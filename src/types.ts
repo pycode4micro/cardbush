@@ -308,8 +308,6 @@ export interface ConversationSummary {
   id: string;
   title: string;
   preview: string;
-  /** The journal's last assistant text. Local optimistic previews may contain user input. */
-  assistantPreview?: string;
   updatedAt: string;
   projectId?: string;
   projectDir?: string;

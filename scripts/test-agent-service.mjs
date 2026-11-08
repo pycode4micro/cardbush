@@ -1,7 +1,10 @@
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
+import { conversationTitleLimit } from '@cardbush/bush-protocol';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile, symlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
@@ -17,7 +20,8 @@ import { callRemoteWorker } from '../dist-electron/remoteWorkers.mjs';
 import { InMemoryRuntimeHost, ToolRegistry, SubagentTaskStore } from '../packages/bush-runtime/dist/index.js';
 import { createProductAgentTurnRequest, createTurnTimeContext } from '../packages/bush-product-agent/dist/index.js';
 
-const tempRoot = resolve('tmp/agent-service-tests');
+// Native Windows sandbox helpers need room for nested attachment paths even in deep worktrees.
+const tempRoot = join(tmpdir(), 'cb-agent-tests');
 
 test('expired approval errors retain their code through Worker and HTTP without dispatching work', async t => {
   const f = await openService(t, 'stale-approval');
@@ -50,7 +54,8 @@ async function directory(t) {
   return root;
 }
 async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
-  const calls = [];
+  const calls = [], titleCalls = [];
+  const titlePrompt = renderPromptTemplate('conversation-title', { limit: conversationTitleLimit }).trim();
   const server = createServer(async (req, res) => {
     // Request chunks can split a UTF-8 code point in large tool catalogs.
     req.setEncoding('utf8');
@@ -62,7 +67,9 @@ async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
       throw error;
     }
     const body = JSON.parse(raw); if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 100 })); return; }
-    calls.push(body); const n = calls.length;
+    const isTitle = body.instructions?.includes(titlePrompt) || body.input?.some?.(message =>
+      ['system','developer'].includes(message.role) && JSON.stringify(message.content).includes(titlePrompt));
+    const n = isTitle ? 'title-' + titleCalls.push(body) : calls.push(body);
     if (compatibility && n === 1) {
       res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Unsupported parameter: store', type: 'invalid_request_error' } })); return;
     }
@@ -74,7 +81,7 @@ async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
     const response = { id: `resp_${n}`, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
     emit({ type: 'response.created', response });
     emit({ type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } });
-    await (typeof delay === 'function' ? delay() : pause(delay));
+    if (!isTitle) await (typeof delay === 'function' ? delay() : pause(delay));
     if (res.destroyed) return;
     emit(item.type === 'function_call'
       ? { type: 'response.function_call_arguments.delta', output_index: 0, delta: item.arguments }
@@ -84,7 +91,7 @@ async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
-  return { calls, url: `http://127.0.0.1:${server.address().port}/v1` };
+  return { calls, titleCalls, url: `http://127.0.0.1:${server.address().port}/v1` };
 }
 async function openService(t, name = 'fixture', delay = 80, tool, compatibility = false, bundledRoot) {
   const root = await directory(t); const model = await modelFixture(t, delay, tool, compatibility);
@@ -741,6 +748,7 @@ test('conversation presentation survives restart and stays independent of active
     assert.ok(Date.parse(done[0].startedAt) >= Date.parse(done[0].createdAt));
     assert.ok(Date.parse(done[0].completedAt) >= Date.parse(done[0].startedAt));
     assert.equal(done[0].turnId, job.turnId);
+    assert.equal(f.model.titleCalls.length, 1, 'the first user message also requests a separate title');
     await service.close(); service = await AgentService.open({ dataRoot: f.root });
     const restored = await service.call('sessions.get', { sessionId: 'presentation' });
     assert.equal(restored.metadata.title, '自定义标题'); assert.equal(restored.metadata.pinned, true); assert.equal(restored.metadata.archived, true); assert.equal(restored.metadata.forcedUnread, true);
@@ -759,7 +767,11 @@ test('conversation presentation survives restart and stays independent of active
     assert.equal((await service.call('sessions.get', { sessionId: 'presentation' })).metadata.individuation.habits, true);
     assert.equal((await service.call('sessions.get', { sessionId: fork.sessionId })).metadata.individuation.predictions, true);
     assert.equal((await service.call('sessions.get', { sessionId: 'presentation' })).metadata.archived, false);
-    await service.call('sessions.create', { sessionId: 'legacy-title', title: 'New conversation' });
+    // Recreate a previously stored, unnamed session from before title generation was introduced.
+    const legacyDir = join(f.root, 'legacy-workspace');
+    await mkdir(legacyDir);
+    await service.call('runtime.command', { kind:'runtime.create_session', payload:{ sessionId:'legacy-title',
+      metadata:{ title:'New conversation' }, workspace:{ mode:'direct', sourceDir:legacyDir } } });
     await service.call('chat.send', input('legacy-title', 'legacy-job', '恢复已有会话的标题'));
     await until(() => service.call('chat.jobs'), jobs => jobs.find(job => job.id === 'legacy-job')?.status === 'completed');
     assert.equal((await service.call('sessions.get', { sessionId: 'legacy-title' })).metadata.title, '恢复已有会话的标题');

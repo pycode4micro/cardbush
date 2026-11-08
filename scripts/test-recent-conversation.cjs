@@ -116,9 +116,7 @@ async function run() {
     return;
   }
   assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
-  await wait(() => read("document.querySelector('.recent-chat-copy small')?.textContent === " + JSON.stringify(examples.get(45)[1])), 'latest assistant output appears before opening the navigator').catch(async cause => {
-    throw Error('Unexpected assistant preview: ' + await read("document.querySelector('.recent-chat-copy')?.textContent"), {cause});
-  });
+  assert.equal(await read("document.querySelector('.recent-chat-copy').textContent"), '设计评审记录', 'the title bar omits assistant output');
   assert.equal(await read("Boolean(document.querySelector('.recent-turn-scroll'))"), false);
   const title = () => read("document.querySelector('.recent-chat-copy strong').textContent");
   const direction = await read("document.querySelector('[data-recent-step=previous]').disabled ? 'next' : 'previous'");
@@ -128,7 +126,7 @@ async function run() {
   assert.equal(await read("!!document.querySelector('.recent-chat-copy small')"), false, 'a chat with no assistant output shows only its title');
   await click('[data-recent-step=' + (direction === 'previous' ? 'next' : 'previous') + ']');
   await wait(async () => await title() === '设计评审记录', 'opposite navigation restores the chat');
-  await visible('.recent-chat-copy small');
+  assert.equal(await read("document.querySelector('.recent-chat-copy').textContent"), '设计评审记录');
   const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar button.no-drag')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
   assert.ok(await bounds());
   fs.writeFileSync(path.join(project, 'tmp/conversation-glass-bar.png'), (await win.webContents.capturePage()).toPNG());
@@ -143,9 +141,7 @@ async function run() {
   await pause(350);
   const captureMaterial = async name => fs.writeFileSync(path.join(project, 'tmp', 'workspace-material-' + name + '.png'),
     (await win.webContents.capturePage()).toPNG());
-  const artwork = () => read("document.querySelector('.recent-chat-mark img')?.currentSrc");
-  await wait(() => read("document.querySelector('.recent-chat-mark img')?.naturalWidth > 0"), 'bundled artwork before reading history');
-  const initialArtwork = await artwork();
+  assert.equal(await read("document.querySelector('.recent-bar-chat img') === null"), true, 'the title bar contains only the title');
   await captureMaterial('toolbar');
   await click('.window-sidebar-toggle');
   await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width>265"), 'expanded navigation is over the artwork');
@@ -181,8 +177,7 @@ async function run() {
   assert.equal(await read("document.querySelector('.recent-turn-text').textContent"), examples.get(45)[0]);
   await visible('[data-desktop-page="overview"]');
   await wait(() => read("document.querySelector('.recent-tile img')?.naturalWidth > 0"), 'real image thumbnail');
-  await wait(() => read("(() => {const cover=document.querySelector('.recent-chat-mark img'); return cover?.naturalWidth>0 && cover.currentSrc===document.querySelector('.recent-tile img')?.currentSrc})()"), 'loaded turn image replaces the cover');
-  assert.notEqual(await artwork(), initialArtwork);
+  assert.equal(await read("document.querySelector('.recent-bar-chat img') === null"), true, 'turn thumbnails stay in the turn list');
   fs.writeFileSync(path.join(project, 'tmp/recent-conversation-drawer.png'), (await win.webContents.capturePage()).toPNG());
   await click('.recent-turn-more');
   await wait(() => read("document.querySelectorAll('.recent-turn-text').length === 40"), 'previous page');
@@ -307,6 +302,7 @@ async function run() {
   await wait(()=>read("pageEntrances.includes('settings-track')"),'entering a category animates its contents');
   await pause(300); await read('pageEntrances.length=0;void 0');
   await click('[data-settings-section=notifications]'); await pause(100);
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('[data-settings-section][aria-expanded=true]'), node=>node.dataset.settingsSection)"), ['notifications']);
   assert.deepEqual(await read('pageEntrances'),[],'editing or disclosing settings does not replay navigation');
   win.webContents.debugger.attach('1.3');
   try {

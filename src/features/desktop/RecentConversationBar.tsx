@@ -1,9 +1,9 @@
+import { compactConversationTitle } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { uiText } from '../../i18n';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { useConversationArchives } from '../sidebar/conversationArchives';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
-import { isBackendSupersededMessage } from '../chatMessages/transcript/messageFacts';
 import { normalizeChatMessagesForDisplay } from '../chatMessages/transcript/messageProjection';
 import { indexContextTurns, quickTurnPreviewMessages } from '../chat/quickContextIndex';
 import { RecentConversationBarView, TurnListView, type RecentTab } from './RecentConversationBarView';
@@ -11,20 +11,6 @@ import './recentConversationBar.css';
 
 const lastVisitKey = 'cardbush_last_opened_conversation';
 const pageSize = 40;
-
-// Streaming and restored histories can fold earlier assistant segments into a tool-only row.
-function latestAssistantOutput(messages?: ChatMessage[]): string {
-  if (!messages) return '';
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (isBackendSupersededMessage(message) || message.role !== 'assistant') continue;
-    const text = conversationDisplayTitle(message.content.slice(0, 600));
-    if (text) return text;
-    const preceding = latestAssistantOutput(message.loopHistory);
-    if (preceding) return preceding;
-  }
-  return '';
-}
 
 export function useRecentConversation(conversations: ConversationSummary[], visibleChatId: string) {
   const archived = useConversationArchives();
@@ -76,18 +62,6 @@ export function RecentConversationBar({ actions, language, conversation, convers
     else setBrowsedId(target.id);
     setSelectedId('');
   };
-  const currentMessages = current && transcripts[current.id];
-  const cover = useMemo(() => {
-    if (!currentMessages) return;
-    for (let i = currentMessages.length - 1; i >= 0; i--) {
-      const message = currentMessages[i];
-      if (message.role === 'user' && !isBackendSupersededMessage(message)) {
-        return message.attachments?.find(item => item.type === 'image' && item.path)?.path;
-      }
-    }
-  }, [currentMessages]);
-  const output = useMemo(() => latestAssistantOutput(currentMessages) || conversationDisplayTitle(current?.assistantPreview ?? ''),
-    [currentMessages, current?.assistantPreview]);
   const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? current;
   const name = (item: ConversationSummary) => conversationDisplayTitle(item.title) || uiText(language)('composer.newConversation');
   const enter = useCallback((id: string, message?: ChatMessage) => {
@@ -98,7 +72,7 @@ export function RecentConversationBar({ actions, language, conversation, convers
     setSelectedId(id); setTab('turns');
     panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="turns"]')?.focus({ preventScroll: true });
   }, []);
-  return <RecentConversationBarView actions={actions} language={language} title={current ? name(current) : ''} cover={cover} output={output} selectedTitle={selected ? name(selected) : ''} panelId={id}
+  return <RecentConversationBarView actions={actions} language={language} title={current ? compactConversationTitle(name(current)) : ''} selectedTitle={selected ? name(selected) : ''} panelId={id}
     previous={previous && (() => switchConversation(previous))} next={next && (() => switchConversation(next))}
     panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={current ? () => enter(current.id) : undefined}
     onToggle={value => { setExpanded(value); if (!value) { setTab('turns'); setSelectedId(''); } }}>

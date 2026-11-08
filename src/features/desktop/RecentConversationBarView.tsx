@@ -4,19 +4,15 @@ import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types'
 import { uiText } from '../../i18n';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { fileUrl } from '../../shared/localPaths';
-import defaultArtwork from './art/prism.jpg';
 
 export type RecentTab = 'turns' | 'sessions';
 
-export function RecentConversationBarView({ actions, language, title, output, cover, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
-  language: AppLanguage; title: string; output: string; cover?: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
+export function RecentConversationBarView({ actions, language, title, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
+  language: AppLanguage; title: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
   actions?: ReactNode; previous?: () => void; next?: () => void;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen?: () => void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
-  const [failedCover, setFailedCover] = useState('');
-  const source = cover && fileUrl(cover);
-  const artwork = source && source !== failedCover ? source : defaultArtwork;
   const tabs = [{ id: 'turns', label: t('recentBar.turns') }, { id: 'sessions', label: t('recentBar.sessions') }] as const;
   return <div className="recent-bar window-drag">
     <div className="recent-bar-transport">
@@ -25,10 +21,8 @@ export function RecentConversationBarView({ actions, language, title, output, co
       <button className="no-drag" type="button" data-recent-step="next" disabled={!next} onClick={next}
         aria-label={t('recentBar.nextChat')} title={t('recentBar.nextChat')}><FastForward aria-hidden="true"/></button>
     </div>
-    <button className="recent-bar-chat no-drag" type="button" disabled={!onOpen} onClick={onOpen} aria-describedby={output ? panelId + '-output' : undefined} aria-label={onOpen ? t('recentBar.open', { title }) : t('recentBar.sessions')} title={onOpen ? t('recentBar.open', { title }) : undefined}>
-      <span className="recent-chat-mark" aria-hidden="true">{onOpen ? <img src={artwork} alt="" draggable={false}
-        onError={() => { if (source && artwork === source) setFailedCover(source); }}/> : <MessageSquare/>}</span>
-      <span className="recent-chat-copy"><strong>{title}</strong>{output && <small id={panelId + '-output'}>{output}</small>}</span>
+    <button className="recent-bar-chat no-drag" type="button" disabled={!onOpen} onClick={onOpen} aria-label={onOpen ? t('recentBar.open', { title }) : t('recentBar.sessions')} title={onOpen ? t('recentBar.open', { title }) : undefined}>
+      <span className="recent-chat-copy"><strong>{title}</strong></span>
     </button>
     <div className="recent-bar-actions">
       {actions}

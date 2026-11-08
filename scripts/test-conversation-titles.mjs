@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import ts from 'typescript';
+import * as protocol from '@cardbush/bush-protocol';
 
 function load(file) {
   file = resolve(file);
@@ -12,17 +13,17 @@ function load(file) {
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
   } }).outputText;
-  new Function('exports', 'require', code)(exports, name => name.startsWith('.')
+  new Function('exports', 'require', code)(exports, name => name === '@cardbush/bush-protocol' ? protocol : name.startsWith('.')
     ? load(resolve(dirname(file), name + '.ts')) : require(name));
   return exports;
 }
 
 const { conversationDisplayTitle: display, conversationTitleFromUserText: title } = load('src/shared/conversationTitle.ts');
-const { authoredPromptContent, promptReferenceMarkdown } = load('src/shared/promptReferences.ts');
+const { promptReferenceMarkdown } = load('src/shared/promptReferences.ts');
 const skill = '[$video-face-stylizer](<C:/Users/Fixture/My Skills/video-face-stylizer/SKILL.md>)';
 
 test('skill, plugin, file and context links become readable names before title truncation', () => {
-  assert.equal(title(skill + ' 现在已经可以使用了是么'), 'video-face-stylizer 现在已经可以使用了是么');
+  assert.equal(title(skill + ' 现在已经可以使用了是么'), 'video-face-stylizer…');
   assert.equal(title('[$face-tools](<C:/plugins/face-tools/.codex-plugin/plugin.json>) 排查连接'), 'face-tools 排查连接');
   assert.equal(title('检查 [需求文档](<D:/项目 (新版)/需求.md>) 的渲染'), '检查 需求文档 的渲染');
   const browser = promptReferenceMarkdown({ kind: 'browser', tabId: 'tab-1', url: 'https://example.test/(guide)', title: '浏览器页面' });
@@ -42,9 +43,9 @@ test('existing titles truncated inside a link recover the complete label', () =>
 
 test('attachment paths do not crowd out the request and the title limit preserves Unicode', () => {
   assert.equal(title('@"C:/Users/Fixture/screenshot.png"\n优化这里的渲染\nD:/notes.txt'), '优化这里的渲染');
-  assert.equal(title('/skill video-face-stylizer'), '/skill video-face-stylizer');
+  assert.equal(title('/skill video-face-stylizer'), '/skill video-face-s…');
   const emoji = '👩🏽‍💻';
-  assert.equal(title(emoji.repeat(60)), emoji.repeat(45) + '...');
+  assert.equal(title(emoji.repeat(60)), emoji.repeat(19) + '…');
   assert.equal(title(' \n '), '');
   assert.equal(title('只包含普通文字'), '只包含普通文字');
 });
@@ -61,14 +62,14 @@ test('restored conversations use authored content and keep stored messages and c
   const functions = source.statements.filter(node => ts.isFunctionDeclaration(node) &&
     ['runtimeConversation', 'optionalString', 'defaultConversationTitle'].includes(node.name?.text)).map(node => node.getText(source)).join('\n');
   const code = ts.transpileModule(functions, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  const project = new Function('exports', 'conversationDisplayTitle', 'conversationTitleFromUserText', 'authoredPromptContent', 'isInternalRuntimeMessage',
-    code + '\nreturn runtimeConversation;')({}, display, title, authoredPromptContent, () => false);
+  const project = new Function('exports', 'conversationDisplayTitle', 'conversationTitleFromUserText', 'summarizeSession',
+    code + '\nreturn runtimeConversation;')({}, display, title, protocol.summarizeSession);
   const authored = skill + ' 验证连接';
   const snapshot = { sessionId: 'fixture', updatedAt: '2026-09-12T00:00:00Z', metadata: {}, supersededMessageIds: [],
     turns: [{ messages: [{ messageId: 'user-1', metadata: { composerReferenceContent: authored },
       message: { role: 'user', content: 'Resolved context must never become a title.' } }] }] };
   const original = structuredClone(snapshot);
-  assert.equal(project(snapshot).title, 'video-face-stylizer 验证连接');
+  assert.equal(project(snapshot).title, 'video-face-stylizer…');
   assert.deepEqual(snapshot, original);
   snapshot.metadata.title = '[$video-face-stylizer](<C...';
   assert.equal(project(snapshot).title, 'video-face-stylizer');

@@ -42,6 +42,7 @@ export type RuntimePermissionAnswer = z.infer<
 >;
 
 export const runtimeEventKindSchema = z.enum([
+  "conversation_title",
   "turn_accepted",
   "turn_started",
   "reasoning_segment_started",
@@ -208,6 +209,10 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal('solution_selection_cancelled'),
     payload: z.object({ selectionId: z.string().min(1), reason: z.string().min(1) }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("conversation_title"),
+    payload: z.object({ title: z.string().min(1), titleGeneration: z.enum(['generated', 'fallback']) }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("turn_accepted"),

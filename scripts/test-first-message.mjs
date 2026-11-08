@@ -41,7 +41,8 @@ function fixture(scope) {
     setConnectionRecoveryByConversation() {}, setError: value => { state.error = value; }, errorMessage: String,
     setMessagesByConversation: update => { state.messages = update(state.messages); context.messagesByConversationRef.current = state.messages; },
     setConversations: update => update([]), upsertConversationPreview: rows => rows,
-    persistPreparedConversation: () => creation.promise,
+    persistPreparedConversation: (_candidate, firstMessage) => { state.firstMessage = firstMessage; return creation.promise; },
+    applyConversationTitle: (id, title) => { state.generatedTitle = { id, title }; },
     persistAutoConversationTitle: (...args) => state.titles.push(args),
     conversationProjectRequestDir: value => value.projectDir, conversationWorkspaceRoot: value => value.workspaceDir,
     createFrameStreamBuffers: () => ({ flushAllStreaming: async () => {}, dispose() {} }),
@@ -66,6 +67,7 @@ for (const scope of [undefined, 'remote-agent']) {
   await tick();
   assert.equal(selected.state.messages.new[0].content, '修改选区', 'optimistic bubble never flashes internal data');
   assert.deepEqual(selected.state.messages.new[0].metadata.promptContext, context);
+  assert.equal(selected.state.firstMessage, '修改选区', 'session naming uses the authored message without attached context');
   selected.creation.resolve(selected.candidate); await tick();
   assert.equal(selected.streams[0].userInput, '修改选区'); assert.deepEqual(selected.streams[0].promptContext, context);
   selected.completion.resolve(); await selectionSend;
@@ -80,6 +82,8 @@ for (const scope of [undefined, 'remote-agent']) {
   assert.equal(f.streams.length, 1);
   assert.equal(f.streams[0].workspaceDir, '/persisted/workspace', 'execution uses the confirmed workspace');
   assert.equal(f.streams[0].sourceEnabled, true);
+  f.streams[0].onConversationTitle('首轮标题', 'generated');
+  assert.deepEqual(f.state.generatedTitle, { id: 'new', title: '首轮标题' });
   f.completion.resolve(); await sending;
   assert.equal(f.running.size, 0);
   assert.equal(f.state.scheduled.length, 1);

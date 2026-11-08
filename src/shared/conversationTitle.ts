@@ -1,5 +1,5 @@
 import { isAbsoluteLocalPath, stripWrappingQuotes } from './localPaths';
-import { truncateText } from './text';
+import { compactConversationTitle } from '@cardbush/bush-protocol';
 
 /** Plain text for compact titles; never render links or load their destinations. */
 export function conversationDisplayTitle(value: string): string {
@@ -37,7 +37,7 @@ export function conversationTitleFromUserText(value: string): string {
     const path = stripWrappingQuotes(line.startsWith('@') ? line.slice(1).trim() : line);
     return !isAbsoluteLocalPath(path);
   }).join(' ');
-  return truncateText(conversationDisplayTitle(readable || value), 48);
+  return compactConversationTitle(conversationDisplayTitle(readable || value));
 }
 
 function linkDestinationEnd(value: string, start: number): number {

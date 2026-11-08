@@ -1,6 +1,6 @@
 import { conversationAgentModel, modelConfigFor, selectedModelName, readInitialReferencePlanMode, readInitialPermissionMode, readInitialSubagentPermissionRouting, normalizeReferencePlanMode, normalizeSubagentPermissionRouting } from '../features/settings/agentRequestPreferences';
 export { modelConfigFor, selectedModelName } from '../features/settings/agentRequestPreferences';
-import { isDefaultConversationTitle } from '../i18n/conversationTitles';
+import { isDefaultConversationTitle } from '@cardbush/platform/i18n';
 import { uiText } from '../i18n';
 import { readUserPrompt, promptContextMetadata, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
 import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision, streamAttachmentsFromChatAttachments } from '../shared/chatAttachments';
@@ -690,9 +690,15 @@ export function useCardbushChat(
     }
   }, [getQueueLocks, setQueueLocks, applyQueueLockState, scheduleQueuedMessage]);
 
+  const applyConversationTitle = useCallback((id: string, title: string, generation: 'generated' | 'fallback') => {
+    setConversations(current => current.map(item => item.id === id && item.metadata?.titleGeneration === 'pending'
+      ? { ...item, title, metadata: { ...item.metadata, titleGeneration: generation } } : item));
+  }, []);
+
   const persistAutoConversationTitle = useCallback(
     (conversation: ConversationSummary, sourceText: string) => {
       const sessionId = conversation.id.trim();
+      if (conversation.metadata?.titleGeneration) return;
       const nextTitle = conversationTitleFromUserText(sourceText);
       if (
         !sessionId ||
@@ -1357,6 +1363,7 @@ export function useCardbushChat(
           lastEventId: cursor.eventId || previous?.lastEventId || '',
         };
       },
+      onConversationTitle: (title, generation) => applyConversationTitle(normalizedSessionId, title, generation),
       onStart: (start) => {
         const userMessages = start.userMessages;
         if (userMessages?.length) {
@@ -1564,6 +1571,7 @@ export function useCardbushChat(
   }, [
     applyConnectionRecoveryUpdate,
     applyGoalExecution,
+    applyConversationTitle,
     clearConnectionRecovery,
     clearSessionRunning,
     scheduleQueuedMessage,
@@ -1933,6 +1941,7 @@ export function useCardbushChat(
 
   const persistPreparedConversation = useCallback(async (
     conversation: ConversationSummary,
+    firstMessage?: string,
   ): Promise<ConversationSummary> => {
     const prepared = Object.values(preparedConversationsRef.current).find(
       (item) => item.id === conversation.id,
@@ -1944,9 +1953,12 @@ export function useCardbushChat(
     const creation = (async () => {
       let created: ConversationSummary;
       try {
+        const autoTitle = shouldAutoTitleConversation(prepared.title, prepared.id);
+        const provisionalTitle = autoTitle && firstMessage ? conversationTitleFromUserText(firstMessage) : undefined;
         created = await createConversation({
           sessionId: prepared.id,
-          title: prepared.title,
+          title: provisionalTitle || prepared.title,
+          ...(autoTitle ? { metadata: { titleGeneration: 'pending' } } : {}),
           projectId: conversationProjectId(prepared) || undefined,
           projectDir: conversationProjectDir(prepared) || undefined,
         });
@@ -2111,7 +2123,7 @@ export function useCardbushChat(
     if (previous.title.trim() === nextTitle) return true;
     setConversations((current) =>
       current.map((item) =>
-        item.id === normalizedId ? { ...item, title: nextTitle } : item,
+        item.id === normalizedId ? { ...item, title: nextTitle, metadata: { ...item.metadata, titleGeneration: 'manual' } } : item,
       ),
     );
     try {
@@ -2134,7 +2146,7 @@ export function useCardbushChat(
       setConversations((current) =>
         current.map((item) =>
           item.id === normalizedId && item.title === nextTitle
-            ? { ...item, title: previous.title }
+            ? { ...item, title: previous.title, metadata: previous.metadata }
             : item,
         ),
       );
@@ -2401,10 +2413,7 @@ export function useCardbushChat(
       let candidate =
         queuedConversation ??
         activeConversation ??
-        prepareConversation(
-          undefined,
-          conversationTitleFromUserText(visibleUserInput),
-        );
+        prepareConversation();
       const sessionId = candidate.id;
       if (!readConversationModel(sessionId, backend.scope)) selectConversationModel(turnModel, sessionId, backend.scope);
       const switching = workspaceSwitchesRef.current.get(sessionId);
@@ -2524,7 +2533,7 @@ export function useCardbushChat(
       try {
         // Paint the pending message and install its cancellation/read fences
         // before filesystem or remote session creation can delay the first send.
-        const conversation = await persistPreparedConversation(candidate);
+        const conversation = await persistPreparedConversation(candidate, titleSource);
         controller.signal.throwIfAborted();
         const projectDir = conversationProjectRequestDir(conversation);
         const workspaceDir = conversationWorkspaceRoot(conversation);
@@ -2559,6 +2568,7 @@ export function useCardbushChat(
           files: attachments.files,
           attachments: optimisticAttachments,
           signal: controller.signal,
+          onConversationTitle: (title, generation) => applyConversationTitle(sessionId, title, generation),
           onStart: (start) => {
             streamStarted = true;
             onAccepted?.();
@@ -2866,6 +2876,7 @@ export function useCardbushChat(
       recoverInterruptedSession,
       managedModelConfigs,
       messagesByConversation,
+      applyConversationTitle,
       persistAutoConversationTitle,
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
@@ -4521,6 +4532,10 @@ function mergeLoadedConversationsPreservingLocalTitles(
     const local = localById.get(conversation.id);
     // A late startup snapshot must not undo a local create, rename, edit or deletion.
     if (startedWith && local && startedWith.get(local.id) !== local) return local;
+    if (conversation.metadata?.titleGeneration === 'pending' &&
+        (local?.metadata?.titleGeneration === 'generated' || local?.metadata?.titleGeneration === 'fallback')) {
+      return { ...conversation, title: local.title, metadata: { ...conversation.metadata, titleGeneration: local.metadata.titleGeneration } };
+    }
     if (
       local &&
       !shouldAutoTitleConversation(local.title, local.id) &&

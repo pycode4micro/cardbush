@@ -1,3 +1,4 @@
+import { isDefaultConversationTitle } from '@cardbush/platform/i18n';
 import { uiText } from '../i18n';
 import { readUserPrompt, type PromptContext } from '@cardbush/bush-protocol';
 import { runtimeHistoryToolExecution } from './runtimeHistoryToolExecution';
@@ -169,6 +170,7 @@ export interface ChatStreamRequest {
   disabledTools?: string[];
   allowedTools?: string[];
   signal?: AbortSignal;
+  onConversationTitle?: (title: string, generation: 'generated' | 'fallback') => void;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
   onAssistantSegmentCompleted?: (content: string, chunk: AssistantStreamChunk) => void;
@@ -193,6 +195,7 @@ export type ChatStreamEventHandlers = Pick<
   ChatStreamRequest,
   | 'sessionId'
   | 'signal'
+  | 'onConversationTitle'
   | 'onStart'
   | 'onDelta'
   | 'onAssistantSegmentCompleted'
@@ -1336,7 +1339,6 @@ export function runtimeConversation(
     id: snapshot.sessionId,
     title,
     preview: summary.preview,
-    assistantPreview: summary.preview,
     updatedAt: snapshot.updatedAt,
     ...(projectId ? { projectId } : {}),
     ...(projectDir ? { projectDir } : {}),
@@ -1493,6 +1495,7 @@ export async function createConversation({
         mode: 'auto' as const,
       } } : {}),
       metadata: {
+        ...(isDefaultConversationTitle(title) ? { titleGeneration: 'pending' } : {}),
         ...normalizedMetadata,
         title,
         ...(normalizedProjectDir ? { projectDir: normalizedProjectDir } : {}),
@@ -1582,7 +1585,7 @@ export async function updateConversation({
     const nextMetadata: Record<string, unknown> = {
       ...(current.metadata ?? {}),
       ...normalizedMetadata,
-      ...(title != null ? { title } : {}),
+      ...(title != null ? { title, titleGeneration: 'manual' } : {}),
     };
     if (projectDir !== undefined) {
       nextMetadata.projectDir = projectDir?.trim() || null;

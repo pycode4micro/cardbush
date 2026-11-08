@@ -96,18 +96,19 @@ function CategoryPanel({ category, initial, language, active, renderSection }: {
   category: SettingsCategory; initial: VisibleSettingsSection; language: AppLanguage;
   active: boolean; renderSection: Props['renderSection'];
 }) {
+  const [expanded, setExpanded] = useState<VisibleSettingsSection | null>(initial);
   return <div className="settings-category">{category.sections.map(id => <Disclosure key={id} id={id}
-    initiallyOpen={id === initial} language={language} active={active} renderSection={renderSection}/>)}</div>;
+    open={id === expanded} toggle={() => setExpanded(current => current === id ? null : id)} language={language} active={active} renderSection={renderSection}/>)}</div>;
 }
 
-function Disclosure({ id, initiallyOpen, language, active, renderSection }: {
-  id: VisibleSettingsSection; initiallyOpen: boolean; language: AppLanguage; active: boolean; renderSection: Props['renderSection'];
+function Disclosure({ id, open, toggle, language, active, renderSection }: {
+  id: VisibleSettingsSection; open: boolean; toggle(): void; language: AppLanguage; active: boolean; renderSection: Props['renderSection'];
 }) {
-  const [open, setOpen] = useState(initiallyOpen), [visited, setVisited] = useState(initiallyOpen);
+  const [visited, setVisited] = useState(open);
   const panelId = useId(), t = uiText(language);
   return <section className="settings-category-section">
     <h2><button type="button" id={panelId + '-label'} data-settings-section={id} aria-expanded={open} aria-controls={panelId}
-      onClick={() => { setOpen(!open); setVisited(true); }}>
+      onClick={() => { toggle(); setVisited(true); }}>
       <span><strong>{t(settingsSectionLabel(id))}</strong><small>{t(settingsDescriptions[id])}</small></span><ChevronDown aria-hidden="true"/>
     </button></h2>
     <div className="category-settings-body" id={panelId} role="region" aria-labelledby={panelId + '-label'} hidden={!open}>

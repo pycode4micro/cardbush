@@ -1,5 +1,5 @@
 import { browserConnectionEnvironment } from './browserEnvironment.js';
-import { uiText } from '@cardbush/platform/i18n';
+import { uiText, isDefaultConversationTitle } from '@cardbush/platform/i18n';
 import { AgentWebhooks } from './agentWebhooks.mjs';
 import { prepareWebhookParentModels } from './contextWebhookRuntime.mjs';
 import { applyWebhookTurnPolicy, assistantProfileSchema, PERSONAL_ASSISTANT_SESSION, runtimeSessionTurnRequestSchema } from '@cardbush/bush-protocol';
@@ -10,7 +10,7 @@ import { workerObservation } from './remoteWorkerObservation.mjs';
 import { openHeadlessWorkers } from './headlessWorkerStore.mjs';
 import { openLocalWorkers } from './localWorkerStore.mjs';
 import { callRemoteWorker } from './remoteWorkers.mjs';
-import { readUserPrompt, remoteWorkerSchema, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
+import { compactConversationTitle, readUserPrompt, remoteWorkerSchema, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
 import { ModelImageStore } from '@cardbush/bush-runtime';
 import { sessionSummarySchema, sessionHistoryPageSchema } from '@cardbush/bush-protocol';
 import { webToolAllowed, webToolDefinition } from '@cardbush/bush-runtime/web-policy';
@@ -393,12 +393,12 @@ export class AgentService {
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; firstUserText?: string; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
-    const placeholder = !presentation?.title && (!saved || ['新对话', '新会话', 'New conversation', 'New chat', session.sessionId].includes(saved));
+    const placeholder = !presentation?.title && (!saved || saved === session.sessionId || isDefaultConversationTitle(saved));
     const first = (session.firstUserText || session.turns?.flatMap(turn => turn.messages).find(item => item.message.role === 'user' && item.message.visibility !== 'internal' && item.message.name !== 'subagent_result')?.message.content)
       ?? this.#state.jobs.find(job => job.sessionId === session.sessionId)?.input.text;
     // Presentation is independent of the model journal and may change during a turn.
-    const title = placeholder && first ? first.replace(/\s+/g, ' ').trim().slice(0, 48) : saved;
-    return { ...session, metadata: { ...session.metadata, ...presentation, title } };
+    const title = placeholder && first ? compactConversationTitle(first) : saved;
+    return { ...session, metadata: { ...session.metadata, ...presentation, ...(presentation?.title ? { titleGeneration: 'manual' } : {}), title } };
   }
   #write(change: (state: AgentState) => void): Promise<void> {
     const task = this.#writes.then(async () => {
@@ -602,7 +602,9 @@ export class AgentService {
         if (projectId && !project) throw new Error('Unknown project.');
         const path = project?.path ?? join(this.root, 'workspaces', randomUUID());
         await mkdir(path, { recursive: true });
-        return this.#command('runtime.create_session', { sessionId: key, metadata: { title: String(data.title || '新对话'), agentId: this.#state.id, projectId: project?.id ?? null, projectDir: project?.path ?? null }, workspace: { mode: 'direct', sourceDir: path } });
+        const title = String(data.title || uiText()('agentsView.newConversation'));
+        const autoTitle = isDefaultConversationTitle(title) || (data.metadata as Record<string, unknown> | undefined)?.titleGeneration === 'pending';
+        return this.#command('runtime.create_session', { sessionId: key, metadata: { title, ...(autoTitle ? { titleGeneration: 'pending' } : {}), agentId: this.#state.id, projectId: project?.id ?? null, projectDir: project?.path ?? null }, workspace: { mode: 'direct', sourceDir: path } });
       }
       case 'sessions.rename': {
         const snapshot = decodeSessionSnapshot(await this.#command('runtime.get_session', { sessionId: sessionId() }));

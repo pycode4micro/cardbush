@@ -189,6 +189,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
     images: request.images?.map((image) => image.path),
     attachments: request.attachments,
   });
+  if (!existingSession) runtimeRequest.sessionMetadata = { ...runtimeRequest.sessionMetadata, titleGeneration: 'pending' };
   if (existingSession?.metadata?.team_workspace === true || existingSession?.metadata?.creation_workspace === true) {
     // Legacy editors could create an empty session on open. Mark real sends so
     // their first in-flight turn is visible before terminal history is committed.
@@ -511,6 +512,9 @@ async function consumeRuntimeEvents(
       });
     }
     switch (event.kind) {
+      case 'conversation_title':
+        request.onConversationTitle?.(event.payload.title, event.payload.titleGeneration);
+        break;
       case 'turn_accepted': {
         const input = event.payload.input;
         const references = input?.messages ?? runtimeRequest.inputMessages?.flatMap((item, messageIndex) =>

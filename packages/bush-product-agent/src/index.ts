@@ -1,3 +1,4 @@
+import { compactConversationTitle } from '@cardbush/bush-protocol';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { CHECKPOINT_CONTINUATION_INSTRUCTIONS, DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, collectTurnAttachments, formatTurnAttachmentContext } from "@cardbush/bush-protocol";
 import { REPORT_DELIVERY_INSTRUCTIONS, TASK_CONTINUATION_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
@@ -330,5 +331,5 @@ function languageFallback(input: ProductAgentTurnInput): string {
 }
 
 function initialTitle(input: string): string {
-  return input.trim().replace(/\s+/g, " ").slice(0, 80) || "New conversation";
+  return compactConversationTitle(input) || "New conversation";
 }

@@ -1,3 +1,4 @@
+import { firstTitleSource, summarizeConversationTitle } from './conversationTitle.js';
 import { createTurnTimeContext } from '@cardbush/bush-protocol';
 import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
 import { remoteAgentFacts, registerSandboxEnvironment } from './environmentResources.js';
@@ -968,6 +969,7 @@ export class InMemoryRuntimeHost {
       eventProtocol: BUSH_RUNTIME_EVENT_PROTOCOL,
       supportedEvents: runtimeEventKindSchema.options.filter((kind) =>
         [
+          "conversation_title",
           "turn_accepted",
           "turn_started",
           "reasoning_segment_started",
@@ -2755,6 +2757,18 @@ export class InMemoryRuntimeHost {
       }
       activeContextCompaction = undefined;
     };
+    const titleSource = input.sessionCommit?.turnSequence === 1 && !input.internalTask &&
+      !request.metadata.automationRunId && !request.metadata.shadowMode && request.metadata.agentRole !== 'child' &&
+      this.#sessions.snapshot(request.sessionId)?.metadata?.titleGeneration === 'pending'
+      ? firstTitleSource(input.sessionCommit) : '';
+    const titleResult = titleSource ? (async () => {
+      // Recovery reuses the recorded title if the app closed before the first turn committed.
+      const recorded = this.#eventLog.replay(request.sessionId, request.turnId).find(event => event.kind === 'conversation_title');
+      if (recorded?.kind === 'conversation_title') return recorded.payload;
+      const result = await summarizeConversationTitle(this.#provider, request, titleSource, input.signal);
+      this.#eventLog.append(identity, { kind: 'conversation_title', payload: result });
+      return result;
+    })().catch(() => undefined) : undefined;
     const finalize = async (payload: TurnTerminalPayload): Promise<RuntimeEvent> => {
       this.#finalizingTurns.add(turnKey);
       let workspace: WorkspaceDescriptor | undefined;
@@ -2771,6 +2785,7 @@ export class InMemoryRuntimeHost {
         this.#activeTurnControllers.get(turnKey)?.abort();
       }
       settleActiveContextCompaction(payload);
+      const title = titleResult && await titleResult;
       input.onFinalized?.(
         payload,
         generatedMessages,
@@ -2778,6 +2793,15 @@ export class InMemoryRuntimeHost {
         cacheChain.snapshot(),
         activeContextCheckpoint,
       );
+      if (title) {
+        try {
+          const session = this.#sessions.snapshot(request.sessionId);
+          if (session?.metadata?.titleGeneration === 'pending') {
+            this.#sessions.updateMetadata({ sessionId: request.sessionId, expectedRevision: session.revision,
+              metadata: { ...session.metadata, ...title } });
+          }
+        } catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
+      }
       if (this.#pluginInterruptedTurns.delete(turnKey) && request.metadata.agentRole !== 'child') await runHook('Interrupt', {});
       if (this.#shuttingDown) await this.#pluginHooks.closeSession(request.sessionId);
       if (workspace) {
