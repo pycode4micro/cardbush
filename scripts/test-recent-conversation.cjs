@@ -104,6 +104,7 @@ async function run() {
   assert.equal(await read("document.querySelector('.recent-turn-text').textContent"), examples.get(45)[0]);
   await visible('[data-desktop-page="overview"]');
   await wait(() => read("document.querySelector('.recent-tile img')?.naturalWidth > 0"), 'real image thumbnail');
+  await wait(() => read("document.querySelector('.recent-chat-mark img')?.naturalWidth > 0"), 'loaded conversation artwork also reaches the title bar');
   fs.writeFileSync(path.join(project, 'tmp/recent-conversation-drawer.png'), (await win.webContents.capturePage()).toPNG());
   await click('.recent-turn-more');
   await wait(() => read("document.querySelectorAll('.recent-turn-text').length === 40"), 'previous page');
@@ -166,6 +167,44 @@ async function run() {
   await click('.recent-bar-list');
   await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-earlier']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
   await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录'"), 'archived and hidden sessions are excluded');
+  win.setContentSize(1084, 760);
+  await pause(300);
+  await read("window.pageEntrances=[];document.addEventListener('animationstart',event=>{if(event.animationName==='workspace-page-entrance') pageEntrances.push(event.target.className)});void 0");
+  await click('[data-nav-section=explore]');
+  await visible('[data-desktop-page=explore]');
+  await wait(()=>read("pageEntrances.includes('main-stage')"),'Explore enters with the Windows page transition');
+  const manage = '.desktop-page-heading .desktop-manage';
+  const point = await read("(()=>{const r=document.querySelector('.desktop-manage').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()");
+  win.webContents.sendInputEvent({type:'mouseMove',...point});
+  await pause(300);
+  assert.equal(await read("document.querySelectorAll('.desktop-page-heading button').length"),1,'hover keeps a single manage action');
+  assert.equal(await read("!!document.querySelector('.desktop-menu-toggle')"),false);
+  assert.ok(await read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return Math.abs((r.left+r.right)/2-innerWidth/2)<9})()"),'compact-rail summary is centered in the window');
+  await click(manage); await visible('.app-center-drawer:modal');
+  await click('.app-center-content>header button:last-child.app-center-icon');
+  await wait(()=>read("!document.querySelector('.app-center-drawer')"),'manager dismissed');
+  await click('.window-sidebar-toggle'); await visible('.desktop-menu-toggle');
+  await pause(300);
+  assert.ok(await read("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.sidebar').getBoundingClientRect().right+1"),'menu remains within the expanded sidebar');
+  await click('.window-sidebar-toggle'); await pause(300);
+  fs.writeFileSync(path.join(project,'tmp','explore-titlebar-alignment.png'),(await win.webContents.capturePage()).toPNG());
+  await click('.sidebar-footer .profile-trigger');
+  await click('.profile-popover:popover-open [data-profile-action=settings]');
+  await visible('.settings-directory');
+  await wait(()=>read("pageEntrances.includes('settings-track')"),'opening settings animates the retained page');
+  await read('pageEntrances.length=0;void 0');
+  await click('[data-settings-target=preferences]');
+  await wait(()=>read("pageEntrances.includes('settings-track')"),'entering a category animates its contents');
+  await pause(300); await read('pageEntrances.length=0;void 0');
+  await click('[data-settings-section=notifications]'); await pause(100);
+  assert.deepEqual(await read('pageEntrances'),[],'editing or disclosing settings does not replay navigation');
+  win.webContents.debugger.attach('1.3');
+  try {
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    await click('[data-nav-section=home]'); await visible('[data-desktop-page=overview]'); await pause(300);
+    assert.deepEqual(await read('pageEntrances'),[], 'reduced motion skips the transition');
+  } finally { win.webContents.debugger.detach(); }
+  console.log('Workspace navigation passed: compact rail and caption alignment, hover-free management, section/category entrance and reduced motion.');
   console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
   app.quit();
 }

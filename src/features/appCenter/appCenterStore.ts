@@ -23,13 +23,11 @@ export function saveAppCenterPreferences(next: AppCenterPreferences) {
   const value = normalizeAppCenterPreferences(next);
   localStorage.setItem(appCenterStorageKey, JSON.stringify(value)); read(); listeners.forEach(fn => fn());
 }
-export function installWebApplication(info: WebApplicationInfo, pin = false) {
+export function installWebApplication(info: WebApplicationInfo) {
   const prefs = read(), existing = prefs.webApps?.find(app => app.identity === info.identity);
   const app = normalizeWebApplications([{ ...info, id: existing?.id ?? `web:${crypto.randomUUID()}` }])[0];
   if (!app) throw Error(uiText()('appCenterStore.invalid_web_app'));
-  if (pin && !prefs.shortcuts.includes(app.id) && prefs.shortcuts.length >= 4) throw Error(uiText()('appCenterStore.remove_a_shortcut_before_pinning_this_app'));
-  saveAppCenterPreferences({ ...prefs, webApps: [...(prefs.webApps ?? []).filter(item => item.id !== app.id), app],
-    shortcuts: pin && !prefs.shortcuts.includes(app.id) ? [...prefs.shortcuts, app.id] : prefs.shortcuts });
+  saveAppCenterPreferences({ ...prefs, webApps: [...(prefs.webApps ?? []).filter(item => item.id !== app.id), app] });
   return app;
 }
 export function useAppCenterPreferences() { return useSyncExternalStore(subscribe, () => raw === undefined ? read() : cached, () => defaultAppCenterPreferences); }

@@ -4,8 +4,8 @@ import type { ApplicationPromptReference } from '../../shared/promptReferences';
 import { normalizeLocalApplications, type LocalApplication } from '../../shared/localApplications';
 import { normalizeWebApplications, type WebApplication } from '@cardbush/bush-protocol';
 
-export type AppCenterPreferences = { shortcuts: string[]; display: 'always' | 'hover'; links: Array<{ id: string; title: string; url: string }>; localApps?: LocalApplication[]; webApps?: WebApplication[]; order?: string[] };
-export const defaultAppCenterPreferences: AppCenterPreferences = { shortcuts: ['builtin:plugins', 'builtin:automations'], display: 'always', links: [] };
+export type AppCenterPreferences = { links: Array<{ id: string; title: string; url: string }>; localApps?: LocalApplication[]; webApps?: WebApplication[]; order?: string[] };
+export const defaultAppCenterPreferences: AppCenterPreferences = { links: [] };
 export type ApplicationEntry = { id: string; title: string; description: string; kind: 'builtin' | 'plugin' | 'external' | 'local' | 'web'; icon?: string;
   target: string; plugin?: CardbushAppPlugin; componentId?: string; launch?: NonNullable<CardbushAppPlugin['components'][number]['app']>; shortcut?: 'openSettings' | 'openPlugins' | 'openAutomations' };
 
@@ -22,11 +22,11 @@ export function normalizeAppCenterPreferences(value: unknown): AppCenterPreferen
     const url = applicationLink(link.url); if (!url) return [];
     ids.add(link.id); return [{ id: link.id, title: link.title.trim().slice(0, 80), url }];
   }).slice(0, 100);
-  return { display: input.display === 'hover' ? 'hover' : 'always', links,
+  return { links,
     ...(Array.isArray(input.localApps) ? { localApps: normalizeLocalApplications(input.localApps) } : {}),
     ...(Array.isArray(input.webApps) ? { webApps: normalizeWebApplications(input.webApps) } : {}),
     ...(Array.isArray(input.order) ? { order: [...new Set(input.order.filter(id => typeof id === 'string' && /^(builtin|plugin|external|local|web):/.test(id) && id.length <= 400))].slice(0, 200) } : {}),
-    shortcuts: Array.isArray(input.shortcuts) ? [...new Set(input.shortcuts.filter(id => typeof id === 'string' && /^(builtin|plugin|external|local|web):/.test(id) && id.length <= 400))].slice(0, 4) : defaultAppCenterPreferences.shortcuts };
+  };
 }
 
 export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPlugin[], prefs: AppCenterPreferences): ApplicationEntry[] {
@@ -50,13 +50,6 @@ export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPl
   ];
   const order = new Map((prefs.order ?? []).map((id, index) => [id, index]));
   return entries.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
-}
-
-export function moveApplication(ids: string[], id: string, target?: string): string[] {
-  if (id === target) return ids;
-  const next = ids.filter(value => value !== id), index = target ? next.indexOf(target) : -1;
-  next.splice(index < 0 ? next.length : index, 0, id);
-  return next;
 }
 
 export function applicationReference(app: ApplicationEntry): ApplicationPromptReference {

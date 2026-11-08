@@ -1,3 +1,4 @@
+import { usePageEntrance } from './features/navigation/usePageEntrance';
 import type { SettingsPage } from './features/settings/settingsNavigation';
 import { ProfileCenter } from './features/profile/ProfileCenter';
 import { AssistantEventConnection } from './features/assistant/events/AssistantEventConnection';
@@ -1896,6 +1897,7 @@ function CardbushApp() {
   }, [drawerLayout, collapseSidebar]);
   const markSettingsReady = useCallback(() => setSettingsReady(true), []);
   const settingsVisible = settingsOpen && settingsReady;
+  usePageEntrance(mainStageRef, section === 'home' ? JSON.stringify(homePage) : section, !settingsVisible && !floating);
 
   useEffect(() => {
     const preloadTimer = window.setTimeout(() => {

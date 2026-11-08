@@ -1,5 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Database, MonitorCog, Network, Search, Settings, SlidersHorizontal, X } from 'lucide-react';
+import { usePageEntrance } from '../navigation/usePageEntrance';
 import { uiText, type MessageKey } from '../../i18n';
 import type { AppLanguage } from '../../types';
 import { settingsDescriptions, settingsDestination, settingsLabels, settingsNavigationGroups, settingsSectionLabel, settingsSectionMatchesQuery,
@@ -18,6 +19,7 @@ export function SettingsDirectory({ language, page, active, version, navigate, r
   const { category, section } = settingsDestination(page);
   const [query, setQuery] = useState('');
   const scroll = useRef<HTMLElement>(null), heading = useRef<HTMLHeadingElement>(null);
+  const track = useRef<HTMLDivElement>(null);
   const positions = useRef(new Map<SettingsPage, number>());
   const lastChoice = useRef<SettingsPage | null>(null);
   const lastPage = useRef<SettingsPage | null>(null);
@@ -37,9 +39,10 @@ export function SettingsDirectory({ language, page, active, version, navigate, r
       if (group && group.getBoundingClientRect().bottom > scroller.getBoundingClientRect().bottom) group.scrollIntoView({block: 'start'});
     }
   }, [page, active, section]);
+  usePageEntrance(track, page, active);
   return <section className="settings-content" ref={scroll} onScroll={event => positions.current.set(page, event.currentTarget.scrollTop)}
     aria-label={t('common.settings')}>
-    <div className="settings-track">
+    <div className="settings-track" ref={track}>
       <header className="settings-page-header">
         <h1 ref={heading} tabIndex={-1}>{category
           ? <><button type="button" data-settings-overview onClick={() => navigate('overview')}>{t('common.settings')}</button>

@@ -11,9 +11,9 @@ import { BrowserSiteIcon } from './BrowserSiteIcon';
 import './browserInstall.css';
 
 function InstallDialog({ language, navigation, onClose }: { language: AppLanguage; navigation: InspectorNavigationState; onClose: () => void }) {
-  const prefs = useAppCenterPreferences(), dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
   const [info, setInfo] = useState<WebApplicationInfo>(() => websiteApplication(navigation.url, navigation.title, { icon: navigation.faviconUrl })!);
-  const [name, setName] = useState<string | null>(null), [busy, setBusy] = useState(true), [pin, setPin] = useState(false), [error, setError] = useState('');
+  const [name, setName] = useState<string | null>(null), [busy, setBusy] = useState(true), [error, setError] = useState('');
   useEffect(() => { const node = dialog.current; node?.showModal(); return () => node?.close(); }, []);
   useEffect(() => {
     let active = true;
@@ -26,7 +26,7 @@ function InstallDialog({ language, navigation, onClose }: { language: AppLanguag
     onCancel={dialogEventHandler(() => onClose())} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <form onSubmit={event => {
       event.preventDefault(); event.stopPropagation(); if (busy || error) return;
-      try { installWebApplication({ ...info, title: name?.trim() || info.title }, pin); onClose(); requestAppCenter(); }
+      try { installWebApplication({ ...info, title: name?.trim() || info.title }); onClose(); requestAppCenter(); }
       catch (cause) { setError(String(cause)); }
     }}>
       <header><h2 id="browser-install-title">{uiText(language)('browserInstallButton.installWebApp')}</h2><button type="button" aria-label={uiText(language)('common.close')} onClick={onClose}><X size={18}/></button></header>
@@ -34,8 +34,6 @@ function InstallDialog({ language, navigation, onClose }: { language: AppLanguag
         <label>{uiText(language)('appCenter.appName')}<input autoFocus required maxLength={80} value={name ?? info.title} onChange={event => setName(event.target.value)} aria-label={uiText(language)('appCenter.appName')}/></label></div>
       <p className="browser-install-url" title={info.url}>{info.url}</p>
       <p>{uiText(language)('browserInstallButton.addToTheAppCenterAndOpen')}</p>
-      <label className="browser-install-pin"><input type="checkbox" checked={pin} disabled={prefs.shortcuts.length >= 4} onChange={event => setPin(event.target.checked)}/>
-        {uiText(language)('browserInstallButton.pinToSidebarShortcuts')}{prefs.shortcuts.length >= 4 && <small>{uiText(language)('browserInstallButton.full')}</small>}</label>
       {error && <p role="alert">{error}</p>}
       <footer><span role="status">{busy ? (uiText(language)('browserInstallButton.readingSiteInformation')) : ''}</span>
         <button type="button" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" disabled={busy || Boolean(error) || name !== null && !name.trim()}>{uiText(language)('browserInstallButton.install')}</button></footer>

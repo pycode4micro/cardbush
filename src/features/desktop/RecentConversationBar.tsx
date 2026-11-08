@@ -76,6 +76,15 @@ export function RecentConversationBar({ language, conversation, conversations, i
     setSelectedId('');
   };
   const currentMessages = transcripts[current.id];
+  const cover = useMemo(() => {
+    if (!currentMessages) return;
+    for (let i = currentMessages.length - 1; i >= 0; i--) {
+      const message = currentMessages[i];
+      if (message.role === 'user' && !isBackendSupersededMessage(message)) {
+        return message.attachments?.find(item => item.type === 'image' && item.path)?.path;
+      }
+    }
+  }, [currentMessages]);
   const output = useMemo(() => latestAssistantOutput(currentMessages) || conversationDisplayTitle(current.assistantPreview ?? ''),
     [currentMessages, current.assistantPreview]);
   const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? current;
@@ -88,7 +97,7 @@ export function RecentConversationBar({ language, conversation, conversations, i
     setSelectedId(id); setTab('turns');
     panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="turns"]')?.focus({ preventScroll: true });
   }, []);
-  return <RecentConversationBarView language={language} title={name(current)} output={output} selectedTitle={name(selected)} panelId={id}
+  return <RecentConversationBarView language={language} title={name(current)} cover={cover} output={output} selectedTitle={name(selected)} panelId={id}
     previous={previous && (() => switchConversation(previous))} next={next && (() => switchConversation(next))}
     panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={() => enter(current.id)}
     onToggle={value => { setExpanded(value); if (!value) { setTab('turns'); setSelectedId(''); } }}>

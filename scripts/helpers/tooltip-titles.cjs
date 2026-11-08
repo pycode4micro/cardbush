@@ -55,7 +55,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.equal(await run("document.activeElement.id"), 'title-control');
     assert.equal(await run("!!document.querySelector('.global-tooltip')"), false, 'keyboard focus on a named control does not invent a tooltip');
     await run("document.querySelector('#title-control').blur()");
-    await run("setFixtureTitle('Restored help')"); await pause(40); move(1);
+    await run("setFixtureTitle('Restored help')");
+    await until("document.querySelector('#title-control').dataset.globalTooltipTitle === 'Restored help'", 'restored title is observed');
+    await away(); move(1);
     await until(help('Restored help'), 'title can be added again');
     for (const event of ['scroll','resize','blur']) {
       await run(`window.dispatchEvent(new Event('${event}'))`);

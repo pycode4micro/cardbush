@@ -45,6 +45,8 @@ export function WindowFrame(props: Props) {
     restoreFocus.current = null;
   }, []);
 
+  useLayoutEffect(() => { if (sidebarCollapsed) close(false); }, [sidebarCollapsed, close]);
+
   const syncMaximized = useCallback(() => {
     void window.cardbushDesktop?.isMaximized().then(setMaximized).catch(() => undefined);
   }, []);
@@ -203,7 +205,7 @@ export function WindowFrame(props: Props) {
     <div className="window-navigation">
     <WindowBackButton language={language} fallback={props.onBack} beforeBack={close}/>
     {!sidebarCollapsed && <span className="window-brand">{uiText(language)('windowSidebarToggle.cardbush')}</span>}
-    {menus.length > 0 && <button type="button" className="frame-chip desktop-menu-toggle no-drag" aria-label={uiText(language)('windowFrame.applicationMenu')}
+    {!sidebarCollapsed && menus.length > 0 && <button type="button" className="frame-chip desktop-menu-toggle no-drag" aria-label={uiText(language)('windowFrame.applicationMenu')}
       aria-haspopup="menu" aria-expanded={Boolean(open)} onPointerDown={event => event.preventDefault()}
       onKeyDown={event => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

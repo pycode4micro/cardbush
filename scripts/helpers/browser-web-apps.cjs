@@ -16,7 +16,7 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   assert.equal((await prefs()).webApps, undefined, 'cancelling never installs a web app');
 
   await click(window.webContents, '.browser-install-button'); await installReady();
-  await read(`(()=>{const input=document.querySelector('.browser-install-dialog input[aria-label="应用名称"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'我的工作台');input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.browser-install-pin input').click();})()`);
+  await read(`(()=>{const input=document.querySelector('.browser-install-dialog input[aria-label="应用名称"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'我的工作台');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   for (const theme of ['bright', 'dark']) {
     await read(`document.querySelector('.app').className='app theme-${theme}'; void 0`); await pause(120);
     await fs.writeFile(path.resolve('tmp', `web-app-install-${theme}.png`), (await window.webContents.capturePage()).toPNG());
@@ -25,7 +25,7 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   await waitFor(`document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-tile[data-application-id^="web:"]')`);
   const saved = await prefs(), app = saved.webApps[0];
   assert.equal(saved.webApps.length, 1); assert.equal(app.title, '我的工作台'); assert.equal(app.identity, origin + '/web-app');
-  assert.ok(saved.shortcuts.includes(app.id));
+  assert.equal('shortcuts' in saved, false);
   assert.equal(original.getURL(), origin + '/web-app/page', 'install form never submits the surrounding address bar');
   await read(`browserFixture.installWebApplication(${JSON.stringify(app)}); void 0`);
   assert.equal((await prefs()).webApps.length, 1, 'repeated installs retain the same app identity');
@@ -50,7 +50,7 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   await click(window.webContents, '.browser-install-button'); await waitFor(`document.querySelector('.app-center-drawer')?.open`);
   await read(`document.querySelector('.app-center-tile[data-application-id^="web:"] button[aria-label="移除 我的工作台"]').click(); void 0`);
   await waitFor(`!document.querySelector('.app-center-tile[data-application-id^="web:"]')`);
-  assert.equal((await prefs()).webApps.length, 0); assert.ok(!(await prefs()).shortcuts.includes(app.id));
+  assert.equal((await prefs()).webApps.length, 0);
   assert.equal(await launched.executeJavaScript(`localStorage.getItem('webapp-session')`), 'retained', 'removing app preserves site data');
   await read(`document.querySelector('.app-center-drawer button[aria-label="关闭探索"]').click(); void 0`);
   await waitFor(`!document.querySelector('.app-center-drawer')`);
@@ -61,5 +61,5 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   await read(`document.querySelector('.browser-install-dialog header button').click(); void 0`);
   await assert.rejects(read(`window.cardbushDesktop.browser.webApplication(${window.webContents.id},${JSON.stringify(origin + '/ordinary-webpage')})`), /unavailable/i);
   await assert.rejects(read(`window.cardbushDesktop.browser.webApplication(${launchedId},${JSON.stringify(origin + '/old-url')})`), /Page changed/);
-  console.log('Web apps passed: real manifest metadata, install/cancel/rename/pin, icon, identity deduplication, internal launch with retained cookies/storage, removal, ordinary-page fallback, guest ownership and stale-navigation checks.');
+  console.log('Web apps passed: real manifest metadata, install/cancel/rename, icon, identity deduplication, internal launch with retained cookies/storage, removal, ordinary-page fallback, guest ownership and stale-navigation checks.');
 };

@@ -12,8 +12,6 @@
 .browser-install-identity input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); font: inherit; font-size: 14px; }
 .browser-install-dialog p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-soft); }
 .browser-install-url { overflow-wrap: anywhere; max-height: 72px; overflow: auto; }
-.browser-install-pin { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.browser-install-pin input { accent-color: var(--accent); }
 .browser-install-dialog footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .browser-install-dialog footer [role="status"] { flex: 1; font-size: 11px; color: var(--text-soft); }
 .browser-install-dialog button[type="submit"] { color: var(--surface); background: var(--text); }

@@ -833,7 +833,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           <Search aria-hidden="true"/><span>{uiText(language)('desktop.search')}</span>
         </button>
         <NavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
-        <NavRow navSection="explore" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
+        <NavRow navSection="explore" shortcut="openAppCenter" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
         <NavRow
           navSection="chat"
           icon={<Edit3 size={14} />}

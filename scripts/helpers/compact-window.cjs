@@ -71,12 +71,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.equal(await run('compactState.sidebarCollapsed'), true, JSON.stringify(await run('({width:innerWidth,height:innerHeight,compact:compactState.compactLayout, media:matchMedia("(max-width: 760px)").matches, errors:failures})')));
     await fits('.window-frame'); await fits('.welcome-input-stack'); await fits('.composer-footer');
     await fits('.composer-actions button:last-child');
-    await fits('.desktop-menu-toggle');
-    assert.ok(await run("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.window-frame').getBoundingClientRect().right - parseFloat(getComputedStyle(document.querySelector('.window-frame')).paddingRight)"), 'menus avoid native caption buttons');
+    assert.equal(await run("!!document.querySelector('.desktop-menu-toggle')"), false, 'collapsed rail contains only Back in the title bar');
     assert.equal(await run('document.documentElement.scrollWidth <= innerWidth'), true, 'no page horizontal overflow');
   }
   await run("document.querySelector('.window-sidebar-toggle').click()");
   await until('compactState.sidebarCollapsed === false', 'open narrow drawer');
+  await fits('.desktop-menu-toggle');
   await pause(260); await fits('.sidebar'); await fits('.main-stage');
   assert.ok(await run("document.querySelector('.main-stage').getBoundingClientRect().width >= innerWidth-52"), 'drawer does not squeeze the chat');
   await run("document.querySelector('.compact-sidebar-backdrop').click()");

@@ -3,13 +3,10 @@ import { MoreHorizontal, Plus } from 'lucide-react';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useOutsideDismiss } from '../../hooks/useOutsideDismiss';
 import type { AppLanguage } from '../../types';
-import type { AppCenterPreferences } from './appCenterModel';
 
-export function AppCenterSettingsMenu({ language, active, display, onDisplayChange, selectingLocal, onAddLocal, onAddLink }: {
+export function AppCenterSettingsMenu({ language, active, selectingLocal, onAddLocal, onAddLink }: {
   language: AppLanguage;
   active: boolean;
-  display: AppCenterPreferences['display'];
-  onDisplayChange: (display: AppCenterPreferences['display']) => void;
   selectingLocal: boolean;
   onAddLocal: () => void;
   onAddLink: () => void;
@@ -40,7 +37,7 @@ export function AppCenterSettingsMenu({ language, active, display, onDisplayChan
       top: `${upwards ? rect.top - 6 : rect.bottom + 6}px`,
       maxHeight: `${Math.max(0, upwards ? above : below)}px`, translate: upwards ? '0 -100%' : 'none',
     });
-    menu.current.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true });
+    menu.current.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
   }, [open]);
   useLayoutEffect(() => {
     if (!open) return;
@@ -60,21 +57,12 @@ export function AppCenterSettingsMenu({ language, active, display, onDisplayChan
     </button>
     <div ref={menu} id={id} popover="auto" role="dialog" aria-label={label} className="app-center-settings-menu"
       onToggle={event => { if ((event.nativeEvent as ToggleEvent).newState === 'closed') setOpen(false); }}>
-      {open && <>
-        <div className="app-center-dock-settings">
-          <span>{uiText(language)('appCenterSettingsMenu.dockShortcuts')}</span>
-          <div className="app-center-display" role="group" aria-label={uiText(language)('appCenterSettingsMenu.showShortcuts')}>
-            {(['always', 'hover'] as const).map(value => <button type="button" key={value} aria-pressed={display === value}
-              onClick={() => onDisplayChange(value)}>{value === 'always' ? (uiText(language)('appCenterSettingsMenu.alwaysVisible')) : (uiText(language)('appCenterSettingsMenu.showOnHover'))}</button>)}
-          </div>
-        </div>
-        <div className="app-center-add-actions">
+      {open && <div className="app-center-add-actions">
           <button type="button" className="app-center-add" disabled={selectingLocal || !window.cardbushDesktop?.localApplications}
             title={uiText(language)('appCenterSettingsMenu.chooseADesktopShortcutAndLoadIts')}
             onClick={() => choose(onAddLocal)}><Plus size={16} aria-hidden="true"/>{selectingLocal ? (uiText(language)('appCenterSettingsMenu.choosing')) : (uiText(language)('appCenterSettingsMenu.addLocalApp'))}</button>
           <button type="button" className="app-center-add" onClick={() => choose(onAddLink)}><Plus size={16} aria-hidden="true"/>{uiText(language)('appCenterSettingsMenu.addAppLink')}</button>
-        </div>
-      </>}
+      </div>}
     </div>
   </>;
 }

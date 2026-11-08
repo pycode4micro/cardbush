@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode, type Ref } from 'react';
-import { List, MessageSquare, SkipBack, SkipForward } from 'lucide-react';
+import { List, MessageSquare, Rewind, FastForward } from 'lucide-react';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { uiText } from '../../i18n';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
@@ -7,8 +7,8 @@ import { fileUrl } from '../../shared/localPaths';
 
 export type RecentTab = 'turns' | 'sessions';
 
-export function RecentConversationBarView({ language, title, output, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
-  language: AppLanguage; title: string; output: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
+export function RecentConversationBarView({ language, title, output, cover, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
+  language: AppLanguage; title: string; output: string; cover?: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
   previous?: () => void; next?: () => void;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen(): void; children: ReactNode;
 }) {
@@ -17,12 +17,12 @@ export function RecentConversationBarView({ language, title, output, previous, n
   return <div className="recent-bar window-drag">
     <div className="recent-bar-transport">
       <button className="no-drag" type="button" data-recent-step="previous" disabled={!previous} onClick={previous}
-        aria-label={t('recentBar.previousChat')} title={t('recentBar.previousChat')}><SkipBack aria-hidden="true"/></button>
+        aria-label={t('recentBar.previousChat')} title={t('recentBar.previousChat')}><Rewind aria-hidden="true"/></button>
       <button className="no-drag" type="button" data-recent-step="next" disabled={!next} onClick={next}
-        aria-label={t('recentBar.nextChat')} title={t('recentBar.nextChat')}><SkipForward aria-hidden="true"/></button>
+        aria-label={t('recentBar.nextChat')} title={t('recentBar.nextChat')}><FastForward aria-hidden="true"/></button>
     </div>
     <button className="recent-bar-chat no-drag" type="button" onClick={onOpen} aria-describedby={output ? panelId + '-output' : undefined} aria-label={t('recentBar.open', { title })} title={t('recentBar.open', { title })}>
-      <MessageSquare className="recent-chat-mark" aria-hidden="true"/>
+      <Tile className="recent-chat-mark" source={cover ? fileUrl(cover) : undefined}/>
       <span className="recent-chat-copy"><strong>{title}</strong>{output && <small id={panelId + '-output'}>{output}</small>}</span>
     </button>
     <button className="recent-bar-list no-drag" type="button" popoverTarget={panelId}
@@ -57,9 +57,9 @@ function RowTime({ at, language }: { at?: string; language: AppLanguage }) {
     : value.toLocaleDateString(language, { month: 'short', day: 'numeric' })}</time>;
 }
 
-function Tile({ source, number, label }: { source?: string; number?: number; label?: string }) {
+function Tile({ source, number, label, className = "recent-tile" }: { className?: string; source?: string; number?: number; label?: string }) {
   const [failed, setFailed] = useState('');
-  return <span className="recent-tile" aria-label={label}>
+  return <span className={className} aria-label={label}>
     {source && failed !== source ? <img src={source} alt="" loading="lazy" decoding="async" onError={() => setFailed(source)}/>
       : number != null ? number : <MessageSquare aria-hidden="true"/>}
   </span>;

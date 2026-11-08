@@ -8,8 +8,9 @@
 .app[data-desktop-workspace]:has(> .sidebar-is-collapsed) { --header-rail-width: 48px; }
 .app[data-desktop-workspace][data-floating-assistant] { --workspace-bar-height: var(--window-frame-height); }
 .app[data-desktop-workspace]:not([data-floating-assistant]) .window-navigation {
-  display:flex; align-items:center; align-self:stretch; gap:8px; min-width:max-content;
-  flex:0 0 calc(var(--header-rail-width) - 10px); box-sizing:border-box;
+  display:flex; align-items:center; align-self:stretch; gap:8px; min-width:0;
+  flex:0 0 calc(var(--header-rail-width) - 10px); box-sizing:border-box; overflow:clip;
+  transition:flex-basis var(--panel-motion-duration) var(--panel-motion-ease);
 }
 .app[data-desktop-workspace] .window-navigation .desktop-menu-toggle { margin-inline-start:auto; margin-inline-end:8px; }
 .app[data-desktop-workspace]:not([data-floating-assistant]) > .window-frame::before {
@@ -24,8 +25,9 @@
 @media (max-width: 700px) {
   .app[data-desktop-workspace] { --workspace-bar-height: max(50px, var(--window-frame-height)); }
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .window-navigation {
-    flex-basis:auto;
+    flex:0 1 min(100%, calc(var(--header-rail-width) - 10px));
   }
+  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar { display:none; }
 }
 .app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
 .app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }
