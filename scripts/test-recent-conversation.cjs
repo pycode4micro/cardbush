@@ -199,7 +199,10 @@ async function run() {
     const inspector = bounds('.window-frame [data-inspector-toggle]');
     const list = bounds('.recent-bar-list');
     const title = bounds('.recent-bar-chat');
+    const bar = bounds('.recent-bar');
     if (!title?.width || !summary?.width || !inspector?.width || !list?.width) return false;
+    const topGap = title.top - bar.top, bottomGap = bar.bottom - title.bottom;
+    if (Math.min(topGap, bottomGap) < 7.5 || Math.abs(topGap - bottomGap) > 1) return false;
     if (title.right > summary.left + 1) return false;
     const centerY = rect => rect.top + rect.height / 2;
     return summary.right <= inspector.left + 1 && inspector.right <= list.left + 1 &&
