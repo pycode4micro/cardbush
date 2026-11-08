@@ -141,6 +141,14 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .desktop-library .desktop-cover-pending { background:var(--surface-raised); cursor:default; }
 .desktop-cover-pending::before { display:none; }
 .desktop-cover::before { content:""; position:absolute; z-index:-1; inset:0; background:linear-gradient(0deg,rgba(8,12,21,.85),rgba(5,8,20,.36) 37%,transparent 68%); }
+@media (any-hover: hover) {
+  .desktop-covers > button::after {
+    content:""; position:absolute; inset:0; z-index:-2; pointer-events:none;
+    background:rgb(64 64 64 / 32%); opacity:0;
+    transition:opacity var(--motion-fast) var(--ease-standard);
+  }
+  .desktop-covers > button:enabled:hover::after { opacity:1; }
+}
 .desktop-cover-copy { min-width:0; display:grid; gap:5px; }
 .desktop-cover-copy>span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; font-size:13px; line-height:1.4; }
 .desktop-cover small { font-size:12px; font-weight:580; opacity:.9; }

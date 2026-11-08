@@ -11,9 +11,10 @@ module.exports = async ({win, read, wait, visible, project}) => {
     return {count:shown.length, rows:new Set(cards.map(r=>r.top)).size, left:shown[0]?.left-bounds.left,
       right:bounds.right-shown.at(-1)?.right, last:shown.includes(cards.at(-1))};
   })()`);
-  const moveTo = async selector => {
-    const point = await read(`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+  const center = selector => read(`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
       return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()`);
+  const moveTo = async selector => {
+    const point = await center(selector);
     for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type,button:'left',clickCount:1,...point});
   };
   const motion = () => read(`(() => {
@@ -36,6 +37,16 @@ module.exports = async ({win, read, wait, visible, project}) => {
         await read("!document.querySelector('.desktop-shell').getAnimations().length");
     },'three cards fill one row beside the list at 1180px');
     fs.writeFileSync(path.join(project,'tmp','featured-shelf-docked.png'),(await win.webContents.capturePage()).toPNG());
+    const cover = '.desktop-covers > button:first-child';
+    const hoveredCovers = () => read("Array.from(document.querySelectorAll('.desktop-covers > button'), card => Number(getComputedStyle(card, '::after').opacity))");
+    win.webContents.sendInputEvent({ type:'mouseMove', ...await center(cover) });
+    await wait(async () => {
+      const [first, ...rest] = await hoveredCovers();
+      return first === 1 && rest.every(opacity => opacity === 0);
+    }, 'only the cover under the pointer is shaded');
+    fs.writeFileSync(path.join(project,'tmp','featured-cover-hover.png'),(await win.webContents.capturePage()).toPNG());
+    win.webContents.sendInputEvent({ type:'mouseMove', ...await center('.recent-bar-list') });
+    await wait(async () => (await hoveredCovers()).every(opacity => opacity === 0), 'leaving restores the cover');
     await moveTo('.featured-step[data-step="next"]');
     await wait(async () => (await shelf()).last,'next reveals the fourth card');
     assert.ok(await read('!!document.querySelector('+JSON.stringify(open)+')'),'browsing keeps the docked list open');
