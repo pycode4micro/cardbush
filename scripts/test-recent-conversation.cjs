@@ -12,7 +12,7 @@ if (typeof electron === 'string') {
   const env = { ...process.env, APPDATA: root, LOCALAPPDATA: root, USERPROFILE: root, HOME: root,
     CARDBUSH_DEVELOPMENT_RUNTIME: '1', CARDBUSH_ELECTRON_DEV_SERVER_URL: '' };
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
-  const result = require('node:child_process').spawnSync(electron, [__filename, root], { cwd: project, env, windowsHide: true, stdio: 'inherit', timeout: 100000 });
+  const result = require('node:child_process').spawnSync(electron, [__filename, root, ...process.argv.slice(2)], { cwd: project, env, windowsHide: true, stdio: 'inherit', timeout: 100000 });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 } else {
@@ -24,6 +24,8 @@ async function run() {
   const root = process.argv[2];
   app.setPath('appData', root); app.setPath('userData', root); app.setAppPath(project);
   const { FileSessionEventPersistence, SessionStore } = await import('@cardbush/bush-runtime');
+  const materialTest = process.argv.includes('--sidebar-material');
+  if (materialTest) require('./helpers/sidebar-material.cjs').seedWallpaper(root);
   const journal = new FileSessionEventPersistence({ root: path.join(root, 'runtime-state', 'sessions') });
   const store = new SessionStore({ persistence: journal });
   const sessionId = 'local-navigation-test';
@@ -74,6 +76,13 @@ async function run() {
   const click = async selector => { await visible(selector); await read('document.querySelector(' + JSON.stringify(selector) + ').click();void 0'); };
   await visible('[data-desktop-page="overview"]');
   await visible('.recent-bar-chat');
+  if (materialTest) {
+    await click('.recent-bar-chat');
+    await visible('.chat-panel[role=region] .message-list');
+    await require('./helpers/sidebar-material.cjs').inspect({ win, read, click, wait, pause, project });
+    app.quit();
+    return;
+  }
   assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
   await wait(() => read("document.querySelector('.recent-chat-copy small')?.textContent === " + JSON.stringify(examples.get(45)[1])), 'latest assistant output appears before opening the navigator').catch(async cause => {
     throw Error('Unexpected assistant preview: ' + await read("document.querySelector('.recent-chat-copy')?.textContent"), {cause});

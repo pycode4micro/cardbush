@@ -13,15 +13,20 @@
   --chrome-secondary: color-mix(in srgb, var(--text) 78%, var(--surface));
   --material-layer-display: block;
   --art-tint-opacity: .18;
+  --sidebar-native-tint: var(--window-chrome-tint);
+  --sidebar-wallpaper-opacity: .20;
+  --sidebar-glass-filter: blur(38px) saturate(1.55);
 }
 .app[data-desktop-workspace].theme-dark {
   --header-glass: color-mix(in srgb, var(--surface) 34%, transparent);
-  --drawer-glass: color-mix(in srgb, var(--surface) 40%, transparent);
+  --drawer-glass: color-mix(in srgb, color-mix(in srgb, var(--surface) 84%, var(--text)) 45%, transparent);
+  --sidebar-native-tint: color-mix(in srgb, var(--text) 5%, transparent);
   --chrome-glass-filter: blur(38px) saturate(1.75) brightness(.63);
   --chrome-control: color-mix(in srgb, var(--text) 7%, transparent);
   --chrome-control-hover: color-mix(in srgb, var(--text) 12%, transparent);
   --chrome-secondary: color-mix(in srgb, var(--text) 86%, var(--surface));
   --art-tint-opacity: .25;
+  --sidebar-wallpaper-opacity: .24;
 }
 .app[data-desktop-workspace]:has(> .sidebar-is-collapsed) { --header-rail-width: 48px; }
 .app[data-desktop-workspace][data-floating-assistant] { --workspace-bar-height: var(--window-frame-height); }
@@ -37,23 +42,30 @@
   background:var(--chrome-grain) repeat var(--header-glass); backdrop-filter:var(--chrome-glass-filter);
   box-shadow:inset 0 -1px var(--chrome-edge);
 }
-/* The docked rail sits over native Mica; only the drawer has page pixels behind it to blur. */
-html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="docked"] > .sidebar::before {
+/* Mica provides the docked backdrop. The same low-frequency wallpaper colors
+   stay visible when an open drawer is composited over a neutral page. */
+html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="docked"] > .sidebar {
+  background-color:var(--sidebar-native-tint); backdrop-filter:none;
+}
+html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell > .sidebar::before {
   content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
-  display:var(--material-layer-display); background-image:var(--chrome-grain), radial-gradient(ellipse at 0% 28%,rgb(var(--wallpaper-accent-rgb) / .085),transparent 75%);
+  display:var(--material-layer-display);
+  background:var(--chrome-grain) repeat, var(--sidebar-wallpaper-field,none) center / 100% 100% no-repeat;
+  mask-image:linear-gradient(170deg, #000 12%, rgb(0 0 0 / .85) 30%, rgb(0 0 0 / .28) 62%, rgb(0 0 0 / .26) 80%, rgb(0 0 0 / .65));
+  opacity:var(--sidebar-wallpaper-opacity); filter:saturate(1.45);
 }
 .app[data-desktop-workspace][data-window-material-preference="solid"] .desktop-shell > .sidebar {
   background:var(--surface); backdrop-filter:none;
 }
 .app[data-desktop-workspace][data-window-material-preference="solid"] {
-  --header-glass:var(--surface); --drawer-glass:var(--surface);
-  --chrome-grain:none; --chrome-glass-filter:none; --material-layer-display:none;
+  --header-glass:var(--surface); --drawer-glass:var(--surface); --sidebar-native-tint:var(--surface);
+  --chrome-grain:none; --chrome-glass-filter:none; --sidebar-glass-filter:none; --material-layer-display:none;
 }
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   :root .app[data-desktop-workspace] .desktop-shell > .sidebar { background:var(--surface); backdrop-filter:none; }
   :root .app[data-desktop-workspace] {
-    --header-glass:var(--surface); --drawer-glass:var(--surface);
-    --chrome-grain:none; --chrome-glass-filter:none; --material-layer-display:none;
+    --header-glass:var(--surface); --drawer-glass:var(--surface); --sidebar-native-tint:var(--surface);
+    --chrome-grain:none; --chrome-glass-filter:none; --sidebar-glass-filter:none; --material-layer-display:none;
   }
 }
 @media (max-width: 700px) {

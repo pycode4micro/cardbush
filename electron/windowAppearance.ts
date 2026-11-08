@@ -11,6 +11,13 @@ export function mainWindowFrameOptions(platform: string): Pick<BrowserWindowCons
   } : { frame: false };
 }
 
+export type WallpaperAccent = {
+  r: number; g: number; b: number; hex: string;
+  source: 'wallpaper' | 'fallback';
+  /** A six-by-six color sample, independent of the original wallpaper path or resolution. */
+  colorField?: string;
+};
+
 export type WindowTheme = 'bright' | 'dark';
 export type WindowMaterialPreference = 'auto' | 'solid';
 export type WindowAppearanceOptions = {

@@ -159,13 +159,7 @@ declare global {
       showErrorDialog: (error: { title: string; message: string }) => Promise<void>;
       setUiLanguage?: (language: string) => Promise<void>;
       restoreEditorFocus?: (state: import('../../electron/rendererFocus').EditorFocusRequest) => Promise<boolean>;
-      wallpaperAccent: () => Promise<{
-        r: number;
-        g: number;
-        b: number;
-        hex: string;
-        source: 'wallpaper' | 'fallback';
-      }>;
+      wallpaperAccent: () => Promise<import('../../electron/windowAppearance').WallpaperAccent>;
       setWindowTheme: (theme: 'bright' | 'dark', options?: import('../../electron/windowAppearance').WindowAppearanceOptions) => Promise<import('../../electron/windowAppearance').WindowAppearanceState | undefined>;
       publishVisualTheme: (context: import('../../electron/visualThemeContextSchema').VisualThemeContext) => Promise<void>;
       onWindowAppearanceChanged: (callback: (state: import('../../electron/windowAppearance').WindowAppearanceState) => void) => () => void;

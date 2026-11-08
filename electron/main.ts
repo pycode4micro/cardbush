@@ -8,7 +8,7 @@ import { pickWindowsApplication, readWindowsApplicationIcon, readWindowsApplicat
 import type { SandboxSetupHost } from './sandboxTypes';
 import type { RuntimeHostIpcRegistration } from './runtimeHostController.mjs' with { 'resolution-mode': 'import' };
 import type { SshConnectionInput } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
-import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
+import { mainWindowFrameOptions, resolveWindowAppearance, WindowAppearanceController, type WallpaperAccent, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
 import { VisualThemeContextStore } from './visualThemeContext';
 import { UsageLedger } from './usageLedger';
@@ -5000,20 +5000,12 @@ function applyProxySettings(proxy: {
   return pending;
 }
 
-type WallpaperAccentResult = {
-  r: number;
-  g: number;
-  b: number;
-  hex: string;
-  source: 'wallpaper' | 'fallback';
-};
-
 let wallpaperAccentCache: {
   signature: string;
-  value: WallpaperAccentResult;
+  value: WallpaperAccent;
 } | null = null;
 
-function readWallpaperAccent(): WallpaperAccentResult {
+function readWallpaperAccent(): WallpaperAccent {
   const fallback = normalizeAccent({ r: 99, g: 123, b: 97 });
   try {
     const wallpaperPath = currentWallpaperPath();
@@ -5025,13 +5017,14 @@ function readWallpaperAccent(): WallpaperAccentResult {
     if (wallpaperAccentCache?.signature === signature) {
       return wallpaperAccentCache.value;
     }
-    const color = dominantColorFromImage(wallpaperPath);
+    const color = wallpaperColorsFromImage(wallpaperPath);
     if (!color) {
       return { ...fallback, source: 'fallback' };
     }
-    const value: WallpaperAccentResult = {
+    const value: WallpaperAccent = {
       ...normalizeAccent(color),
       source: 'wallpaper',
+      colorField: color.colorField,
     };
     wallpaperAccentCache = { signature, value };
     return value;
@@ -5159,7 +5152,7 @@ type ColorBucket = {
   score: number;
 };
 
-function dominantColorFromImage(filePath: string) {
+function wallpaperColorsFromImage(filePath: string) {
   let image = nativeImage.createFromPath(filePath);
   if (image.isEmpty()) {
     image = nativeImage.createFromBuffer(fs.readFileSync(filePath));
@@ -5237,6 +5230,7 @@ function dominantColorFromImage(filePath: string) {
     return null;
   }
   return {
+    colorField: sample.resize({ width: 6, height: 6, quality: 'best' }).toDataURL(),
     r: Math.round(best.r / best.count),
     g: Math.round(best.g / best.count),
     b: Math.round(best.b / best.count),

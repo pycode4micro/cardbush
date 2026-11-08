@@ -167,9 +167,15 @@ app.whenReady().then(async () => {
     assert.match(win.getBackgroundColor(), /^#000000(?:00)?$/);
     const checkTransparency = async () => {
       for (const selector of ['html','body','#root','.app','.desktop-shell','.window-frame','.sidebar']) {
-        const style = await run(`({ color:getComputedStyle(document.querySelector(${JSON.stringify(selector)})).backgroundColor, image:getComputedStyle(document.querySelector(${JSON.stringify(selector)})).backgroundImage })`);
+        const style = await run(`(() => {
+          const computed = getComputedStyle(document.querySelector(${JSON.stringify(selector)}));
+          const context = document.createElement('canvas').getContext('2d');
+          context.fillStyle = computed.backgroundColor;
+          context.fillRect(0, 0, 1, 1);
+          return { alpha: context.getImageData(0, 0, 1, 1).data[3], image: computed.backgroundImage };
+        })()`);
         assert.equal(style.image, 'none', `${selector} must not cover native material with a gradient`);
-        assert.match(style.color, /rgba\(/, `${selector} must expose native material`);
+        assert.ok(style.alpha < 255, `${selector} must expose native material`);
       }
       assert.match(await run("getComputedStyle(document.querySelector('.main-stage')).backgroundColor"), /^rgb\(/);
     };

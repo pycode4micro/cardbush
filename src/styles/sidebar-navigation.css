@@ -53,8 +53,8 @@
 }
 html .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar {
   background:var(--chrome-grain) repeat var(--drawer-glass);
-  -webkit-backdrop-filter:var(--chrome-glass-filter);
-  backdrop-filter:var(--chrome-glass-filter);
+  -webkit-backdrop-filter:var(--sidebar-glass-filter);
+  backdrop-filter:var(--sidebar-glass-filter);
   border-inline-end-color:var(--chrome-edge);
   box-shadow:6px 0 24px color-mix(in srgb,var(--shadow) 36%,transparent);
   --sidebar-text-mid:var(--chrome-secondary);

@@ -308,13 +308,7 @@ const desktopApi = {
   restoreEditorFocus: (state: import('./rendererFocus').EditorFocusRequest) =>
     ipcRenderer.invoke('window:restore-editor-focus', state) as Promise<boolean>,
   wallpaperAccent: () =>
-    ipcRenderer.invoke('appearance:wallpaper-accent') as Promise<{
-      r: number;
-      g: number;
-      b: number;
-      hex: string;
-      source: 'wallpaper' | 'fallback';
-    }>,
+    ipcRenderer.invoke('appearance:wallpaper-accent') as Promise<import('./windowAppearance').WallpaperAccent>,
   setWindowTheme: (theme: 'bright' | 'dark', options?: import('./windowAppearance').WindowAppearanceOptions) =>
     ipcRenderer.invoke('appearance:set-window-theme', theme, options) as Promise<import('./windowAppearance').WindowAppearanceState | undefined>,
   publishVisualTheme: (context: import('./visualThemeContextSchema').VisualThemeContext) =>

@@ -152,6 +152,7 @@ import {
   themeAccentColor,
   themeClassNames,
 } from './features/appearance/themeRuntime';
+import type { WallpaperAccent } from '../electron/windowAppearance';
 import { useWindowAppearance, readWindowMaterialPreference, WINDOW_MATERIAL_STORAGE_KEY, type WindowMaterialPreference } from './features/appearance/windowAppearance';
 import { useVisualThemeContext } from './features/appearance/useVisualThemeContext';
 import { ConversationSearchDialog } from './features/search/ConversationSearchDialog';
@@ -251,14 +252,6 @@ function SettingsModuleFallback({ active, obscured, onReady, language, retry }: 
     </section>
   </section>;
 }
-
-type WallpaperAccent = {
-  r: number;
-  g: number;
-  b: number;
-  hex: string;
-  source: 'wallpaper' | 'fallback';
-};
 
 type InspectorTabContextMenuState = {
   tabId: string;
@@ -1331,6 +1324,7 @@ function CardbushApp() {
     ? ({
         '--wallpaper-accent-rgb': `${wallpaperAccent.r} ${wallpaperAccent.g} ${wallpaperAccent.b}`,
         '--wallpaper-accent-hex': wallpaperAccent.hex,
+        '--sidebar-wallpaper-field': wallpaperAccent.colorField ? `url("${wallpaperAccent.colorField}")` : undefined,
         '--sidebar-width': `${sidebarWidth}px`,
         ...importedThemeVariables,
       } as CSSProperties)
@@ -1352,6 +1346,7 @@ function CardbushApp() {
           current.g === accent.g &&
           current.b === accent.b &&
           current.hex === accent.hex &&
+          current.colorField === accent.colorField &&
           current.source === accent.source
             ? current
             : accent,
