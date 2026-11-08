@@ -136,7 +136,7 @@ function Screen() {
     <div className={`app theme-${theme}`} lang={language} style={{ '--sidebar-width': '272px' } as React.CSSProperties}>
       <AppCenterProvider language={language} onNavigate={noop}>
         <GlobalTooltip />
-        <WindowFrame language={language} sidebarCollapsed={false} onToggleSidebar={noop} menus={menus} onError={console.error} />
+        <WindowFrame language={language} sidebarCollapsed={false} menus={menus} onError={console.error} />
         {scene === 'browser-use' ? <SettingsView {...{
           active: true, onReady: noop, language, languageMode: language, systemLanguage: language,
           themePreference: 'light', settings, selectedModel: model.id, availableModels: [model],

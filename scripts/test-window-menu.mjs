@@ -55,7 +55,7 @@ function Fixture(){
     forward:nav.canGoForward?nav.goForward:undefined},
     {sidebarVisible:sidebar,inspectorVisible:preview,native:true,externalLinks:true});
   return <div className={'app theme-'+theme} style={{height:'100vh'}}><WindowFrame language={language} sidebarCollapsed={!sidebar}
-    onToggleSidebar={toggleSidebar} menus={menus} onBack={nav.canGoBack?nav.goBack:undefined} onForward={nav.canGoForward?nav.goForward:undefined}
+    menus={menus} onBack={nav.canGoBack?nav.goBack:undefined} onForward={nav.canGoForward?nav.goForward:undefined}
     onError={error=>window.errors.push(String(error))}/>
     <main style={{padding:40}}><h2>CardBush</h2><div id="active">{active}</div><div id="sidebar">{String(sidebar)}</div>
     {conversations.map(chat=><button key={chat.id} data-chat={chat.id} onClick={()=>setActive(chat.id)}>{chat.id}</button>)}

@@ -162,8 +162,7 @@ app.whenReady().then(async () => {
         const [collapsed, setCollapsed] = React.useState(false);
         const [width, setWidth] = React.useState(272);
         const [active, setActive] = React.useState(true);
-        const presence = views.useSoftPanelPresence(!collapsed);
-        window.settingsSidebarState = { collapsed, width, active, ...presence };
+        window.settingsSidebarState = { collapsed, width, active };
         window.setSettingsActive = setActive;
         window.restoreSidebarWidth = () => setWidth(272);
         const appearance = views.normalizeAppearance(settingsProps.settings.appearance);
@@ -172,19 +171,18 @@ app.whenReady().then(async () => {
         const variables = views.appearanceVariables(appearance, theme, settingsProps.settings.importedThemeStyle, settingsProps.settings.font.family);
         return h('div', { className: 'app theme-' + theme, 'data-translucent-sidebar': appearance.translucentSidebar, 'data-pointer-cursor': appearance.pointerCursor, 'data-diff-indicators': appearance.diffIndicators, style: { width: '100vw', height: '100vh', minWidth: 0, '--sidebar-width': width + 'px', ...variables } },
           h(views.GlobalTooltip),
-          h('header', { className: 'window-frame window-drag' }, h(views.WindowBackButton, { language:'zh', fallback:active ? ()=>setActive(false) : undefined }), h(views.WindowSidebarToggle, {
-            language: 'zh', collapsed, onToggle: () => setCollapsed(value => !value),
-          })),
-          h('main', { className: 'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-settings-visible':active || undefined },
-            presence.mounted && h(views.ChatSidebar, {
+          h('header', { className: 'window-frame window-drag' }, h(views.WindowBackButton, { language:'zh', fallback:active ? ()=>setActive(false) : undefined })),
+          h('main', { className: 'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-settings-visible':active || undefined, 'data-sidebar-layout':innerWidth <= 760 ? 'drawer' : 'docked' },
+            h(views.WindowSidebarToggle, { language:'zh', collapsed, onToggle:() => setCollapsed(value => !value) }),
+            h(views.ChatSidebar, { railCollapsed:collapsed, onExpandRail:() => setCollapsed(false),
               language:'zh', section:'chat', activeConversationId:'', projects:settingsProps.projects || [], conversations:settingsProps.conversations, changeReportsByConversation:{},
               onSectionChange:noop, onConversationChange:id => window.sidebarOpenedConversations?.push(id), onCreateConversation:noop, onAddProject:noop,
               onProjectAction:(action, project) => settingsProps.onProjectAction?.(action, project), onDeleteConversation:noop, onRenameConversation:noop, onOpenConversationChanges:noop,
               onOpenSettings:() => setActive(true),
-              onOpenArchives:() => { settingsProps.initialSection = 'cache'; setActive(true); renderSettings(); }, softVisible:presence.visible,
+              onOpenArchives:() => { settingsProps.initialSection = 'cache'; setActive(true); renderSettings(); },
             }),
-            presence.mounted && h(views.SidebarResizer, { key:active ? 'settings' : 'workspace', language:'zh', width, onWidthChange:setWidth,
-              onCollapse:() => setCollapsed(true), softVisible:presence.visible }),
+            !collapsed && h(views.SidebarResizer, { key:active ? 'settings' : 'workspace', language:'zh', width, onWidthChange:setWidth,
+              onCollapse:() => setCollapsed(true) }),
             h(views.SettingsView,{...settingsProps,active}),
             h('section', { className:'main-stage' }, h('button', { onClick:() => setActive(true) }, '打开设置'))));
       }
@@ -410,7 +408,7 @@ app.whenReady().then(async () => {
       win.setContentSize(760, 850);
       await until("document.querySelector('#proxy-tab-models')?.textContent==='App default'");
       await run("document.querySelector('.window-sidebar-toggle').click()");
-      await until("!document.querySelector('.desktop-shell > .sidebar')");
+      await until("settingsSidebarState.collapsed");
       await pause(150);
       assert.equal(await run("document.querySelector('#proxy-panel-models').scrollWidth <= document.querySelector('#proxy-panel-models').clientWidth + 1"), true, 'proxy editor fits the narrow English layout');
       fs.writeFileSync(path.join(root, 'tmp/network-proxy-default-en.png'), (await win.webContents.capturePage()).toPNG());
@@ -502,7 +500,7 @@ app.whenReady().then(async () => {
     await until("document.querySelectorAll('.branch-list button').length === 2");
     assert.equal(await run("Array.from(document.querySelectorAll('.branch-list button')).every(button => button.disabled)"), true);
     await run('renderGit(false)');
-    await until("!document.querySelectorAll('.branch-list button')[1].disabled");
+    await until("document.querySelectorAll('.branch-list button')[1]?.disabled === false");
     await run("document.querySelectorAll('.branch-list button')[1].click()");
     await until('checkouts.length === 1');
     assert.deepEqual(await run('checkouts[0]'), { root: 'D:/fixture', branch: 'preview' });

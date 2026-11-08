@@ -4,7 +4,7 @@ const path = require('node:path');
 
 module.exports = async ({ run, until, pause, window, root }) => {
   const toggle = () => run("document.querySelector('.window-sidebar-toggle').click()");
-  await until("settingsSidebarState.visible && document.querySelector('.desktop-shell > .sidebar')?.getBoundingClientRect().width === 272");
+  await until("!settingsSidebarState.collapsed && document.querySelector('.desktop-shell > .sidebar')?.getBoundingClientRect().width === 272");
   await pause(300);
   const frames = await run(`new Promise(resolve => {
     const frames = [], start = performance.now();
@@ -18,13 +18,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
   })`);
   assert.ok(new Set(frames.map(frame => Math.round(frame[0]))).size > 2, 'settings sidebar animates through intermediate widths');
   assert.equal(new Set(frames.map(frame => Math.round(frame[1]))).size, 1, 'settings labels do not rewrap during collapse');
-  await until("!document.querySelector('.desktop-shell > .sidebar') && document.querySelector('.window-sidebar-toggle').getAttribute('aria-expanded') === 'false'");
+  await until("document.querySelector('.desktop-shell > .sidebar')?.getBoundingClientRect().width === 48 && document.querySelector('.window-sidebar-toggle').getAttribute('aria-expanded') === 'false'");
   await toggle();
   await until("document.querySelector('.desktop-shell > .sidebar')?.getBoundingClientRect().width === 272");
 
   let point, endX;
   const drag = async (offset, width) => {
-    await until("settingsSidebarState.visible && new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.desktop-shell > .sidebar')).transform).m41 === 0");
+    await until("!settingsSidebarState.collapsed && new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.desktop-shell > .sidebar')).transform).m41 === 0");
     const rect = await run("document.querySelector('.desktop-shell > .sidebar').getBoundingClientRect().toJSON()");
     point = { x: Math.round(rect.right + offset), y: Math.round(rect.top + 100) };
     window.webContents.sendInputEvent({ type: 'mouseMove', ...point });
@@ -45,9 +45,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("document.querySelector('[data-history-action=back]').click()");
   await until("!settingsSidebarState.active && document.querySelector('.desktop-shell .sidebar')?.getBoundingClientRect().width === 320");
   await toggle();
-  await until('!settingsSidebarState.mounted');
+  await until('settingsSidebarState.collapsed');
   await run("document.querySelector('.main-stage button').click()");
-  await until("settingsSidebarState.active && !document.querySelector('.desktop-shell > .sidebar')");
+  await until("settingsSidebarState.active && document.querySelector('.desktop-shell > .sidebar')?.getBoundingClientRect().width === 48");
   await toggle();
   await until("document.querySelector('.desktop-shell > .sidebar')?.getBoundingClientRect().width === 320");
 
@@ -68,5 +68,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await pause(300);
   fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
   fs.writeFileSync(path.join(root, 'tmp/settings-sidebar-shared.png'), (await window.webContents.capturePage()).toPNG());
-  console.log('Settings sidebar passed: shared title toggle and saved width, fixed content during animation, enlarged hit area, snap/reopen, page switching and drag cancellation.');
+  console.log('Settings sidebar passed: shared navigation toggle and saved width, fixed content during animation, enlarged hit area, snap/reopen, page switching and drag cancellation.');
 };

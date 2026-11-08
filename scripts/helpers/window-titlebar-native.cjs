@@ -7,9 +7,6 @@ module.exports = async ({ win, run, until, pause, root }) => {
   let systemMenuEvents = 0;
   const onSystemMenu = event => { systemMenuEvents++; event.preventDefault(); };
   win.on('system-context-menu', onSystemMenu);
-  // A hidden native window does not continuously paint CSS animations. Those
-  // animations have their own offscreen renderer tests; freeze them here.
-  const animationStyle = await win.webContents.insertCSS('.window-sidebar-toggle { transition: none !important; }');
   const nativeProbe = (points, command) => new Promise((resolve, reject) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File',
       path.join(root, 'scripts/helpers/window-native-hit.ps1')], { windowsHide: true, timeout: 8000 });
@@ -63,8 +60,7 @@ module.exports = async ({ win, run, until, pause, root }) => {
   try {
     await run(`openFixtureSettings(false); void 0`);
     await until("!!document.querySelector('.main-stage')", 'titlebar fixture surface');
-    // In the desktop workspace the brand and sidebar toggle share a fixed slot.
-    await until("document.querySelector('.window-sidebar-toggle')?.dataset.brandVisible === 'false' && document.querySelector('.window-sidebar-toggle').getBoundingClientRect().width >= 28", 'settled titlebar controls');
+    await until("!!document.querySelector('.desktop-shell > .window-sidebar-toggle') && !document.querySelector('.window-frame .window-sidebar-toggle')", 'sidebar control below the title bar');
     await run(`
       const scroller = document.createElement('div'); scroller.id = 'native-titlebar-scroll-test';
       Object.assign(scroller.style, { position:'absolute', inset:'0', overflow:'auto', background:'var(--bg)' });
@@ -128,7 +124,6 @@ module.exports = async ({ win, run, until, pause, root }) => {
   } finally {
     win.webContents.setZoomFactor(1);
     win.removeListener('system-context-menu', onSystemMenu);
-    await win.webContents.removeInsertedCSS(animationStyle);
     await run("document.getElementById('native-titlebar-scroll-test')?.remove(); openFixtureSettings(false); void 0");
   }
   console.log('Native titlebar passed: native caption hit targets after scrolling, drag regions, settings, 80%/125% zoom, maximize/restore/minimize, system menu and close to tray.');

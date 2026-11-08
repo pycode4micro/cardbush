@@ -6,6 +6,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/windowMaterial.css'), 'utf8'));
   const main = fs.readFileSync(path.join(root, 'electron/main.ts'), 'utf8');
   assert.match(main, /function createWindow[\s\S]*?minWidth: 480,\s*minHeight: 480,/);
+  window.setSize(1440, 850);
   await run(`
     {
     const {useState} = require(${JSON.stringify(require.resolve('react'))});
@@ -19,7 +20,6 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const [draft, setDraft] = useState('保留输入草稿'), [history, setHistory] = useState(false);
       const [inspector, setInspector] = useState(false), [settings, setSettings] = useState(false);
       const [theme, setTheme] = useState('dark');
-      const presence = views.useSoftPanelPresence(!layout.sidebarCollapsed);
       window.compactState = { ...layout, draft, inspector, settings };
       window.compactActions = {setDraft, setHistory, setInspector, setSettings, setTheme};
       const close = () => layout.setSidebarCollapsed(true);
@@ -27,18 +27,19 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const actions = {newConversation:noop,openSettings:()=>setSettings(true),showShortcuts:noop,openDiagnostics:noop,
         toggleSidebar:toggle,toggleInspector:()=>setInspector(value=>!value),search:noop,openBrowser:noop};
       return h('div', {className:'app theme-'+theme,style:{height:'100vh','--sidebar-width':'272px'}},
-        h(views.WindowFrame,{language:'zh',sidebarCollapsed:layout.sidebarCollapsed,onToggleSidebar:toggle,
+        h(views.WindowFrame,{language:'zh',sidebarCollapsed:layout.sidebarCollapsed,
           menus:views.applicationMenus('zh',actions,{sidebarVisible:!layout.sidebarCollapsed,inspectorVisible:inspector,native:false,externalLinks:false}),onError:noop}),
-        h('main',{className:'desktop-shell'+(layout.sidebarCollapsed?' sidebar-is-collapsed':'') ,'data-settings-visible':settings || undefined},
+        h('main',{className:'desktop-shell'+(layout.sidebarCollapsed?' sidebar-is-collapsed':'') ,'data-settings-visible':settings || undefined,'data-sidebar-layout':layout.drawerLayout?'drawer':'docked'},
+          h(views.WindowSidebarToggle,{language:'zh',collapsed:layout.sidebarCollapsed,onToggle:toggle}),
           h(views.CompactSidebarBackdrop,{visible:layout.compactLayout&&!layout.sidebarCollapsed,language:'zh',onClose:close}),
-          presence.mounted&&h(views.ChatSidebar,{language:'zh',section:'chat',activeConversationId:'draft',projects:[],
-            conversations:[{id:'draft',title:'今天有更新邮件么',preview:'',updatedAt:''}],changeReportsByConversation:{},softVisible:presence.visible,
+          h(views.ChatSidebar,{language:'zh',section:'chat',activeConversationId:'draft',projects:[],
+            conversations:[{id:'draft',title:'今天有更新邮件么',preview:'',updatedAt:''}],changeReportsByConversation:{},railCollapsed:layout.sidebarCollapsed,onExpandRail:()=>layout.setSidebarCollapsed(false),
             onSectionChange:close,onConversationChange:()=>{setHistory(true);if(layout.compactLayout)close();},onCreateConversation:()=>{setHistory(false);if(layout.compactLayout)close();},
             onAddProject:noop,onProjectAction:noop,onDeleteConversation:noop,onRenameConversation:async()=>true,onOpenConversationChanges:noop,onOpenSettings:()=>{close();setSettings(true);},onOpenPlugins:noop,onOpenSearch:noop}),
         settings && h(views.SettingsView,{active:true,onReady:noop,themePreference:theme,language:'zh',languageMode:'zh',systemLanguage:'zh',settings:compactSettings,
           selectedModel:'fixture',availableModels:[],backendCapabilities:{terminalRuntimes:['powershell'],runtimeAssetCategories:[]},runtimeBusy:false,conversations:[],skills:[],disabledSkillNames:new Set(),
           initialSection:'overview',initialPluginTab:'plugins',onThemePreferenceChange:noop,onLanguageModeChange:noop,
-          onSettingsChange:noop,onUseModel:noop,sidebarCollapsed:layout.sidebarCollapsed,compactLayout:layout.compactLayout,sidebarPresence:presence,sidebarWidth:272,
+          onSettingsChange:noop,onUseModel:noop,sidebarCollapsed:layout.sidebarCollapsed,compactLayout:layout.compactLayout,sidebarWidth:272,
           onSidebarCollapse:close,onSidebarWidthChange:noop,onToggleSkill:noop,onReloadSkills:async()=>[],onLoadSkillDetail:async()=>({})}),
           h('section',{className:'main-stage',inert:layout.compactLayout&&(!layout.sidebarCollapsed||inspector)},h(views.ChatPanel,{...chatProps,
             language:'zh',theme,loading:false,sidebarCollapsed:layout.sidebarCollapsed,draft,onDraftChange:setDraft,selectedModel:'long-model',
@@ -77,7 +78,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("document.querySelector('.window-sidebar-toggle').click()");
   await until('compactState.sidebarCollapsed === false', 'open narrow drawer');
   await pause(260); await fits('.sidebar'); await fits('.main-stage');
-  assert.ok(await run("document.querySelector('.main-stage').getBoundingClientRect().width > innerWidth-4"), 'drawer does not squeeze the chat');
+  assert.ok(await run("document.querySelector('.main-stage').getBoundingClientRect().width >= innerWidth-52"), 'drawer does not squeeze the chat');
   await run("document.querySelector('.compact-sidebar-backdrop').click()");
   await until('compactState.sidebarCollapsed', 'backdrop closes drawer');
   await until("document.querySelector('.compact-sidebar-backdrop')?.inert === true", 'closing backdrop releases interaction');
@@ -104,7 +105,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("document.querySelector('[data-settings-target=connections]').click()");
   await fits('.settings-content');
   await run('compactActions.setSettings(false); compactActions.setDraft("保留输入草稿")');
-  await resize(1180,760);
+  await resize(1440,760);
   assert.equal(await run('compactState.sidebarCollapsed'), false, 'wide sidebar preference restored');
   await run('compactState.setSidebarCollapsed(true)'); await pause(260);
   await resize(480,480);
@@ -122,7 +123,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('window.removeEventListener("keydown",drawerEscapeObserver);compactState.setSidebarCollapsed(false);void 0');await pause(260);
   await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   await until('compactState.sidebarCollapsed', 'Escape closes drawer');
-  await resize(1180,760);
+  await resize(1440,760);
   assert.equal(await run('compactState.sidebarCollapsed'), true, 'collapsed wide preference is also retained');
   await resize(480,480);
   fs.mkdirSync(path.join(root,'tmp'),{recursive:true});
@@ -140,7 +141,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const hit = await run(`(() => {
       const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
       return {
-        sidebar: !!document.elementFromPoint(sidebar.left + 30, sidebar.top + 30)?.closest('.sidebar'),
+        sidebar: !!document.elementFromPoint(sidebar.left + 30, sidebar.top + 62)?.closest('.sidebar'),
         backdrop: !!document.elementFromPoint(innerWidth - 30, sidebar.top + 70)?.closest('.compact-sidebar-backdrop'),
         contentInert: document.querySelector('.main-stage').inert,
       };

@@ -64,6 +64,7 @@ async function run() {
     throw Error('Timed out: ' + label);
   };
   const win = await wait(() => BrowserWindow.getAllWindows().find(w => !w.isDestroyed()), 'workspace');
+  win.setContentSize(1400, 800);
   const read = code => win.webContents.executeJavaScript(code, true);
   const visible = selector => wait(() => read('Boolean(document.querySelector(' + JSON.stringify(selector) + ')?.checkVisibility())'), selector);
   const click = async selector => { await visible(selector); await read('document.querySelector(' + JSON.stringify(selector) + ').click();void 0'); };

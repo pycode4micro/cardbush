@@ -1,0 +1,58 @@
+/* The desktop rail keeps its navigation and profile reachable at icon width. */
+.desktop-shell[data-sidebar-layout] {
+  --sidebar-rail-width: 48px;
+  --rail-button-size: 36px;
+  --rail-button-gutter: calc((var(--sidebar-rail-width) - var(--rail-button-size)) / 2);
+}
+.window-sidebar-toggle {
+  display: grid; place-items: center; width: var(--rail-button-size, 36px); height: var(--rail-button-size, 36px);
+  padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-mid); cursor: pointer;
+}
+.window-sidebar-toggle svg { width: 18px; height: 18px; }
+.window-sidebar-toggle:hover { background: var(--menu-hover); color: var(--text); }
+.window-sidebar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.desktop-shell[data-sidebar-layout] > .window-sidebar-toggle {
+  position: absolute; inset-inline-start: var(--rail-button-gutter); inset-block-start: 3px; z-index: 47;
+}
+.app[data-desktop-workspace] .desktop-shell > .window-sidebar-toggle { inset-block-start: calc(var(--window-frame-height) + 3px); }
+.desktop-shell[data-sidebar-layout] > .sidebar > .sidebar-panel-content { padding-block-start: calc(var(--rail-button-size) + 8px); }
+.desktop-shell[data-sidebar-layout].sidebar-is-collapsed,
+.desktop-shell[data-sidebar-layout="drawer"] { --layout-sidebar-space: var(--sidebar-rail-width); }
+.desktop-shell[data-sidebar-layout].sidebar-is-collapsed > .sidebar { --side-panel-width: var(--sidebar-rail-width); width: var(--side-panel-width); flex-basis: var(--side-panel-width); }
+.sidebar-is-collapsed[data-sidebar-layout] .sidebar-panel-content { padding-inline: var(--rail-button-gutter); }
+.sidebar-is-collapsed[data-sidebar-layout] :is(.desktop-search, .nav-row, .section-header, .profile-trigger) {
+  display: flex; align-items: center; justify-content: center; width: var(--rail-button-size); height: var(--rail-button-size);
+  border: 0; border-radius: 5px; margin-inline: 0; padding: 0;
+}
+.sidebar-is-collapsed[data-sidebar-layout] .desktop-search { background: transparent; }
+.sidebar-is-collapsed[data-sidebar-layout] .desktop-search:hover { background: var(--menu-hover); }
+.sidebar-is-collapsed[data-sidebar-layout] :is(.desktop-search span, .nav-row > :not(.nav-row-icon), .section-heading-label,
+  .section-chevron, .section-action, .sidebar-section-body, .profile-trigger > :not(.profile-symbol)) { display: none; }
+.sidebar-is-collapsed[data-sidebar-layout] .section-title,
+.sidebar-is-collapsed[data-sidebar-layout] .section-heading-icon { margin: 0; padding: 0; justify-content: center; }
+.sidebar-is-collapsed[data-sidebar-layout] .sidebar-sections { padding-inline: 0; }
+.sidebar-is-collapsed[data-sidebar-layout] .sidebar-footer { padding-inline: 0; margin-block-start: auto; }
+
+.desktop-shell[data-sidebar-layout="drawer"] { padding-inline-start: var(--sidebar-rail-width); }
+.desktop-shell[data-sidebar-layout="drawer"] > .sidebar {
+  position: absolute; inset: 0 auto 0 0; z-index: 46; height: 100%;
+  --side-panel-width: min(var(--sidebar-width), calc(100vw - var(--sidebar-rail-width)));
+  transition: width var(--panel-motion-duration) var(--panel-motion-ease);
+}
+.desktop-shell[data-sidebar-layout="drawer"].sidebar-is-collapsed > .sidebar { box-shadow: none; }
+.desktop-shell[data-sidebar-layout="drawer"] > .compact-sidebar-backdrop { background: transparent; backdrop-filter: none; }
+.desktop-shell[data-sidebar-layout="drawer"] > .sidebar-resizer { display: none; }
+.desktop-shell[data-sidebar-layout="drawer"] > .settings-shell { left: var(--sidebar-rail-width); }
+.desktop-shell[data-sidebar-layout].inspector-covered > .right-inspector {
+  inset-inline-start: var(--sidebar-rail-width); width: auto;
+}
+.desktop-shell[data-sidebar-layout].inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
+@media (max-width: 760px) {
+  .desktop-shell[data-sidebar-layout="drawer"] > .right-inspector { --side-panel-width: calc(100vw - var(--sidebar-rail-width)); }
+}
+html[data-window-material="mica"] .app:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(28px) saturate(1.15);
+}
+.app[data-floating-assistant] .desktop-shell[data-sidebar-layout] { padding-inline-start: 0; }

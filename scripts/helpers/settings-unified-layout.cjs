@@ -46,9 +46,9 @@ module.exports = async ({ goTo, run, until, pause, window: win, root }) => {
     let reference;
     for (const page of pages) {
       await goTo(page);
-      if (width < 900 && await run("!!document.querySelector('.desktop-shell > .sidebar')")) {
+      if (width < 900 && await run("!settingsSidebarState.collapsed")) {
         await run("document.querySelector('.window-sidebar-toggle').click()");
-        await until("!document.querySelector('.desktop-shell > .sidebar')");
+        await until("settingsSidebarState.collapsed");
       }
       await pause(100);
       await run("document.querySelector('.settings-content').scrollTop=0");

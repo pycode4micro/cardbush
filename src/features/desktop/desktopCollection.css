@@ -1,6 +1,6 @@
 /* Native caption hit targets stay above the workspace. The rail paints continuously behind them. */
 .app[data-desktop-workspace] { --rail-divider: color-mix(in srgb,var(--text) 11%,transparent); }
-.app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; background:transparent; border:0; box-shadow:none; }
+.app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
 .app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }
 .app[data-desktop-workspace] .desktop-shell > .main-stage { margin-top:var(--window-frame-height); border-radius:0; box-shadow:none; }
 .app[data-desktop-workspace] .desktop-shell > :is(.right-inspector,.right-inspector-resizer) { margin-top:var(--window-frame-height); }
@@ -86,6 +86,4 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 }
 
 
-.app[data-desktop-workspace] .window-sidebar-toggle { width:max-content; }
-.app[data-desktop-workspace] .window-sidebar-toggle:not(:hover):not(:focus-visible) .window-sidebar-track { transform:none; }
 .app[data-desktop-workspace] .settings-page-header h2 { font-size:clamp(25px,2.4vw,36px); letter-spacing:-.04em; }

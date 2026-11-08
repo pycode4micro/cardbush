@@ -73,8 +73,6 @@
   .window-frame { gap: 4px; padding-left: 6px; }
   .window-frame[data-native-controls="true"] { padding-left: calc(6px + env(titlebar-area-x, 0px)); }
   .window-spacer { min-width: 12px; }
-  .window-sidebar-toggle { width: 28px; }
-  .window-sidebar-track { transform: translateX(-100%); }
 }
 
 @media (max-height: 540px) {

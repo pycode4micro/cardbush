@@ -240,6 +240,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenSettings,
   onOpenArchives,
   onOpenSearch,
+  railCollapsed = false, onExpandRail,
   softVisible = true, showRail = true, recentList,
 }: {
   language: AppLanguage;
@@ -265,6 +266,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   recentList?: RecentListOutlet | null;
   onOpenArchives?: () => void;
   onOpenSearch: () => void;
+  railCollapsed?: boolean;
+  onExpandRail?: () => void;
   softVisible?: boolean;
 }) {
   const sidebarRenderStartedAt = performance.now();
@@ -546,6 +549,11 @@ export const ChatSidebar = memo(function ChatSidebar({
   }
 
   function toggleSection(sectionId: string) {
+    if (railCollapsed) {
+      setExpandedSections(current => new Set(current).add(sectionId));
+      onExpandRail?.();
+      return;
+    }
     setExpandedSections((current) => {
       const next = new Set(current);
       if (next.has(sectionId)) {
@@ -821,7 +829,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     >
       <div className="sidebar-panel-content">
       <nav className="sidebar-nav">
-        <button type="button" className="desktop-search" aria-label={searchLabel} onClick={onOpenSearch}>
+        <button type="button" className="desktop-search" data-shortcut="searchConversations" aria-label={searchLabel} title={searchLabel} onClick={onOpenSearch}>
           <Search aria-hidden="true"/><span>{uiText(language)('desktop.search')}</span>
         </button>
         <NavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
@@ -852,17 +860,17 @@ export const ChatSidebar = memo(function ChatSidebar({
           </span>}/>
       </nav>
 
-      <div className="sidebar-scroll">
+      <div className="sidebar-scroll" hidden={railCollapsed && !onExpandRail}>
         <div className="sidebar-sections">
               <SectionHeader
                 title={uiText(language)('chatSidebar.pinned')}
                 leading={<Pin/>}
                 action={<Pin size={14} />}
                 actionLabel={uiText(language)('chatSidebar.pinnedItems')}
-                expanded={expandedSections.has('pinned')}
+                expanded={!railCollapsed && expandedSections.has('pinned')}
                 onToggle={() => toggleSection('pinned')}
               />
-              <SectionBody expanded={expandedSections.has('pinned')}>
+              {!railCollapsed && <SectionBody expanded={expandedSections.has('pinned')}>
                 {pinnedProjects.length > 0 || pinnedConversations.length > 0
                   ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(conversation => renderStandaloneConversation(conversation))}</>
                   : (
@@ -871,7 +879,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                     </div>
                   )
                 }
-              </SectionBody>
+              </SectionBody>}
 
               <SectionHeader
                 title={uiText(language)('archivedItemsPanel.projects')}
@@ -879,7 +887,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                 action={<FolderOpen size={14} />}
                 actionLabel={uiText(language)('agentDataSettings.addProject')}
                 actionShortcut="openProject"
-                expanded={expandedSections.has('projects')}
+                expanded={!railCollapsed && expandedSections.has('projects')}
                 onToggle={() => toggleSection('projects')}
                 onAction={onAddProject}
                 onContextMenu={(event) =>
@@ -907,9 +915,9 @@ export const ChatSidebar = memo(function ChatSidebar({
                   ])
                 }
               />
-              <SectionBody expanded={expandedSections.has('projects')}>
+              {!railCollapsed && <SectionBody expanded={expandedSections.has('projects')}>
                 {regularProjects.map(renderProjectBlock)}
-              </SectionBody>
+              </SectionBody>}
         </div>
       </div>
 
@@ -964,6 +972,7 @@ function NavRow({
       data-shortcut={shortcut}
       data-nav-section={navSection}
       aria-current={active ? 'page' : undefined}
+      aria-label={label}
       title={label}
       type="button"
       onClick={onClick}
@@ -1023,6 +1032,7 @@ function SectionHeader({
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
       aria-expanded={interactive ? expanded : undefined}
+      aria-label={title} title={title}
       onClick={onToggle}
       onKeyDown={(event) => {
         if (!interactive || (event.key !== 'Enter' && event.key !== ' ')) {
@@ -1037,7 +1047,7 @@ function SectionHeader({
         className="section-title"
       >
         {leading && <span className="section-heading-icon" aria-hidden="true">{leading}</span>}
-        {title}
+        <span className="section-heading-label">{title}</span>
         <ChevronDown className={`section-chevron${expanded ? '' : ' collapsed'}`} size={14} aria-hidden="true" />
       </span>
       <button

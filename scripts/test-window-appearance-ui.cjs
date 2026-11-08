@@ -16,7 +16,7 @@ async function bundleViews() {
   const { build } = await import('vite');
   const { default: react } = await import('@vitejs/plugin-react');
   const files = [
-    'src/features/appearance/windowAppearance.ts', 'src/components/WindowFrame.tsx',
+    'src/features/appearance/windowAppearance.ts', 'src/components/WindowFrame.tsx', 'src/components/WindowSidebarToggle.tsx',
     'src/components/TopBar.tsx', 'src/features/sidebar/ChatSidebar.tsx',
     'src/features/chat/WelcomeComposer.tsx', 'src/features/desktop/RecentConversationBar.tsx',
   ];
@@ -134,15 +134,16 @@ app.whenReady().then(async () => {
       };
       views.useWindowAppearance(theme, themePreference === 'custom' ? 'dark' : themePreference, material, undefined, themePreference === 'custom');
       return h('div', { className: 'app ' + ('theme-' + theme), 'data-desktop-workspace': '', 'data-translucent-sidebar': 'true', style: { '--sidebar-width':'252px' } },
-        h(views.WindowFrame, { language:'zh', sidebarCollapsed:collapsed, onToggleSidebar:() => setCollapsed(!collapsed),
+        h(views.WindowFrame, { language:'zh', sidebarCollapsed:collapsed,
           onBack:settings ? () => setSettings(false) : undefined, onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
             {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
           ]}] }, h(views.RecentConversationBar, {language:'zh',conversation:{id:'fixture',title:'Conversation',updatedAt:'',preview:''},
             conversations:[],transcripts:{},pageFor:()=>({hasMore:false,loadingOlder:false,historyError:''}),onRecentList:noop,read:noop,earlier:noop,open:noop})),
-        h('main', { className:'desktop-shell', 'data-settings-visible':settings || undefined },
+        h('main', { className:'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-sidebar-layout':'docked','data-settings-visible':settings || undefined },
+          h(views.WindowSidebarToggle, {language:'zh',collapsed,onToggle:() => setCollapsed(!collapsed)}),
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
-            softVisible:!collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
+            railCollapsed:collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
             onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:()=>setSettings(true) }),
           h('section', { className: settings ? 'settings-shell' : 'main-stage' }, h('div', { className:settings ? 'settings-content' : 'chat-panel' },
             h(views.TopBar, { title:settings ? '个性化' : '新会话', language:'zh', inspectorOpen:false, onToggleInspector:noop }),

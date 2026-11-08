@@ -26,7 +26,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       showShortcuts:()=>{},openDiagnostics:()=>{},toggleSidebar:()=>{},toggleInspector:()=>{},search:()=>{},openBrowser:()=>{}},
       {sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
     window.mountCenter=()=>renderView(h(views.ConversationHostContext.Provider,{value:centerHost},h(views.AppCenterProvider,{language:'zh',onNavigate:(app,environment)=>centerEvents.push(['navigate',app.id,environment])},
-      h(views.GlobalTooltip),h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,onToggleSidebar:()=>{},menus:centerMenus,onError:error=>failures.push(String(error))}),
+      h(views.GlobalTooltip),h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,menus:centerMenus,onError:error=>failures.push(String(error))}),
       h('div',{className:'test-center-layout'},h(views.AppCenterDock,{language:'zh'}),h(views.ChatSidebar,centerSidebarProps),h('main',{className:'main-stage'},h(views.ChatPanel,chatProps))))));
     Object.assign(chatProps,{language:'zh',loading:false,historyLoading:false,draft:'',availableModels:[{id:'fixture',modelName:'fixture',provider:'fixture',enabled:true}],
       onDraftChange:draft=>{chatProps.draft=draft;mountCenter();},onSend:async text=>{centerSent.push(text);chatProps.draft='';mountCenter();}});

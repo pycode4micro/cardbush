@@ -26,6 +26,14 @@ type InspectorWorkspaceOptions = {
   setInspectorTabsMenuOpen: (open: boolean) => void;
 };
 
+// Use the rail's target width during motion and when restoring a saved split.
+function sidebarSpace(shell: HTMLElement | null | undefined, collapsed: boolean, expandedWidth: number) {
+  if (shell && (collapsed || shell.dataset.sidebarLayout === 'drawer')) {
+    return Number.parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-rail-width')) || 0;
+  }
+  return collapsed ? 0 : expandedWidth;
+}
+
 /** Owns workspace geometry and its restore lifecycle; the app supplies navigation and tabs. */
 export function useInspectorWorkspace({
   workspaceId = 'shared', language, windowMaximized, compactLayout,
@@ -66,7 +74,7 @@ export function useInspectorWorkspace({
           context.inspectorCover || context.compactLayout || context.conversationCoverRequested.current ||
           !panel || getComputedStyle(panel).position === 'absolute') return;
         const available = gesture.startWidth - (window.innerWidth - shell.clientWidth)
-          - (context.sidebarCollapsed ? 0 : context.sidebarWidth);
+          - sidebarSpace(shell, context.sidebarCollapsed, context.sidebarWidth);
         windowResize.current = {
           startWidth: gesture.startWidth,
           inspectorWidth: Math.min(preferredWidthRef.current, Math.max(minimumInspectorWidth, available - minimumConversationWidth)),
@@ -93,7 +101,7 @@ export function useInspectorWorkspace({
       Math.max(minimumInspectorWidth, Math.round(width)),
     );
     const shell = mainStageRef.current?.parentElement;
-    const available = (shell?.clientWidth ?? window.innerWidth) - (sidebarCollapsed ? 0 : sidebarWidth);
+    const available = (shell?.clientWidth ?? window.innerWidth) - sidebarSpace(shell, sidebarCollapsed, sidebarWidth);
     // Only an explicit oversized pane choice may hide the conversation. A
     // viewport change must never turn an ordinary split into a cover by itself.
     conversationCoverRequested.current = !keepConversationVisible && !compactLayout && next > available - minimumConversationWidth;
@@ -126,7 +134,8 @@ export function useInspectorWorkspace({
     const previous = coverRestore.current; coverRestore.current = null;
     if (previous) { setSidebarCollapsed(previous.sidebar); setSection(previous.section); }
     const collapsed = previous?.sidebar ?? sidebarCollapsed;
-    const available = (mainStageRef.current?.parentElement?.clientWidth ?? window.innerWidth) - (collapsed ? 0 : sidebarWidth);
+    const shell = mainStageRef.current?.parentElement;
+    const available = (shell?.clientWidth ?? window.innerWidth) - sidebarSpace(shell, collapsed, sidebarWidth);
     const maximum = available - minimumConversationWidth;
     if (compactLayout || maximum < minimumInspectorWidth) {
       setInspectorOpen(false);
@@ -215,7 +224,7 @@ export function useInspectorWorkspace({
         document.body.classList.contains('sidebar-resizing')) return;
       const panel = shell.querySelector(':scope > .right-inspector');
       const overlay = compactLayout || panel && getComputedStyle(panel).position === 'absolute';
-      const available = shell.clientWidth - (sidebarCollapsed ? 0 : sidebarWidth);
+      const available = shell.clientWidth - sidebarSpace(shell, sidebarCollapsed, sidebarWidth);
       const resize = windowResize.current;
       if (resize) {
         // Right-edge drags allocate their width delta to the inspector, keeping

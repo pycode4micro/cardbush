@@ -20,7 +20,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const back=history.canGoBack?history.back:undefined,forward=history.canGoForward?history.forward:undefined;
       const menus=views.applicationMenus('zh',{newConversation:navNoop,openSettings:navNoop,showShortcuts:navNoop,openDiagnostics:navNoop,toggleSidebar:navNoop,toggleInspector:navNoop,search:navNoop,openBrowser:navNoop,forward},{sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
       return h(views.PageNavigationContext.Provider,{value:history},h(views.PageNavigationScope.Provider,{value:'main:'+page.section},
-        h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,onToggleSidebar:navNoop,onBack:back,onForward:forward,menus,onError:error=>failures.push(String(error))}),
+        h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,onBack:back,onForward:forward,menus,onError:error=>failures.push(String(error))}),
         h('nav',{id:'test-nav'},['chat','plugins','settings','automations','agents'].map(section=>h('button',{key:section,onClick:()=>setPage({section,id:section==='chat'?'a':section==='agents'?'cloud-a':undefined})},section))),
         h('output',{id:'current-route'},JSON.stringify(page)),h('span',{hidden:true},revision),
         page.section==='plugins'?h(views.SettingsHostContext.Provider,{value:navHost},h('div',{style:{height:680,overflow:'auto'}},h(views.PluginWorkspace,{capabilities:{},language:'zh',skills:[],disabledSkillNames:new Set(),onReloadSkills:navReload,onLoadSkillDetail:navReload,onToggleSkill:navNoop})))

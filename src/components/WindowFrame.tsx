@@ -2,7 +2,6 @@ import { uiText } from '../i18n';
 import { ArrowLeft, Check, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { AppLanguage } from '../types';
-import { WindowSidebarToggle } from './WindowSidebarToggle';
 import { useKeyboardShortcuts } from '../features/shortcuts/useKeyboardShortcuts';
 import { windowMenuItems, type ApplicationMenu, type WindowMenuEntry, type WindowMenuItem } from '../features/windowMenu/applicationMenus';
 import { captureMenuFocus } from '../features/windowMenu/menuFocus';
@@ -12,7 +11,7 @@ import type { HistoryDirection } from '../../electron/shortcutBinding';
 
 type OpenMenu = { id: string; anchor: HTMLElement; initialFocus?: 'first' | 'last' };
 type Props = {
-  language: AppLanguage; sidebarCollapsed: boolean; onToggleSidebar: () => void;
+  language: AppLanguage; sidebarCollapsed: boolean;
   children?: React.ReactNode;
   menus: ApplicationMenu[]; onBack?: () => void; onForward?: () => void;
   onInspectorHistory?: (direction: HistoryDirection, tabId?: string) => void;
@@ -20,7 +19,7 @@ type Props = {
 };
 
 export function WindowFrame(props: Props) {
-  const { language, sidebarCollapsed, onToggleSidebar, menus } = props;
+  const { language, sidebarCollapsed, menus } = props;
   const onBack = useWindowBack(props.onBack);
 
   const nativeControls = window.cardbushDesktop?.platform === 'win32';
@@ -202,7 +201,7 @@ export function WindowFrame(props: Props) {
       }
     }}>
     <WindowBackButton language={language} fallback={props.onBack} beforeBack={close}/>
-    <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
+    {!sidebarCollapsed && <span className="window-brand">{uiText(language)('windowSidebarToggle.cardbush')}</span>}
     {menus.length > 0 && <button type="button" className="frame-chip desktop-menu-toggle no-drag" aria-label={uiText(language)('windowFrame.applicationMenu')}
       aria-haspopup="menu" aria-expanded={Boolean(open)} onPointerDown={event => event.preventDefault()}
       onKeyDown={event => {

@@ -102,6 +102,7 @@ import { useOutsideDismiss } from './hooks/useOutsideDismiss';
 import { createPortal } from 'react-dom';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
+import { WindowSidebarToggle } from './components/WindowSidebarToggle';
 import { WindowFrame } from './components/WindowFrame';
 import { RecentConversationBar, useRecentConversation, type RecentListOutlet } from './features/desktop/RecentConversationBar';
 import { applicationMenus } from './features/windowMenu/applicationMenus';
@@ -295,7 +296,7 @@ function CardbushApp() {
   const [section, setSection] = useState<AppSection>(requestedWorkspace === 'team' || requestedWorkspace === 'explore' ? requestedWorkspace : 'home');
   const workspaceVisited = useRef(false);
   const [homePage, setHomePage] = useState<HomePage>({ kind: 'overview' });
-  const { compactLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
+  const { compactLayout, drawerLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
   );
@@ -1140,9 +1141,6 @@ function CardbushApp() {
   ], []);
   const inspectorMenuOpen = inspectorTabsMenuOpen || !!inspectorTabContextMenu;
   useOutsideDismiss(inspectorMenuOpen, inspectorMenuContainers, dismissInspectorMenus);
-  const sidebarPresence = useSoftPanelPresence(
-    !sidebarCollapsed,
-  );
   const inspectorPresence = useSoftPanelPresence(inspectorOpen, 240, { keepMounted: true });
 
   useEffect(() => {
@@ -1196,10 +1194,11 @@ function CardbushApp() {
     window.localStorage.setItem('cardbush.sidebar_width', String(next));
   }, []);
 
+  const expandSidebar = useCallback(() => setSidebarCollapsed(false), [setSidebarCollapsed]);
   const collapseSidebar = useCallback(() => setSidebarCollapsed(true), [setSidebarCollapsed]);
   useEffect(() => {
-    if (compactLayout) collapseSidebar();
-  }, [compactLayout, collapseSidebar, chat.activeConversationId, section, settingsOpen, inspectorOpen]);
+    if (drawerLayout) collapseSidebar();
+  }, [drawerLayout, collapseSidebar, chat.activeConversationId, section, settingsOpen, inspectorOpen]);
 
   const updateAppSettings = useCallback(
     (updater: (current: AppSettingsState) => AppSettingsState) => {
@@ -1889,12 +1888,12 @@ function CardbushApp() {
     targetSection: SettingsPage = 'overview',
     pluginTab: 'plugins' | 'skills' = 'plugins',
   ) => {
-    if (compactLayout) collapseSidebar();
+    if (drawerLayout) collapseSidebar();
     setSettingsInitialSection(targetSection);
     setSettingsPluginTab(pluginTab);
     setSettingsMounted(true);
     setSettingsOpen(true);
-  }, [compactLayout, collapseSidebar]);
+  }, [drawerLayout, collapseSidebar]);
   const markSettingsReady = useCallback(() => setSettingsReady(true), []);
   const settingsVisible = settingsOpen && settingsReady;
 
@@ -1934,15 +1933,15 @@ function CardbushApp() {
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
     setSettingsOpen(false);
     if (nextSection === 'home') setHomePage({ kind: 'overview' });
-    if (compactLayout) collapseSidebar();
+    if (drawerLayout) collapseSidebar();
     if (!['assistant'].includes(section) && !['assistant'].includes(nextSection)) revealConversation();
     setSection(nextSection);
-  }, [section, revealConversation, compactLayout, collapseSidebar]);
+  }, [section, revealConversation, drawerLayout, collapseSidebar]);
   const handleSidebarConversationChange = useCallback((conversationId: string) => {
     if (section === 'chat' && conversationId === chat.activeConversationId) revealConversation();
     openConversation(conversationId);
-    if (compactLayout) collapseSidebar();
-  }, [openConversation, compactLayout, collapseSidebar, revealConversation, section, chat.activeConversationId]);
+    if (drawerLayout) collapseSidebar();
+  }, [openConversation, drawerLayout, collapseSidebar, revealConversation, section, chat.activeConversationId]);
   const openExplore = useCallback(() => {
     setSettingsOpen(false);
     handleSidebarSectionChange('explore');
@@ -1962,8 +1961,8 @@ function CardbushApp() {
   const handleSidebarOpenConversationChanges = useCallback((conversationId: string) => {
     setSettingsOpen(false);
     openChangeReviewInspector(conversationId);
-    if (compactLayout) collapseSidebar();
-  }, [openChangeReviewInspector, compactLayout, collapseSidebar]);
+    if (drawerLayout) collapseSidebar();
+  }, [openChangeReviewInspector, drawerLayout, collapseSidebar]);
   useEffect(() => {
     if ((section !== 'home' && section !== 'explore') || settingsOpen || retainedInspectorTabs.length)
       workspaceVisited.current = true;
@@ -1996,7 +1995,8 @@ function CardbushApp() {
     onOpenConversation: handlePreviousConversation,
   });
   const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
-  const showChatRail = sidebarPresence.mounted && (settingsOpen || (section !== 'team' && section !== 'md-presentation'));
+  const hasWorkspaceSidebar = settingsOpen || (section !== 'team' && section !== 'md-presentation');
+  const showChatRail = sidebarCollapsed || hasWorkspaceSidebar;
   const recentConversation = useRecentConversation(chat.conversations, section === 'chat' && !settingsOpen ? chat.activeConversationId : '');
   const [requestedTurn, setRequestedTurn] = useState<{ sessionId: string; messageId: string; turnId?: string } | null>(null);
   const clearRequestedTurn = useCallback(() => setRequestedTurn(null), []);
@@ -2004,9 +2004,9 @@ function CardbushApp() {
     revealConversation();
     if (!openConversation(id)) return;
     setSettingsOpen(false);
-    if (compactLayout) collapseSidebar();
+    if (drawerLayout) collapseSidebar();
     setRequestedTurn(message ? { sessionId: id, messageId: message.id, turnId: message.turnId } : null);
-  }, [openConversation, revealConversation, compactLayout, collapseSidebar]);
+  }, [openConversation, revealConversation, drawerLayout, collapseSidebar]);
   useEffect(() => {
     if (requestedTurn && (settingsOpen || section !== 'chat' || chat.activeConversationId !== requestedTurn.sessionId)) clearRequestedTurn();
   }, [section, settingsOpen, chat.activeConversationId, requestedTurn, clearRequestedTurn]);
@@ -2128,13 +2128,12 @@ function CardbushApp() {
         setSettingsOpen(false);
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
         else setSection(application.target === 'automations' ? 'automations' : application.target === 'components' ? 'components' : application.target === 'team' ? 'team' : application.target === 'md-presentation' ? 'md-presentation' : 'plugins');
-        if (compactLayout) collapseSidebar();
+        if (drawerLayout) collapseSidebar();
       }}>
       <GlobalTooltip/>
       <WindowFrame
         language={language}
         sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={toggleSidebar}
         menus={floating ? [] : windowMenus}
         onBack={pageNavigation.canGoBack ? pageNavigation.back : settingsOpen ? () => setSettingsOpen(false) : undefined}
         onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
@@ -2169,9 +2168,11 @@ function CardbushApp() {
       <ConversationInspectorContext.Provider value={{ ...conversationInspectorActions, outlets: conversationInspectorOutlets, visible: inspectorOpen, visibleTabIds: visibleInspectorTabIds }}>
       <main
         className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${!settingsOpen && inspectorCover ? ' inspector-covered' : !settingsOpen && conversationCovered ? ' inspector-conversation-covered' : ''}`}
+        data-sidebar-layout={drawerLayout ? 'drawer' : 'docked'}
         data-settings-visible={settingsVisible || undefined}
       >
-          <CompactSidebarBackdrop visible={(compactLayout || (!settingsOpen && inspectorCover)) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
+          <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={toggleSidebar}/>
+          <CompactSidebarBackdrop visible={(drawerLayout || (!settingsOpen && inspectorCover)) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
           {(showChatRail || recentList) && <ChatSidebar showRail={showChatRail} recentList={recentList}
             language={language}
             section={settingsOpen ? 'settings' : section}
@@ -2194,20 +2195,19 @@ function CardbushApp() {
             onOpenSettings={handleSidebarOpenSettings}
             onOpenArchives={() => openSettings('cache')}
             onOpenSearch={conversationSearch.show}
-            softVisible={sidebarPresence.visible}
+            railCollapsed={sidebarCollapsed} onExpandRail={hasWorkspaceSidebar ? expandSidebar : undefined}
           />}
-          {sidebarPresence.mounted && (
+          {!sidebarCollapsed && (
             <>
               {!settingsOpen && section === 'team' ? (
-                <NativeTeamSidebar
+                <NativeTeamSidebar softVisible
                   language={language}
                   onOpenSettings={() => openSettings()}
-                  softVisible={sidebarPresence.visible}
-                  onSelect={() => { if (compactLayout) collapseSidebar(); }}
+                  onSelect={() => { if (drawerLayout) collapseSidebar(); }}
                 />
               ) : !settingsOpen && section === 'md-presentation' ? (
-                <CanvasSidebar language={language} softVisible={sidebarPresence.visible}
-                  onSelect={() => { if (compactLayout) collapseSidebar(); }}/>
+                <CanvasSidebar language={language} softVisible
+                  onSelect={() => { if (drawerLayout) collapseSidebar(); }}/>
               ) : null}
               <SidebarResizer
                 key={settingsOpen ? 'settings' : 'workspace'}
@@ -2215,7 +2215,6 @@ function CardbushApp() {
                 width={sidebarWidth}
                 onWidthChange={setSidebarWidth}
                 onCollapse={collapseSidebar}
-                softVisible={sidebarPresence.visible}
               />
             </>
           )}
@@ -2225,7 +2224,7 @@ function CardbushApp() {
               <LazySettingsView
                 onOpenPluginPrompt={openPluginPrompt}
                 active={settingsVisible}
-                obscured={compactLayout && !sidebarCollapsed}
+                obscured={drawerLayout && !sidebarCollapsed}
                 onReady={markSettingsReady}
                 themePreference={themePreference}
                 windowMaterial={windowMaterial}
@@ -2267,7 +2266,7 @@ function CardbushApp() {
             </Suspense>
             </PageNavigationScope.Provider>
           )}
-          <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || !floating && (inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen)) ? true : undefined}>
+          <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || !floating && (inspectorControlsVisible || drawerLayout && !sidebarCollapsed || compactLayout && inspectorOpen) ? true : undefined}>
             <AssistantView compactProfileMenu={floating} active={floating || section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
               inspectorOpen={!floating && inspectorOpen} onToggleInspector={floating ? undefined : toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
               composerPortalTarget={!floating && section === 'assistant' && quickInputOpen ? quickInputTarget : null}
@@ -2429,7 +2428,7 @@ function CardbushApp() {
               className={`right-inspector soft-panel-motion ${inspectorPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
               aria-label={uiText(language)('app.inspector')}
               aria-hidden={settingsVisible || !inspectorPresence.visible}
-              inert={settingsVisible || !inspectorPresence.visible || ((compactLayout || inspectorCover) && !sidebarCollapsed) ? true : undefined}
+              inert={settingsVisible || !inspectorPresence.visible || ((drawerLayout || inspectorCover) && !sidebarCollapsed) ? true : undefined}
               style={{ '--right-inspector-width': `${inspectorWidth}px` } as CSSProperties}
             >
               <RightInspectorResizer
@@ -2881,7 +2880,7 @@ function CardbushApp() {
           ) : null}
           {!settingsVisible && inspectorControlsVisible && <InspectorCoverControls language={language} inputOpen={quickInputOpen}
             status={activeCreationInspector?.inputStatus}
-            inert={(compactLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
+            inert={(drawerLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
             onBack={leaveInspectorCover} onToggleInput={() => {
               if (!quickInputOpen && section !== 'assistant' && section !== 'md-presentation' && section !== 'team') setSection('chat');
               setQuickInputOpen(open => !open);
