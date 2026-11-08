@@ -96,6 +96,37 @@ async function run() {
   await pause(120);
   assert.ok(await read("document.querySelector('.window-frame').getBoundingClientRect().top===0 && document.querySelector('.desktop-library').getBoundingClientRect().top<2"));
   fs.writeFileSync(path.join(project, 'tmp/conversation-glass-scrolled.png'), (await win.webContents.capturePage()).toPNG());
+  win.setContentSize(1160, 620);
+  await visible('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed');
+  await read("document.querySelector('.desktop-library').scrollTop=260;void 0");
+  await pause(350);
+  const captureMaterial = async name => fs.writeFileSync(path.join(project, 'tmp', 'workspace-material-' + name + '.png'),
+    (await win.webContents.capturePage()).toPNG());
+  const artwork = () => read("document.querySelector('.recent-chat-mark img')?.currentSrc");
+  await wait(() => read("document.querySelector('.recent-chat-mark img')?.naturalWidth > 0"), 'bundled artwork before reading history');
+  const initialArtwork = await artwork();
+  await captureMaterial('toolbar');
+  await click('.window-sidebar-toggle');
+  await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width>265"), 'expanded navigation is over the artwork');
+  await pause(350);
+  await captureMaterial('sidebar');
+  const material = () => read("({bar:getComputedStyle(document.querySelector('.window-frame'),'::before').backdropFilter, drawer:getComputedStyle(document.querySelector('.sidebar')).backdropFilter, tint:getComputedStyle(document.querySelector('.recent-art-tint')).display})");
+  if (!await read("matchMedia('(prefers-reduced-transparency: reduce), (forced-colors: active)').matches")) {
+    const glass = await material();
+    assert.match(glass.bar, /blur\(/);
+    assert.match(glass.drawer, /blur\(/);
+    assert.equal(await read("getComputedStyle(document.querySelector('.desktop-shell')).backgroundColor === getComputedStyle(document.querySelector('.desktop-library')).backgroundColor"), true, 'drawer blur has a continuous backing across the rail');
+    assert.notEqual(glass.tint, 'none');
+  }
+  win.webContents.debugger.attach('1.3');
+  try {
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{name:'prefers-reduced-transparency',value:'reduce'}],
+    });
+    await wait(() => read("matchMedia('(prefers-reduced-transparency: reduce)').matches"), 'reduced transparency');
+    assert.deepEqual(await material(), {bar:'none',drawer:'none',tint:'none'});
+  } finally { win.webContents.debugger.detach(); }
+  await click('.window-sidebar-toggle');
   win.setContentSize(1400, 800);
   await read("document.querySelector('.desktop-library').scrollTop=0;void 0");
   await click('.recent-bar-list');
@@ -104,7 +135,8 @@ async function run() {
   assert.equal(await read("document.querySelector('.recent-turn-text').textContent"), examples.get(45)[0]);
   await visible('[data-desktop-page="overview"]');
   await wait(() => read("document.querySelector('.recent-tile img')?.naturalWidth > 0"), 'real image thumbnail');
-  await wait(() => read("document.querySelector('.recent-chat-mark img')?.naturalWidth > 0"), 'loaded conversation artwork also reaches the title bar');
+  await wait(() => read("(() => {const cover=document.querySelector('.recent-chat-mark img'); return cover?.naturalWidth>0 && cover.currentSrc===document.querySelector('.recent-tile img')?.currentSrc && cover.currentSrc===document.querySelector('.recent-art-tint img')?.currentSrc})()"), 'loaded turn image reaches both the cover and the reflected color');
+  assert.notEqual(await artwork(), initialArtwork);
   fs.writeFileSync(path.join(project, 'tmp/recent-conversation-drawer.png'), (await win.webContents.capturePage()).toPNG());
   await click('.recent-turn-more');
   await wait(() => read("document.querySelectorAll('.recent-turn-text').length === 40"), 'previous page');

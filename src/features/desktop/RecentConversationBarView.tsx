@@ -4,6 +4,7 @@ import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types'
 import { uiText } from '../../i18n';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { fileUrl } from '../../shared/localPaths';
+import defaultArtwork from './art/prism.jpg';
 
 export type RecentTab = 'turns' | 'sessions';
 
@@ -13,8 +14,12 @@ export function RecentConversationBarView({ language, title, output, cover, prev
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen(): void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
+  const [failedCover, setFailedCover] = useState('');
+  const source = cover && fileUrl(cover);
+  const artwork = source && source !== failedCover ? source : defaultArtwork;
   const tabs = [{ id: 'turns', label: t('recentBar.turns') }, { id: 'sessions', label: t('recentBar.sessions') }] as const;
   return <div className="recent-bar window-drag">
+    <div className="recent-art-tint" aria-hidden="true"><img src={artwork} alt="" draggable={false}/></div>
     <div className="recent-bar-transport">
       <button className="no-drag" type="button" data-recent-step="previous" disabled={!previous} onClick={previous}
         aria-label={t('recentBar.previousChat')} title={t('recentBar.previousChat')}><Rewind aria-hidden="true"/></button>
@@ -22,7 +27,8 @@ export function RecentConversationBarView({ language, title, output, cover, prev
         aria-label={t('recentBar.nextChat')} title={t('recentBar.nextChat')}><FastForward aria-hidden="true"/></button>
     </div>
     <button className="recent-bar-chat no-drag" type="button" onClick={onOpen} aria-describedby={output ? panelId + '-output' : undefined} aria-label={t('recentBar.open', { title })} title={t('recentBar.open', { title })}>
-      <Tile className="recent-chat-mark" source={cover ? fileUrl(cover) : undefined}/>
+      <span className="recent-chat-mark" aria-hidden="true"><img src={artwork} alt="" draggable={false}
+        onError={() => { if (source && artwork === source) setFailedCover(source); }}/></span>
       <span className="recent-chat-copy"><strong>{title}</strong>{output && <small id={panelId + '-output'}>{output}</small>}</span>
     </button>
     <button className="recent-bar-list no-drag" type="button" popoverTarget={panelId}
@@ -57,9 +63,9 @@ function RowTime({ at, language }: { at?: string; language: AppLanguage }) {
     : value.toLocaleDateString(language, { month: 'short', day: 'numeric' })}</time>;
 }
 
-function Tile({ source, number, label, className = "recent-tile" }: { className?: string; source?: string; number?: number; label?: string }) {
+function Tile({ source, number, label }: { source?: string; number?: number; label?: string }) {
   const [failed, setFailed] = useState('');
-  return <span className={className} aria-label={label}>
+  return <span className="recent-tile" aria-label={label}>
     {source && failed !== source ? <img src={source} alt="" loading="lazy" decoding="async" onError={() => setFailed(source)}/>
       : number != null ? number : <MessageSquare aria-hidden="true"/>}
   </span>;

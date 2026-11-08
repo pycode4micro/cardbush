@@ -133,7 +133,7 @@ app.whenReady().then(async () => {
         setTheme(nextTheme); setMaterial(nextMaterial); setThemePreference(nextPreference);
       };
       views.useWindowAppearance(theme, themePreference === 'custom' ? 'dark' : themePreference, material, undefined, themePreference === 'custom');
-      return h('div', { className: 'app ' + ('theme-' + theme), 'data-desktop-workspace': '', 'data-translucent-sidebar': 'true', style: { '--sidebar-width':'252px' } },
+      return h('div', { className: 'app ' + ('theme-' + theme), 'data-desktop-workspace': '', 'data-translucent-sidebar': 'true', 'data-window-material-preference': material, style: { '--sidebar-width':'252px' } },
         h(views.WindowFrame, { language:'zh', sidebarCollapsed:collapsed,
           onBack:settings ? () => setSettings(false) : undefined, onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
@@ -196,6 +196,8 @@ app.whenReady().then(async () => {
     await pause(100);
     assert.equal(await run('document.documentElement.dataset.windowMaterial'), 'none');
     assert.equal(win.getBackgroundColor().toLowerCase(), backgrounds.dark);
+    assert.equal(await run("getComputedStyle(document.querySelector('.window-frame'),'::before').backdropFilter"), 'none');
+    assert.equal(await run("getComputedStyle(document.querySelector('.recent-art-tint')).display"), 'none');
     await run("changeAppearance('dark')");
     await until("document.documentElement.dataset.windowMaterial === 'mica'", 'restored');
     reducedTransparency = true; refresh();

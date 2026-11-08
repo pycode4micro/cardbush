@@ -2108,6 +2108,7 @@ function CardbushApp() {
       lang={language}
       style={appStyle}
       data-translucent-sidebar={appearance.translucentSidebar}
+      data-window-material-preference={windowMaterial}
       data-desktop-workspace=""
       data-floating-assistant={floating || undefined}
       data-pointer-cursor={appearance.pointerCursor}

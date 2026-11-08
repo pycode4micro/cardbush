@@ -51,8 +51,13 @@
 @media (max-width: 760px) {
   .desktop-shell[data-sidebar-layout="drawer"] > .right-inspector { --side-panel-width: calc(100vw - var(--sidebar-rail-width)); }
 }
-html[data-window-material="mica"] .app:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar {
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(28px) saturate(1.15);
+html .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar {
+  background:var(--chrome-grain) repeat var(--drawer-glass);
+  -webkit-backdrop-filter:var(--chrome-glass-filter);
+  backdrop-filter:var(--chrome-glass-filter);
+  border-inline-end-color:var(--chrome-edge);
+  box-shadow:6px 0 24px color-mix(in srgb,var(--shadow) 36%,transparent);
+  --sidebar-text-mid:var(--chrome-secondary);
+  --sidebar-text-soft:var(--chrome-secondary);
 }
 .app[data-floating-assistant] .desktop-shell[data-sidebar-layout] { padding-inline-start: 0; }
