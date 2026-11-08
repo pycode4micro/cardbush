@@ -106,6 +106,8 @@
         background: var(--cardbush-window-bg, #1a1a1a);
       }
 
+      #root:not(:empty) + #cardbush-startup-splash { display: none; }
+
       #cardbush-startup-splash {
         position: fixed;
         inset: 0;
@@ -216,18 +218,17 @@
     </style>
   </head>
   <body>
-    <div id="root">
-      <div id="cardbush-startup-splash" role="status" aria-label="cardbush 正在启动">
-        <div class="cardbush-startup-inner">
-          <img class="cardbush-startup-logo" src="./cardbush-logo.png" alt="" />
-          <div class="cardbush-startup-wordmark">cardbush</div>
-          <div class="cardbush-startup-rhythm" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
+    <div id="root"></div>
+    <div id="cardbush-startup-splash" role="status" aria-busy="true" aria-labelledby="cardbush-startup-brand">
+      <div class="cardbush-startup-inner">
+        <img class="cardbush-startup-logo" src="./cardbush-logo.png" alt="" />
+        <div class="cardbush-startup-wordmark" id="cardbush-startup-brand">cardbush</div>
+        <div class="cardbush-startup-rhythm" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
         </div>
       </div>
     </div>

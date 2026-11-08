@@ -12,7 +12,8 @@ if (typeof electron === 'string') {
   const env = { ...process.env, APPDATA: root, LOCALAPPDATA: root, USERPROFILE: root, HOME: root,
     CARDBUSH_DEVELOPMENT_RUNTIME: '1', CARDBUSH_ELECTRON_DEV_SERVER_URL: '' };
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
-  const result = require('node:child_process').spawnSync(electron, [__filename, root, ...process.argv.slice(2)], { cwd: project, env, windowsHide: true, stdio: 'inherit', timeout: 100000 });
+  // Match the desktop launcher: Windows may suppress the first show of a child started with SW_HIDE.
+  const result = require('node:child_process').spawnSync(electron, [__filename, root, ...process.argv.slice(2)], { cwd: project, env, windowsHide: false, stdio: 'inherit', timeout: 100000 });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 } else {
@@ -62,6 +63,21 @@ async function run() {
   }
   store.ensureSession('local-hidden', { title: 'Hidden session', hidden: true });
   journal.close();
+  // Hold real runtime replies until the workspace is mounted, including on fast machines.
+  let releaseData;
+  const dataGate = new Promise(resolve => { releaseData = resolve; });
+  const { ipcMain } = electron;
+  const register = ipcMain.handle;
+  let requested = false;
+  ipcMain.handle = function(channel, handler) {
+    if (channel !== 'bush-runtime:command') return register.call(this, channel, handler);
+    ipcMain.handle = register;
+    return register.call(this, channel, async (...args) => {
+      requested = true;
+      await dataGate;
+      return handler(...args);
+    });
+  };
   require(path.join(project, 'dist-electron/bootstrap.js'));
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const wait = async (check, label) => {
@@ -76,6 +92,22 @@ async function run() {
   const click = async selector => { await visible(selector); await read('document.querySelector(' + JSON.stringify(selector) + ').click();void 0'); };
   await visible('[data-desktop-page="overview"]');
   await visible('.recent-bar-chat');
+  await wait(() => requested, 'runtime request held');
+  await read('document.fonts.ready.then(() => true)');
+  await pause(300);
+  const positions = () => read(`Array.from(document.querySelectorAll('.recent-bar-transport button,.recent-bar-chat,.recent-bar-list,.desktop-covers > *'), el => {
+    const r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height].map(Math.round);
+  })`);
+  assert.ok(await read("!!document.querySelector('.recent-bar-chat:disabled') && !!document.querySelector('.recent-bar-list:disabled')"));
+  assert.equal(await read("document.querySelectorAll('.desktop-covers > *').length"), 4);
+  assert.ok(await read("!!document.querySelector('.desktop-covers[aria-busy=true]')"));
+  await wait(() => win.isVisible(), 'native window visible before data arrives');
+  assert.equal(await read("getComputedStyle(document.querySelector('#cardbush-startup-splash')).display"), 'none');
+  const initialPositions = await positions();
+  fs.writeFileSync(path.join(project, 'tmp/workspace-awaiting-data.png'), (await win.webContents.capturePage()).toPNG());
+  releaseData();
+  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录' && !!document.querySelector('.desktop-covers[aria-busy=false]')"), 'conversation and events arrived');
+  assert.deepEqual(await positions(), initialPositions, 'real data fills the initial toolbar and card slots without reflow');
   if (materialTest) {
     await click('.recent-bar-chat');
     await visible('.chat-panel[role=region] .message-list');
@@ -119,7 +151,7 @@ async function run() {
   await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width>265"), 'expanded navigation is over the artwork');
   await pause(350);
   await captureMaterial('sidebar');
-  const material = () => read("({bar:getComputedStyle(document.querySelector('.window-frame'),'::before').backdropFilter, drawer:getComputedStyle(document.querySelector('.sidebar')).backdropFilter, tint:getComputedStyle(document.querySelector('.recent-art-tint')).display})");
+  const material = () => read("({bar:getComputedStyle(document.querySelector('.window-frame'),'::before').backdropFilter, drawer:getComputedStyle(document.querySelector('.sidebar')).backdropFilter})");
   if (!await read("matchMedia('(prefers-reduced-transparency: reduce), (forced-colors: active)').matches")) {
     const glass = await material();
     assert.match(glass.bar, /blur\(/);
@@ -130,7 +162,7 @@ async function run() {
       return stage === color('.desktop-shell') && (library === stage || library === 'rgba(0, 0, 0, 0)');
     })()`);
     assert.ok(continuous, 'drawer blur has a continuous backing across the rail');
-    assert.notEqual(glass.tint, 'none');
+    assert.equal(await read("!!document.querySelector('.recent-art-tint')"), false, 'only page content contributes to the header backdrop');
   }
   win.webContents.debugger.attach('1.3');
   try {
@@ -138,7 +170,7 @@ async function run() {
       features: [{name:'prefers-reduced-transparency',value:'reduce'}],
     });
     await wait(() => read("matchMedia('(prefers-reduced-transparency: reduce)').matches"), 'reduced transparency');
-    assert.deepEqual(await material(), {bar:'none',drawer:'none',tint:'none'});
+    assert.deepEqual(await material(), {bar:'none',drawer:'none'});
   } finally { win.webContents.debugger.detach(); }
   await click('.window-sidebar-toggle');
   win.setContentSize(1400, 800);
@@ -149,7 +181,7 @@ async function run() {
   assert.equal(await read("document.querySelector('.recent-turn-text').textContent"), examples.get(45)[0]);
   await visible('[data-desktop-page="overview"]');
   await wait(() => read("document.querySelector('.recent-tile img')?.naturalWidth > 0"), 'real image thumbnail');
-  await wait(() => read("(() => {const cover=document.querySelector('.recent-chat-mark img'); return cover?.naturalWidth>0 && cover.currentSrc===document.querySelector('.recent-tile img')?.currentSrc && cover.currentSrc===document.querySelector('.recent-art-tint img')?.currentSrc})()"), 'loaded turn image reaches both the cover and the reflected color');
+  await wait(() => read("(() => {const cover=document.querySelector('.recent-chat-mark img'); return cover?.naturalWidth>0 && cover.currentSrc===document.querySelector('.recent-tile img')?.currentSrc})()"), 'loaded turn image replaces the cover');
   assert.notEqual(await artwork(), initialArtwork);
   fs.writeFileSync(path.join(project, 'tmp/recent-conversation-drawer.png'), (await win.webContents.capturePage()).toPNG());
   await click('.recent-turn-more');
@@ -284,7 +316,7 @@ async function run() {
   await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-navigation-test','local-earlier','local-empty']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
   await click('[data-nav-section=chat]');
   await visible(inspector);
-  assert.equal(await read("!!document.querySelector('.recent-bar')"), false, 'a fresh chat can open the inspector with no recent sessions');
+  assert.equal(await read("!!document.querySelector('.recent-bar-chat:disabled') && !!document.querySelector('.recent-bar-list:disabled')"), true, 'empty history keeps the controls in place and the inspector available');
   await click(inspector);
   await visible('.right-inspector');
   await click(inspector);

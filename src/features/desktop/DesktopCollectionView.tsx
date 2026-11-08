@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode, type UIEvent } from 'react';
 import { ArrowUpRight, Blocks, ChevronRight, Folder, MessageSquare, Plus, Search, Waves } from 'lucide-react';
 import type { EventPresentation, FriendsSnapshot, FriendsWorkEvent } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
@@ -12,9 +12,17 @@ import type { HtmlComponent } from '../components/componentModel';
 import { conversationMatchesScope } from '../conversationScope';
 import type { HomePage } from '../navigation/appPage';
 
+function trackHeaderUnderlap(event: UIEvent<HTMLElement>) {
+  const page = event.currentTarget;
+  if (page.hasAttribute('data-header-underlap') !== (page.scrollTop > 0)) {
+    page.toggleAttribute('data-header-underlap', page.scrollTop > 0);
+  }
+}
+
 type Cover = EventPresentation['cover'];
-type Card = {id: string; art: Cover; title: string; caption: string; summary?: string; open(): void};
-function CoverCard({card}: {card: Card}) {
+type Card = {art: Cover; title: string; caption: string; summary?: string; open(): void};
+function CoverCard({card}: {card?: Card}) {
+  if (!card) return <div className="desktop-cover desktop-cover-pending" aria-hidden="true"/>;
   return <button type="button" className="desktop-cover" data-cover={card.art} onClick={card.open}>
     <span className="desktop-cover-copy"><small>{card.caption}</small><strong>{card.title}</strong>{card.summary && <span>{card.summary}</span>}</span>
     <ArrowUpRight aria-hidden="true"/>
@@ -32,7 +40,7 @@ function ComponentPage({item, page}: {item: HtmlComponent; page?: EventPresentat
   return <div className="desktop-component">{page ? <HtmlComponentContext.Provider value={null}>{surface}</HtmlComponentContext.Provider> : surface}</div>;
 }
 type HomeProps = {
-  language: AppLanguage; page: HomePage; projects: ProjectItem[]; conversations: ConversationSummary[]; assistantName: string;
+  language: AppLanguage; page: HomePage; conversationsLoading: boolean; projects: ProjectItem[]; conversations: ConversationSummary[]; assistantName: string;
   events: FriendsWorkEvent[]; snapshot?: FriendsSnapshot; components: HtmlComponent[]; error: boolean; retry(): Promise<void>;
   onPage(page: HomePage): void; onProject(project: ProjectItem): void; onConversation(id: string): void;
   onAssistant(): void; onExplore(): void; onNew(): void; onAddProject(): void;
@@ -66,15 +74,20 @@ export function DesktopHomeView(p: HomeProps) {
     icon={<Waves/>} open={() => onPage({kind:'event', id:item.id})}/>);
   const addProject = <Row title={t('agentDataSettings.addProject')} icon={<Plus/>} open={p.onAddProject}/>;
   const newChat = <Row title={t('chatSidebar.newChat')} icon={<Plus/>} open={p.onNew}/>;
-  const eventCards: Card[] = events.slice(0, 2).map((item, index) => ({id:item.id, art:item.presentation?.cover ?? (index ? 'fern' : 'tide'),
+  const eventCards: Card[] = events.slice(0, 2).map((item, index) => ({art:item.presentation?.cover ?? (index ? 'fern' : 'tide'),
     title:item.title, caption:t(`yourFriends.status.${item.status}`), summary:item.presentation?.summary, open:() => onPage({kind:'event', id:item.id})}));
-  const featured: Card[] = [...eventCards,
-    {id:'assistant', art:'prism', title:p.assistantName, caption:t('desktop.openAssistant'), open:p.onAssistant},
-    {id:'projects', art:'fold', title:projects[0]?.title ?? projectLabel, caption:projects.length ? projectLabel : t('desktop.openProjects'),
-      open:() => onPage(projects[0] ? {kind:'project', id:projects[0].id} : {kind:'projects'})},
-    {id:'explore', art:'fern', title:t('appCenter.appCenter'), caption:t('desktop.workspaceApps'), open:p.onExplore},
-    {id:'events', art:'tide', title:eventLabel, caption:t('desktop.eventLibrary'), open:() => onPage({kind:'events'})}].slice(0,4) as Card[];
-  return <section className="desktop-library" aria-label={heading} data-desktop-page={page.kind} ref={scroll}>
+  // Keep the two local shortcuts in place while the runtime supplies event cards.
+  const waitingForEvents = !p.snapshot && !p.error;
+  const pendingRow = <div className="desktop-row" role="status">{t('common.loading')}</div>;
+  const explore: Card = {art:'fern', title:t('appCenter.appCenter'), caption:t('desktop.workspaceApps'), open:p.onExplore};
+  const library: Card = {art:'tide', title:eventLabel, caption:t('desktop.eventLibrary'), open:() => onPage({kind:'events'})};
+  const assistant: Card = {art:'prism', title:p.assistantName, caption:t('desktop.openAssistant'), open:p.onAssistant};
+  const projectCard: Card = {art:'fold', title:projects[0]?.title ?? projectLabel,
+    caption:projects.length ? projectLabel : t('desktop.openProjects'),
+    open:() => onPage(projects[0] ? {kind:'project', id:projects[0].id} : {kind:'projects'})};
+  const lead = eventCards[0] ?? (waitingForEvents ? undefined : explore);
+  const last = eventCards[1] ?? (waitingForEvents ? undefined : eventCards.length ? explore : library);
+  return <section className="desktop-library" aria-label={heading} data-desktop-page={page.kind} ref={scroll} onScroll={trackHeaderUnderlap}>
     {page.kind !== 'overview' && <nav className="desktop-crumbs" aria-label={t('desktop.breadcrumb')}>
       <button onClick={() => onPage({kind:'overview'})}>{home}</button>
       {page.kind === 'event' && <><ChevronRight/><button onClick={() => onPage({kind:'events'})}>{eventLabel}</button></>}
@@ -87,11 +100,13 @@ export function DesktopHomeView(p: HomeProps) {
       <div><small>{t(`yourFriends.status.${selected.status}`)}</small><h1>{heading}</h1><p>{selected.presentation?.summary ?? selected.intent}</p></div>
     </header> : <h1>{heading}</h1>}
     {page.kind === 'overview' && <>
-      <Shelf title={t('desktop.featured')}><div className="desktop-covers">{featured.map(card => <CoverCard key={card.id} card={card}/>)}</div></Shelf>
-      <Shelf title={eventLabel} open={() => onPage({kind:'events'})}><div className="desktop-rows">{events.length ? eventRows(events.slice(0,6)) :
+      <Shelf title={t('desktop.featured')}><div className="desktop-covers" aria-busy={waitingForEvents}>
+        <CoverCard card={lead}/><CoverCard card={assistant}/><CoverCard card={projectCard}/><CoverCard card={last}/>
+      </div></Shelf>
+      <Shelf title={eventLabel} open={() => onPage({kind:'events'})}><div className="desktop-rows">{waitingForEvents ? pendingRow : events.length ? eventRows(events.slice(0,6)) :
         <Row title={p.error ? t('desktop.retryEvents') : t('desktop.openAssistant')} detail={p.error ? undefined : p.assistantName} icon={<Waves/>} open={p.error ? p.retry : p.onAssistant}/>}</div></Shelf>
       <Shelf title={projectLabel} open={() => onPage({kind:'projects'})}><div className="desktop-rows">{projects.length ? projectRows(projects.slice(0,6)) : addProject}</div></Shelf>
-      <Shelf title={recent} open={() => onPage({kind:'recent'})}><div className="desktop-rows">{conversations.length ? recentRows(conversations.slice(0,6)) : newChat}</div></Shelf>
+      <Shelf title={recent} open={() => onPage({kind:'recent'})}><div className="desktop-rows">{conversations.length ? recentRows(conversations.slice(0,6)) : p.conversationsLoading ? pendingRow : newChat}</div></Shelf>
       {p.components.length > 0 && <Shelf title={t('appCenterModel.components')}><div className="desktop-rows">{p.components.map(item =>
         <Row key={item.id} title={item.title} icon={<Blocks/>} open={() => onPage({kind:'component',id:item.id})}/>)}</div></Shelf>}
     </>}
@@ -121,7 +136,7 @@ type ExploreProps = {
 };
 export function ExploreView(p: ExploreProps) {
   const t = uiText(p.language);
-  return <section className="desktop-library desktop-explore" aria-label={t('appCenter.appCenter')} data-desktop-page="explore">
+  return <section className="desktop-library desktop-explore" aria-label={t('appCenter.appCenter')} data-desktop-page="explore" onScroll={trackHeaderUnderlap}>
     <h1>{t('appCenter.appCenter')}</h1>
     <label className="desktop-filter"><Search/><input type="search" aria-label={t('appCenter.searchApps')} placeholder={t('appCenter.searchApps')} value={p.query} onChange={event => p.onQuery(event.target.value)}/></label>
     {p.featured.length > 0 && <div className="desktop-discover-covers">{p.featured.map((app,index) =>

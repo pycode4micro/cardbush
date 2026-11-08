@@ -58,26 +58,24 @@ exports.inspect = async ({ win, read, click, wait, pause, project }) => {
   }
   const docked = await snapshot('docked chat');
   assert.equal(docked.layout, 'docked');
-  if (translucent) {
-    assert.equal(docked.filter, 'none', 'docked chrome exposes the native material directly');
-    const [upper, lower] = docked.pageEdge;
-    assert.ok(upper[0] > lower[0] + 12 && lower[2] > upper[2] + 12, 'both wallpaper bands continue across the rail onto the page');
-    const [top, bottom] = docked.readingSurface;
-    assert.ok(top.every((value, i) => Math.abs(value - bottom[i]) <= 2), 'the main reading area is uniform including behind the composer');
-    assert.equal(top[3], 255);
-  }
-
+  const checkSolidRail = report => {
+    assert.equal(report.filter, 'none');
+    assert.equal(report.wallpaperLayer, false);
+    assert.equal(report.upperRGBA[3], 255);
+    assert.equal(report.lowerRGBA[3], 255);
+  };
+  checkSolidRail(docked);
+  assert.deepEqual(docked.pageEdge, docked.readingSurface, 'the page has the same solid surface at its edge and in the reading area');
   win.setContentSize(1160, 740);
   await wait(() => read("!!document.querySelector('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed')"), 'drawer layout');
+  await pause(300);
+  checkSolidRail(await snapshot('collapsed rail'));
   await click('.window-sidebar-toggle');
   await pause(400);
   const drawer = await snapshot('drawer over plain chat');
   if (translucent) {
-    for (const report of [docked, drawer]) {
-      assert.ok(report.wallpaperLayer, 'wallpaper layer is visible in ' + report.layout);
-      assert.ok(report.upperRGBA[0] > report.upperRGBA[2] + 8, 'warm upper wallpaper band survives composition');
-      assert.ok(report.lowerRGBA[2] > report.lowerRGBA[0] + 3, 'cool lower wallpaper band survives composition');
-    }
+    assert.ok(drawer.wallpaperLayer, 'only the open overlay has a wallpaper layer');
+    assert.ok(drawer.upperRGBA[0] > drawer.upperRGBA[2] && drawer.lowerRGBA[2] > drawer.lowerRGBA[0], 'open drawer takes on its backdrop colors');
   }
 
   if (!drawer.reduce) {
@@ -108,5 +106,8 @@ exports.inspect = async ({ win, read, click, wait, pause, project }) => {
     assert.equal(await read("getComputedStyle(document.querySelector('.main-stage')).backgroundImage"), 'none', 'reduced transparency restores a solid page');
     assert.equal(opaque.upperRGBA[3], 255, 'the drawer is opaque when transparency is reduced');
   } finally { win.webContents.debugger.detach(); }
+  await click('.window-sidebar-toggle');
+  await pause(300);
+  checkSolidRail(await snapshot('closed again'));
   fs.writeFileSync(path.join(project, 'tmp', 'sidebar-material-check.json'), JSON.stringify(reports, null, 2));
 };

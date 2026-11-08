@@ -1,10 +1,13 @@
-import { useLayoutEffect, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { prefersReducedMotion } from '../../shared/motionPreference';
 import './pageEntrance.css';
 
 /** Replay the incoming page only. Retained panels keep their focus, scroll position and local state. */
-export function usePageEntrance(ref: RefObject<HTMLElement | null>, page: string, active: boolean) {
+export function usePageEntrance(ref: RefObject<HTMLElement | null>, page: string, active: boolean, { animateOnMount = true } = {}) {
+  const initial = useRef<{ page: string; active: boolean } | null>({ page, active });
   useLayoutEffect(() => {
+    if (!animateOnMount && initial.current?.page === page && initial.current.active === active) return;
+    initial.current = null;
     const node = ref.current;
     if (!active || !node || prefersReducedMotion()) return;
     node.dataset.pageEntering = '';
@@ -23,5 +26,5 @@ export function usePageEntrance(ref: RefObject<HTMLElement | null>, page: string
       current = false;
       delete node.dataset.pageEntering;
     };
-  }, [ref, page, active]);
+  }, [ref, page, active, animateOnMount]);
 }

@@ -173,11 +173,12 @@ app.whenReady().then(async () => {
         context.fillRect(0, 0, 1, 1);
         return { alpha: context.getImageData(0, 0, 1, 1).data[3], image: computed.backgroundImage };
       })()`);
-      for (const selector of ['html','body','#root','.app','.desktop-shell','.window-frame','.sidebar']) {
+      for (const selector of ['html','body','#root','.app','.desktop-shell','.window-frame']) {
         const style = await paint(selector);
         assert.equal(style.image, 'none', `${selector} must not cover native material with a gradient`);
         assert.ok(style.alpha < 255, `${selector} must expose native material`);
       }
+      assert.equal((await paint('.sidebar')).alpha, 255, 'docked navigation stays opaque');
       assert.equal((await paint('.main-stage')).alpha, 255, 'the reading surface stays opaque');
     };
     await checkTransparency();
@@ -204,7 +205,7 @@ app.whenReady().then(async () => {
     assert.equal(await run('document.documentElement.dataset.windowMaterial'), 'none');
     assert.equal(win.getBackgroundColor().toLowerCase(), backgrounds.dark);
     assert.equal(await run("getComputedStyle(document.querySelector('.window-frame'),'::before').backdropFilter"), 'none');
-    assert.equal(await run("getComputedStyle(document.querySelector('.recent-art-tint')).display"), 'none');
+    assert.equal(await run("!!document.querySelector('.recent-art-tint')"), false, 'the header has no simulated artwork backdrop');
     assert.equal(await run("getComputedStyle(document.querySelector('.main-stage')).backgroundImage"), 'none');
     await run("changeAppearance('dark')");
     await until("document.documentElement.dataset.windowMaterial === 'mica'", 'restored');

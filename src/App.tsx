@@ -1239,11 +1239,11 @@ function CardbushApp() {
     };
   }, []);
 
+  const rendererReadySent = useRef(false);
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      void window.cardbushDesktop?.rendererReady?.().catch(() => undefined);
-    });
-    return () => window.cancelAnimationFrame(frame);
+    if (rendererReadySent.current) return;
+    rendererReadySent.current = true;
+    void window.cardbushDesktop?.rendererReady?.().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -1892,7 +1892,7 @@ function CardbushApp() {
   }, [drawerLayout, collapseSidebar]);
   const markSettingsReady = useCallback(() => setSettingsReady(true), []);
   const settingsVisible = settingsOpen && settingsReady;
-  usePageEntrance(mainStageRef, section === 'home' ? JSON.stringify(homePage) : section, !settingsVisible && !floating);
+  usePageEntrance(mainStageRef, section === 'home' ? JSON.stringify(homePage) : section, !settingsVisible && !floating, { animateOnMount: false });
 
   useEffect(() => {
     const preloadTimer = window.setTimeout(() => {
@@ -2147,12 +2147,12 @@ function CardbushApp() {
         }}
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       >
-        {!floating && recentConversation ? <RecentConversationBar
+        {!floating && <RecentConversationBar
           key={currentPage.section} actions={chatActionsSlot}
           language={language} conversation={recentConversation} conversations={chat.conversations} inConversation={section === 'chat' && !settingsOpen}
           transcripts={chat.messagesByConversation} onRecentList={setRecentList}
           pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
-          earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/> : chatActionsSlot}
+          earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>}
       </WindowFrame>
       {conversationSearch.open && <ConversationSearchDialog
         language={language}
@@ -2290,6 +2290,7 @@ function CardbushApp() {
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
             {section === 'home' ? <DesktopHome language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
               page={homePage} onPage={setHomePage} projects={projectItems} conversations={chat.conversations}
+              conversationsLoading={runtimeStartup.phase === 'initializing' || chat.loading}
               onProject={project => handleSidebarProjectAction('newChat', project)} onAddProject={handleSidebarAddProject}
               onNew={handleSidebarCreateConversation} onConversation={handleSidebarConversationChange}
               onAssistant={() => handleSidebarSectionChange('assistant')} onExplore={openExplore}/>

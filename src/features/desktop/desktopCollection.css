@@ -4,7 +4,7 @@
   --workspace-bar-height: max(60px, var(--window-frame-height));
   --header-rail-width: var(--sidebar-width);
   --chrome-grain: url('../../styles/workspace-grain.png');
-  --header-glass: color-mix(in srgb, var(--reading-paper, var(--surface)) 62%, transparent);
+  --header-glass: color-mix(in srgb, var(--surface) 62%, transparent);
   --drawer-glass: color-mix(in srgb, var(--surface) 70%, transparent);
   --chrome-glass-filter: blur(38px) saturate(1.65);
   --chrome-edge: color-mix(in srgb, var(--text) 14%, transparent);
@@ -12,21 +12,17 @@
   --chrome-control-hover: color-mix(in srgb, var(--text) 10%, transparent);
   --chrome-secondary: color-mix(in srgb, var(--text) 78%, var(--surface));
   --material-layer-display: block;
-  --art-tint-opacity: .18;
-  --sidebar-native-tint: var(--window-chrome-tint);
-  --sidebar-wallpaper-opacity: .20;
+  --sidebar-wallpaper-opacity: .07;
   --sidebar-glass-filter: blur(38px) saturate(1.55);
 }
 .app[data-desktop-workspace].theme-dark {
-  --header-glass: color-mix(in srgb, var(--reading-paper, var(--surface)) 34%, transparent);
+  --header-glass: color-mix(in srgb, var(--surface) 34%, transparent);
   --drawer-glass: color-mix(in srgb, color-mix(in srgb, var(--surface) 84%, var(--text)) 45%, transparent);
-  --sidebar-native-tint: color-mix(in srgb, var(--text) 5%, transparent);
   --chrome-glass-filter: blur(38px) saturate(1.75) brightness(.63);
   --chrome-control: color-mix(in srgb, var(--text) 7%, transparent);
   --chrome-control-hover: color-mix(in srgb, var(--text) 12%, transparent);
   --chrome-secondary: color-mix(in srgb, var(--text) 86%, var(--surface));
-  --art-tint-opacity: .25;
-  --sidebar-wallpaper-opacity: .24;
+  --sidebar-wallpaper-opacity: .09;
 }
 .app[data-desktop-workspace]:has(> .sidebar-is-collapsed) { --header-rail-width: 48px; }
 .app[data-desktop-workspace][data-floating-assistant] { --workspace-bar-height: var(--window-frame-height); }
@@ -39,15 +35,14 @@
 .app[data-desktop-workspace]:not([data-floating-assistant]) > .window-frame::before {
   content:""; position:absolute; inset-block-start:0; inset-inline:var(--header-rail-width) 0;
   height:var(--workspace-bar-height); z-index:-1; pointer-events:none;
-  background:var(--chrome-grain) repeat var(--header-glass); backdrop-filter:var(--chrome-glass-filter);
+  background:var(--surface);
   box-shadow:inset 0 -1px var(--chrome-edge);
 }
-/* Mica provides the docked backdrop. The same low-frequency wallpaper colors
-   stay visible when an open drawer is composited over a neutral page. */
-html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="docked"] > .sidebar {
-  background-color:var(--sidebar-native-tint); backdrop-filter:none;
+/* Only a surface overlapping actual content needs a glass backdrop. */
+.app[data-desktop-workspace]:not([data-floating-assistant]):has(> .desktop-shell:not([data-settings-visible]) > .main-stage > .desktop-library[data-header-underlap]) > .window-frame::before {
+  background:var(--chrome-grain) repeat var(--header-glass); backdrop-filter:var(--chrome-glass-filter);
 }
-html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell > .sidebar::before {
+html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar::before {
   content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
   display:var(--material-layer-display);
   background:var(--chrome-grain) repeat, var(--sidebar-wallpaper-field,none) center / 100% 100% no-repeat;
@@ -58,41 +53,14 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
   background:var(--surface); backdrop-filter:none;
 }
 .app[data-desktop-workspace][data-window-material-preference="solid"] {
-  --header-glass:var(--surface); --drawer-glass:var(--surface); --sidebar-native-tint:var(--surface);
+  --header-glass:var(--surface); --drawer-glass:var(--surface);
   --chrome-grain:none; --chrome-glass-filter:none; --sidebar-glass-filter:none; --material-layer-display:none;
 }
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   :root .app[data-desktop-workspace] .desktop-shell > .sidebar { background:var(--surface); backdrop-filter:none; }
   :root .app[data-desktop-workspace] {
-    --header-glass:var(--surface); --drawer-glass:var(--surface); --sidebar-native-tint:var(--surface);
+    --header-glass:var(--surface); --drawer-glass:var(--surface);
     --chrome-grain:none; --chrome-glass-filter:none; --sidebar-glass-filter:none; --material-layer-display:none;
-  }
-}
-/* Let the rail's last wallpaper column taper into an opaque reading surface.
-   The page and the composer's bottom scrim share the same bottom-aligned paint. */
-@media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
-  html[data-window-material="mica"] .app[data-desktop-workspace][data-translucent-sidebar="true"]:not([data-window-material-preference="solid"], [data-floating-assistant]) {
-    --reading-paper:color-mix(in srgb, var(--surface) 94%, rgb(var(--wallpaper-accent-rgb)));
-    --reading-edge-width:clamp(96px, 20vw, 256px);
-    --reading-background:
-      linear-gradient(to right, color-mix(in srgb, var(--reading-paper) 84%, transparent), var(--reading-paper) min(32%, var(--reading-edge-width))),
-      var(--sidebar-wallpaper-field, none) calc(-5 * var(--reading-edge-width)) bottom / calc(6 * var(--reading-edge-width)) 100vh no-repeat var(--reading-paper);
-    --rail-divider:color-mix(in srgb, var(--text) 5%, transparent);
-
-    & > .window-frame::before { box-shadow:inset 0 -1px var(--rail-divider); }
-    & > .desktop-shell > .main-stage,
-    & > .desktop-shell > .settings-shell > .settings-content { background:var(--reading-background); }
-    & > .desktop-shell > .main-stage > :is(.desktop-library, .assistant-view),
-    & > .desktop-shell > .main-stage > :is(.assistant-view, .feature-panel) > .topbar { background:transparent; }
-
-    & > .desktop-shell > .main-stage > .chat-panel {
-      --reading-bubble:color-mix(in srgb, var(--user-bubble) 94%, rgb(var(--wallpaper-accent-rgb)));
-      --reading-input:color-mix(in srgb, var(--surface-strong) 95%, rgb(var(--wallpaper-accent-rgb)));
-    }
-    & > .desktop-shell > .main-stage > .chat-panel:not(.composer-anchored) .composer-dock:not(.interaction-only)::before {
-      background:var(--reading-background);
-      mask-image:linear-gradient(to bottom, transparent, black var(--composer-backdrop-fade));
-    }
   }
 }
 @media (max-width: 700px) {
@@ -109,7 +77,7 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
 .app[data-desktop-workspace] .desktop-shell > .sidebar { box-sizing:border-box; padding-top:var(--window-frame-height); border-inline-end:1px solid var(--rail-divider); border-radius:0; }
 html[data-window-material="mica"] .app[data-desktop-workspace] > .desktop-shell { background:transparent; }
 /* Give the overlay an opaque backdrop across the rail so Chromium blurs the page only once. */
-.app[data-desktop-workspace] > .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) { background-color:var(--reading-paper, var(--surface)); }
+.app[data-desktop-workspace] > .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) { background-color:var(--surface); }
 html[data-window-material] .app[data-desktop-workspace] > .window-frame { border:0; background:transparent; box-shadow:none; }
 .app[data-desktop-workspace] .desktop-shell > .main-stage:has(> .desktop-library) { margin-top:0; }
 .app[data-desktop-workspace] .main-stage > .desktop-library { padding-block-start:calc(var(--workspace-bar-height) + var(--library-inset)); scroll-padding-top:var(--workspace-bar-height); }
@@ -146,6 +114,8 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .desktop-library [data-cover="prism"] { --cover-image:url('./art/prism.jpg'); }
 .desktop-cover,.desktop-detail-art,.desktop-discover-covers [data-cover] { background:var(--surface-raised) var(--cover-image) center/cover no-repeat; border-radius:9px; }
 .desktop-library .desktop-cover { color:white; display:flex; position:relative; align-items:end; justify-content:space-between; gap:7px; overflow:hidden; aspect-ratio: .84; max-height:360px; border:0; text-align:start; padding:clamp(12px,1.45vw,24px); isolation:isolate; }
+.desktop-library .desktop-cover-pending { background:var(--surface-raised); cursor:default; }
+.desktop-cover-pending::before { display:none; }
 .desktop-cover::before { content:""; position:absolute; z-index:-1; inset:0; background:linear-gradient(0deg,rgba(8,12,21,.85),rgba(5,8,20,.36) 37%,transparent 68%); }
 .desktop-cover-copy { min-width:0; display:grid; gap:5px; }
 .desktop-cover-copy>span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; font-size:13px; line-height:1.4; }

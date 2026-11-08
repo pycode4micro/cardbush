@@ -21,7 +21,7 @@
   min-width: 0;
   padding: 10px 14px;
   color: var(--text);
-  background: var(--reading-bubble, var(--user-bubble));
+  background: var(--user-bubble);
   border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
   border-radius: 16px;
   overflow-wrap: anywhere;

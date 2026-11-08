@@ -12,15 +12,9 @@
   display: flex;
   flex-direction: column;
   padding: 0;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface) 82%, rgb(var(--wallpaper-accent-rgb)) 10%),
-      color-mix(in srgb, var(--surface) 76%, rgb(var(--wallpaper-accent-rgb)) 14%)
-    );
+  background: color-mix(in srgb, var(--surface) 96%, var(--text));
   border-right: 0;
   box-shadow: none;
-  backdrop-filter: blur(36px) saturate(1.1);
   user-select: none;
   overflow: hidden;
   transform: translateX(0);
@@ -56,12 +50,6 @@
   --sidebar-text-mid: rgba(235, 229, 218, 0.76);
   --sidebar-text-soft: rgba(224, 215, 202, 0.62);
   --sidebar-text-muted: rgba(224, 215, 202, 0.46);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface) 86%, rgb(var(--wallpaper-accent-rgb)) 8%),
-      color-mix(in srgb, var(--surface) 80%, rgb(var(--wallpaper-accent-rgb)) 12%)
-    );
   border-right-color: transparent;
 }
 

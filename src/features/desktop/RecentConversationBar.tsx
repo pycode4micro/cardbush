@@ -48,7 +48,7 @@ type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
 type Props = HistoryActions & {
   actions?: ReactNode;
-  language: AppLanguage; conversation: ConversationSummary; conversations: ConversationSummary[]; inConversation?: boolean;
+  language: AppLanguage; conversation?: ConversationSummary; conversations: ConversationSummary[]; inConversation?: boolean;
   transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
   open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
 };
@@ -64,11 +64,11 @@ export function RecentConversationBar({ actions, language, conversation, convers
     panel.current?.hidePopover();
     setSelectedId('');
     setBrowsedId('');
-  }, [conversation.id]);
+  }, [conversation?.id]);
   const timeline = useMemo(() => conversations.filter(item => !item.metadata?.hidden && !archived.has(item.id))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)), [conversations, archived]);
   const current = (!inConversation && timeline.find(item => item.id === browsedId)) || conversation;
-  const position = timeline.findIndex(item => item.id === current.id);
+  const position = timeline.findIndex(item => item.id === current?.id);
   const previous = position >= 0 ? timeline[position + 1] : undefined;
   const next = position > 0 ? timeline[position - 1] : undefined;
   const switchConversation = (target: ConversationSummary) => {
@@ -76,7 +76,7 @@ export function RecentConversationBar({ actions, language, conversation, convers
     else setBrowsedId(target.id);
     setSelectedId('');
   };
-  const currentMessages = transcripts[current.id];
+  const currentMessages = current && transcripts[current.id];
   const cover = useMemo(() => {
     if (!currentMessages) return;
     for (let i = currentMessages.length - 1; i >= 0; i--) {
@@ -86,8 +86,8 @@ export function RecentConversationBar({ actions, language, conversation, convers
       }
     }
   }, [currentMessages]);
-  const output = useMemo(() => latestAssistantOutput(currentMessages) || conversationDisplayTitle(current.assistantPreview ?? ''),
-    [currentMessages, current.assistantPreview]);
+  const output = useMemo(() => latestAssistantOutput(currentMessages) || conversationDisplayTitle(current?.assistantPreview ?? ''),
+    [currentMessages, current?.assistantPreview]);
   const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? current;
   const name = (item: ConversationSummary) => conversationDisplayTitle(item.title) || uiText(language)('composer.newConversation');
   const enter = useCallback((id: string, message?: ChatMessage) => {
@@ -98,11 +98,11 @@ export function RecentConversationBar({ actions, language, conversation, convers
     setSelectedId(id); setTab('turns');
     panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="turns"]')?.focus({ preventScroll: true });
   }, []);
-  return <RecentConversationBarView actions={actions} language={language} title={name(current)} cover={cover} output={output} selectedTitle={name(selected)} panelId={id}
+  return <RecentConversationBarView actions={actions} language={language} title={current ? name(current) : ''} cover={cover} output={output} selectedTitle={selected ? name(selected) : ''} panelId={id}
     previous={previous && (() => switchConversation(previous))} next={next && (() => switchConversation(next))}
-    panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={() => enter(current.id)}
+    panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={current ? () => enter(current.id) : undefined}
     onToggle={value => { setExpanded(value); if (!value) { setTab('turns'); setSelectedId(''); } }}>
-    {expanded && (tab === 'sessions'
+    {expanded && selected && (tab === 'sessions'
       ? <RecentSessions selectedId={selected.id} register={onRecentList} select={browse} enter={enter}/>
       : <TurnList key={selected.id} language={language} sessionId={selected.id} messages={transcripts[selected.id]}
           page={pageFor(selected.id)} read={read} earlier={earlier} select={message => enter(selected.id, message)}/>)}
