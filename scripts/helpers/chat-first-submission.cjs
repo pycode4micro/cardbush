@@ -11,9 +11,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.sampleFirst=()=>{
       const input=document.querySelector('[data-composer-input]'),surface=document.querySelector('.composer-surface');
       const button=document.querySelector('.scroll-bottom'),dock=document.querySelector('.composer-dock');
+      const surfaceBounds=surface?.getBoundingClientRect();
       if(input)firstNodes.add(input);
       firstFrames.push({input:!!input,focus:document.activeElement===input,welcome:!!document.querySelector('.welcome-composer'),
-        surfaceTop:surface?.getBoundingClientRect().top, surfaceHeight:surface?.getBoundingClientRect().height,
+        surfaceTop:surfaceBounds?.top, surfaceHeight:surfaceBounds?.height, surfaceLeft:surfaceBounds?.left, surfaceRight:surfaceBounds?.right,
         buttonBottom:button?.getBoundingClientRect().bottom,dockTop:dock?.getBoundingClientRect().top,
         voice:!!document.querySelector('.send-button .lucide-audio-lines'),actionsWidth:document.querySelector('.composer-actions')?.getBoundingClientRect().width});
       window.firstFrame=requestAnimationFrame(sampleFirst);
@@ -63,6 +64,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     results.push({style,custom,zoom,long,completeAtAdmission,activation,...state});
     assert.equal(state.nodes,1,'first admission keeps the mounted input');
     assert.ok(state.frames.every(frame=>frame.input&&(activation==='pointer'||frame.focus)),'input stays mounted and keyboard submission preserves focus on every frame');
+    const first=state.frames[0];
+    assert.ok(state.frames.every(frame=>Math.abs(frame.surfaceLeft-first.surfaceLeft)<2 && Math.abs(frame.surfaceRight-first.surfaceRight)<2),
+      'both composer edges stay fixed throughout first submission');
     const widths=state.frames.map(frame=>frame.actionsWidth);
     assert.ok(Math.max(...widths)-Math.min(...widths)<1,'the action bar never shrinks to idle controls during admission');
     const settled=state.frames.at(-1);

@@ -95,7 +95,7 @@ async function run() {
   await wait(() => requested, 'runtime request held');
   await read('document.fonts.ready.then(() => true)');
   await pause(300);
-  const positions = () => read(`Array.from(document.querySelectorAll('.recent-bar-transport button,.recent-bar-chat,.recent-bar-list,.desktop-covers > *'), el => {
+  const positions = () => read(`Array.from(document.querySelectorAll('.recent-bar-chat,.recent-bar-list,.desktop-covers > *'), el => {
     const r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height].map(Math.round);
   })`);
   assert.ok(await read("!!document.querySelector('.recent-bar-chat:disabled') && !!document.querySelector('.recent-bar-list:disabled')"));
@@ -118,15 +118,7 @@ async function run() {
   assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
   assert.equal(await read("document.querySelector('.recent-chat-copy').textContent"), '设计评审记录', 'the title bar omits assistant output');
   assert.equal(await read("Boolean(document.querySelector('.recent-turn-scroll'))"), false);
-  const title = () => read("document.querySelector('.recent-chat-copy strong').textContent");
-  const direction = await read("document.querySelector('[data-recent-step=previous]').disabled ? 'next' : 'previous'");
-  await click('[data-recent-step=' + direction + ']');
-  await wait(async () => await title() !== '设计评审记录', 'previous or next selects an adjacent chat');
-  await visible('[data-desktop-page=overview]');
-  assert.equal(await read("!!document.querySelector('.recent-chat-copy small')"), false, 'a chat with no assistant output shows only its title');
-  await click('[data-recent-step=' + (direction === 'previous' ? 'next' : 'previous') + ']');
-  await wait(async () => await title() === '设计评审记录', 'opposite navigation restores the chat');
-  assert.equal(await read("document.querySelector('.recent-chat-copy').textContent"), '设计评审记录');
+  assert.equal(await read("document.querySelectorAll('.recent-bar button.no-drag').length"), 2, 'home toolbar offers the title and the list');
   const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar button.no-drag')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
   assert.ok(await bounds());
   fs.writeFileSync(path.join(project, 'tmp/conversation-glass-bar.png'), (await win.webContents.capturePage()).toPNG());
@@ -223,6 +215,32 @@ async function run() {
     await wait(() => read('innerWidth === ' + width), 'chat window resized to ' + width);
     await wait(toolbarFits, 'chat controls fit at ' + width + ' pixels');
   }
+  const checkChatMargins = async (label, selector) => {
+    const chat = '.main-stage > .chat-panel[role=region]';
+    await visible(chat + ' .composer-surface');
+    await wait(() => read("document.querySelector('.sidebar').getAnimations().every(animation => animation.playState !== 'running')"), 'sidebar settles');
+    const sample = () => read(`(() => {
+      const rail = document.querySelector('.sidebar').getBoundingClientRect();
+      const stage = document.querySelector('.main-stage').getBoundingClientRect();
+      return Array.from(document.querySelector(${JSON.stringify(chat)}).querySelectorAll(${JSON.stringify(selector)}), el => {
+        const rect = el.getBoundingClientRect();
+        return {element: el.className, width: rect.width, left: rect.left - rail.right, right: stage.right - rect.right};
+      }).filter(box => box.width > 0);
+    })()`);
+    const centered = boxes => boxes.every(box => box.left >= 0 && Math.abs(box.left - box.right) < 2);
+    const margins = await wait(async () => {
+      const boxes = await sample();
+      return boxes.length && centered(boxes) && boxes[0];
+    }, label).catch(async error => { throw Error(label + ': ' + JSON.stringify((await sample()).slice(-5)), {cause: error}); });
+    console.log(label, margins);
+  };
+  win.setContentSize(1180, 760);
+  await visible('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed');
+  await checkChatMargins('Transcript centers beside the rail', '.composer-surface,.message-row');
+  await click('.window-sidebar-toggle');
+  await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width > 240"), 'chat drawer opens');
+  await checkChatMargins('Transcript centers beside the expanded drawer', '.composer-surface,.message-row');
+  await click('.window-sidebar-toggle');
   win.setContentSize(1160, 740);
   await pause(400);
   fs.writeFileSync(path.join(project, 'tmp/chat-titlebar-actions.png'), (await win.webContents.capturePage()).toPNG());
@@ -237,12 +255,7 @@ async function run() {
   await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'dismiss with Escape');
   await click('.recent-bar-chat');
   await visible('[data-message-id="' + targetId + '"]');
-  await click('[data-recent-step=' + direction + ']');
-  await wait(async () => await title() !== '设计评审记录', 'in chat, transport switches the active conversation');
-  const otherTitle = await title();
-  await wait(() => read("document.querySelector('.main-stage .chat-panel[role=region]')?.getAttribute('aria-label') === " + JSON.stringify(otherTitle)), 'the active chat and title bar agree');
-  await click('[data-recent-step=' + (direction === 'previous' ? 'next' : 'previous') + ']');
-  await wait(async () => await title() === '设计评审记录', 'return to the original conversation');
+  assert.equal(await read("document.querySelector('.main-stage .chat-panel[role=region]').getAttribute('aria-label')"), await read("document.querySelector('.recent-chat-copy strong').textContent"), 'the active chat and title agree');
   // Browsing another session does not change the page or register it as visited.
   await click('[data-nav-section=home]');
   assert.equal(await read("document.querySelectorAll('.sidebar .conversation-row').length"), 0);
@@ -322,6 +335,13 @@ async function run() {
   await click(inspector);
   await visible('.right-inspector');
   await click(inspector);
+  win.setContentSize(1180, 760);
+  await visible('.welcome-slot-input .composer-surface');
+  await visible('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed');
+  await checkChatMargins('Welcome input centers beside the rail', '.welcome-slot-input .composer-surface');
+  await click('.window-sidebar-toggle');
+  await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width > 240"), 'welcome drawer opens');
+  await checkChatMargins('Welcome input centers beside the expanded drawer', '.welcome-slot-input .composer-surface');
   console.log('Workspace navigation passed: compact rail and caption alignment, Explore without a management button, section/category entrance and reduced motion.');
   console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
   app.quit();

@@ -6,17 +6,10 @@
   --caption-inset: clamp(0px, calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)), 150px);
   --center-offset: clamp(0px, calc((var(--caption-inset) - 48px) / 2), 51px);
   display:grid; align-items:center;
-  grid-template-columns:minmax(64px,calc((100% - var(--summary-width)) / 2 - 8px + var(--center-offset))) minmax(0,var(--summary-width)) minmax(max-content,1fr);
+  grid-template-columns:minmax(0,calc((100% - var(--summary-width)) / 2 - 8px + var(--center-offset))) minmax(0,var(--summary-width)) minmax(max-content,1fr);
   gap:8px; margin-inline-end:8px;
 }
 .recent-bar button { font:inherit; color:inherit; cursor:pointer; }
-.recent-bar-transport { grid-column:1; justify-self:center; display:flex; align-items:center; gap:3px; }
-.recent-bar-transport button {
-  display:grid; place-items:center; width:30px; height:30px; padding:0; border:0; border-radius:5px; background:transparent;
-}
-.recent-bar-transport button:hover:not(:disabled) { background:var(--menu-hover); }
-.recent-bar-transport button:disabled { opacity:.46; cursor:default; }
-.recent-bar-transport svg { width:18px; height:18px; fill:currentColor; }
 .recent-bar-chat {
   grid-column:2; width:100%; min-width:0; height:clamp(24px, calc(100% - 16px), 54px); padding:0;
   display:flex; align-items:center; overflow:hidden; border:0; border-radius:4px;
@@ -38,9 +31,6 @@
 @media (max-width:760px) {
   .recent-bar { grid-template-columns:auto minmax(0,1fr) auto; gap:4px; margin-inline-end:4px; }
   .recent-bar-actions { margin-inline-end:0; gap:0; }
-
-  .recent-bar-transport { gap:0; }
-  .recent-bar-transport button { width:25px; }
 }
 .recent-turn-drawer {
   position: fixed; inset: var(--workspace-bar-height, var(--window-frame-height)) 0 0 auto; margin: 0;

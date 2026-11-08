@@ -17,8 +17,6 @@
     "desktop.manageApps": "Manage apps",
     "desktop.retryEvents": "Reload events",
     "desktop.eventsUnavailable": "Events are temporarily unavailable.",
-    "recentBar.previousChat": "Previous conversation",
-    "recentBar.nextChat": "Next conversation",
     "recentBar.open": "Open conversation · {title}",
     "recentBar.sessions": "Recent chats",
     "recentBar.navigator": "Conversation navigation",

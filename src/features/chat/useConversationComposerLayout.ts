@@ -101,11 +101,9 @@ export function useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, s
     const summaryInset = Math.max(0, parseFloat(contentStyle.marginRight) || 0);
     const height = scroller.clientHeight;
     if (!embedded) {
-      // A bottom-docked conversation input follows the transcript's reading
-      // track. The welcome page's custom width belongs only to kept placements.
       const readingWidth = Math.max(0, content.clientWidth - (parseFloat(contentStyle.paddingLeft) || 0) - (parseFloat(contentStyle.paddingRight) || 0));
-      const horizontal = composerHorizontalBounds(body.clientWidth, anchored ? placement?.width : undefined,
-        Math.min(parseFloat(getComputedStyle(body).getPropertyValue('--chat-track-width')) || 704, readingWidth), body.clientWidth - summaryInset);
+      const horizontal = composerHorizontalBounds(body.clientWidth - summaryInset, placement?.width,
+        Math.min(parseFloat(getComputedStyle(body).getPropertyValue('--chat-track-width')) || 704, readingWidth));
       body.style.setProperty('--flow-composer-left', `${horizontal.left}px`);
       body.style.setProperty('--flow-composer-width', `${horizontal.width}px`);
     }

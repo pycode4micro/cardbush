@@ -6,7 +6,16 @@
 .default-layout .welcome-slot-greeting { width: 100%; }
 .default-layout .welcome-slot-suggestions { width: min(100%, 720px); margin-top: 14px; }
 .welcome-layout-surface .welcome-slot-input { position: absolute; left: 50%; width: min(calc(100% - 24px), var(--chat-track-width)); top: auto; bottom: 20px; height: auto; }
-.default-layout .welcome-hero { margin-bottom: var(--welcome-composer-height, 100px); }
+.welcome-layout-surface.default-layout { padding-inline: 0; }
+.default-layout .welcome-hero {
+  --welcome-reading-gutter: var(--chat-inline-gutter, 16px);
+  width: min(calc(100% - 2 * var(--welcome-reading-gutter)), var(--chat-track-width, 704px));
+  margin-bottom: var(--welcome-composer-height, 100px);
+}
+/* Reserve the same margin the turn rail will use once the transcript opens. */
+@container welcome-layout (min-width: 640px) {
+  .default-layout .welcome-hero { --welcome-reading-gutter: max(56px, var(--chat-inline-gutter, 16px)); }
+}
 .welcome-layout-slot .welcome-suggestions { width: 100%; margin: 0; }
 .welcome-layout-slot .welcome-input-stack { width: 100%; max-width: none; height: auto; min-height: 0; padding: 0; overflow: visible; justify-content: flex-start; gap: 0; }
 .welcome-layout-slot .welcome-slot-content > h2 { height: 100%; display: flex; align-items: center; justify-content: center; }

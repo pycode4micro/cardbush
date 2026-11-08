@@ -2149,7 +2149,7 @@ function CardbushApp() {
       >
         {!floating && <RecentConversationBar
           key={currentPage.section} actions={chatActionsSlot}
-          language={language} conversation={recentConversation} conversations={chat.conversations} inConversation={section === 'chat' && !settingsOpen}
+          language={language} conversation={recentConversation} conversations={chat.conversations}
           transcripts={chat.messagesByConversation} onRecentList={setRecentList}
           pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
           earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>}

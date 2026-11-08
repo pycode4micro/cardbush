@@ -34,18 +34,17 @@ type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
 type Props = HistoryActions & {
   actions?: ReactNode;
-  language: AppLanguage; conversation?: ConversationSummary; conversations: ConversationSummary[]; inConversation?: boolean;
+  language: AppLanguage; conversation?: ConversationSummary; conversations: ConversationSummary[];
   transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
   open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ actions, language, conversation, conversations, inConversation = false, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
+export function RecentConversationBar({ actions, language, conversation, conversations, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
   const [tab, setTab] = useState<RecentTab>('turns');
   const [selectedId, setSelectedId] = useState('');
-  const [browsedId, setBrowsedId] = useState('');
   const panel = useRef<HTMLElement>(null);
   const id = useId(), archived = useConversationArchives();
   useLayoutEffect(() => {
@@ -78,20 +77,8 @@ export function RecentConversationBar({ actions, language, conversation, convers
   useLayoutEffect(() => {
     panel.current?.hidePopover();
     setSelectedId('');
-    setBrowsedId('');
   }, [conversation?.id]);
-  const timeline = useMemo(() => conversations.filter(item => !item.metadata?.hidden && !archived.has(item.id))
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)), [conversations, archived]);
-  const current = (!inConversation && timeline.find(item => item.id === browsedId)) || conversation;
-  const position = timeline.findIndex(item => item.id === current?.id);
-  const previous = position >= 0 ? timeline[position + 1] : undefined;
-  const next = position > 0 ? timeline[position - 1] : undefined;
-  const switchConversation = (target: ConversationSummary) => {
-    if (inConversation) open(target.id);
-    else setBrowsedId(target.id);
-    setSelectedId('');
-  };
-  const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? current;
+  const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? conversation;
   const name = (item: ConversationSummary) => conversationDisplayTitle(item.title) || uiText(language)('composer.newConversation');
   const enter = useCallback((id: string, message?: ChatMessage) => {
     panel.current?.hidePopover();
@@ -114,9 +101,8 @@ export function RecentConversationBar({ actions, language, conversation, convers
     if (animations?.length) void Promise.allSettled(animations.map(animation => animation.finished)).then(finish);
     else finish();
   };
-  return <RecentConversationBarView actions={actions} language={language} title={current ? compactConversationTitle(name(current)) : ''} selectedTitle={selected ? name(selected) : ''} panelId={id}
-    previous={previous && (() => switchConversation(previous))} next={next && (() => switchConversation(next))}
-    panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={current ? () => enter(current.id) : undefined}
+  return <RecentConversationBarView actions={actions} language={language} title={conversation ? compactConversationTitle(name(conversation)) : ''} selectedTitle={selected ? name(selected) : ''} panelId={id}
+    panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={conversation ? () => enter(conversation.id) : undefined}
     onToggle={togglePanel}>
     {present && selected && (tab === 'sessions'
       ? <RecentSessions selectedId={selected.id} register={onRecentList} select={browse} enter={enter}/>

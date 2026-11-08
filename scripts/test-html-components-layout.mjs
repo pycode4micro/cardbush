@@ -1,18 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import test from 'node:test';
-import ts from 'typescript';
-const load = file => { const exports = {}; new Function('exports', 'require', ts.transpileModule(readFileSync(file, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText)(exports, spec => load(path.resolve(path.dirname(file), spec + '.ts'))); return exports; };
-const p = load('src/features/inspector/panelLayout.ts');
-const b = load('src/features/inspector/browserBookmarks.ts');
-const c = load('src/features/components/componentModel.ts');
-const { dispatchComponentMessage } = load('src/features/components/dispatchComponentMessage.ts');
-const g = load('src/features/components/welcomeLayoutGeometry.ts');
-const composer = load('src/features/components/composerLayoutGeometry.ts');
-const viewport = load('src/features/components/welcomeViewportGeometry.ts');
+import './coding-benchmark/register-loader.mjs';
+
+const p = await import('../src/features/inspector/panelLayout.ts');
+const b = await import('../src/features/inspector/browserBookmarks.ts');
+const c = await import('../src/features/components/componentModel.ts');
+const { dispatchComponentMessage } = await import('../src/features/components/dispatchComponentMessage.ts');
+const g = await import('../src/features/components/welcomeLayoutGeometry.ts');
+const composer = await import('../src/features/components/composerLayoutGeometry.ts');
+const viewport = await import('../src/features/components/welcomeViewportGeometry.ts');
 
 test('welcome layouts retain aligned proportions through maximize, restore and editor rebasing', () => {
   const layout = { viewportHeight: 700, items: [
@@ -68,7 +64,7 @@ test('bottom placements snap or leave meaningful travel, including tall inputs a
   assert.equal(pinned.top, 828, 'saved bottom pin follows viewport height');
   assert.equal(composer.composerHorizontalBounds(1000, 60).left, 200);
   assert.deepEqual(composer.composerHorizontalBounds(320, undefined, 218), { left: 51, width: 218 }, 'default composer fits the narrow transcript track');
-  assert.deepEqual(composer.composerHorizontalBounds(1000, 90, 704, 700), { left: 12, width: 676 }, 'summary constrains width symmetrically');
+  assert.deepEqual(composer.composerHorizontalBounds(700, 90), { left: 35, width: 630 }, 'a custom width follows the available pane after docking a summary');
 });
 
 test('composer flow defaults, validates choices and lets a placement override the catalog', () => {

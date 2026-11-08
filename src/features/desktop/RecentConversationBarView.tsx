@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode, type Ref } from 'react';
-import { List, MessageSquare, Rewind, FastForward } from 'lucide-react';
+import { List, MessageSquare } from 'lucide-react';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { uiText } from '../../i18n';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
@@ -7,20 +7,14 @@ import { fileUrl } from '../../shared/localPaths';
 
 export type RecentTab = 'turns' | 'sessions';
 
-export function RecentConversationBarView({ actions, language, title, previous, next, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
+export function RecentConversationBarView({ actions, language, title, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
   language: AppLanguage; title: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
-  actions?: ReactNode; previous?: () => void; next?: () => void;
+  actions?: ReactNode;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen?: () => void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
   const tabs = [{ id: 'turns', label: t('recentBar.turns') }, { id: 'sessions', label: t('recentBar.sessions') }] as const;
   return <div className="recent-bar window-drag">
-    <div className="recent-bar-transport">
-      <button className="no-drag" type="button" data-recent-step="previous" disabled={!previous} onClick={previous}
-        aria-label={t('recentBar.previousChat')} title={t('recentBar.previousChat')}><Rewind aria-hidden="true"/></button>
-      <button className="no-drag" type="button" data-recent-step="next" disabled={!next} onClick={next}
-        aria-label={t('recentBar.nextChat')} title={t('recentBar.nextChat')}><FastForward aria-hidden="true"/></button>
-    </div>
     <button className="recent-bar-chat no-drag" type="button" disabled={!onOpen} onClick={onOpen} aria-label={onOpen ? t('recentBar.open', { title }) : t('recentBar.sessions')} title={onOpen ? t('recentBar.open', { title }) : undefined}>
       <span className="recent-chat-copy"><strong>{title}</strong></span>
     </button>

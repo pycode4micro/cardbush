@@ -35,6 +35,13 @@
 .sidebar-is-collapsed[data-sidebar-layout] .sidebar-footer { padding-inline: 0; margin-block-start: auto; }
 
 .desktop-shell[data-sidebar-layout="drawer"] { padding-inline-start: var(--sidebar-rail-width); }
+/* Keep the page backing under the glass. Center ordinary chats, including the
+   welcome canvas, in the part of the workspace beside the expanded drawer. */
+@media (min-width: 761px) {
+  .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .main-stage > .chat-panel {
+    margin-inline-start: clamp(0px, calc(100% - var(--conversation-pane-min-width)), calc(var(--sidebar-width) - var(--sidebar-rail-width)));
+  }
+}
 .desktop-shell[data-sidebar-layout="drawer"] > .sidebar {
   position: absolute; inset: 0 auto 0 0; z-index: 46; height: 100%;
   --side-panel-width: min(var(--sidebar-width), calc(100vw - var(--sidebar-rail-width)));

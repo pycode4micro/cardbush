@@ -6,10 +6,10 @@
 
 .chat-panel .message-list-content,
 .chat-panel .composer-dock {
-  /* Balance the right scrollbar with equal outer margins while preserving
-     the reading width and leaving the native scrollbar outside the dock. */
-  padding-left: calc(var(--chat-reading-gutter, var(--chat-inline-gutter, 16px)) + var(--message-list-scrollbar-inset, 0px) / 2);
-  padding-right: max(0px, calc(var(--chat-reading-gutter, var(--chat-inline-gutter, 16px)) - var(--message-list-scrollbar-inset, 0px) / 2));
+  /* The native scrollbar occupies part of the end gutter. Its arrival on
+     first send must not narrow the reading track. */
+  padding-left: var(--chat-reading-gutter, var(--chat-inline-gutter, 16px));
+  padding-right: max(0px, calc(var(--chat-reading-gutter, var(--chat-inline-gutter, 16px)) - var(--message-list-scrollbar-inset, 0px)));
 }
 
 .composer-dock.action-only {

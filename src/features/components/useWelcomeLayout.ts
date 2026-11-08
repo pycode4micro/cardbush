@@ -12,6 +12,7 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
     const canvas = ref.current, slot = canvas?.querySelector<HTMLElement>('.welcome-slot-input');
     const input = slot?.querySelector<HTMLElement>('.welcome-input-stack');
     if (!canvas) return;
+    const readingTrack = canvas.querySelector<HTMLElement>('.welcome-hero');
     const placement = layout?.items.find(item => item.componentId === 'system-input');
     let referenceHeight = layout?.viewportHeight;
     const measure = () => {
@@ -34,8 +35,7 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       if (!editing && layout === collection.welcomeLayout) adoptWelcomeViewport(collection, referenceHeight);
       if (!slot || !input) return;
       const viewportWidth = canvas.offsetWidth;
-      const horizontal = composerHorizontalBounds(viewportWidth, placement?.width,
-        parseFloat(getComputedStyle(canvas).getPropertyValue('--chat-track-width')) || 704);
+      const horizontal = composerHorizontalBounds(viewportWidth, placement?.width, readingTrack?.offsetWidth);
       // Set width before measuring height: wrapped text and the standard toolbar
       // can change height when a narrow pane is resized.
       slot.style.left = `${horizontal.left}px`;
