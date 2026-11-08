@@ -1290,27 +1290,11 @@ function nativeText(language = nativeUiLanguage ?? (app.isReady() ? app.getLocal
 
 function updateTrayMenu() {
   if (!tray) return;
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: nativeText()(assistantResident ? 'resident.openAssistant' : 'main.open_cardbush'),
-        click: () => showMainWindow(),
-      },
-      ...(assistantResident ? [{ label: nativeText()('main.open_cardbush'), click: () => openResidentWorkspace('home') }] : []),
-      { type: 'checkbox', label: nativeText()('resident.nextLaunch'), checked: assistantNextLaunch,
-        click: async item => {
-          try {
-            await saveResidentPreference(item.checked);
-          } catch { void dialog.showMessageBox({ type: 'error', message: nativeText()('resident.preferenceFailed') }); }
-          updateTrayMenu();
-        } },
-      { type: 'separator' },
-      {
-        label: nativeText()('main.quit'),
-        click: () => requestAppQuit(),
-      },
-    ]),
-  );
+  const t = nativeText();
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: t('main.open'), click: showMainWindow },
+    { label: t('main.quit'), click: requestAppQuit },
+  ]));
 }
 
 function requestAppQuit() {
@@ -1733,7 +1717,6 @@ function openResidentWorkspace(page: 'home' | 'explore') {
     createWindow({ workspace: page });
     assistantResident = false;
     syncAssistantResidency();
-    updateTrayMenu();
   }
   else showMainWindow();
 }
@@ -1783,7 +1766,6 @@ ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown
   const win = mainWindow!;
   if (action === 'startup' && typeof enabled === 'boolean') {
     await saveResidentPreference(enabled);
-    updateTrayMenu();
   } else if (action === 'float' && !floatingAssistant && !workspaceWindowState) {
     if ((idlePage === 'home' || idlePage === 'explore') && !desktopVoiceHost.hasActiveCall(win.webContents.id)) {
       // An untouched workspace has no editor or browser state to retain.
@@ -1794,7 +1776,6 @@ ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown
         syncAssistantResidency();
         win.destroy();
         createWindow();
-        updateTrayMenu();
       });
       return { floating: true, nextLaunch: assistantNextLaunch };
     }

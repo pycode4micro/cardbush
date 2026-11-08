@@ -94,6 +94,7 @@ async function run() {
     return ()=>{release();audioGate=undefined;};
   };
   await wait(() => tray && menu, 'tray');
+  assert.deepEqual(menu.items.map(item => item.type), ['normal', 'normal'], 'tray has only Open and Quit in either launch mode');
   const stats = {};
   if (resident) {
     await sleep(1500); stats.idle = take();
@@ -120,8 +121,8 @@ async function run() {
     win.close(); await wait(() => win.isDestroyed(), 'release floating renderer');
     await wait(() => !app.getAppMetrics().some(p => p.type === 'Tab'), 'release renderer process');
     stats.closed = take();
-    tray.emit('double-click');
-    await wait(() => BrowserWindow.getAllWindows()[0]?.isVisible(), 'reopen floating Assistant');
+    menu.items[0].click();
+    await wait(() => BrowserWindow.getAllWindows()[0]?.isVisible(), 'tray Open restores the floating Assistant');
     const reopened = BrowserWindow.getAllWindows()[0];
     await wait(() => reopened.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant"))'), 'reopened UI');
     // Exercise the first tool request after the local reminder and renderer teardown.
@@ -153,7 +154,9 @@ async function run() {
     await wait(() => win.webContents.executeJavaScript('window.cardbushDesktop.runtimeStartupStatus().then(s=>s.phase==="ready")'), 'runtime ready');
     await sleep(1500); stats.open = take(); win.close(); await sleep(1500); stats.idle = take();
     assert.equal(stats.idle.windows, 1);
-    win.show();
+    assert.ok(!win.isVisible(), 'closing the workspace hides it in the tray');
+    menu.items[0].click();
+    await wait(() => win.isVisible(), 'tray Open restores the same workspace');
     await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, tray, wait, root, project, holdAudioSettings });
   }
   fs.writeFileSync(path.join(root, 'metrics.json'), JSON.stringify(stats, null, 2));
