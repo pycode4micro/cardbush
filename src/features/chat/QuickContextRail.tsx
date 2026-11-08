@@ -21,7 +21,7 @@ import { MarkdownContent } from '../chatMessages/MessageBubble';
 import { FileMemoScope } from '../chatMessages/FileMemoScope';
 import { HoverPreview, useHoverPreview } from '../../components/HoverPreview';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
-import { contextTickWindow, indexContextTurns } from './quickContextIndex';
+import { contextTickWindow, indexContextTurns, quickTurnPreviewMessages } from './quickContextIndex';
 
 type SelectedTurn = {
   message: ChatMessage;
@@ -490,29 +490,6 @@ const QuickContextTick = memo(function QuickContextTick({ message, language, ind
 
 function selectorEscape(value: string) {
   return value.replace(/["\\]/g, '\\$&');
-}
-
-export function quickTurnPreviewMessages(messages: ChatMessage[]) {
-  const user = messages.find((message) =>
-    message.role === 'user' && !isTurnGuidanceMessage(message),
-  );
-  const assistant = messages.find((message) =>
-    message.role === 'assistant' &&
-    message.metadata?.transcript_kind === 'assistant_final' &&
-    Boolean(message.content.trim()),
-  ) ?? [...messages].reverse().find((message) =>
-    message.role === 'assistant' && Boolean(message.content.trim()),
-  );
-  return [user, assistant].filter((message): message is ChatMessage => Boolean(message));
-}
-
-function isTurnGuidanceMessage(message: ChatMessage) {
-  const metadata = message.metadata ?? {};
-  return (
-    metadata.turn_guidance === true ||
-    metadata.turnGuidance === true ||
-    String(metadata.name ?? '').trim() === 'turn_guidance'
-  );
 }
 
 function compactText(value: string, limit: number) {

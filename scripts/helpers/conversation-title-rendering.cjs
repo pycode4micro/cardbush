@@ -15,11 +15,11 @@ module.exports = async function testConversationTitleRendering({ run, until, pau
       { id: 'long', title: '[$a-very-long-plugin-name-for-testing-layout](<C:/plugins/long/plugin.json>) 验证渲染与省略', expected: 'a-very-long-plugin-name-for-testing-layout 验证渲染与省略' },
       { id: 'plain', title: '普通标题 [待办]', expected: '普通标题 [待办]' },
     ];
-    window.titleConversations = titleFixtures.map(item => ({ ...item, preview: '', updatedAt: '2026-09-12T00:00:00Z' }));
+    window.titleConversations = titleFixtures.map(item => ({ ...item, projectId: 'title-project', projectDir: 'D:/title-project', preview: '', updatedAt: '2026-09-12T00:00:00Z' }));
     window.showTitleFixture = index => renderView(h('div', { className: 'desktop-shell' },
       h(views.ChatSidebar, {
         language: 'zh', section: 'chat', activeConversationId: titleFixtures[index].id,
-        projects: [], conversations: titleConversations, changeReportsByConversation: {},
+        projects: [{id:"title-project", title:"Review", rootPath:"D:/title-project"}], conversations: titleConversations, changeReportsByConversation: {},
         runningConversationIds: new Set(['legacy']),
         onSectionChange: titleNoop, onConversationChange: id => titleSelections.push(id),
         onCreateConversation: titleNoop, onAddProject: titleNoop, onProjectAction: titleNoop,

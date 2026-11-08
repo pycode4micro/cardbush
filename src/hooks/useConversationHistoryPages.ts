@@ -16,6 +16,11 @@ export function useConversationHistoryPages(input: {
   const sequence = useRef(0);
   const previousMessages = useRef(input.messages);
   const pending = useRef(new Map<string, AbortController>());
+  const prependAnchors = useRef(new Map<string, () => void>());
+  const registerPrependAnchor = useCallback((id: string, capture: () => void) => {
+    prependAnchors.current.set(id, capture);
+    return () => { if (prependAnchors.current.get(id) === capture) prependAnchors.current.delete(id); };
+  }, []);
   const invalidated = useRef(new Set<string>());
   const [revision, setRevision] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -34,8 +39,8 @@ export function useConversationHistoryPages(input: {
   }, [changed]);
   const readMessages = useCallback(async (id: string, options?: Parameters<typeof fetchSessionMessages>[1]) => (await read(id, options)).messages, [read]);
 
-  const loadOlder = useCallback(async (beforeApply?: () => void) => {
-    const id = current.current.activeId, page = pages.current.get(id), baseline = current.current.messages[id];
+  const loadOlderFor = useCallback(async (id: string, beforeApply?: () => void) => {
+    const page = pages.current.get(id), baseline = current.current.messages[id];
     if (!page?.nextCursor || !baseline || pending.current.has(id)) return;
     const controller = new AbortController(), epoch = advance(id);
     pending.current.set(id, controller); changed();
@@ -48,7 +53,7 @@ export function useConversationHistoryPages(input: {
       if (controller.signal.aborted || epochs.current.get(id) !== epoch || !current.current.messages[id]) return;
       if (!result.historyPage || result.historyPage.historyRevision !== page.historyRevision) throw Error(uiText()('useConversationHistoryPages.session_history_changed_refresh_the_conversation'));
       if (current.current.messages[id]?.[0] !== baseline[0]) return;
-      if (current.current.activeId === id) beforeApply?.();
+      if (current.current.activeId === id) (beforeApply ?? prependAnchors.current.get(id))?.();
       current.current.setMessages(value => {
         const messages = value[id];
         if (!messages || epochs.current.get(id) !== epoch || messages[0] !== baseline[0]) return value;
@@ -72,9 +77,13 @@ export function useConversationHistoryPages(input: {
     previousMessages.current = input.messages;
   }, [input.messages]);
   useEffect(() => () => { for (const controller of pending.current.values()) controller.abort(); }, []);
+  const loadOlder = useCallback((beforeApply?: () => void) => loadOlderFor(current.current.activeId, beforeApply), [loadOlderFor]);
+  const forSession = (id: string) => ({
+    hasMore: !!pages.current.get(id)?.nextCursor, loadingOlder: pending.current.has(id), historyError: errors[id] ?? '',
+  });
   void revision;
-  return { read, readMessages, loadOlder, hasMore: !!pages.current.get(input.activeId)?.nextCursor,
-    loadingOlder: pending.current.has(input.activeId), historyError: errors[input.activeId] ?? '', needsRefresh: invalidated.current.has(input.activeId) };
+  return { read, readMessages, loadOlder, loadOlderFor, forSession, registerPrependAnchor,
+    ...forSession(input.activeId), needsRefresh: invalidated.current.has(input.activeId) };
 }
 
-export type ConversationHistoryControls = Pick<ReturnType<typeof useConversationHistoryPages>, 'loadOlder' | 'hasMore' | 'loadingOlder' | 'historyError' | 'needsRefresh'>;
+export type ConversationHistoryControls = Pick<ReturnType<typeof useConversationHistoryPages>, 'loadOlder' | 'hasMore' | 'loadingOlder' | 'historyError' | 'needsRefresh'> & { registerPrependAnchor?: (id: string, capture: () => void) => () => void };

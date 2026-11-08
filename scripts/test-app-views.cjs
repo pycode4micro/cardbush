@@ -174,7 +174,7 @@ async function buildViews() {
     'src/features/shortcuts/useKeyboardShortcuts.ts',
     'src/features/shortcuts/keyboardShortcuts.ts',
     'src/components/GlobalTooltip.tsx',
-    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'delete-focus' ? ['src/components/confirmAction.tsx'] : []),
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'delete-focus' ? ['src/components/confirmAction.tsx', 'src/i18n/index.ts', 'src/shared/conversationDraft.ts', 'src/features/settings/conversationModel.ts'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'app-center' ? [
       'src/features/appCenter/AppCenter.tsx', 'src/features/appCenter/appCenterStore.ts',
       'src/features/browser/browserSiteIcons.ts',

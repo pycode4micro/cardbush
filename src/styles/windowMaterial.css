@@ -25,8 +25,7 @@ html[data-window-material="mica"] .app > .settings-shell {
 }
 
 html[data-window-material="mica"] .app .window-frame,
-html[data-window-material="mica"] .app .sidebar,
-html[data-window-material="mica"] .app .settings-sidebar {
+html[data-window-material="mica"] .app:not([data-translucent-sidebar="false"]) :is(.sidebar, .settings-sidebar) {
   background: var(--window-chrome-tint);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -57,7 +56,7 @@ html[data-window-material="mica"] .app .settings-content {
 /* Compact drawers sit above app content, so they need a readable surface of
    their own instead of the nearly transparent tint used over native Mica. */
 @media (max-width: 760px) {
-  html[data-window-material="mica"] .app .sidebar {
+  html[data-window-material="mica"] .app:not([data-translucent-sidebar="false"]) .sidebar {
     background: color-mix(in srgb, var(--surface) 96%, transparent);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);

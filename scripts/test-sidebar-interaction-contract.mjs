@@ -32,7 +32,7 @@ const rightInspectorResizerSource = readSourceFile(
 
 assert.match(
   sidebarSource,
-  /className=\{`section-action[^`]*`\}[\s\S]*?event\.currentTarget\.blur\(\)/,
+  /className="section-action"[\s\S]*?event\.currentTarget\.blur\(\)/,
   'Mouse activation must not leave section actions visibly focused',
 );
 assert.match(
@@ -155,7 +155,7 @@ assert.doesNotMatch(
 assert.match(sidebarSource, /title=\{uiText\(language\)\('chatSidebar\.pinned'\)\}/);
 assert.match(sidebarSource, /cardbush_pinned_conversation_ids/);
 assert.match(sidebarSource, /pinnedProjects\.map\(renderProjectBlock\)/);
-assert.match(sidebarSource, /pinnedConversations\.map\(renderStandaloneConversation\)/);
+assert.match(sidebarSource, /pinnedConversations\.map\(conversation => renderStandaloneConversation\(conversation\)\)/);
 assert.match(sidebarSource, /options\.pinned\s*\? uiText\(language\)\('chatSidebar\.unpinChat'\)\s*:\s*uiText\(language\)\('chatSidebar\.pinChat'\)/);
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
 const windowFrameBlock = appSource.match(/function WindowFrame\([\s\S]*?function WindowFrameMenu\(/)?.[0] ?? '';
@@ -164,16 +164,10 @@ assert.doesNotMatch(windowFrameBlock, /onOpenPluginSettings|onOpenSkills|label=\
 assert.doesNotMatch(windowFrameBlock, /only-talk-toggle|onOnlyTalkModeChange/);
 assert.doesNotMatch(sidebarSource, /onlyTalkMode|onOnlyTalkModeChange|only-talk-toggle/);
 assert.doesNotMatch(stylesSource, /\.only-talk-toggle|new-chat-mode-row|sidebar-mode-enter/);
-assert.match(
-  sidebarSource,
-  /className="sidebar-sections"[\s\S]*?pinnedProjects\.map\(renderProjectBlock\)[\s\S]*?regularProjects\.map\(renderProjectBlock\)[\s\S]*?recentConversations\.map\(renderStandaloneConversation\)/,
-  'Projects and independent chats must share a stable sidebar instead of separate modes',
-);
-assert.match(
-  sidebarSource,
-  /recentConversations = useMemo\([\s\S]*?!projectItems\.some\(project =>[\s\S]*?conversationMatchesScope/,
-  'Recent chats must include ungrouped conversations without duplicating project chats',
-);
+const railSections = sidebarSource.slice(sidebarSource.indexOf('className="sidebar-sections"'), sidebarSource.indexOf('className="sidebar-footer"'));
+assert.match(railSections, /pinnedProjects\.map\(renderProjectBlock\)[\s\S]*?regularProjects\.map\(renderProjectBlock\)/);
+assert.doesNotMatch(railSections, /recentConversations|data-workspace-drop="recent"/, 'recent history lives in the right drawer');
+assert.match(sidebarSource, /recentList && createPortal[\s\S]*?recentConversations\.map[\s\S]*?recentList\.element/);
 assert.match(sidebarSource, /cardbush_conversation_read_state_v1/);
 assert.match(sidebarSource, /conversationReadReceipt\(/);
 assert.match(sidebarSource, /if \(!isCardbushForeground\(\)\) return;/,

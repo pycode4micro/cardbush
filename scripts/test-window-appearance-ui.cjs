@@ -18,7 +18,7 @@ async function bundleViews() {
   const files = [
     'src/features/appearance/windowAppearance.ts', 'src/components/WindowFrame.tsx',
     'src/components/TopBar.tsx', 'src/features/sidebar/ChatSidebar.tsx',
-    'src/features/chat/WelcomeComposer.tsx',
+    'src/features/chat/WelcomeComposer.tsx', 'src/features/desktop/RecentConversationBar.tsx',
   ];
   const result = await build({
     configFile: false, logLevel: 'error', plugins: [react(), {
@@ -91,7 +91,7 @@ app.whenReady().then(async () => {
   await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
   const css = ['theme.css', 'app.css', 'windowMaterial.css', 'appearance.css']
     .map(file => readSourceFile(path.join(root, 'src/styles', file), 'utf8')).join('\n');
-  await win.webContents.insertCSS(css);
+  await win.webContents.insertCSS(css + '\n' + readSourceFile(path.join(root, 'src/features/desktop/desktopCollection.css'), 'utf8') + '\n' + readSourceFile(path.join(root, 'src/features/desktop/recentConversationBar.css'), 'utf8'));
   await run(`
     const { ipcRenderer } = require('electron');
     window.failures = [];
@@ -131,14 +131,15 @@ app.whenReady().then(async () => {
         setTheme(nextTheme); setMaterial(nextMaterial); setThemePreference(nextPreference);
       };
       views.useWindowAppearance(theme, themePreference === 'custom' ? 'dark' : themePreference, material, undefined, themePreference === 'custom');
-      return h('div', { className: 'app ' + ('theme-' + theme), style: { '--sidebar-width':'252px' } },
+      return h('div', { className: 'app ' + ('theme-' + theme), 'data-desktop-workspace': '', 'data-translucent-sidebar': 'true', style: { '--sidebar-width':'252px' } },
         h(views.WindowFrame, { language:'zh', sidebarCollapsed:collapsed, onToggleSidebar:() => setCollapsed(!collapsed),
           onBack:settings ? () => setSettings(false) : undefined, onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
             {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
-          ]}] }),
+          ]}] }, h(views.RecentConversationBar, {language:'zh',conversation:{id:'fixture',title:'Conversation',updatedAt:'',preview:''},
+            conversations:[],transcripts:{},pageFor:()=>({hasMore:false,loadingOlder:false,historyError:''}),onRecentList:noop,read:noop,earlier:noop,open:noop})),
         h('main', { className: settings ? 'settings-shell' : 'desktop-shell' },
-          settings ? h('aside', { className:'settings-sidebar' }, h('button', { className:'settings-nav active' }, '个性化')) :
+          settings ? h('aside', { className:'sidebar settings-sidebar' }, h('button', { className:'settings-nav active' }, '个性化')) :
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
             softVisible:!collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
             onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:()=>setSettings(true) }),
@@ -214,7 +215,7 @@ app.whenReady().then(async () => {
     // Share the palette and corners; the conversation's right divider belongs to the inspector.
     const settingsSurface = await run("({radius:getComputedStyle(document.querySelector('.settings-content')).borderRadius, background:getComputedStyle(document.querySelector('.settings-content')).backgroundColor})");
     assert.deepEqual(settingsSurface, homeSurface, 'settings uses the same rounded surface as home');
-    assert.equal(settingsSurface.radius, '14px 0px 0px 14px');
+    assert.equal(settingsSurface.radius, '0px', 'workspace pages fill the area below the title bar');
   }
   await run("openFixtureSettings(false); changeAppearance('dark')");
   if (!preview) await require('./helpers/window-titlebar-native.cjs')({ win, run, until, pause, root });

@@ -6,15 +6,7 @@
 .app[data-desktop-workspace] .settings-shell > .settings-content { margin-top:var(--window-frame-height); border-radius:0; box-shadow:none; }
 .app[data-desktop-workspace] .desktop-shell > :is(.right-inspector,.right-inspector-resizer) { margin-top:var(--window-frame-height); }
 .app[data-desktop-workspace] :is(.desktop-shell,.settings-shell) > .sidebar { box-sizing:border-box; padding-top:var(--window-frame-height); border-inline-end:1px solid var(--rail-divider); border-radius:0; }
-.app[data-desktop-workspace][data-translucent-sidebar="true"] :is(.desktop-shell,.settings-shell) > .sidebar {
-  background:linear-gradient(165deg,color-mix(in srgb,var(--surface) 85%,#98aed6),color-mix(in srgb,var(--surface) 87%,#c6a8c3) 62%,color-mix(in srgb,var(--surface) 91%,#dfbca5));
-}
 html[data-window-material="mica"] .app[data-desktop-workspace] > :is(.desktop-shell,.settings-shell) { background:transparent; }
-html[data-window-material="mica"] .app[data-desktop-workspace][data-translucent-sidebar="true"] :is(.desktop-shell,.settings-shell) > .sidebar {
-  --rail-sky:color-mix(in srgb,var(--surface) 92%,#7299ce);
-  --rail-dusk:color-mix(in srgb,var(--surface) 91%,#c898a7);
-  background:linear-gradient(165deg,color-mix(in srgb,var(--rail-sky) 82%,transparent),color-mix(in srgb,var(--rail-dusk) 78%,transparent));
-}
 html[data-window-material] .app[data-desktop-workspace] > .window-frame { border:0; background:transparent; box-shadow:none; }
 .app[data-desktop-workspace] > :is(.desktop-shell,.settings-shell)::before { content:""; position:absolute; pointer-events:none; inset:0 0 auto var(--layout-sidebar-space); height:var(--window-frame-height); background:var(--surface); }
 .app[data-desktop-workspace] .nav-row { position:relative; border-radius:5px; min-height:35px; }

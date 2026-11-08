@@ -35,8 +35,12 @@ module.exports = async ({ win, run, until, pause, root }) => {
       const area = navigator.windowControlsOverlay?.getTitlebarAreaRect();
       if (!area || area.width <= 0 || area.right >= innerWidth) throw Error('Native titlebar safe area is unavailable');
       const width = (innerWidth - area.right) / 3;
-      return [center('.window-spacer', 'drag-left', .1), center('.window-spacer', 'drag-center'),
-        center('.window-spacer', 'drag-right', .9), center('.window-sidebar-toggle', 'sidebar-button'),
+      const bar = document.querySelector('.recent-bar').getBoundingClientRect();
+      const chat = document.querySelector('.recent-bar-chat').getBoundingClientRect();
+      const list = document.querySelector('.recent-bar-list').getBoundingClientRect();
+      const y = bar.y + bar.height / 2;
+      return [{name:'drag-left', x:(bar.left + chat.left) / 2, y}, {name:'drag-right', x:(chat.right + list.left) / 2, y},
+        center('.recent-bar-chat', 'recent-chat-button'), center('.recent-bar-list', 'turn-list-button'), center('.window-sidebar-toggle', 'sidebar-button'),
         center('.frame-chip', 'menu-button'),
         ...['minimize', 'maximize', 'close'].map((name, index) => ({
           name: 'caption-' + name, x: area.right + width * (index + .5), y: area.y + area.height / 2,
@@ -59,9 +63,8 @@ module.exports = async ({ win, run, until, pause, root }) => {
   try {
     await run(`openFixtureSettings(false); void 0`);
     await until("!!document.querySelector('.main-stage')", 'titlebar fixture surface');
-    // The startup brand contracts after three seconds. Sample settled controls
-    // so their centers cannot move during the native probe's process startup.
-    await until("document.querySelector('.window-sidebar-toggle')?.dataset.brandVisible === 'false' && document.querySelector('.window-sidebar-toggle').getBoundingClientRect().width <= 29", 'settled titlebar controls');
+    // In the desktop workspace the brand and sidebar toggle share a fixed slot.
+    await until("document.querySelector('.window-sidebar-toggle')?.dataset.brandVisible === 'false' && document.querySelector('.window-sidebar-toggle').getBoundingClientRect().width >= 28", 'settled titlebar controls');
     await run(`
       const scroller = document.createElement('div'); scroller.id = 'native-titlebar-scroll-test';
       Object.assign(scroller.style, { position:'absolute', inset:'0', overflow:'auto', background:'var(--bg)' });

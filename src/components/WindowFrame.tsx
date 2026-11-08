@@ -13,6 +13,7 @@ import type { HistoryDirection } from '../../electron/shortcutBinding';
 type OpenMenu = { id: string; anchor: HTMLElement; initialFocus?: 'first' | 'last' };
 type Props = {
   language: AppLanguage; sidebarCollapsed: boolean; onToggleSidebar: () => void;
+  children?: React.ReactNode;
   menus: ApplicationMenu[]; onBack?: () => void; onForward?: () => void;
   onInspectorHistory?: (direction: HistoryDirection, tabId?: string) => void;
   onError: (error: unknown) => void;
@@ -214,7 +215,7 @@ export function WindowFrame(props: Props) {
     {open && <div className="window-menu-dismiss-layer no-drag" aria-hidden="true" onPointerDown={event => { event.preventDefault(); close(); }} />}
     {open && activeMenu && popup(activeMenu.items, open, false, activeMenu.label)}
     {submenu && activeSubmenu?.children && popup(activeSubmenu.children, submenu, true, activeSubmenu.label)}
-    <div className="window-spacer window-drag" aria-hidden="true" />
+    {props.children || <div className="window-spacer window-drag" aria-hidden="true" />}
     {!nativeControls && <>
       <WindowButton label={uiText(language)('windowFrame.minimize')} glyph="minimize" onClick={() => window.cardbushDesktop?.minimize()} />
       <WindowButton label={maximized ? (uiText(language)('windowFrame.restore')) : (uiText(language)('windowFrame.maximize'))}

@@ -10,6 +10,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     {
     const {useState} = require(${JSON.stringify(require.resolve('react'))});
     const noop = () => {};
+    localStorage.setItem("cardbush_pinned_conversation_ids", JSON.stringify(["draft"]));
     Object.assign(window.cardbushDesktop,{platform:${JSON.stringify(process.platform)},isMaximized:async()=>false,
       minimize:noop, toggleMaximize:async()=>false, closeToTray:noop});
     window.compactSettings = {managedModelConfigs:[], terminal:{runtime:'powershell'}, proxy:{mode:'none'}};

@@ -94,6 +94,7 @@ app.whenReady().then(async () => {
       const module = { exports: {} };
       new Function('require', 'module', 'exports', ${JSON.stringify(bundle)})(sourceRequire, module, module.exports);
       const views = module.exports, h = React.createElement, reactRoot = createRoot(document.getElementById('root'));
+      localStorage.setItem('cardbush_pinned_conversation_ids', JSON.stringify(['archive-a']));
       window.archiveFixture = { setArchived: views.setConversationsArchived, storageKey: views.conversationArchivesStorageKey };
       window.file = { path: 'C:/Users/fixture/AppData/Roaming/cardbush/AGENTS.md', content: '请使用中文，并核对交付结果。', revision: 'one' };
       window.failSave = false; window.checkouts = []; window.proxyWrites = []; window.proxyFail = false;

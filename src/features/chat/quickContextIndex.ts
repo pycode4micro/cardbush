@@ -46,3 +46,17 @@ export function contextTickWindow(count: number, capacity: number, offset: numbe
   const first = Math.min(Math.max(0, count - capacity), Math.max(0, Math.floor(offset / Math.max(1, step))));
   return { first, start: Math.max(0, first - 1), end: Math.min(count, first + capacity + 2) };
 }
+
+export function quickTurnPreviewMessages(messages: ChatMessage[]) {
+  const user = messages.find((message) =>
+    message.role === 'user' && !isContextGuidance(message),
+  );
+  const assistant = messages.find((message) =>
+    message.role === 'assistant' &&
+    message.metadata?.transcript_kind === 'assistant_final' &&
+    Boolean(message.content.trim()),
+  ) ?? [...messages].reverse().find((message) =>
+    message.role === 'assistant' && Boolean(message.content.trim()),
+  );
+  return [user, assistant].filter((message): message is ChatMessage => Boolean(message));
+}

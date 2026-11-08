@@ -15,6 +15,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/components/confirm-action.css'), 'utf8') +
     '\n.app{width:100% !important}.delete-focus-layout{display:flex;height:100vh}.delete-focus-layout>.chat-panel{flex:1;min-width:0}');
   await run(`
+    localStorage.setItem('cardbush_pinned_conversation_ids', JSON.stringify(['s','other']));
     window.deleteState={active:'s',conversations:[
       {id:'s',title:'当前会话',updatedAt:'2026-09-27T00:00:00Z',preview:''},
       {id:'other',title:'其他会话',updatedAt:'2026-09-27T00:00:00Z',preview:''},
@@ -34,7 +35,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
         onAddProject:()=>{},onProjectAction:()=>{},onRenameConversation:async()=>true,onOpenConversationChanges:()=>{},onOpenSettings:()=>{},
       }),h(views.ChatPanel,chatProps)));
     };
-    const bindings={useCallback:fn=>fn,confirmAction:views.confirmAction,conversationsRef,localize:chinese=>chinese,
+    const bindings={useCallback:fn=>fn,confirmAction:views.confirmAction,conversationsRef,uiText:views.uiText,languageRef:{current:'zh'},
+      backend:{scope:'fixture'},selectConversationModel:views.selectConversationModel,notifyConversationDeleted:views.notifyConversationDeleted,transcriptVisitsRef:{current:new Map()},
       historyReadsRef:{current:{invalidate:()=>{}}},contextUsageReadsRef:{current:{invalidate:()=>{}}},
       clearSessionAttention:()=>{},setMessageHistoryLoading:()=>{},errorMessage:error=>error.message,
       setError:error=>{deleteState.error=error;drawDelete();},

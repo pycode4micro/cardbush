@@ -172,7 +172,7 @@ export function ChatPanel({
   guidanceDeliveryMode,
   loading: backgroundLoading,
   historyLoading,
-  historyPages,
+  historyPages, requestedTurn, onTurnLocated,
   sending,
   stopping,
   activeTurnId,
@@ -280,6 +280,8 @@ export function ChatPanel({
   loading: boolean;
   historyLoading: boolean;
   historyPages?: ConversationHistoryControls;
+  requestedTurn?: { sessionId: string; messageId: string; turnId?: string } | null;
+  onTurnLocated?: () => void;
   sending: boolean;
   stopping: boolean;
   activeTurnId: string;
@@ -2014,14 +2016,18 @@ export function ChatPanel({
   }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible, composerAnchored]);
 
   const prependAnchor = useRef<{ sessionId: string; firstId?: string; position: ReturnType<typeof captureConversationScrollPosition> } | undefined>(undefined);
-  const loadEarlier = useCallback(() => historyPages?.loadOlder(() => {
+  const capturePrependAnchor = useCallback(() => {
     const scroller = listScrollerRef.current;
     if (!scroller) return;
     markUserDetachedFromBottom('load-earlier');
     cancelScheduledStreamFollow();
     prependAnchor.current = { sessionId: activeConversationId, firstId: renderMessages[0]?.id,
       position: captureConversationScrollPosition(scroller, false) };
-  }), [historyPages?.loadOlder, markUserDetachedFromBottom, cancelScheduledStreamFollow, activeConversationId, renderMessages[0]?.id]);
+  }, [markUserDetachedFromBottom, cancelScheduledStreamFollow, activeConversationId, renderMessages[0]?.id]);
+  const registerPrependAnchor = historyPages?.registerPrependAnchor;
+  useLayoutEffect(() => registerPrependAnchor?.(activeConversationId, capturePrependAnchor),
+    [registerPrependAnchor, activeConversationId, capturePrependAnchor]);
+  const loadEarlier = useCallback(() => historyPages?.loadOlder(capturePrependAnchor), [historyPages?.loadOlder, capturePrependAnchor]);
   useLayoutEffect(() => {
     const anchor = prependAnchor.current, scroller = listScrollerRef.current;
     if (!anchor || !scroller) return;
@@ -2092,6 +2098,24 @@ export function ChatPanel({
     shouldShowScrollBottomForMetrics,
     composerAnchored,
   ]);
+
+  useLayoutEffect(() => {
+    if (!requestedTurn || requestedTurn.sessionId !== activeConversationId || loading) return;
+    const scroller = listScrollerRef.current;
+    if (!scroller) return;
+    // A live prompt can acquire its persisted message ID while the chat opens.
+    const message = renderMessages.find(item => item.id === requestedTurn.messageId) ??
+      (requestedTurn.turnId && renderMessages.find(item => item.turnId === requestedTurn.turnId && item.role === 'user' && !isTurnGuidanceMessage(item)));
+    if (!message) return;
+    const target = scroller.querySelector<HTMLElement>(`[data-message-id="${cssEscape(message.id)}"]`);
+    if (!target) return;
+    markUserDetachedFromBottom('turn-navigation');
+    const position = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    scroller.scrollTo({ top: Math.max(0, position - 16), behavior: 'instant' });
+    scroller.focus({ preventScroll: true });
+    lastScrollTopRef.current = scroller.scrollTop;
+    onTurnLocated?.();
+  }, [activeConversationId, loading, scrollMountRevision, renderMessages, requestedTurn, onTurnLocated, markUserDetachedFromBottom]);
 
   const reflowOptions = {
     paused: () => Boolean(scrollActivationRef.current?.restoring || scrollbarDragActiveRef.current ||

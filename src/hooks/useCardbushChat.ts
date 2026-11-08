@@ -902,6 +902,7 @@ export function useCardbushChat(
     setMessagesByConversation(current => trimConversationCache(current, transcriptVisitsRef.current, protectedIds));
   }, [activeConversationId, transcriptCount, runningByConversation]);
   const loadSessionHistory = useCallback((sessionId: string) => {
+    transcriptVisitsRef.current.set(sessionId, ++transcriptVisitSequenceRef.current);
     if (preparedConversationsRef.current[sessionId]) return Promise.resolve(null);
     const pending = historyRequestsRef.current.get(sessionId);
     if (pending && isHistoryReadCurrent(pending.read)) return pending.promise;
@@ -4314,7 +4315,7 @@ export function useCardbushChat(
     skills,
     loading,
     messagesLoading,
-    historyPages,
+    historyPages, loadSessionHistory,
     sending,
     stopping,
     activeTurnId,

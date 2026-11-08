@@ -4,6 +4,7 @@ const path = require('node:path');
 
 module.exports = async ({ run, until, window: win, root, click, edit }) => {
   await run(`
+    settingsProps.initialSection = 'cache';
     window.archiveRestores = [];
     window.sidebarOpenedConversations = [];
     window.sidebarProjectActions = [];
@@ -71,6 +72,8 @@ module.exports = async ({ run, until, window: win, root, click, edit }) => {
   assert.deepEqual(await run('sidebarProjectActions'), [{action:'archive',id:'archived-project'}], 'direct project archive dispatches exactly once');
   assert.equal(await run("!!document.querySelector('.sidebar-context-menu,.sidebar-menu,.row-more')"), false, 'project archive closes menus and removes the old dots');
   await run("archiveFixture.setArchived(['archive-a','archive-b'], true); setSettingsActive(true)");
+  await click('数据与维护');
+  await until("document.querySelectorAll('.archive-manager-tabs button').length === 2");
   await run("document.querySelectorAll('.archive-manager-tabs button')[1].click()");
   await until("!!document.querySelector('[data-archive-id=archived-project]')");
   await run("document.querySelector('[data-archive-id=archived-project] button').click()");

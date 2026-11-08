@@ -102,6 +102,7 @@ import { createPortal } from 'react-dom';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
 import { WindowFrame } from './components/WindowFrame';
+import { RecentConversationBar, useRecentConversation, type RecentListOutlet } from './features/desktop/RecentConversationBar';
 import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
@@ -1989,6 +1990,21 @@ function CardbushApp() {
     enabled: section === 'chat' && !settingsOpen && !conversationSearch.open,
     onOpenConversation: handlePreviousConversation,
   });
+  const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
+  const showChatRail = sidebarPresence.mounted && section !== 'team' && section !== 'md-presentation';
+  const recentConversation = useRecentConversation(chat.conversations, section === 'chat' && !settingsOpen ? chat.activeConversationId : '');
+  const [requestedTurn, setRequestedTurn] = useState<{ sessionId: string; messageId: string; turnId?: string } | null>(null);
+  const clearRequestedTurn = useCallback(() => setRequestedTurn(null), []);
+  const openRecentConversation = useCallback((id: string, message?: ChatMessage) => {
+    revealConversation();
+    if (!openConversation(id)) return;
+    setSettingsOpen(false);
+    if (compactLayout) collapseSidebar();
+    setRequestedTurn(message ? { sessionId: id, messageId: message.id, turnId: message.turnId } : null);
+  }, [openConversation, revealConversation, compactLayout, collapseSidebar]);
+  useEffect(() => {
+    if (requestedTurn && (settingsOpen || section !== 'chat' || chat.activeConversationId !== requestedTurn.sessionId)) clearRequestedTurn();
+  }, [section, settingsOpen, chat.activeConversationId, requestedTurn, clearRequestedTurn]);
   const currentPage: AppPage = settingsOpen
     ? { section: 'settings', agentId: '', settingsSection: settingsInitialSection, pluginTab: settingsPluginTab }
     : section === 'home' ? { section, page: homePage }
@@ -2124,7 +2140,14 @@ function CardbushApp() {
             handle: inspectorWebviewRefs.current.get(tabId), onStep: stepStartHistory })[direction]?.();
         }}
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
-      />
+      >
+        {!floating && recentConversation && <RecentConversationBar
+          key={JSON.stringify([recentConversation.id, currentPage.section])}
+          language={language} conversation={recentConversation} conversations={chat.conversations}
+          transcripts={chat.messagesByConversation} onRecentList={setRecentList}
+          pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
+          earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>}
+      </WindowFrame>
       {conversationSearch.open && <ConversationSearchDialog
         language={language}
         conversations={chat.conversations}
@@ -2198,6 +2221,30 @@ function CardbushApp() {
         inert={settingsVisible ? true : undefined}
       >
           <CompactSidebarBackdrop visible={(compactLayout || inspectorCover) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
+          {(showChatRail || recentList) && <ChatSidebar showRail={showChatRail} recentList={recentList}
+            language={language}
+            section={section}
+            activeConversationId={section === 'chat' ? chat.activeConversationId : ''}
+            runningConversationIds={chat.processingConversationIds}
+            onConversationWorkspaceChange={(conversationId, project) => chat.setConversationProject(conversationId, project?.rootPath ?? null, project?.id ?? null)}
+            attentionByConversation={chat.attentionByConversation}
+            projects={projectItems}
+            conversations={chat.conversations}
+            changeReportsByConversation={sidebarChangeReportsByConversation}
+            onSectionChange={handleSidebarSectionChange}
+            onConversationChange={handleSidebarConversationChange}
+            onCreateConversation={handleSidebarCreateConversation}
+            onAddProject={handleSidebarAddProject}
+            onProjectAction={handleSidebarProjectAction}
+            onRenameProject={(project, title) => renameProject(project, title, false)}
+            onDeleteConversation={chat.deleteConversation}
+            onRenameConversation={chat.renameConversation}
+            onOpenConversationChanges={handleSidebarOpenConversationChanges}
+            onOpenSettings={handleSidebarOpenSettings}
+            onOpenArchives={() => openSettings('cache')}
+            onOpenSearch={conversationSearch.show}
+            softVisible={sidebarPresence.visible}
+          />}
           {sidebarPresence.mounted && (
             <>
               {section === 'team' ? (
@@ -2210,32 +2257,7 @@ function CardbushApp() {
               ) : section === 'md-presentation' ? (
                 <CanvasSidebar language={language} softVisible={sidebarPresence.visible}
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}/>
-              ) : (
-                <ChatSidebar
-                  language={language}
-                  section={section}
-                  activeConversationId={section === 'chat' ? chat.activeConversationId : ''}
-                  runningConversationIds={chat.processingConversationIds}
-                  onConversationWorkspaceChange={(conversationId, project) => chat.setConversationProject(conversationId, project?.rootPath ?? null, project?.id ?? null)}
-                  attentionByConversation={chat.attentionByConversation}
-                  projects={projectItems}
-                  conversations={chat.conversations}
-                  changeReportsByConversation={sidebarChangeReportsByConversation}
-                  onSectionChange={handleSidebarSectionChange}
-                  onConversationChange={handleSidebarConversationChange}
-                  onCreateConversation={handleSidebarCreateConversation}
-                  onAddProject={handleSidebarAddProject}
-                  onProjectAction={handleSidebarProjectAction}
-                  onRenameProject={(project, title) => renameProject(project, title, false)}
-                  onDeleteConversation={chat.deleteConversation}
-                  onRenameConversation={chat.renameConversation}
-                  onOpenConversationChanges={handleSidebarOpenConversationChanges}
-                  onOpenSettings={handleSidebarOpenSettings}
-                  onOpenArchives={() => openSettings('cache')}
-                  onOpenSearch={conversationSearch.show}
-                  softVisible={sidebarPresence.visible}
-                />
-              )}
+              ) : null}
               <SidebarResizer
                 language={language}
                 width={sidebarWidth}
@@ -2315,6 +2337,7 @@ function CardbushApp() {
                 loading={chat.loading || chat.messagesLoading}
                 historyLoading={chat.messagesLoading}
                 historyPages={chat.historyPages}
+                requestedTurn={requestedTurn} onTurnLocated={clearRequestedTurn}
                 sending={chat.sending}
                 stopping={chat.stopping}
                 activeTurnId={chat.activeTurnId}

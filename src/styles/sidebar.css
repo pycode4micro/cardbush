@@ -272,23 +272,6 @@ body.sidebar-resizing .right-inspector {
   overflow: hidden;
 }
 
-.sidebar-conversation-list {
-  display: grid;
-  gap: 2px;
-}
-
-.sidebar-conversation-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 18px 12px;
-  color: var(--sidebar-text-muted, var(--text-soft));
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
-  line-height: 1.45;
-  text-align: center;
-}
-
 .section-header {
   position: relative;
   height: 34px;
@@ -330,7 +313,6 @@ body.sidebar-resizing .right-inspector {
   pointer-events: none;
 }
 
-.section-action.section-action-visible:not(:disabled),
 .section-header:hover .section-action:not(:disabled),
 .section-header:has(.section-action:focus-visible) .section-action:not(:disabled),
 .section-header-wrap:has(.sidebar-menu) .section-action:not(:disabled) {

@@ -1,6 +1,8 @@
 import { uiText } from '../../i18n';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
+import type { RecentListOutlet } from '../desktop/RecentConversationBar';
+import { ConversationRowContent } from '../desktop/RecentConversationBarView';
 import { ProfileMenu } from '../profile/ProfileMenu';
 import { setConversationsArchived, useConversationArchives } from './conversationArchives';
 import { showUiError } from '../../shared/showUiError';
@@ -12,7 +14,6 @@ import {
   Archive,
   Compass,
   House,
-  History,
   CircleAlert,
   CircleCheck,
   TriangleAlert,
@@ -185,6 +186,7 @@ type SidebarContextMenuState = {
   items: SidebarContextMenuItem[];
   anchor?: HTMLButtonElement;
   focusFirst?: boolean;
+  drawerHost?: HTMLElement | null;
 };
 
 type ConversationMenuOptions = {
@@ -238,7 +240,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenSettings,
   onOpenArchives,
   onOpenSearch,
-  softVisible = true,
+  softVisible = true, showRail = true, recentList,
 }: {
   language: AppLanguage;
   section: AppSection;
@@ -259,6 +261,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   onConversationWorkspaceChange?: (conversationId: string, project: ProjectItem | null) => Promise<void>;
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
+  showRail?: boolean;
+  recentList?: RecentListOutlet | null;
   onOpenArchives?: () => void;
   onOpenSearch: () => void;
   softVisible?: boolean;
@@ -277,7 +281,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   const extraction = useContext(ConversationExtractionContext);
   const extractionShortcuts = useKeyboardShortcuts();
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(['pinned', 'projects', 'recent']),
+    () => new Set(['pinned', 'projects']),
   );
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
@@ -304,7 +308,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     try {
       await onConversationWorkspaceChange(conversationId, project);
       if (project) setExpandedProjectIds(current => new Set([...current, project.id]));
-      setExpandedSections(current => new Set([...current, project ? (project.pinned ? 'pinned' : 'projects') : 'recent']));
+      if (project) setExpandedSections(current => new Set([...current, project.pinned ? 'pinned' : 'projects']));
     } catch (error) {
       void showUiError(uiText(language)('app.workspaceSwitchFailed'), String(error));
     } finally {
@@ -359,16 +363,9 @@ export const ChatSidebar = memo(function ChatSidebar({
     () => visibleConversations.filter((conversation) => pinnedConversationIds.has(conversation.id)),
     [pinnedConversationIds, visibleConversations],
   );
-  const regularConversations = useMemo(
-    () => visibleConversations.filter((conversation) => !pinnedConversationIds.has(conversation.id)),
-    [pinnedConversationIds, visibleConversations],
-  );
-  const recentConversations = useMemo(
-    () => regularConversations.filter(conversation => !projectItems.some(project =>
-      conversationMatchesScope(conversation, { mode: 'project', projectId: project.id, projectDir: project.rootPath }),
-    )),
-    [projectItems, regularConversations],
-  );
+  const recentConversations = useMemo(() => recentList
+    ? [...visibleConversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, recentList.limit) : [],
+    [visibleConversations, recentList]);
   const unreadConversationIds = useMemo(() => {
     if (!conversationReadState.initialized) return new Set<string>();
     return new Set(
@@ -525,7 +522,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     event.preventDefault();
     event.stopPropagation();
     const position = sidebarContextMenuPosition(event.clientX, event.clientY, items);
-    setContextMenu({ id, items, ...position });
+    setContextMenu({ id, items, ...position, drawerHost: event.currentTarget.closest<HTMLElement>('.recent-turn-drawer') });
   }
 
   function runContextMenuItem(item: SidebarContextMenuItem) {
@@ -632,13 +629,14 @@ export const ChatSidebar = memo(function ChatSidebar({
   function conversationMenuItems(
     conversation: ConversationSummary,
     options: ConversationMenuOptions,
+    open = onConversationChange,
   ): SidebarContextMenuItem[] {
     const items: SidebarContextMenuItem[] = [
       {
         key: 'open',
         icon: <MessageSquare size={15} />,
         label: uiText(language)('chatSidebar.openChat'),
-        onClick: () => onConversationChange(conversation.id),
+        onClick: () => open(conversation.id),
       },
       {
         key: 'pin',
@@ -770,7 +768,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     );
   }
 
-  function renderStandaloneConversation(conversation: ConversationSummary) {
+  function renderStandaloneConversation(conversation: ConversationSummary, drawer = false) {
     const project = projectItems.find(item => conversationMatchesScope(conversation, {
       mode: 'project', projectId: item.id, projectDir: item.rootPath,
     }));
@@ -778,7 +776,8 @@ export const ChatSidebar = memo(function ChatSidebar({
       <ConversationRow
         key={conversation.id}
         conversation={conversation}
-        active={conversation.id === activeConversationId}
+        drawer={drawer}
+        active={drawer ? conversation.id === recentList?.selectedId : conversation.id === activeConversationId}
         running={runningConversationIds?.has(conversation.id) ?? false}
         attention={attentionByConversation?.[conversation.id]}
         unread={unreadConversationIds.has(conversation.id)}
@@ -798,10 +797,11 @@ export const ChatSidebar = memo(function ChatSidebar({
           openContextMenu(
             event,
             `conversation:${conversation.id}`,
-            conversationMenuItems(conversation, options),
+            conversationMenuItems(conversation, options, drawer ? recentList?.enter : onConversationChange),
           )
         }
         onClick={() => {
+          if (drawer && recentList) { recentList.select(conversation.id); return; }
           setConversationUnread(conversation.id, false);
           onConversationChange(conversation.id);
         }}
@@ -809,8 +809,8 @@ export const ChatSidebar = memo(function ChatSidebar({
     );
   }
 
-  return (
-    <aside
+  return <>
+    {showRail && <aside
       className={`sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       ref={sidebarRef}
       aria-hidden={!softVisible}
@@ -864,7 +864,7 @@ export const ChatSidebar = memo(function ChatSidebar({
               />
               <SectionBody expanded={expandedSections.has('pinned')}>
                 {pinnedProjects.length > 0 || pinnedConversations.length > 0
-                  ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
+                  ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(conversation => renderStandaloneConversation(conversation))}</>
                   : (
                     <div className="sidebar-pinned-empty">
                       {uiText(language)('chatSidebar.rightClickAProjectOrChatTo')}
@@ -910,31 +910,6 @@ export const ChatSidebar = memo(function ChatSidebar({
               <SectionBody expanded={expandedSections.has('projects')}>
                 {regularProjects.map(renderProjectBlock)}
               </SectionBody>
-              <div data-workspace-drop="recent" className={`workspace-drop-target${workspaceDropTarget === 'recent' ? ' workspace-drop-active' : ''}`}
-                {...workspaceDropHandlers(null)}>
-              <SectionHeader
-                title={uiText(language)('chatSidebar.recent')}
-                leading={<History/>}
-                action={<Search size={14} />}
-                actionLabel={searchLabel}
-                actionShortcut="searchConversations"
-                alwaysShowAction
-                onAction={onOpenSearch}
-                expanded={expandedSections.has('recent')}
-                onToggle={() => toggleSection('recent')}
-              />
-              <SectionBody expanded={expandedSections.has('recent')}>
-                {recentConversations.length > 0 ? (
-                  <div className="sidebar-conversation-list">
-                    {recentConversations.map(renderStandaloneConversation)}
-                  </div>
-                ) : (
-                  <div className="sidebar-conversation-empty">
-                    {uiText(language)('chatSidebar.useNewChatAboveToBegin')}
-                  </div>
-                )}
-              </SectionBody>
-              </div>
         </div>
       </div>
 
@@ -942,6 +917,13 @@ export const ChatSidebar = memo(function ChatSidebar({
         <ProfileMenu language={language}/>
       </div>
       </div>
+    </aside>}
+    {recentList && createPortal(<div className={workspaceDropTarget === 'recent' ? 'recent-session-rows workspace-drop-active' : 'recent-session-rows'} data-workspace-drop="recent"
+      onDragStart={event => setDraggedConversationId(event.dataTransfer.getData(CONVERSATION_DRAG_TYPE))}
+      onDragEnd={() => { setDraggedConversationId(''); setWorkspaceDropTarget(null); }} {...workspaceDropHandlers(null)}>
+      {recentConversations.map(conversation => renderStandaloneConversation(conversation, true))}
+      {visibleConversations.length > recentList.limit && <button className="recent-turn-more" type="button" onClick={recentList.more}>{uiText(language)('recentBar.moreChats')}</button>}
+    </div>, recentList.element)}
       {contextMenu && (
         createPortal(
           <SidebarContextMenu
@@ -950,12 +932,11 @@ export const ChatSidebar = memo(function ChatSidebar({
             onClose={closeMenus}
             onDismiss={closeMenus}
           />,
-          sidebarRef.current?.closest('.app') ?? document.body,
+          contextMenu.drawerHost ?? sidebarRef.current?.closest('.app') ?? document.body,
         )
       )}
       {assistantActions.dialog}
-    </aside>
-  );
+  </>;
 });
 
 function NavRow({
@@ -1023,7 +1004,6 @@ function SectionHeader({
   onAction,
   onContextMenu,
   actionShortcut,
-  alwaysShowAction = false,
 }: {
   title: string;
   leading?: React.ReactNode;
@@ -1034,7 +1014,6 @@ function SectionHeader({
   onAction?: () => void;
   onContextMenu?: (event: ReactMouseEvent) => void;
   actionShortcut?: ShortcutId;
-  alwaysShowAction?: boolean;
 }) {
   const interactive = Boolean(onToggle);
   const shortcuts = useKeyboardShortcuts();
@@ -1062,7 +1041,7 @@ function SectionHeader({
         <ChevronDown className={`section-chevron${expanded ? '' : ' collapsed'}`} size={14} aria-hidden="true" />
       </span>
       <button
-        className={`section-action${alwaysShowAction ? ' section-action-visible' : ''}`}
+        className="section-action"
         data-shortcut={actionShortcut}
         aria-keyshortcuts={actionShortcut ? shortcuts.aria(actionShortcut) : undefined}
         data-sidebar-menu-trigger="true"
@@ -1252,6 +1231,7 @@ function ConversationRow({
   nested,
   remote = false,
   quickActionsAvailable = true,
+  drawer = false,
   projectLabel,
   hostLabel,
   pinned,
@@ -1274,6 +1254,7 @@ function ConversationRow({
   nested?: boolean;
   remote?: boolean;
   quickActionsAvailable?: boolean;
+  drawer?: boolean;
   projectLabel?: string;
   hostLabel?: string;
   pinned: boolean;
@@ -1296,7 +1277,7 @@ function ConversationRow({
   const [renameDraft, setRenameDraft] = useState(displayTitle);
   const [renamePending, setRenamePending] = useState(false);
   const [renameFailed, setRenameFailed] = useState(false);
-  const hoverPreview = useHoverPreview(editingTitle, { interactive: true });
+  const hoverPreview = useHoverPreview(editingTitle || drawer, { interactive: true });
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
   const beginRename = useCallback(() => {
     setRenameDraft(displayTitle);
@@ -1353,6 +1334,7 @@ function ConversationRow({
     <div
       {...hoverPreview.triggerProps}
       className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}${remote ? ' remote-conversation' : ''}${quickActionsAvailable ? '' : ' without-quick-actions'}`}
+      data-recent-session={drawer ? conversation.id : undefined}
       draggable={!remote && !editingTitle}
       onDragStart={event => { hoverPreview.close(); event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id); }}
       role="button"
@@ -1435,7 +1417,7 @@ function ConversationRow({
             <X size={12} />
           </button>
         </form>
-      ) : (
+      ) : drawer ? <ConversationRowContent title={displayTitle} conversation={conversation} language={language}/> : (
         <ScrollingConversationTitle title={displayTitle} />
       )}
       {!editingTitle && running && attention?.kind !== 'interaction' && attention?.kind !== 'error' && (

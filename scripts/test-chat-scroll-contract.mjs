@@ -270,8 +270,8 @@ assert.doesNotMatch(
   'Quick Turn details must not depend on a fixed-size message window',
 );
 assert.match(
-  quickContextSource,
-  /function quickTurnPreviewMessages[\s\S]*?message\.role === 'user'[\s\S]*?!isTurnGuidanceMessage[\s\S]*?transcript_kind === 'assistant_final'[\s\S]*?\.reverse\(\)\.find/,
+  readSourceFile(path.resolve('src/features/chat/quickContextIndex.ts'), 'utf8'),
+  /function quickTurnPreviewMessages[\s\S]*?message\.role === 'user'[\s\S]*?!isContextGuidance[\s\S]*?transcript_kind === 'assistant_final'[\s\S]*?\.reverse\(\)\.find/,
   'Quick Turn details must render the user request and protocol-marked final assistant reply, with a legacy fallback',
 );
 assert.match(

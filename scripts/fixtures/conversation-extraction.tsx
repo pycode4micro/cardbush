@@ -8,6 +8,7 @@ import { OPEN_INSPECTOR_EVENT } from '../../src/features/inspector/inspectorEven
 import '../../src/styles/theme.css';
 import '../../src/styles/app.css';
 
+localStorage.setItem('cardbush_pinned_conversation_ids', JSON.stringify(['source', 'other']));
 const noop = () => {};
 window.openRequests = [];
 window.addEventListener(OPEN_INSPECTOR_EVENT, event => window.openRequests.push(event.detail));

@@ -6,6 +6,7 @@ module.exports = async function testSidebarMenu({ run, until, pause, window, roo
   await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/windowMaterial.css'), 'utf8'));
   await run(`
     document.documentElement.dataset.windowMaterial = 'mica';
+    localStorage.setItem("cardbush_pinned_conversation_ids", JSON.stringify(["menu-chat"]));
     window.menuMoves = [];
     window.menuNoop = () => {};
     window.showMenuFixture = (theme = 'dark', running = false) => {
