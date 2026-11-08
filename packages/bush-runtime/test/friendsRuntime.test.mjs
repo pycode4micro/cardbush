@@ -13,6 +13,19 @@ const now = () => new Date().toISOString();
 const modelEvent = (request, sequence, kind, extra = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId, sequence, createdAt: now(), kind, ...extra });
 const data = request => JSON.parse(request.messages.find(message => message.name === 'friends_event_data').content);
 const decide = disposition => ({ name: 'friends_decide', input: { disposition, basis: 'Observed event evidence.', habitRefs: [] } });
+test('a successful event turn publishes its desktop pages durably alongside the actual result', async t => {
+  const presentation = { summary: 'Release checks complete', cover: 'prism',
+    pages: [{ id: 'checks', title: 'Checks', layout: 'facts', items: [{ label: 'Renderer', text: 'Passed' }] }] };
+  const f = await fixture(t, (_request, round) => round === 1
+    ? { calls: [{ name: 'friends_decide', input: { ...decide('completed').input, presentation } }] }
+    : { text: 'The renderer passed.' });
+  await f.configure(); await f.send('desktop-fixture');
+  const snapshot = await until(f.read, s => s.events.some(e => e.status === 'completed'));
+  assert.deepEqual(snapshot.events[0].presentation, presentation);
+  assert.equal(snapshot.events[0].result.text, 'The renderer passed.');
+  const persisted = JSON.parse(await readFile(join(f.root, 'friends', 'events.json'), 'utf8'));
+  assert.deepEqual(persisted.events[0].presentation, presentation);
+});
 async function until(read, predicate) {
   for (let i = 0; i < 200; i++) { const value = await read(); if (predicate(value)) return value; await sleep(10); }
   throw Error('Timed out waiting for Friends state');

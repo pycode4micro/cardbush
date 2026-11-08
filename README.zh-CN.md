@@ -32,7 +32,7 @@
 | 桌面安装包 | [GitHub Releases](https://github.com/pycode4micro/cardbush/releases) | 选择发行页实际附带、与系统和架构匹配的产物。 |
 | 当前源码 | [开发指南](CONTRIBUTING.zh-CN.md) | 在目标操作系统上构建。 |
 
-这些渠道分别发布。截至 2026 年 10 月 28 日，npm 已提供 **1.0.13**，GitHub 上的公开桌面产物仍为 **1.0.0-beta.3** 预发布版本。仓库中存在某个版本的说明，不代表相应安装包已经发布。商店当前可用版本以商店页面为准。
+这些渠道分别发布。截至 2026 年 11 月 6 日，npm 已提供 **1.0.14**。当前源码版本为 **1.0.15**，正在准备 Agent + CLI npm 包和 **1.0.15.0** Microsoft Store MSIX，详见[版本说明](docs/releases/1.0.15.zh-CN.md)。候选包和版本说明不代表已经发布；桌面版本以 GitHub Releases 实际附带的产物和商店页面为准。
 
 当前桌面源码支持 **Windows 10 1809+ / Windows 11 x64** 和 **Linux x64**；兼容更新上架前，商店包可能仍有不同的最低系统要求。目前没有发布 macOS、ARM64 或 32 位桌面包。详见[安装与平台支持](docs/INSTALLATION.zh-CN.md)。
 
@@ -75,7 +75,7 @@ cardbush serve --stop
 
 服务默认目录为 `~/.cardbush/service`。需要指定目录或使用进程管理器时，运行 `cardbush serve --data-dir /absolute/path/agent-data`。服务拥有自己的模型、凭据和会话。详见 [Agent 部署](docs/AGENT_SERVICES.md)和 [Docker 部署](deploy/agent/README.md)。
 
-**当前源码预览：**远程服务通过 Team 或 `cardbush worker` 注册为子 Agent，不再打开独立 Agents 会话。两端都需从更新后的源码重新构建。这次迁移与实验性的 [subagent-remote-proton 协议](docs/SUBAGENT_REMOTE_PROTOCOL.zh-CN.md)尚未包含在已发布的 npm 1.0.13 中。本机 CLI 仍可对话，包括在服务器上使用 CLI。
+远程服务通过 Team 或 `cardbush worker` 注册为子 Agent，不再打开独立 Agents 会话。两端使用相匹配的构建；测试尚未发布的 1.0.15 候选版本时，安装经过验证的 tarball 或从对应源码构建。[subagent-remote-proton 协议](docs/SUBAGENT_REMOTE_PROTOCOL.zh-CN.md)仍属实验性能力。本机 CLI 仍可对话，包括在服务器上使用 CLI。
 
 ## 文档导航
 

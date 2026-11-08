@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { BrowserConnectorBroker } from '../dist-electron/browserConnectorBroker.js';
 import { createCardbushBrowserServer } from '../packages/cardbush-chrome-mcp/dist/index.js';
 import { requestBrowserConnector } from '../packages/cardbush-chrome-mcp/dist/bridgeClient.js';
+import { BrowserTestCdp } from './helpers/browser-test-cdp.mjs';
 
 if (process.platform !== 'win32') throw new Error('This regression requires Windows.');
 const workspaceTmp = path.resolve('tmp');
@@ -41,31 +42,20 @@ async function until(fn, description, timeout = 15000) {
 }
 async function startBrowser(browser, executable, existingId = '') {
   await fs.access(executable);
-  const child = spawn(executable, [`--user-data-dir=${path.join(root, browser)}`, '--headless=new', '--no-first-run',
-    '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', 'about:blank'],
-  { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
-  const pending = new Map(); let sequence = 0, buffer = '';
+  const profilePath = path.join(root, browser);
+  // A restarted private profile still contains the previous endpoint file.
+  // Wait for this launch to publish a fresh endpoint, never attach to that one.
+  await fs.rm(path.join(profilePath, 'DevToolsActivePort'), { force: true });
+  const child = spawn(executable, [`--user-data-dir=${profilePath}`, '--headless=new', '--no-first-run',
+    '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--enable-unsafe-extension-debugging', 'about:blank'],
+  { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  const cdp = new BrowserTestCdp();
   const item = { child, send: null, closed: false }; children.push(item);
-  let browserLog = '';
-  child.stderr.on('data', chunk => { browserLog = (browserLog + chunk).slice(-4000); });
-  const fail = error => { for (const request of pending.values()) { clearTimeout(request.timer); request.reject(error); } pending.clear(); };
-  child.on('error', fail); child.on('exit', code => { item.closed = true; fail(new Error(`${browser} exited (${code}): ${browserLog}`)); });
-  child.stdio[3].on('error', fail); child.stdio[4].on('error', fail);
-  child.stdio[4].on('data', data => {
-    buffer += data.toString(); let boundary;
-    while ((boundary = buffer.indexOf('\0')) >= 0) {
-      const line = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 1); if (!line) continue;
-      const value = JSON.parse(line), request = pending.get(value.id); if (!request) continue;
-      pending.delete(value.id); clearTimeout(request.timer);
-      value.error ? request.reject(new Error(value.error.message)) : request.resolve(value.result);
-    }
-  });
-  const send = item.send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
-    const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${browser}: ${method} timed out`)); }, 15000);
-    pending.set(id, { resolve, reject, timer });
-    child.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
-  });
+  // Edge may replace its launcher, so observe the browser endpoint rather than
+  // treating the launcher's successful exit as the end of the browser session.
+  await cdp.connect(child, { profilePath, allowRelaunch: browser === 'edge' });
+  cdp.socket.addEventListener('close', () => { item.closed = true; });
+  const send = item.send = (...args) => cdp.send(...args);
   const version = await send('Browser.getVersion');
   const extension = await send('Extensions.loadUnpacked', { path: extensionPath });
   assert.equal(extension.id, 'iibaamkfgackofhhpadgnmgcjkhckeln');
@@ -173,7 +163,16 @@ try {
   await broker.start();
   assert.equal(broker.status().portRecovery.previousPort, savedConnectorPort);
   const recoveryStarted = Date.now();
-  const recoveredPages = await call('chrome', 'list_pages');
+  let recoveredPages;
+  try { recoveredPages = await call('chrome', 'list_pages'); }
+  catch (error) {
+    report.recoveryFailure = { elapsedMs: Date.now() - recoveryStarted, ports: broker.status().portRecovery,
+      connections: broker.status().connections.map(({ browser, connected }) => ({ browser, connected })),
+      extensions: await Promise.all([chrome, edge].filter(Boolean).map(connection => connection.evaluate(
+        'chrome.runtime.sendMessage({action:"status"}).then(({nativeConnected,nativeConnecting,reconnectWaiting,reconnectPaused,nextRetryAt,lastError,connectionDiagnostic}) => ({nativeConnected,nativeConnecting,reconnectWaiting,reconnectPaused,nextRetryAt,lastError,connectionDiagnostic}))'))),
+    };
+    throw error;
+  }
   assert.equal(recoveredPages.structuredContent.pages.length, 1, 'same session pages remain usable after app restart');
   report.checks.push(`app restart: first tool request succeeds without intervention (${Date.now() - recoveryStarted} ms)`);
   await until(() => broker.status().connections.filter(connection => connection.connected).length === savedPairingCount, 'alarm reconnect after app restart without user action', 45000);

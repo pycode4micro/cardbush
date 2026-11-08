@@ -10,7 +10,7 @@ type ComposerProps = ComponentProps<typeof Composer>;
 export type AssistantComposerControls = Pick<ComposerProps,
   'selectedModel' | 'availableModels' | 'onModelChange' | 'onConfigureModels' |
   'referencePlanMode' | 'onReferencePlanModeChange' | 'permissionMode' | 'onPermissionModeChange' |
-  'subagentPermissionRouting' | 'onSubagentPermissionRoutingChange' | 'reasoningLevel' |
+  'subagentPermissionRouting' | 'onSubagentPermissionRoutingChange' | 'onRetainDraft' | 'reasoningLevel' |
   'reasoningLevelAvailable' | 'reasoningLevels' | 'onReasoningLevelChange' | 'skills' | 'disabledSkillNames' | 'onToggleSkill'>;
 
 export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, onSend, messages, fileDropTarget, browserTabs, nextStepPrediction, predictionPending, interaction, quote }: {

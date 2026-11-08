@@ -27,6 +27,7 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   const lockItem = contextMenu + ' [role=menuitemcheckbox]:first-child';
   const muteItem = contextMenu + ' [role=menuitemcheckbox]:nth-child(2)';
   const openContext = async id => {
+    await waitFor(`document.querySelector('#right-inspector').getAnimations({subtree:true}).every(animation=>animation.playState!=='running'||animation.effect?.getComputedTiming().iterations===Infinity)`, 'inspector motion settles before native tab input');
     // Wait for Chromium to remove the previous menu's hit-test surface.
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     await click(window.webContents, tab(id)+' [role=tab]', 'right');

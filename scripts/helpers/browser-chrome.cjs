@@ -7,16 +7,19 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   const search = active + '.inspector-bookmark-search input';
   const typeSearch = async value => read(`(()=>{const input=document.querySelector(${JSON.stringify(search)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   const count = () => read(`document.querySelectorAll('${active}.inspector-bookmark-link').length`);
-  // Sample Chromium's actual canvas. Computed backgrounds on html and body
-  // can both be transparent even when the correct final canvas is opaque.
+  // Sample the guest's actual Chromium canvas. The hidden offscreen host may
+  // retain an older composed guest surface after a native-theme change, even
+  // when the guest has repainted. Computed html/body colors can be transparent.
   const { nativeTheme } = require('electron');
   const previousTheme = nativeTheme.themeSource;
   const canvas = async () => {
-    const rect = await read(`(()=>{const r=document.querySelector('${active}webview').getBoundingClientRect();return {x:Math.round(r.x)+8,y:Math.round(r.y)+8,width:1,height:1}})()`);
-    const frame = await window.webContents.capturePage();
-    const size = frame.getSize();
-    if (rect.x < 0 || rect.y < 0 || rect.x >= size.width || rect.y >= size.height) return [];
-    return [...frame.crop(rect).toBitmap().subarray(0, 4)];
+    try {
+      const frame = await original.capturePage({ x: 8, y: 8, width: 1, height: 1 });
+      return [...frame.toBitmap().subarray(0, 4)];
+    } catch (error) {
+      if (error.message === 'UnknownVizError') return []; // First compositor frame is not ready yet; the bounded assertion polls again.
+      throw error;
+    }
   };
   try {
     nativeTheme.themeSource = 'dark';

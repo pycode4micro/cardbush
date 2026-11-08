@@ -4,7 +4,7 @@
 
 官方 [cardbush npm 包](https://www.npmjs.com/package/cardbush)同时提供独立 Agent 服务与终端客户端。Windows 和 Linux 使用同一份发布包，需要 Node.js 24、npm 10 或更高版本。API Key 模型不需要桌面 App。
 
-本页与当前源码同步。已发布的 **1.0.13** 不包含新的 `cardbush worker` 注册与远程聊天入口迁移；使用下述 worker 功能时，需要在两端重新构建当前源码。发布范围见 [1.0.13 说明](https://github.com/pycode4micro/cardbush/blob/main/docs/releases/1.0.13.zh-CN.md)。
+本页对应 **1.0.15 候选版本**。截至 2026 年 11 月 6 日，公开 npm 的最新版本为 **1.0.14**；1.0.15 的打包与验证不代表已经发布。测试本次 Webhook、CLI 和浏览器修复时，使用经过验证的 `cardbush-1.0.15.tgz`，worker 两端使用相匹配的构建。变更范围见 [1.0.15 说明](https://github.com/pycode4micro/cardbush/blob/main/docs/releases/1.0.15.zh-CN.md)。
 
 无需用户提前准备部署压缩包：已有匹配发行版时，目标机直接安装固定版本；测试未发布代码时，Agent 可从可访问的完整源码现场构建独立目录或临时 tarball。已有验证过的 `cardbush-VERSION.tgz` 也可直接安装：`npm install --global /absolute/path/cardbush-VERSION.tgz`，无需先发布 npm。选择 tarball 时传输前后核对 SHA-256，并检查实际命令版本与服务能力；不能用 `@latest` 代替未发布候选包。
 

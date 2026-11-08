@@ -15,7 +15,7 @@ export const eventBackend = {
   read: () => command({ action: 'read' }),
   status: () => command<FriendsConnectionStatus>({ action: 'status' }),
   targets: () => command<Array<{ sourceRef: string; botName: string; senderId: string; conversationId: string }>>({ action: 'targets' }),
-  async configure(config: ChatStreamRequest, assistant: AssistantProfile, language: string, signal: AbortSignal) {
+  async configure(config: ChatStreamRequest, assistant: AssistantProfile, language: string, signal: AbortSignal, desktopComponents?: {id: string; title: string}[]) {
     if (!assistant.proactive) {
       const previous = await command<AssistantEventPreferences | null>({ action: 'preferences' });
       signal.throwIfAborted();
@@ -30,7 +30,7 @@ export const eventBackend = {
     try {
       const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId: PERSONAL_ASSISTANT_SESSION, userInput: '', uiLanguage: language }, runtime);
       signal.throwIfAborted();
-      await command({ action: 'configure', parent, assistant, profile: { name: assistant.name, language,
+      await command({ action: 'configure', parent: desktopComponents?.length ? { ...parent, metadata: {...parent.metadata, desktopComponents} } : parent, assistant, profile: { name: assistant.name, language,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         recognition: preferences.confirmedAt ? preferences.recognition : {}, confirmedAt: preferences.confirmedAt ?? new Date(0).toISOString(),
         interactionPreferences: { beforeExecution: preferences.beforeExecution, report: preferences.report } } });

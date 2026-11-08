@@ -135,5 +135,5 @@ export function registerVoiceIpc(mainWindow: () => BrowserWindow | null, runtime
     if (!event.sender.isDestroyed()) event.sender.send('voice:audio', chunk);
   }), undefined));
   ipcMain.handle('voice:cancel', (event, id) => authorized(event).cancel(event.sender.id, id));
-  return { realtime, settings: () => currentService().settings() };
+  return { realtime, hasActiveCall: (owner: number) => callBlockers.has(owner), settings: () => currentService().settings() };
 }

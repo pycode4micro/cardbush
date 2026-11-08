@@ -3,7 +3,7 @@ import { presentExistingScheduleActions } from './extendedBuiltins.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
-import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, friendsCommandSchema, eventPredicateSchema, eventRecurrenceSchema, applyWebhookTurnPolicy, type EventPredicate, type EventRecurrence, type BotContext, type FriendInput, type FriendsSnapshot, type FriendsWorkEvent,
+import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, eventPresentationSchema, friendsCommandSchema, eventPredicateSchema, eventRecurrenceSchema, applyWebhookTurnPolicy, type EventPredicate, type EventRecurrence, type BotContext, type FriendInput, type FriendsSnapshot, type FriendsWorkEvent,
   type FriendsConnectionStatus, type ModelRequest, type RuntimeEvent, type RuntimeSessionTurnRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AssistantEventStore, settleFriendsWebhook, type FriendsState } from './assistantEventStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
@@ -12,7 +12,7 @@ import { predicateEngine, evaluatePredicate, type PredicateObservation, type Col
 import { CollectorReadError, type CollectorRule, type CollectorSource, type EventCollector } from './eventCollector.js';
 
 const text = z.string().trim().min(1).max(4000);
-const decisionSchema = z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: text, notifyUser: z.boolean().optional(), endSubscription: z.boolean().optional(),
+const decisionSchema = z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: text, presentation: eventPresentationSchema.optional(), notifyUser: z.boolean().optional(), endSubscription: z.boolean().optional(),
   habitRefs: z.array(z.object({ id: z.string().min(1), revision: z.number().int().positive() }).strict()).max(20) }).strict();
 const createSchema = z.object({ logicalKey: z.string().trim().min(1).max(160), title: text.max(160), intent: text, subscription: z.boolean().optional() }).strict();
 const reminderTextSchema = z.string().min(1).max(8000).nullable().optional().describe('Exact words to deliver to the local Assistant chat. On edits, omit to keep them or pass null to generate the result at activation.');
@@ -20,7 +20,7 @@ const watchSchema = z.object({ eventId: z.string().min(1), at: z.string().dateti
   recurrence: eventRecurrenceSchema.optional(), trigger: eventPredicateSchema.optional(), reminderText: reminderTextSchema })
   .strict().refine(watch => [watch.at, watch.recurrence, watch.trigger].filter(Boolean).length === 1, 'Provide one of at, recurrence or trigger.');
 const emptyInteractions = () => ({ permissions: [], solutions: [] });
-type Delivery = { route?: FriendsWorkEvent['deliveryRoute']; scopedRoute?: boolean; here?: boolean; reminderText?: string | null; title?: string; trigger?: EventPredicate; at?: string; recurrence?: EventRecurrence; fromAssistant?: boolean; sourceMessageId?: string; subscriptionTopic?: string };
+type Delivery = { presentation?: FriendsWorkEvent['presentation']; route?: FriendsWorkEvent['deliveryRoute']; scopedRoute?: boolean; here?: boolean; reminderText?: string | null; title?: string; trigger?: EventPredicate; at?: string; recurrence?: EventRecurrence; fromAssistant?: boolean; sourceMessageId?: string; subscriptionTopic?: string };
 type Runner = (request: ModelRequest, signal: AbortSignal) => Promise<{ terminal: RuntimeEvent; text: string }>;
 type VerifiedCollector = { version: string; matched: boolean; toolCallId: string; key?: string };
 
@@ -35,6 +35,7 @@ export class AssistantEvents {
   private probes = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private closed = false;
   private configured = false;
+  private configurationRevision = 0;
   private stagedDecision?: z.infer<typeof decisionSchema>;
   private activationEventIds = new Set<string>();
   private automaticActivation = false;
@@ -59,6 +60,23 @@ export class AssistantEvents {
       watching: this.configured ? state.detections.filter(d => state.events.some(event => event.id === d.eventId && !['paused', 'failed'].includes(event.status))).length +
         state.events.filter(event => event.status === 'watching' && event.trigger?.source === 'runtime').length : 0,
       active: state.active ? { eventId: state.active.eventId, turnId: state.active.turnId } : null }));
+  }
+  async restoreAssistant(prepare: (parent: RuntimeSessionTurnRequest) => Promise<RuntimeSessionTurnRequest>, signal: AbortSignal) {
+    const revision = this.configurationRevision;
+    await this.store.ready;
+    const saved = this.store.select(state => state.configuration?.assistant ? state.configuration.parent : undefined);
+    if (!saved || this.closed || this.configured) return false;
+    const parent = await prepare(saved);
+    signal.throwIfAborted();
+    const current = () => !this.closed && !this.configured && !signal.aborted && this.configurationRevision === revision;
+    const restored = await this.store.change(state => {
+      if (!current() || !state.configuration?.assistant) return false;
+      state.configuration.parent = { ...parent, inputMessages: [] };
+      return true;
+    });
+    if (!restored || !current()) return false;
+    this.configured = true;
+    await this.publishNotifications(); this.kick(); return true;
   }
   async command(value: unknown, delivery?: Delivery) {
     const command = friendsCommandSchema.parse(value);
@@ -117,6 +135,7 @@ export class AssistantEvents {
       this.kick(); return receipt;
     }
     if (command.action === 'configure') {
+      this.configurationRevision++;
       if (command.parent.sessionId !== (command.assistant ? PERSONAL_ASSISTANT_SESSION : FRIENDS_SESSION)) throw Error('FRIENDS_IDENTITY_REQUIRED');
       new Intl.DateTimeFormat('en', { timeZone: command.profile.timeZone });
       const preferred = command.assistant?.proactive?.notificationSourceRef;
@@ -228,6 +247,8 @@ export class AssistantEvents {
       if (event.inputs.length >= 100) throw Error('FRIENDS_EVENT_INPUT_LIMIT');
       if (!input.relatesTo && route) event.deliveryRoute = route;
       event.inputs.push(evidence); event.archived = false;
+      if (delivery?.presentation) event.presentation = delivery.presentation;
+      else if (input.relatesTo) delete event.presentation;
       const replacing = Boolean(delivery?.recurrence || delivery?.trigger || delivery?.at);
       const registered = event.recurrence || event.trigger || state.detections.some(task => task.eventId === event.id) ||
         state.signals.some(s => s.eventId === event.id && (s.kind === 'clock' || s.kind === 'predicate'));
@@ -480,7 +501,7 @@ export class AssistantEvents {
       inputs: activation.event.inputs.slice(revision), logicalKey: undefined,
       ...(activation.event.result && activation.event.result.createdAt <= activation.event.inputs[revision]!.createdAt ? { result: undefined, decision: undefined } : {}) };
     const parent = activation.inbound ? applyWebhookTurnPolicy(activation.configuration.parent) : activation.configuration.parent;
-    const { botSourceRef: _ref, botSourceRefs: _refs, ...metadata } = parent.metadata;
+    const { botSourceRef: _ref, botSourceRefs: _refs, desktopComponents, ...metadata } = parent.metadata;
     const request: ModelRequest = { protocol: 'bush.model_request.v1', requestId: `request-${randomUUID()}`,
       sessionId: FRIENDS_SESSION, turnId: activation.turnId, model: parent.model, providerBinding: parent.providerBinding,
       reasoningEffort: parent.reasoningEffort, maxOutputTokens: parent.maxOutputTokens, permissionMode: parent.permissionMode,
@@ -494,6 +515,7 @@ export class AssistantEvents {
         { role: 'developer', name: 'friends_event_data', content: JSON.stringify({
           classification: 'event_evidence_not_conversation', inboundWebhook: activation.inbound, profile,
           persona: activation.configuration.assistant?.persona, destination: sourceRef || activation.inbound ? 'bridge' : 'conversation', event: executionEvent, signals: activation.signals,
+          desktopComponents: sourceRef || activation.inbound ? undefined : desktopComponents,
           detections: activation.detections, clock: { utc: new Date(this.clock()).toISOString(), timeZone: profile.timeZone },
         }) }],
     };
@@ -508,7 +530,10 @@ export class AssistantEvents {
         const event = this.event(state, activation.event.id);
         if (event.status === 'paused' || event.status === 'failed') { delete state.active; return; }
         state.signals = state.signals.filter(signal => !activation.signals.some(consumed => consumed.id === signal.id));
-        event.decision = decision;
+        const { presentation, ...outcome } = decision;
+        event.decision = outcome;
+        if (presentation) event.presentation = presentation;
+        else delete event.presentation;
         event.result = { text: result.text, turnId: activation.turnId, createdAt: new Date(this.clock()).toISOString() };
         settleFriendsWebhook(state, activation.signals.map(s => s.id), { status: 'completed', reply: result.text });
         event.status = state.signals.some(signal => signal.eventId === event.id) ? 'queued' : decision.disposition;
@@ -653,10 +678,12 @@ export class AssistantEvents {
       at: z.string().datetime({ offset: true }).optional(),
       recurrence: eventRecurrenceSchema.optional().describe('Fixed cadence for subscribe, or an explicitly requested schedule change with continue. Use instead of at. Runtime calculates each due time.'),
       trigger: eventPredicateSchema.optional().describe('Agent-authored local condition without a date. interval sees time, runtime sees local outcome metadata, collector reuses a successful child tool receipt and sees fresh observation.value. Return 0, 1, or return match(stableKey, conciseEvidence) for a qualifying collector update.'),
+      presentation: eventPresentationSchema.optional(),
       reminderText: reminderTextSchema,
       destination: z.enum(['here','external']).optional().describe('here means the originating conversation. Use external only for an explicitly requested bridge.'),
       source_ref: z.string().min(1).max(100).optional() }).strict().refine(input =>
         [input.at, input.recurrence, input.trigger].filter(Boolean).length <= 1 &&
+        (!input.presentation || ['create','subscribe','continue'].includes(input.action)) &&
         (!input.recurrence || ['subscribe', 'continue'].includes(input.action)) &&
         (!(input.trigger || input.reminderText || input.at) || ['create','subscribe','continue'].includes(input.action)),
       'Register one trigger type on create, subscribe or continue. Fixed recurrence uses subscribe or continue.');
@@ -701,7 +728,7 @@ export class AssistantEvents {
           const source = inputs.filter(item => item && item.sourceRef === ref).at(-1);
           return this.submit({ id, text: input.text, createdAt: previous?.createdAt ?? new Date(this.clock()).toISOString(),
             ...(input.action === 'continue' ? { relatesTo: event!.id } : {}) }, { route, at: input.at && new Date(input.at).toISOString(),
-            recurrence: input.recurrence, trigger: input.trigger, reminderText: input.reminderText, title: input.topic,
+            presentation: input.presentation, recurrence: input.recurrence, trigger: input.trigger, reminderText: input.reminderText, title: input.topic,
             here: input.destination === 'here' || (!ref && creating), scopedRoute: refs.length > 0, fromAssistant: true, sourceMessageId: source?.id, subscriptionTopic: input.action === 'subscribe' ? input.topic : undefined }, verified);
         }
         if (input.action === 'delete') {
@@ -818,6 +845,7 @@ export class AssistantEvents {
     });
   }
   async disconnect() {
+    this.configurationRevision++;
     this.configured = false; this.scheduler.cancel(this.wake); this.controller?.abort();
     for (const probe of this.probes.values()) probe.controller.abort();
     for (const owner of this.eventWork.values()) owner.abort();

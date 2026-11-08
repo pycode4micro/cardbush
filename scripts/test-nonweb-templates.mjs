@@ -48,7 +48,9 @@ test('MCP document keeps host CSP first and treats provider inputs as inert JSON
   const html = mcpAppDocument({ token: 'not-in-frame', html: provider, input: { text: hostile }, result: { structuredContent: { text: hostile } }, tool: {}, meta: { ui: { csp: { connectDomains: ['https://allowed.example', 'https://bad.example; script-src *'] } } } }, 'zh', 'dark', { '--accent': hostile });
   assert.ok(html.indexOf('Content-Security-Policy') < html.indexOf('<script>'));
   assert.ok(html.includes('https://allowed.example')); assert.ok(!html.includes('bad.example'));
-  assert.ok(html.endsWith(provider + '\n')); assert.ok(!html.includes('not-in-frame'));
+  assert.ok(html.endsWith(provider + '\n') || html.endsWith(provider + '\r\n'),
+    'provider markup stays verbatim at the end of LF and CRLF templates');
+  assert.ok(!html.includes('not-in-frame'));
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   assert.equal(scripts.length, 1); new Script(scripts[0][1]);
   assert.ok(scripts[0][1].includes('宿主请求超时'));

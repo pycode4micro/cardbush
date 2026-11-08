@@ -66,7 +66,7 @@ async function bundle() {
     export function useNavigationFixture({ activeId, setActiveId, conversations, setConversations, projectItems, setProjectItems, setDraftsByConversation, setSection }: any) {
       const chat = useDraftFixture({ activeId, setActiveId, conversations, setConversations });
       const activeConversationProjectDir = conversationProjectDir(chat.activeConversation), language = 'zh';
-      const [, setSettingsOpen] = useState(false), [, setConversationPromptFocus] = useState(0);
+      const [, setSettingsOpen] = useState(false), [, setFriendsOpen] = useState(false), [, setConversationPromptFocus] = useState(0);
       ${navigationCallbacks.join('\n')}
       return { chat, createConversation, openConversation, changeWelcomeProject, handleProjectAction, createAutomationConversation, openPluginPrompt, newChat: handleSidebarCreateConversation,
         projectDir: conversationProjectDir(chat.activeConversation) };
@@ -208,7 +208,7 @@ app.whenReady().then(async () => {
     await until("routing.chat.activeConversationId === 'saved-task-chat' && routing.projectDir === ''", 'independent history restores its own context');
     assert.equal(await run("document.querySelectorAll('.conversation-row:not(.agent-sidebar-empty)').length"), 2, 'history stays visible across selection');
     await run("routing.openConversation('saved-project-chat')"); await pause(30);
-    await run("document.querySelector('.sidebar-nav .nav-row').click()");
+    await run("document.querySelector('[data-nav-section=chat]').click()");
     await until("routing.chat.activeConversationId !== 'saved-project-chat' && routing.projectDir === ''", 'general new chat starts independently');
     await run("changeDraft('独立工作草稿')"); await pause(30);
     const independentDraftId = await run('routing.chat.activeConversationId');

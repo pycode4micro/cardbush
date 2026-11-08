@@ -7,6 +7,8 @@ const { captureInspectorRegion } = require('../dist-electron/inspectorRegionCapt
 const { renderOfficePreview } = require('../dist-electron/officePreview.js');
 const directory = process.argv[2], delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 app.setPath('userData', join(directory, 'profile'));
+// Match the other geometry fixtures; OS display scaling must not round exact CSS viewport targets.
+app.commandLine.appendSwitch('force-device-scale-factor', '1');
 protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {

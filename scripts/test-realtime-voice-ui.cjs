@@ -122,6 +122,13 @@ app.whenReady().then(async()=>{
     await click('通话音色');await dom('document.querySelector(".settings-dropdown-popover:popover-open")');
     await read('[...document.querySelectorAll("[role=option]")].find(b=>b.textContent.includes("添加音色")).click();void 0');
     await dom('document.querySelector(".realtime-voice-dialog").open');
+    await read(`document.querySelector('.realtime-voice-dialog input').dispatchEvent(new Event('cancel',{bubbles:true,cancelable:true}));void 0`);
+    assert.equal(await read('document.querySelector(".realtime-voice-dialog").open'),true,'child cancellation keeps the voice dialog open');
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+    await dom('!document.querySelector(".realtime-voice-dialog").open');
+    await click('通话音色');await dom('document.querySelector(".settings-dropdown-popover:popover-open")');
+    await read('[...document.querySelectorAll("[role=option]")].find(b=>b.textContent.includes("添加音色")).click();void 0');
+    await dom('document.querySelector(".realtime-voice-dialog").open');
     await read(`(()=>{const fields=document.querySelectorAll('.realtime-voice-dialog input');for(const [i,value] of ['自定义音色','fixture-custom'].entries()){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(fields[i],value);fields[i].dispatchEvent(new Event('input',{bubbles:true}));}})()`);
     await click('添加并使用');await dom('fixture.state().realtimeSettings.voiceId==="fixture-custom"');
     assert.equal(service.settings().customVoices[0].name,'自定义音色');

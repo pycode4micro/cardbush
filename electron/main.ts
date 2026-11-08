@@ -28,6 +28,7 @@ import {
   Menu,
   net,
   Notification,
+  powerMonitor,
   protocol,
   Tray,
   dialog,
@@ -108,6 +109,7 @@ import {
 } from './browserConnectorRegistration';
 import { BrowserConnectorLifecycle } from './browserConnectorLifecycle';
 import { installApplicationInstance } from './applicationInstance';
+import { residentRuntimeWakeAt } from './assistantResidentStartup';
 import { connectorDataRoot } from './browserConnectorFiles';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
@@ -134,6 +136,8 @@ const cardbushAppUserModelId = cardbushRuntimeIsPackaged
 const cardbushDisplayName = 'cardbush';
 const desktopStartupStartedAt = Date.now();
 const runtimeStartupStatusChannel = 'app:runtime-startup-status';
+// Each boot phase owns its deadline. Cold module/sandbox setup must not consume
+// the worker's own startup allowance before that process has even been spawned.
 const runtimeServicesStartupTimeoutMs = 15_000;
 const packagedSmokeResultPath = process.env.CARDBUSH_PACKAGED_SMOKE_RESULT?.trim() ?? '';
 const packagedSmokeMode = packagedSmokeResultPath.length > 0;
@@ -292,6 +296,30 @@ type ShadowWindowState = {
 const shadowWindows = new Map<number, ShadowWindowState>();
 const shadowWindowIdsByKey = new Map<string, number>();
 let tray: Tray | null = null;
+let assistantResident = false;
+let assistantNextLaunch = false;
+let floatingAssistant = false;
+let retainAssistantWindow = false;
+let residentBootTimer: ReturnType<typeof setTimeout> | undefined;
+const residentPreferencePath = () => path.join(app.getPath('userData'), 'assistant-resident.json');
+type DesktopModelProxy = { mode: 'none' | 'system' | 'manual'; httpProxy: string; httpsProxy: string; noProxy: string };
+let residentProxy: DesktopModelProxy = { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' };
+let residentPreferenceWrite: Promise<unknown> = Promise.resolve();
+function saveResidentPreference(enabled: boolean) {
+  const write = residentPreferenceWrite.then(async () => {
+    let encryptedProxy: string | undefined;
+    if (enabled && residentProxy.mode === 'manual') {
+      if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text'))
+        throw Error('secure_proxy_storage_unavailable');
+      encryptedProxy = safeStorage.encryptString(JSON.stringify(residentProxy)).toString('base64');
+    }
+    const { writePrivateJson } = await import('./atomicJsonFile.mjs');
+    await writePrivateJson(residentPreferencePath(), { enabled, language: nativeUiLanguage, proxyMode: residentProxy.mode, encryptedProxy });
+    assistantNextLaunch = enabled;
+  });
+  residentPreferenceWrite = write.catch(() => undefined);
+  return write;
+}
 let isQuitting = false;
 let hostShutdownComplete = false;
 let hostShutdownPromise: Promise<void> | null = null;
@@ -562,7 +590,7 @@ function traceMainWindowComposition(
   }
 }
 
-function createWindow(options: { reveal?: boolean } = {}) {
+function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' } = {}) {
   if (mainWindow != null && !mainWindow.isDestroyed()) {
     return mainWindow;
   }
@@ -572,12 +600,13 @@ function createWindow(options: { reveal?: boolean } = {}) {
   }
   const loadedWindowIcon = loadCardbushIconWithSource(256);
   const windowIcon = loadedWindowIcon.image;
+  const floating = assistantResident && !options.workspace;
   const window = new BrowserWindow({
-    width: 1180,
-    height: 760,
+    width: floating ? 500 : 1180,
+    height: floating ? 640 : 760,
     minWidth: 480,
     minHeight: 480,
-    ...mainWindowFrameOptions(process.platform),
+    ...(floating ? { alwaysOnTop: true, autoHideMenuBar: true } : mainWindowFrameOptions(process.platform)),
     title: 'cardbush',
     icon: windowIcon,
     backgroundColor: mainWindowThemeBackgrounds.dark,
@@ -588,12 +617,14 @@ function createWindow(options: { reveal?: boolean } = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webviewTag: true,
-      backgroundThrottling: false,
+      webviewTag: !floating,
+      backgroundThrottling: floating,
     },
   });
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
+  floatingAssistant = floating;
+  retainAssistantWindow = false;
   installAppSessionPermissions(window);
   windowScrollDiagnostics.set(window, new WindowScrollDiagnostics(window, appLogsDir()));
   window.setMenu(null);
@@ -650,11 +681,16 @@ function createWindow(options: { reveal?: boolean } = {}) {
     }
     if (mainWindow === window) {
       mainWindow = null;
+      if (floating && assistantResident && !isQuitting && runtimeHostController) {
+        void runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+          command: { kind: 'runtime.assistant_window_closed', payload: {} } }).catch(() => undefined);
+      }
     }
   });
 
   window.on('close', (event) => {
     if (!isQuitting) {
+      if (floating && !retainAssistantWindow && !desktopVoiceHost.hasActiveCall(window.webContents.id)) return;
       event.preventDefault();
       if (!window.isDestroyed()) {
         window.hide();
@@ -662,7 +698,7 @@ function createWindow(options: { reveal?: boolean } = {}) {
     }
   });
 
-  loadRenderer(window, 'main');
+  loadRenderer(window, floating ? 'assistant' : 'main', options.workspace);
   return window;
 }
 
@@ -831,6 +867,10 @@ function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMod
   }
   lastMainWindowTheme = theme;
   const background = backgroundForMainWindowTheme(theme);
+  if (target === mainWindow && floatingAssistant) {
+    target.setBackgroundColor(background);
+    return;
+  }
   let controller = windowAppearanceControllers.get(target);
   if (!controller) {
     controller = new WindowAppearanceController(target, process.platform, (error) => {
@@ -1197,10 +1237,11 @@ async function openFileWithChooser(targetPath: string) {
   });
 }
 
-function loadRenderer(target: BrowserWindow, mode: 'main' | 'shadow') {
+function loadRenderer(target: BrowserWindow, mode: 'main' | 'shadow' | 'assistant', workspace?: string) {
   installWindowVisibilityEvents(target);
   if (devServerUrl) {
     const url = new URL(devServerUrl);
+    if (workspace) url.searchParams.set('workspace', workspace);
     if (mode !== 'main') {
       url.searchParams.set('window', mode);
     }
@@ -1212,7 +1253,7 @@ function loadRenderer(target: BrowserWindow, mode: 'main' | 'shadow') {
     target.loadFile(indexPath, { query: { window: mode } });
     return;
   }
-  target.loadFile(indexPath);
+  target.loadFile(indexPath, workspace ? { query: { workspace } } : undefined);
 }
 
 function createTray() {
@@ -1221,6 +1262,7 @@ function createTray() {
   tray.setToolTip('cardbush');
   updateTrayMenu();
   tray.on('double-click', () => showMainWindow());
+  if (assistantResident) tray.on('click', () => showMainWindow());
 }
 
 let nativeUiLanguage: string | undefined;
@@ -1233,9 +1275,17 @@ function updateTrayMenu() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: nativeText()('main.open_cardbush'),
+        label: nativeText()(assistantResident ? 'resident.openAssistant' : 'main.open_cardbush'),
         click: () => showMainWindow(),
       },
+      ...(assistantResident ? [{ label: nativeText()('main.open_cardbush'), click: () => openResidentWorkspace('home') }] : []),
+      { type: 'checkbox', label: nativeText()('resident.nextLaunch'), checked: assistantNextLaunch,
+        click: async item => {
+          try {
+            await saveResidentPreference(item.checked);
+          } catch { void dialog.showMessageBox({ type: 'error', message: nativeText()('resident.preferenceFailed') }); }
+          updateTrayMenu();
+        } },
       { type: 'separator' },
       {
         label: nativeText()('main.quit'),
@@ -1246,6 +1296,7 @@ function updateTrayMenu() {
 }
 
 function requestAppQuit() {
+  clearTimeout(residentBootTimer);
   if (isQuitting && quitFallbackTimer != null) {
     return;
   }
@@ -1606,6 +1657,7 @@ function escapeXmlText(value: string) {
 }
 
 function activateSessionAttention(sessionId: string) {
+  if (assistantResident && sessionId === 'personal-assistant' && (!mainWindow || floatingAssistant)) { showMainWindow(); return; }
   if (sessionAttentionOpenQueue.enqueue(sessionId)) {
     publishSessionAttentionOpenAvailable();
   }
@@ -1624,6 +1676,7 @@ function publishSessionAttentionOpenAvailable() {
 }
 
 function showMainWindow() {
+  if (assistantResident && !isQuitting) void startRuntimeServices().catch(() => undefined);
   if (browserConnectorLifecycle?.enabled && browserConnectorLifecycle.state === 'needs_repair') {
     void browserConnectorLifecycle.setEnabled(true).catch(error => console.warn('[chrome-connector] resume failed', error));
   }
@@ -1638,6 +1691,25 @@ function showMainWindow() {
   mainWindow.show();
   mainWindow.focus();
   mainWindow.moveTop();
+}
+
+function openResidentWorkspace(page: 'team' | 'home') {
+  if (!assistantResident) return;
+  if (mainWindow && floatingAssistant) {
+    if (retainAssistantWindow || desktopVoiceHost.hasActiveCall(mainWindow.webContents.id)) {
+      showMainWindow();
+      void dialog.showMessageBox(mainWindow, { message: nativeText()('resident.finishBeforeSwitch') });
+      return;
+    }
+    mainWindow.destroy();
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void startRuntimeServices().catch(() => undefined);
+    createWindow({ workspace: page });
+    assistantResident = false;
+    updateTrayMenu();
+  }
+  else showMainWindow();
 }
 
 async function voiceEnvironmentCommand(kind: string, payload: unknown) {
@@ -1676,7 +1748,20 @@ ipcMain.handle('window:toggle-maximize', () => {
 });
 
 ipcMain.handle('window:close-to-tray', () => {
-  mainWindow?.hide();
+  if (assistantResident && floatingAssistant) mainWindow?.close();
+  else mainWindow?.hide();
+});
+ipcMain.handle('assistant:window-retained', (event, retained: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (!assistantResident || !floatingAssistant || typeof retained !== 'boolean') return;
+  retainAssistantWindow = retained;
+  mainWindow?.webContents.setBackgroundThrottling(!retained);
+  if (!retained && mainWindow && !mainWindow.isVisible() && !mainWindow.webContents.isLoadingMainFrame() &&
+    !startupRevealFallback && !desktopVoiceHost.hasActiveCall(event.sender.id)) mainWindow.close();
+});
+ipcMain.handle('assistant:open-workspace', (event, page: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (page === 'team') openResidentWorkspace(page);
 });
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
@@ -2070,6 +2155,10 @@ ipcMain.handle(
   ) => {
     assertMainWindowSender(event.sender.id);
     await applyProxySettings(proxy);
+    if (JSON.stringify(residentProxy) !== JSON.stringify(proxy)) {
+      residentProxy = { ...proxy };
+      if (assistantNextLaunch) await saveResidentPreference(true);
+    }
   },
 );
 
@@ -2583,6 +2672,9 @@ function mcpDesktop() {
     openUrl: url => shell.openExternal(url),
     changed: () => {
       const contents = mainWindow?.webContents;
+      const pending = assistantResident && mcpDesktopHost?.requests()[0];
+      if (pending) showSessionAttentionNotification({ sessionId: 'personal-assistant', kind: 'interaction',
+        interactionId: pending.id, title: nativeText()('resident.notificationTitle'), body: nativeText()('resident.needsAttention') });
       try { if (contents && !contents.isDestroyed() && !contents.mainFrame.isDestroyed()) contents.send('mcp:requests-changed'); }
       catch { /* A closed renderer restores pending requests on next mount. */ }
     },
@@ -3398,6 +3490,20 @@ app.on('child-process-gone', (_event, details) => {
 
 app.whenReady().then(async () => {
   if (!applicationInstance.primary) return;
+  let usableResidentPreference = true;
+  try {
+    const preference = JSON.parse(fs.readFileSync(residentPreferencePath(), 'utf8'));
+    assistantNextLaunch = preference?.enabled === true;
+    if (assistantNextLaunch && typeof preference.language === 'string') nativeUiLanguage = resolveUiLanguage(preference.language);
+    if (assistantNextLaunch && preference.proxyMode === 'system') residentProxy.mode = 'system';
+    if (assistantNextLaunch && preference.proxyMode === 'manual') {
+      residentProxy = JSON.parse(safeStorage.decryptString(Buffer.from(preference.encryptedProxy, 'base64')));
+    }
+  } catch (error) {
+    assistantNextLaunch = false;
+    usableResidentPreference = (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+  assistantResident = !packagedSmokeMode && usableResidentPreference && (app.commandLine.hasSwitch('assistant-only') || assistantNextLaunch);
   trustedGitSync = (await import('@cardbush/bush-runtime/processes')).trustedGitSync;
   if (process.platform === 'win32' && !windowsReleaseSupported(os.release())) {
     dialog.showErrorBox('CardBush', nativeText()('main.windows_version_required'));
@@ -3445,8 +3551,8 @@ app.whenReady().then(async () => {
     await runPackagedApplicationSmoke();
     return;
   }
-  await applyProxySettings({ mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' });
-  createWindow();
+  await applyProxySettings(residentProxy);
+  if (!assistantResident) createWindow();
   createTray();
   applicationInstance.windowReady();
   appendDebugLog('startup', {
@@ -3455,8 +3561,14 @@ app.whenReady().then(async () => {
     packaged: cardbushRuntimeIsPackaged,
   });
   void ensureLegacyProductSkillsMigrated();
-  void contextWebhookHost().catch(() => console.warn('[webhooks] startup unavailable'));
-  void startRuntimeServices();
+  if (!assistantResident || fs.existsSync(path.join(app.getPath('userData'), 'webhooks', 'state.json')))
+    void contextWebhookHost().catch(() => console.warn('[webhooks] startup unavailable'));
+  if (assistantResident) {
+    void scheduleResidentBoot();
+    powerMonitor.on('resume', () => { if (assistantResident && !runtimeHostController) void scheduleResidentBoot(); });
+    if (fs.existsSync(path.join(app.getPath('userData'), 'embodied', 'devices.json')))
+      void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
+  } else void startRuntimeServices();
   setImmediate(() => {
     const shortcutUpdated = ensureWindowsTaskbarShortcut();
     if (process.platform !== 'win32') return;
@@ -3480,13 +3592,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    } else {
-      showMainWindow();
-    }
-  });
+  app.on('activate', showMainWindow);
 });
 
 function publishRuntimeStartupStatus(next: RuntimeStartupStatus) {
@@ -3499,6 +3605,18 @@ function publishRuntimeStartupStatus(next: RuntimeStartupStatus) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     sendToLiveRenderer(mainWindow, runtimeStartupStatusChannel, { ...next });
   }
+}
+
+async function scheduleResidentBoot() {
+  clearTimeout(residentBootTimer);
+  const at = await residentRuntimeWakeAt(path.join(app.getPath('userData'), 'runtime-state'));
+  const arm = () => {
+    if (at === undefined || !assistantResident || isQuitting || runtimeServicesInitialization || runtimeHostController) return;
+    const delay = at - Date.now();
+    if (delay <= 0) void startRuntimeServices().catch(() => undefined);
+    else residentBootTimer = setTimeout(arm, Math.min(delay, 2_147_483_647));
+  };
+  arm();
 }
 
 function isComputerUseRuntimeTool(toolName: string): boolean {
@@ -3686,6 +3804,7 @@ function disposeDesktopControlMonitor(): void {
 }
 
 async function startRuntimeServices(force = false): Promise<void> {
+  clearTimeout(residentBootTimer);
   if (runtimeServicesInitialization) return runtimeServicesInitialization;
   if (runtimeServicesStopping || (!force && runtimeStartupStatus.attempt > 0 && runtimeStartupStatus.phase !== 'initializing')) return;
   const attempt = runtimeStartupStatus.attempt + 1;
@@ -3713,7 +3832,7 @@ async function startRuntimeServices(force = false): Promise<void> {
       // Runtime-dependent work starts only after the complete boot succeeds.
       if (!runtimeServicesStopping && !isQuitting && runtimeHostController) {
         startRuntimeAutomations(runtimeHostController);
-        if (!packagedSmokeMode) void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
+        if (!packagedSmokeMode && !assistantResident) void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
       }
     })
     .catch((error) => {
@@ -3756,11 +3875,23 @@ async function initializeRuntimeHost() {
   const abort = new AbortController();
   runtimeServicesAbort = abort;
   try {
-    await withRuntimeStartupTimeout(
-      initializeRuntimeHostWithinDeadline(abort.signal),
+    const controller = await withRuntimeStartupTimeout(
+      prepareRuntimeHost(abort.signal),
       runtimeServicesStartupTimeoutMs,
       abort,
+      'preparation',
     );
+    abort.signal.throwIfAborted();
+    await withRuntimeStartupTimeout(Promise.all([
+      runtimeStartupStep('worker-ready', () => controller.start()),
+      runtimeStartupStep('product-host', () => initializeProductHost(controller, abort.signal)),
+    ]), runtimeServicesStartupTimeoutMs, abort, 'services');
+    abort.signal.throwIfAborted();
+    await withRuntimeStartupTimeout(runtimeStartupStep('product-settings', async () => productHostController?.execute({
+      protocol: 'cardbush.product_host_ipc.v1',
+      kind: 'apps.get',
+    })), runtimeServicesStartupTimeoutMs, abort, 'settings');
+    abort.signal.throwIfAborted();
   } catch (error) {
     abort.abort(error);
     await disposeRuntimeServices(error instanceof Error ? error : new Error(String(error)))
@@ -3771,7 +3902,7 @@ async function initializeRuntimeHost() {
   }
 }
 
-async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
+async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostController> {
   const sandboxSettingsPath = path.join(app.getPath('userData'), 'product-host', 'config', 'sandbox.json');
   const sandboxHostEnv = { ...process.env, CARDBUSH_EXECUTION_SANDBOX: process.env.CARDBUSH_EXECUTION_SANDBOX || app.commandLine.getSwitchValue('execution-sandbox') || undefined };
   const sandboxModule = await runtimeStartupStep('sandbox-module', () => import(pathToFileURL(path.join(__dirname, 'sandboxSetup.mjs')).href));
@@ -3807,6 +3938,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
       modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
       startupTimeoutMs: 12_000,
       env: {
+        CARDBUSH_ASSISTANT_BACKGROUND: assistantResident ? '1' : '0',
         ...process.env,
         // Host startup option only. A deployment environment policy takes
         // precedence; session settings and renderer payloads cannot change it.
@@ -3879,6 +4011,16 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal, onAccepted: () => void) => {
+        if (operation === 'assistant.is-background') return assistantResident && !mainWindow && !isQuitting;
+        if (operation === 'assistant.attention') {
+          const notice = payload as { id: string; text?: string; interaction: boolean };
+          if (assistantResident && typeof notice?.id === 'string') return showSessionAttentionNotification({
+            sessionId: 'personal-assistant', title: nativeText()('resident.notificationTitle'), turnId: notice.id,
+            kind: notice.interaction ? 'interaction' : 'completed', interactionId: notice.id,
+            body: notice.interaction ? nativeText()('resident.needsAttention') : notice.text,
+          });
+          return { shown: false };
+        }
         if (operation === 'environment.snapshot') {
           const sessionId = (payload as { sessionId?: unknown })?.sessionId;
           if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw Error('Invalid environment scope.');
@@ -3929,16 +4071,7 @@ async function initializeRuntimeHostWithinDeadline(signal: AbortSignal) {
     }) as RuntimeHostController;
     runtimeHostController = controller;
     registerDesktopControlMonitor(controller);
-  await Promise.all([
-    runtimeStartupStep('worker-ready', () => controller.start()),
-    runtimeStartupStep('product-host', () => initializeProductHost(controller, signal)),
-  ]);
-  signal.throwIfAborted();
-  await runtimeStartupStep('product-settings', async () => productHostController?.execute({
-    protocol: 'cardbush.product_host_ipc.v1',
-    kind: 'apps.get',
-  }));
-  signal.throwIfAborted();
+    return controller;
 }
 
 async function runtimeStartupStep<T>(step: string, operation: () => Promise<T>): Promise<T> {
@@ -3954,13 +4087,15 @@ async function runtimeStartupStep<T>(step: string, operation: () => Promise<T>):
   }
 }
 
-function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number, abort: AbortController): Promise<T> {
+function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number, abort: AbortController,
+  phase: 'preparation' | 'services' | 'settings'): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       const error = new Error(
         `Runtime services did not become ready within ${timeoutMs}ms`,
       ) as Error & { code?: string };
       error.code = 'runtime_services_startup_timeout';
+      appendDebugLog('startup', { stage: 'runtime-phase-timeout', phase, timeoutMs, attempt: runtimeStartupStatus.attempt });
       abort.abort(error);
       reject(error);
     }, timeoutMs);
@@ -3989,6 +4124,10 @@ function startRuntimeAutomations(controller: RuntimeHostController) {
   void host.refreshMcp(undefined, undefined, abort.signal).catch(report)
     .then(() => {
       if (abort.signal.aborted || !current()) return;
+      if (assistantResident) void controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+        command: { kind: 'runtime.assistant_background_start', payload: {} } }).then(response => {
+        if (response.type === 'command_response' && !response.ok) report(response.error);
+      }).catch(report);
       return controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind: 'runtime.automation_start', payload: {} } });
     })
     .catch(report)
@@ -4519,7 +4658,7 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && (!assistantResident || isQuitting)) {
     app.quit();
   }
 });

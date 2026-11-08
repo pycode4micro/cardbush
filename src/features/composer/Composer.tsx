@@ -361,6 +361,7 @@ export function Composer({
   portalCommands = false,
   retainUntilAccepted = false,
   optimisticSubmission: immediateSubmission = false,
+  onRetainDraft,
   topAccessory,
 }: {
   compact?: boolean;
@@ -419,6 +420,7 @@ export function Composer({
   portalCommands?: boolean;
   retainUntilAccepted?: boolean;
   optimisticSubmission?: boolean;
+  onRetainDraft?: (retain: boolean) => void;
 }) {
   const host = useContext(ConversationHostContext);
   const optimisticSubmission = immediateSubmission || host?.optimisticSubmission;
@@ -525,6 +527,9 @@ export function Composer({
   const [imageAttachments, setImageAttachments, currentImages] = useConversationViewState<ComposerImageAttachment[]>(`${attachmentKey}:images`, () => [], value => value.length > 0);
   const [fileAttachments, setFileAttachments, currentFiles] = useConversationViewState<ComposerFileAttachment[]>(`${attachmentKey}:files`, () => [], value => value.length > 0);
   const [attachmentUploads, setAttachmentUploads, currentAttachmentUploads] = useConversationViewState(`${attachmentKey}:uploads`, () => 0, value => value > 0);
+  useLayoutEffect(() => {
+    onRetainDraft?.(Boolean(draft || imageAttachments.length || fileAttachments.length || attachmentUploads || submissionPending));
+  }, [draft, imageAttachments, fileAttachments, attachmentUploads, submissionPending, onRetainDraft]);
   const pastedTextApi = host ? host.pastedTextAttachments : window.cardbushDesktop?.pastedTextAttachments;
   const dropTargetRef = fileDropTarget ?? composerStackRef;
   const fileDragActive = useFileDropZone(dropTargetRef, transfer => {

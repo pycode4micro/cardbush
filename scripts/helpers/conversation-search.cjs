@@ -66,7 +66,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const query = async value => { await run(`setSearchQuery(${JSON.stringify(value)})`); await pause(45); };
   const selected = () => run("document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchConversation || document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchAction");
 
-  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav .nav-row')].map(node => node.textContent)"), ['新会话']);
+  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav .nav-row')].map(node => node.dataset.navSection)"), ['home','explore','chat','assistant']);
   assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').textContent"), '');
   assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').getAttribute('aria-keyshortcuts')"), 'Control+F');
   assert.match(await run("document.querySelector('[data-shortcut=searchConversations]').closest('.section-header').textContent"), /最近/);

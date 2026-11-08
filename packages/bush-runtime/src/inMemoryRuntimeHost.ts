@@ -298,10 +298,12 @@ export interface InMemoryRuntimeHostOptions {
   eventLogOptions?: RuntimeEventLogOptions;
   projectorOptions?: RuntimeEventProjectorOptions;
   toolRegistry?: ToolRegistry;
+  prepareToolCatalog?: () => Promise<void> | undefined;
   createPermissionId?: () => string;
   checkpointStore?: RuntimeCheckpointStore;
   checkpointNow?: () => string;
   onRecoveryError?: (error: Error) => void;
+  onAssistantAttention?: (notice: { id: string; text?: string; interaction: boolean }) => void;
   durableRecovery?: boolean;
   sessionStore?: SessionStore;
   durableSessions?: boolean;
@@ -375,6 +377,7 @@ export class InMemoryRuntimeHost {
   readonly #wait: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly #projectorOptions: RuntimeEventProjectorOptions;
   readonly #toolRegistry: ToolRegistry;
+  readonly #prepareToolCatalog?: InMemoryRuntimeHostOptions['prepareToolCatalog'];
   readonly #botMessaging?: BotMessagingBridge;
   readonly #bridgePlugins: BridgePluginTools;
   readonly #pluginHookScopes: PluginHookScopes;
@@ -495,6 +498,7 @@ export class InMemoryRuntimeHost {
     this.#wait = options.wait ?? wait;
     this.#projectorOptions = options.projectorOptions ?? {};
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
+    this.#prepareToolCatalog = options.prepareToolCatalog;
     registerMcpDiscovery(this.#toolRegistry, options.loadSearchResultLimit);
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     registerFileMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
@@ -508,10 +512,16 @@ export class InMemoryRuntimeHost {
     this.#botMessaging = options.botMessaging;
     this.#bridgePlugins = new BridgePluginTools(this.#toolRegistry, options.botMessaging, id => this.#botRootSession(id));
     this.#assistantManagement = new AssistantManagement({ registry: this.#toolRegistry, executions: this.#toolExecutions,
-      onPermissionState: (sessionId, executionId, waiting) => this.#agentExecutions.update(sessionId, executionId, waiting ? 'waiting' : 'running'),
+      onPermissionState: (sessionId, executionId, waiting) => {
+        this.#agentExecutions.update(sessionId, executionId, waiting ? 'waiting' : 'running');
+        if (waiting && sessionId === PERSONAL_ASSISTANT_SESSION) options.onAssistantAttention?.({ id: executionId, interaction: true });
+      },
       capabilities: this.#capabilityGrants, coordination: () => this.#coordination, automation: options.automation,
       hooks: request => this.#managementToolHooks(request) });
-    this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal')), {
+    this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal'), (session, entry) => {
+      if (session === PERSONAL_ASSISTANT_SESSION && entry.role === 'assistant' && entry.visibility === 'conversation' && entry.content)
+        options.onAssistantAttention?.({ id: entry.id, text: entry.content.slice(0, 500), interaction: false });
+    }), {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
@@ -867,6 +877,7 @@ export class InMemoryRuntimeHost {
     for (const [section, source] of Object.entries(options.environmentSources ?? {})) this.#environment.register(section, source);
     this.#assistantEvents = new AssistantEvents(join(runtimeDataRoot, 'friends', 'events.json'), {
       collector: new EventCollector({ registry: this.#toolRegistry, capabilities: this.#capabilityGrants, executions: this.#toolExecutions,
+        prepareToolCatalog: options.prepareToolCatalog,
         tasks: (owner, id) => this.#subagentTasks.get(owner, id),
         loadChild: async session => {
           if (!this.#sessions.hasSession(session)) return;
@@ -913,6 +924,9 @@ export class InMemoryRuntimeHost {
     });
     this.#environment.register('friends', () => this.#assistantEvents.environment());
     this.#stopEventTriggers = this.#eventLog.observe(event => {
+      if (options.onAssistantAttention && (event.kind === 'permission_requested' || event.kind === 'solution_selection_requested') &&
+        this.#botRootSession(event.sessionId) === PERSONAL_ASSISTANT_SESSION)
+        options.onAssistantAttention({ id: event.eventId, interaction: true });
       if (event.kind !== 'tool_failed' && event.kind !== 'tool_returned' && event.kind !== 'turn_terminal') return;
       // Observe Assistant-owned work only. Deliveries and their descendants
       // cannot trigger themselves; tool arguments, outputs and paths stay private.
@@ -1222,6 +1236,9 @@ export class InMemoryRuntimeHost {
     return this.#activeTurns.size > 0 || this.#teams.hasActiveRuns();
   }
   /** A disconnected local client must not terminate accepted or background work. */
+  restoreAssistantEvents(prepare: (parent: RuntimeSessionTurnRequest) => Promise<RuntimeSessionTurnRequest>, signal: AbortSignal) {
+    return this.#assistantEvents.restoreAssistant(prepare, signal);
+  }
   hasActiveWork(): boolean {
     return Boolean(this.hasActiveTurns() || this.#turnAdmissions || this.#workspaceActions || this.#activeAppCommands ||
       this.#mcpApps.busy || this.#pluginBackground.busy || this.#activeExtensionCommands.size || this.#workspaceTerminals.hasActiveProcesses());
@@ -1920,6 +1937,10 @@ export class InMemoryRuntimeHost {
     if (previous && this.#eventLog.isTerminal(input.sessionId, input.turnId)) throw new Error(`Turn ${input.turnId} is already terminal.`);
     this.#agentExecutions.begin(input);
     try {
+      if (this.#prepareToolCatalog && input.tools.length) {
+        await this.#prepareToolCatalog();
+        signal?.throwIfAborted();
+      }
       const result = await run();
       if (result.kind === 'turn_terminal') this.#agentExecutions.observe(result);
       return result;

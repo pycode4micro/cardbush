@@ -5,12 +5,33 @@ import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { PassThrough } from 'node:stream';
+import path from 'node:path';
 import concurrently from 'concurrently';
 
 const require = createRequire(import.meta.url);
 const documents = createRequire(new URL('../packages/cardbush-document-tools/package.json', import.meta.url));
 const runtime = createRequire(new URL('../packages/bush-runtime/package.json', import.meta.url));
 const JSZip = documents('jszip');
+
+test('builder minimatch override preserves packaged resources and private-file exclusions', () => {
+  const builder = createRequire(require.resolve('app-builder-lib/package.json'));
+  const { FileMatcher } = builder('./out/fileMatcher.js');
+  const source = path.resolve('packaging-fixture');
+  const match = new FileMatcher(source, path.resolve('packaging-output'), value => value,
+    ['dist/**/*', 'assets/**/*', '!**/*.map', '!**/*.key', '!**/.env', '!**/.env.*', '!assets/**/*.local.json']).createFilter();
+  const file = { isDirectory: () => false };
+  for (const entry of ['dist/main.js', 'assets/中文 image.png', 'assets/plugins/tool/index.mjs']) {
+    assert.equal(match(path.join(source, entry), file), true, entry);
+  }
+  for (const entry of ['dist/main.js.map', 'assets/private.key', 'assets/.env', 'assets/.env.production', 'assets/identity.local.json', 'tmp/session.json']) {
+    assert.equal(match(path.join(source, entry), file), false, entry);
+  }
+  assert.equal(match(path.join(source, 'assets/plugins'), { isDirectory: () => true }), true);
+  const universal = createRequire(builder.resolve('@electron/universal'));
+  const { minimatch } = universal('minimatch');
+  assert.equal(minimatch('nested/tool.node', '*.node', { matchBase: true }), true);
+  assert.equal(minimatch('nested/tool.key', '*.node', { matchBase: true }), false);
+});
 
 test('concurrently retains command parsing and rejects shell comment newline injection', async () => {
   const dependency = createRequire(require.resolve('concurrently'));

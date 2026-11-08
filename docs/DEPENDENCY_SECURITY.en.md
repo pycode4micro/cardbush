@@ -6,7 +6,7 @@
 
 Development, CI and Agent Docker images use Node 24 LTS. `.nvmrc` selects the major version, root `engines` is `^24.0.0`, and Node types use series 24. A terminal using Node 25 must switch before `npm install`; repository configuration does not change the system Node installation.
 
-The maintained dependency set includes Electron 42, MCP SDK 2, patched sharp and affected transitive dependencies in the lockfile. Although Electron is a `devDependency`, it is the shipped desktop runtime: `npm audit --omit=dev` alone is insufficient.
+The 1.0.15 preparation updates Electron to 42.11.18, Vite to 8.2.4, and the locked security revisions of fast-uri, follow-redirects, joi and build-tool undici. Although Electron is a `devDependency`, it is the shipped desktop runtime: `npm audit --omit=dev` alone is insufficient. The full npm audit on November 6, 2026 reported zero known advisories for this dependency set; this reflects the advisory database at that time, not an absence of unknown vulnerabilities.
 
 Recent npm versions restrict undeclared install scripts. The repository explicitly disables optional native acceleration builds for `cpu-features` and `ssh2`, consistent with desktop packaging exclusions; SSH uses Node crypto. The unused Squirrel `electron-winstaller` 7-Zip selection script is also disabled; Windows uses NSIS/MSIX. Do not allow every script merely to silence warnings. Review purpose/version when enabling a necessary script.
 
@@ -17,10 +17,11 @@ Root `package.json` scopes these overrides to parents that have not yet adopted 
 | Parent | Override | Runtime check |
 | --- | --- | --- |
 | `@electron/get` | `global-agent@4.1.3` | Remove an old logging chain; initialize the actual electron-builder downloader's proxy and verify a request reaches a local proxy. |
-| `@file-viewer/core` | `dompurify@3.4.16` | Same-major security update preserving preview HTML sanitization. |
+| `@file-viewer/core` | `dompurify@3.4.17` | Same-major security update preserving preview HTML sanitization. |
 | `concurrently` | `shell-quote@1.11.0` | Concurrent launch, normal argument parsing and rejection of newline injection after comments. |
 | `exceljs` | `uuid@11.1.1` | Preserve CommonJS; write/reread extension icon-set conditional formatting that actually uses UUID. |
 | `pptxgenjs` | `image-size@2.0.4` | Published PptxGenJS code does not call this old dependency; still verify dimensions, embedded images and PPTX output. |
+| `app-builder-lib` | `minimatch@>=7 <11` → `11.0.1` | Override only affected versions within the builder tree, retaining the older 3/5 function APIs. Exercise the actual FileMatcher's resource inclusion, directory traversal and private-file exclusions, and universal's named export before validating the actual MSIX. |
 
 Cross-major overrides require real call-path checks, not just a lower audit count. `npm run test:dependency-upgrades` runs in Windows/Linux desktop CI and covers these paths and sharp SVG rendering.
 

@@ -7,7 +7,7 @@ import JSZip from 'jszip';
 const guidance = 'https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msix/screenshots-and-images';
 const titles = {
   'conversation': ['会话与行动清单', 'Conversations and actions'],
-  'app-center': ['应用中心', 'App Center'],
+  'app-center': ['探索', 'App Center'],
   'browser-use': ['Chrome / Edge 连接管理', 'Chrome / Edge connections'],
   'automations': ['定时与自动化', 'Scheduled automations'],
 };
@@ -32,7 +32,7 @@ export async function packageScreenshots(output) {
     hashes.push(`${item.sha256}  ${item.file}`);
   }
   const captions = report.screenshots.map(item => `| ${item.language} | ${item.file} | ${item.caption} |`).join('\n');
-  const readme = `# CardBush 1.0.5.0 商店截图\n\n中英文各 4 张，共 8 张；均为 1920 × 1080 PNG。\n\n- zh-CN：上传至简体中文商店页面。\n- en-US：上传至英文商店页面。\n- 每组按文件名 01—04 排序：会话、应用中心、Browser Use、定时与自动化。\n- 配图说明在 captions.tsv，也见下表；只把 PNG 上传到“桌面截图”，不要把预览网页或 ZIP 当截图上传。\n- [打开预览](index.html)，点击图片可以查看原始尺寸。\n\n截图直接渲染当前产品的正式 React 界面组件，使用独立的中英文演示数据。会话内容、模型名称、浏览器连接状态和定时任务均为示例；未调用模型或实际运行这些任务，未读取用户配置、个人会话、网页、Cookie、配对码或密钥。界面组件没有为截图更改样式，也没有在图上叠加营销文案。这些图片用于商店介绍，不能替代安装包的端到端验证证据。\n\n尺寸、文件大小和说明长度已按[微软 MSIX 截图要求](${guidance})核对。已检查英文界面无中文残留、无渲染错误，并逐张查看画面。最终上传与认证提交由发布者完成。\n\n| 语言 | 文件 | 配图说明 |\n| --- | --- | --- |\n${captions}\n\n重新生成：在仓库目录运行 node scripts/capture-store-screenshots.mjs。脚本只使用隔离的离屏渲染器，禁止网络请求。\n`;
+  const readme = `# CardBush 1.0.5.0 商店截图\n\n中英文各 4 张，共 8 张；均为 1920 × 1080 PNG。\n\n- zh-CN：上传至简体中文商店页面。\n- en-US：上传至英文商店页面。\n- 每组按文件名 01—04 排序：会话、探索、Browser Use、定时与自动化。\n- 配图说明在 captions.tsv，也见下表；只把 PNG 上传到“桌面截图”，不要把预览网页或 ZIP 当截图上传。\n- [打开预览](index.html)，点击图片可以查看原始尺寸。\n\n截图直接渲染当前产品的正式 React 界面组件，使用独立的中英文演示数据。会话内容、模型名称、浏览器连接状态和定时任务均为示例；未调用模型或实际运行这些任务，未读取用户配置、个人会话、网页、Cookie、配对码或密钥。界面组件没有为截图更改样式，也没有在图上叠加营销文案。这些图片用于商店介绍，不能替代安装包的端到端验证证据。\n\n尺寸、文件大小和说明长度已按[微软 MSIX 截图要求](${guidance})核对。已检查英文界面无中文残留、无渲染错误，并逐张查看画面。最终上传与认证提交由发布者完成。\n\n| 语言 | 文件 | 配图说明 |\n| --- | --- | --- |\n${captions}\n\n重新生成：在仓库目录运行 node scripts/capture-store-screenshots.mjs。脚本只使用隔离的离屏渲染器，禁止网络请求。\n`;
   const cards = report.screenshots.map(item => {
     const scene = item.file.match(/0\d-(.+)\.png$/)[1];
     const title = titles[scene][item.language === 'zh-CN' ? 0 : 1];

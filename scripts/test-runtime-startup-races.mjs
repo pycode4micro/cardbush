@@ -10,7 +10,7 @@ import ts from 'typescript';
 // service boundaries. No user profile, network, model, or sandbox is touched.
 const source = ts.createSourceFile('main.ts', readFileSync('electron/main.ts', 'utf8'), ts.ScriptTarget.Latest, true);
 const names = ['ensureRuntimeServicesReady', 'ensureRuntimeHostReady', 'startRuntimeServices',
-  'disposeRuntimeServices', 'initializeRuntimeHost', 'initializeRuntimeHostWithinDeadline',
+  'disposeRuntimeServices', 'initializeRuntimeHost', 'prepareRuntimeHost',
   'withRuntimeStartupTimeout', 'initializeProductHost', 'startRuntimeAutomations', 'runtimeStartupStep', 'contextWebhookHost'];
 const functions = names.map(name => {
   const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
@@ -59,7 +59,7 @@ function fixture(timeout = 2000) {
     process: { env: {}, platform: 'win32', arch: 'x64', resourcesPath: '/resources' },
     app: { getPath: () => '/profile', getAppPath: () => '/app', commandLine: { getSwitchValue: () => '' } },
     browserConnectorDataRoot: () => '/connector-profile',
-    cardbushRuntimeIsPackaged: false, packagedSmokeMode: false, runtimeServicesStartupTimeoutMs: timeout,
+    cardbushRuntimeIsPackaged: false, packagedSmokeMode: false, assistantResident: false, residentBootTimer: undefined, runtimeServicesStartupTimeoutMs: timeout,
     runtimeServicesInitialization: null, runtimeServicesAbort: null, runtimeServicesStopping: false, isQuitting: false, runtimeAutomationStartup: null,
     contextWebhookHostPromise: undefined, webhookHosts: [],
     runtimeStartupStatus: { phase: 'initializing', attempt: 0 }, runtimeHostController: null,
@@ -147,11 +147,38 @@ test('failed boot retains the cause, background reads never retry, explicit retr
   assert.equal(f.calls.filter(item => item.command.kind === 'runtime.automation').length, 1, 'the failed request was not replayed');
 });
 
-for (const stage of ['probe', 'management', 'browser', 'product-import']) {
+test('cold preparation cannot consume worker or settings readiness budgets', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = fixture(1000);
+  for (const stage of ['probe', 'worker', 'apps']) f.gates[stage] = deferred();
+  const outcome = f.context.ensureRuntimeHostReady().then(controller => ({ controller }), error => ({ error }));
+  await flush();
+  t.mock.timers.tick(700); f.gates.probe.resolve(); await flush();
+  assert.equal(f.controllers.length, 1);
+  t.mock.timers.tick(700); await flush();
+  assert.equal(f.context.runtimeStartupStatus.phase, 'initializing', 'the worker still has its full readiness budget');
+  assert.equal(f.controllers[0].disposed, false);
+  f.gates.worker.resolve(); await flush();
+  t.mock.timers.tick(700); await flush();
+  assert.equal(f.context.runtimeStartupStatus.phase, 'initializing', 'settings readiness starts a separate bounded phase');
+  assert.equal(f.context.dependentStarts.length, 0);
+  f.gates.apps.resolve();
+  const result = await outcome;
+  assert.equal(result.error, undefined);
+  assert.equal(result.controller, f.controllers[0]);
+  assert.equal(f.context.runtimeStartupStatus.phase, 'ready');
+  assert.equal(f.context.runtimeStartupStatus.elapsedMs, 2100);
+  assert.equal(f.context.runtimeStartupStatus.attempt, 1, 'slow preparation needs no retry');
+  assert.deepEqual(f.context.dependentStarts, ['ready']);
+});
+
+for (const stage of ['probe', 'management', 'browser', 'product-import', 'worker', 'apps']) {
   test(`timeout during ${stage} cannot publish an old host after retry`, async () => {
     const f = fixture(30); const oldGate = deferred(); f.gates[stage] = oldGate;
     await assert.rejects(f.context.ensureRuntimeHostReady(), /did not become ready within 30ms/);
     assert.equal(f.context.runtimeStartupStatus.phase, 'error');
+    const phase = stage === 'apps' ? 'settings' : ['worker', 'product-import'].includes(stage) ? 'services' : 'preparation';
+    assert.ok(f.context.startupSteps.some(entry => entry.stage === 'runtime-phase-timeout' && entry.phase === phase));
     const oldControllers = [...f.controllers], oldManagers = [...f.managers], oldBrowserEndpoints = [...f.browserEndpoints];
     delete f.gates[stage]; f.context.runtimeServicesStartupTimeoutMs = 2000;
     await f.invoke('app:retry-runtime');

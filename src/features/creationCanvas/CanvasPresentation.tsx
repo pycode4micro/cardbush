@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Maximize2, Minimize2, X } from 'lucide-react
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import type { CanvasItem, CanvasSnapshot } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import { HtmlComponentContext } from '../components/HtmlComponentContext';
 import { CanvasItemContent } from './CanvasStage';
 import { fitCanvasPresentation } from './canvasGeometry';
@@ -99,7 +100,7 @@ export function CanvasPresentation({ snapshot, language, initialId, onClose }: {
   };
   return <dialog ref={dialog} className="canvas-presentation" data-mode={mode} data-layout={layout} data-light-paper={light}
     style={{ '--canvas-paper': snapshot.document.background } as CSSProperties} aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); onClose(); }} onKeyDown={keyDown}
+    onCancel={dialogEventHandler(event => { event.preventDefault(); onClose(); })} onKeyDown={keyDown}
     onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); event.stopPropagation(); }}>
     <div className="canvas-presentation-screen" ref={screen}>
     <div className="canvas-presentation-window-drag" aria-hidden="true"/>

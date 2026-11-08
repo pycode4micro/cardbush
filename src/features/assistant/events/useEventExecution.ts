@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FriendsSnapshot } from '@cardbush/bush-protocol';
 import { eventBackend } from './eventBackend';
 
-export function useEventExecution(enabled: boolean) {
+export function useEventExecution(enabled: boolean, refreshInterval = 1500) {
   const [snapshot, setSnapshot] = useState<FriendsSnapshot>();
   const [error, setError] = useState(false);
   const mounted = useRef(true), refreshTask = useRef<Promise<void> | undefined>(undefined);
@@ -17,10 +17,12 @@ export function useEventExecution(enabled: boolean) {
     let timer: ReturnType<typeof setTimeout>, disposed = false;
     const poll = async () => {
       if (!document.hidden) await refresh();
-      if (!disposed) timer = setTimeout(() => void poll(), 1500);
+      if (!disposed) timer = setTimeout(() => void poll(), refreshInterval);
     };
     void poll();
-    return () => { disposed = true; mounted.current = false; clearTimeout(timer); };
-  }, [enabled, refresh]);
+    const onVisible = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { disposed = true; mounted.current = false; clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [enabled, refresh, refreshInterval]);
   return { snapshot, setSnapshot, error, refresh };
 }

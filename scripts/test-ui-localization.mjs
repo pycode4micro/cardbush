@@ -164,6 +164,7 @@ test('native menus follow the App language, normalize locale tags and reject oth
   let handler;
   const menus = [];
   const bindings = { uiText, resolveUiLanguage: catalog.resolve,
+    assistantResident: false, assistantNextLaunch: false,
     app: { isReady: () => true, getLocale: () => 'en-GB' },
     Menu: { buildFromTemplate: template => template }, tray: { setContextMenu: menu => menus.push(menu) },
     showMainWindow: () => {}, requestAppQuit: () => {},
@@ -173,16 +174,17 @@ test('native menus follow the App language, normalize locale tags and reject oth
   const code = 'let nativeUiLanguage;\n' + functions.join('\n') + '\n' + registration.getText(source) + '\nupdateTrayMenu();';
   new Function(...Object.keys(bindings), ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText)(...Object.values(bindings));
   const labels = () => menus.at(-1).filter(item => item.label).map(item => item.label);
-  assert.deepEqual(labels(), ['Open cardbush', 'Quit']);
+  const expected = language => [uiText(language)('main.open_cardbush'), uiText(language)('resident.nextLaunch'), uiText(language)('main.quit')];
+  assert.deepEqual(labels(), expected('en'));
   handler({ sender: { id: 7 } }, 'zh-CN');
-  assert.deepEqual(labels(), ['打开 cardbush', '退出']);
+  assert.deepEqual(labels(), expected('zh'));
   const count = menus.length;
   handler({ sender: { id: 7 } }, 'zh');
   assert.equal(menus.length, count, 'same resolved language does not rebuild the menu');
   assert.throws(() => handler({ sender: { id: 8 } }, 'en'), /Untrusted sender/);
-  assert.deepEqual(labels(), ['打开 cardbush', '退出']);
+  assert.deepEqual(labels(), expected('zh'));
   handler({ sender: { id: 7 } }, 'en-US');
-  assert.deepEqual(labels(), ['Open cardbush', 'Quit']);
+  assert.deepEqual(labels(), expected('en'));
   handler({ sender: { id: 7 } }, { invalid: 'locale' });
-  assert.deepEqual(labels(), ['Open cardbush', 'Quit']);
+  assert.deepEqual(labels(), expected('en'));
 });

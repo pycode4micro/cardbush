@@ -31,8 +31,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.navClick=text=>{const button=[...document.querySelectorAll('button')].find(node=>node.checkVisibility()&&node.textContent.trim()===text);if(!button)throw Error('Missing '+text);button.click();};
     renderView(h(NavigationFixture));
   `);
+  assert.equal(await run("document.querySelector('[data-history-action=forward]') === null"), true, 'the title bar exposes only Back');
   const back = () => run("document.querySelector('[data-history-action=back]').click()");
-  const forward = () => run("document.querySelector('[data-history-action=forward]').click()");
+  const forward = () => run("window.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',code:'ArrowRight',altKey:true,bubbles:true,cancelable:true}))");
   const route = value => until(`document.querySelector('#current-route')?.textContent.includes(${JSON.stringify(value)})`, `route ${value}`);
   await route('chat'); await pause(50);
   assert.equal(await run("document.querySelector('[data-history-action=back]').disabled"), true, 'StrictMode does not create visits');
@@ -42,7 +43,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await back(); await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'Back restores plugin catalog');
   await forward(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'Forward restores plugin detail');
   await run("navClick('返回插件')"); await until("document.querySelector('[data-plugin-page=catalog]')?.checkVisibility()", 'in-page back uses same history');
-  assert.equal(await run("document.querySelector('[data-history-action=forward]').disabled"), false);
+  assert.equal(await run("!navHistory.canGoForward"), false);
   await forward(); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'forward branch survives in-page back');
   await run("navClick('settings')"); await route('settings');
   await run("navClick('appearance')"); await route('appearance');
@@ -61,10 +62,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('.automation-tabs [aria-pressed=true]')?.textContent==='全部结果'", 'remount preserves automation route');
   await run("navRefresh();navRefresh();window.dispatchEvent(new Event('focus'))"); await pause(150);
   await forward(); await route('cloud-b');
-  assert.equal(await run("document.querySelector('[data-history-action=forward]').disabled"), true, 'refresh adds no spurious entries');
+  assert.equal(await run("!navHistory.canGoForward"), true, 'refresh adds no spurious entries');
   await back(); await route('automations');
   await run("navClick('chat')"); await route('chat');
-  assert.equal(await run("document.querySelector('[data-history-action=forward]').disabled"), true, 'new visit replaces forward history');
+  assert.equal(await run("!navHistory.canGoForward"), true, 'new visit replaces forward history');
   // Return to the older plugin details after the whole plugin surface was unmounted.
   await run("for(let visit=0;visit<6;visit++)navHistory.back()");
   await route('plugins'); await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'plugin details survive remount and rapid Back');

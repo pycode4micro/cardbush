@@ -2,6 +2,8 @@ import type { MessageKey } from '../i18n';
 import type { AppSection } from '../types';
 
 export const sectionLabels: Record<AppSection, MessageKey> = {
+  home: 'desktop.home',
+  explore: 'appCenter.appCenter',
   assistant: 'appSections.assistant',
   components: 'appCenterModel.components',
   chat: 'appSections.chat',

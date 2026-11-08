@@ -10,6 +10,9 @@ import { ConversationHostContext } from '../conversationHost';
 import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import {
   Archive,
+  Compass,
+  House,
+  History,
   CircleAlert,
   CircleCheck,
   TriangleAlert,
@@ -820,7 +823,13 @@ export const ChatSidebar = memo(function ChatSidebar({
     >
       <div className="sidebar-panel-content">
       <nav className="sidebar-nav">
+        <button type="button" className="desktop-search" aria-label={searchLabel} onClick={onOpenSearch}>
+          <Search aria-hidden="true"/><span>{uiText(language)('desktop.search')}</span>
+        </button>
+        <NavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
+        <NavRow navSection="explore" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
         <NavRow
+          navSection="chat"
           icon={<Edit3 size={14} />}
           label={uiText(language)('conversationSearchDialog.newChat')}
           shortcut="newConversation"
@@ -849,6 +858,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         <div className="sidebar-sections">
               <SectionHeader
                 title={uiText(language)('chatSidebar.pinned')}
+                leading={<Pin/>}
                 action={<Pin size={14} />}
                 actionLabel={uiText(language)('chatSidebar.pinnedItems')}
                 expanded={expandedSections.has('pinned')}
@@ -867,6 +877,7 @@ export const ChatSidebar = memo(function ChatSidebar({
 
               <SectionHeader
                 title={uiText(language)('archivedItemsPanel.projects')}
+                leading={<Folder/>}
                 action={<FolderOpen size={14} />}
                 actionLabel={uiText(language)('agentDataSettings.addProject')}
                 actionShortcut="openProject"
@@ -905,6 +916,7 @@ export const ChatSidebar = memo(function ChatSidebar({
                 {...workspaceDropHandlers(null)}>
               <SectionHeader
                 title={uiText(language)('chatSidebar.recent')}
+                leading={<History/>}
                 action={<Search size={14} />}
                 actionLabel={searchLabel}
                 actionShortcut="searchConversations"
@@ -972,6 +984,7 @@ function NavRow({
       className={`nav-row ${active ? 'active' : ''}`}
       data-shortcut={shortcut}
       data-nav-section={navSection}
+      aria-current={active ? 'page' : undefined}
       title={label}
       type="button"
       onClick={onClick}
@@ -1004,6 +1017,7 @@ function SectionBody({ expanded, children }: { expanded: boolean; children: Reac
 
 function SectionHeader({
   title,
+  leading,
   action,
   actionLabel,
   expanded = true,
@@ -1014,6 +1028,7 @@ function SectionHeader({
   alwaysShowAction = false,
 }: {
   title: string;
+  leading?: React.ReactNode;
   action: React.ReactNode;
   actionLabel: string;
   expanded?: boolean;
@@ -1044,6 +1059,7 @@ function SectionHeader({
       <span
         className="section-title"
       >
+        {leading && <span className="section-heading-icon" aria-hidden="true">{leading}</span>}
         {title}
         <ChevronDown className={`section-chevron${expanded ? '' : ' collapsed'}`} size={14} aria-hidden="true" />
       </span>

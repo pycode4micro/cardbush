@@ -75,7 +75,7 @@ import {
   loadEnabledProductRuntimeExtensions,
   type PluginRoot,
 } from './productPlugins.js';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { configureProcessResourceClient, type ProcessResourceGrant } from '@cardbush/bush-runtime/processes';
@@ -144,6 +144,51 @@ let mcpUpdate: Promise<unknown> = Promise.resolve();
 let effectiveMcp: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
 let effectiveMcpContent = '';
 let sourceMcpRevision = 0;
+// These bundled stdio servers expose tools. A timer delivering an exact local
+// reminder does not need their five processes or their stdio supervisors.
+let deferResidentTools = process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1';
+let deferredMcpSource: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
+let residentToolStartup: Promise<void> | undefined;
+let residentDesktopToolsUsed = false;
+let residentToolReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleResidentToolRelease() {
+  if (!residentDesktopToolsUsed || deferResidentTools) return;
+  clearTimeout(residentToolReleaseTimer);
+  residentToolReleaseTimer = setTimeout(() => {
+    void releaseIdleDocumentTools().catch(error => console.warn('[resident-tools]', errorMessage(error)));
+  }, 35_000);
+  residentToolReleaseTimer.unref();
+}
+
+async function releaseIdleDocumentTools() {
+  const timer = residentToolReleaseTimer;
+  await mcpUpdate;
+  if (deferResidentTools || !deferredMcpSource || !await mcpHost.request<boolean>('assistant.is-background', {})) return;
+  if (timer !== residentToolReleaseTimer) return;
+  if (host.hasActiveWork() || residentToolStartup) { scheduleResidentToolRelease(); return; }
+  // Document services operate on files. Keep the desktop service and its
+  // per-session safety observations alive once computer use has been enabled.
+  deferResidentTools = true;
+  await executeRuntimeCommand({ kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: deferredMcpSource }, new AbortController().signal);
+}
+
+function prepareResidentTools(): Promise<void> | undefined {
+  if (process.env.CARDBUSH_ASSISTANT_BACKGROUND !== '1') return;
+  if (!deferResidentTools) { scheduleResidentToolRelease(); return residentToolStartup; }
+  deferResidentTools = false;
+  residentDesktopToolsUsed = true;
+  scheduleResidentToolRelease();
+  const startup = (async () => {
+    await mcpUpdate;
+    if (!deferredMcpSource) return;
+    await executeRuntimeCommand({ kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: deferredMcpSource }, new AbortController().signal);
+    if (effectiveMcp) await mcp.apply(effectiveMcp);
+  })();
+  residentToolStartup = startup.catch(error => { deferResidentTools = true; throw error; })
+    .finally(() => { residentToolStartup = undefined; });
+  return residentToolStartup;
+}
 
 async function handleMessage(input: unknown) {
   if (isMcpHostMessage(input)) { mcpHost.receive(input); return; }
@@ -290,6 +335,18 @@ async function executeRuntimeCommand(
   command: { kind: string; payload: unknown },
   signal: AbortSignal,
 ) {
+  if (command.kind === 'runtime.assistant_window_closed' && process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1') {
+    scheduleResidentToolRelease();
+    return { accepted: true };
+  }
+  if ([GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
+    'runtime.mcp_login', 'runtime.mcp_reconnect', 'runtime.prepare_plugin_uninstall', 'runtime.prepare_plugin_update'].includes(command.kind))
+    await prepareResidentTools();
+  if (command.kind === 'runtime.assistant_background_start' && process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1') {
+    const { prepareWebhookParentModels } = await import('./contextWebhookRuntime.mjs');
+    return host.restoreAssistantEvents(parent => prepareWebhookParentModels(parent,
+      modelId => mcpHost.request('subagent.prepare-model', { modelId }, signal), signal), signal);
+  }
   if (command.kind === 'runtime.personalization') {
     const { personalizationCommandSchema } = await import('@cardbush/bush-protocol');
     const payload = personalizationCommandSchema.parse(command.payload);
@@ -360,6 +417,16 @@ async function executeRuntimeCommand(
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
       }));
+      if (process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1') deferredMcpSource = source;
+      if (deferResidentTools) {
+        const standalone = new Set(source.servers.map(server => server.id));
+        combined.servers = combined.servers.filter(server => {
+          if (server.required || server.transport.kind !== 'stdio' || standalone.has(server.id)) return true;
+          if (server.id === 'cardbush_apps') return residentDesktopToolsUsed;
+          const [entry] = server.transport.args ?? [];
+          return !entry || !bundledDocumentToolEntries.has(resolve(entry));
+        });
+      }
       if (suspendedPluginId && combined.servers.some(server => server.pluginId === suspendedPluginId)) {
         throw new Error('Plugin is still enabled. Refresh before replacing or uninstalling it.');
       }
@@ -788,6 +855,8 @@ if (process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SER
 const loadSearchResultLimit = () => readCardbushSearchResultLimit(process.env.CARDBUSH_APPS_CONFIG_PATH?.trim());
 const skillRoots = skillRootsFromEnvironment();
 const pluginRoots = pluginRootsFromEnvironment();
+const bundledDocumentToolEntries = new Set(pluginRoots.filter(root => root.source === 'bundled')
+  .flatMap(root => ['docx', 'xlsx', 'pptx', 'pdf'].map(id => resolve(root.path, id, 'server.cjs'))));
 const automation = runtimeStateRoot ? new AutomationScheduler({
   path: join(runtimeStateRoot, 'scheduler', 'automations.json'),
   canRun: sessionId => !host.hasActiveSession(sessionId),
@@ -795,6 +864,7 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
   changed: () => { void mcpHost.request('automation.changed', {}).catch(() => {}); },
   onError: error => process.stderr.write(`${JSON.stringify({ code: 'automation_error', message: errorMessage(error) })}\n`),
   run: async (job, run, context, signal) => {
+    await prepareResidentTools();
     signal.throwIfAborted();
     const sessionId = run.sessionId ?? job.sessionId;
     if (sessionId === job.sessionId && !host.hasSession(sessionId)) throw new Error('The target conversation was removed.');
@@ -864,6 +934,10 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
+  ...(process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1' ? {
+    prepareToolCatalog: prepareResidentTools,
+    onAssistantAttention: notice => { void mcpHost.request('assistant.attention', notice).catch(error => console.warn('[assistant-notification]', error)); },
+  } : {}),
   // Desktop, server Agent and CLI share this worker and compaction policy.
   // Product prompts no longer request tool_summary; reuse recorded tool facts.
   preferRecordedToolHandoffs: true,

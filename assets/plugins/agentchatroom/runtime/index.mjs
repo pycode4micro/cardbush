@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-//#region node_modules/zod/v4/core/util.js
+// node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
 	const numericValues = Object.values(entries).filter((v) => typeof v === "number");
 	return Object.entries(entries).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
@@ -411,6 +411,7 @@ function hide(inst, key, value) {
 	return own(inst, key, value, false);
 }
 /** Adds members a table derives from the instance: each builds on first read and shadows as own data, and assignment shadows the same way, as when these were own properties. */
+/* @__NO_SIDE_EFFECTS__ */
 function derived(computes, table) {
 	for (const key in computes) {
 		const compute = computes[key];
@@ -534,8 +535,7 @@ function constantCatch(value) {
 	fn[CONSTANT_CATCH] = true;
 	return fn;
 }
-//#endregion
-//#region node_modules/zod/v4/core/core.js
+// node_modules/zod/v4/core/core.js
 var _a$1;
 var _zodDesc = {
 	value: void 0,
@@ -562,6 +562,7 @@ function newError(Definition) {
 	}
 	return new Definition();
 }
+/* @__NO_SIDE_EFFECTS__ */
 function $constructor(name, initializer, proto, params) {
 	const zodProto = {};
 	function Internals(def) {
@@ -640,8 +641,7 @@ function config(newConfig) {
 	if (newConfig) Object.assign(globalConfig, newConfig);
 	return globalConfig;
 }
-//#endregion
-//#region node_modules/zod/v4/core/errors.js
+// node_modules/zod/v4/core/errors.js
 function _getMessage() {
 	const internals = this._zod;
 	internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -692,8 +692,7 @@ var initializer$1 = (inst, def) => {
 		});
 	}
 };
-var $ZodError = $constructor("$ZodError", initializer$1);
-$constructor("$ZodError", initializer$1, void 0, { Parent: Error });
+var $ZodError = /* @__PURE__ */ $constructor("$ZodError", initializer$1);
 /** Get-or-create `obj[key]` as an own data property. A path segment naming an inherited member
 * ("toString", "constructor") would otherwise read through to the prototype, and assigning
 * "__proto__" would hit the setter instead of creating a key. */
@@ -756,8 +755,7 @@ function formatError(error, mapper = (issue) => issue.message) {
 	processError(error);
 	return fieldErrors;
 }
-//#endregion
-//#region node_modules/zod/v4/core/parse.js
+// node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
 	return {
 		callee: params?.callee ?? callee,
@@ -959,8 +957,7 @@ var _safeEncodeAsync = (_Err) => async (schema, value, _ctx) => {
 var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 	return _safeParseAsync(_Err)(schema, value, _ctx);
 };
-//#endregion
-//#region node_modules/zod/v4/core/regexes.js
+// node_modules/zod/v4/core/regexes.js
 /**
 * @deprecated CUID v1 is deprecated by its authors due to information leakage
 * (timestamps embedded in the id). Use {@link cuid2} instead.
@@ -1031,8 +1028,7 @@ var number$1 = /^-?\d+(?:\.\d+)?$/;
 var boolean$1 = /^(?:true|false)$/i;
 var lowercase = /^[^A-Z]*$/;
 var uppercase = /^[^a-z]*$/;
-//#endregion
-//#region node_modules/zod/v4/core/checks.js
+// node_modules/zod/v4/core/checks.js
 var $ZodCheck = /*@__PURE__*/ $constructor("$ZodCheck", (inst, def) => {
 	var _a;
 	inst._zod ?? (inst._zod = {});
@@ -1327,8 +1323,7 @@ var $ZodCheckOverwrite = /*@__PURE__*/ $constructor("$ZodCheckOverwrite", (inst,
 		payload.value = def.tx(payload.value);
 	};
 });
-//#endregion
-//#region node_modules/zod/v4/core/doc.js
+// node_modules/zod/v4/core/doc.js
 var Doc = class {
 	constructor(args = [], closed = {}) {
 		this.content = [];
@@ -1361,15 +1356,13 @@ var Doc = class {
 		return new F(...Object.keys(this.closed), `return function (${this.args.join(", ")}) {\n${content.join("\n")}\n};`)(...Object.values(this.closed));
 	}
 };
-//#endregion
-//#region node_modules/zod/v4/core/versions.js
+// node_modules/zod/v4/core/versions.js
 var version = {
 	major: 4,
 	minor: 6,
 	patch: 7
 };
-//#endregion
-//#region node_modules/zod/v4/core/schemas.js
+// node_modules/zod/v4/core/schemas.js
 var $ZodType = /*@__PURE__*/ $constructor("$ZodType", (inst, def) => {
 	var _a;
 	inst ?? (inst = {});
@@ -2691,8 +2684,7 @@ function handleRefineResult(result, payload, input, inst) {
 		payload.issues.push(issue(_iss));
 	}
 }
-//#endregion
-//#region node_modules/zod/v4/core/memoizer.js
+// node_modules/zod/v4/core/memoizer.js
 var $ZodCyclicError = class extends Error {
 	constructor() {
 		super(`Cannot parse a reference cycle that closes through a transform`);
@@ -2944,8 +2936,7 @@ function isBackEdge(ctx, value) {
 	const backEdges = ctx[STATE]?.backEdges;
 	return backEdges !== void 0 && isRef(value) && backEdges.has(value);
 }
-//#endregion
-//#region node_modules/zod/v4/locales/en.js
+// node_modules/zod/v4/locales/en.js
 var error = () => {
 	const Sizable = {
 		string: {
@@ -3052,8 +3043,7 @@ var error = () => {
 function en_default() {
 	return { localeError: error() };
 }
-//#endregion
-//#region node_modules/zod/v4/core/registries.js
+// node_modules/zod/v4/core/registries.js
 var _a;
 var $ZodRegistry = class {
 	constructor() {
@@ -3099,8 +3089,7 @@ function registry() {
 }
 (_a = globalThis).__zod_globalRegistry ?? (_a.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
-//#endregion
-//#region node_modules/zod/v4/core/api.js
+// node_modules/zod/v4/core/api.js
 function snapshotChecks(def) {
 	if (def.checks) def.checks = [...def.checks];
 	return def;
@@ -3608,8 +3597,7 @@ function _check(fn, params) {
 	ch._zod.check = fn;
 	return ch;
 }
-//#endregion
-//#region node_modules/zod/v4/core/to-json-schema.js
+// node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
 	for (const source of sources) for (const key of Reflect.ownKeys(source)) if (Object.prototype.propertyIsEnumerable.call(source, key)) assignProp(target, key, source[key]);
 	return target;
@@ -4052,8 +4040,7 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
 	extractDefs(ctx, schema);
 	return finalize(ctx, schema);
 };
-//#endregion
-//#region node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/zod/v4/core/json-schema-processors.js
 var narrowMin = (agg, key, value) => {
 	if (agg[key] === void 0 || value > agg[key]) agg[key] = value;
 };
@@ -4698,8 +4685,7 @@ function toJSONSchema(input, params) {
 	extractDefs(ctx, input);
 	return finalize(ctx, input);
 }
-//#endregion
-//#region node_modules/zod/v4/classic/errors.js
+// node_modules/zod/v4/classic/errors.js
 var _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
 function _lazyMethod(proto, key, make) {
 	Object.defineProperty(proto, key, {
@@ -4748,8 +4734,7 @@ var initializer = (inst, issues) => {
 	});
 };
 var ZodRealError = /*@__PURE__*/ $constructor("ZodError", initializer, void 0, { Parent: Error });
-//#endregion
-//#region node_modules/zod/v4/classic/parse.js
+// node_modules/zod/v4/classic/parse.js
 var parse = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -4762,8 +4747,7 @@ var safeEncode = /* @__PURE__ */ _safeEncode(ZodRealError);
 var safeDecode = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
-//#endregion
-//#region node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
 	if (!globalConfig.localeError) config(en_default());
 }
@@ -5620,8 +5604,7 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
 	return /* @__PURE__ */ _superRefine(fn, params);
 }
-//#endregion
-//#region assets/plugins/agentchatroom/src/vendor/schema.ts
+// assets/plugins/agentchatroom/src/vendor/schema.ts
 var id$1 = string().min(1).max(100);
 var name = string().trim().min(1).max(100);
 var seq = number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -5701,8 +5684,7 @@ var humanJoinSchema = object({
 	humen_code: string().min(16).max(256),
 	name
 }).strict();
-//#endregion
-//#region assets/plugins/agentchatroom/src/vendor/store.ts
+// assets/plugins/agentchatroom/src/vendor/store.ts
 var ChatError = class extends Error {
 	code;
 	status;
@@ -6236,8 +6218,7 @@ var RoomStore = class RoomStore {
 		})();
 	}
 };
-//#endregion
-//#region assets/plugins/agentchatroom/src/state.ts
+// assets/plugins/agentchatroom/src/state.ts
 /** RoomStore owns message ordering/dedup/wait; this file holds host-bound memberships, never model-supplied tokens. */
 var CollaborationState = class CollaborationState {
 	store;
@@ -6323,8 +6304,7 @@ function acquireState(directory) {
 		}
 	};
 }
-//#endregion
-//#region assets/plugins/agentchatroom/src/projects.ts
+// assets/plugins/agentchatroom/src/projects.ts
 var canonical = (value) => process.platform === "win32" ? value.toLowerCase() : value;
 /** Source projects and their worktrees share a coordination scope, without changing their write roots. */
 async function projectKey(fact) {
@@ -6347,8 +6327,7 @@ async function projectKey(fact) {
 	}
 	return `directory:${canonical(actual)}`;
 }
-//#endregion
-//#region assets/plugins/agentchatroom/src/tools.ts
+// assets/plugins/agentchatroom/src/tools.ts
 var id = string().trim().min(1).max(100);
 var room = { room_id: id };
 var schemas = {
@@ -6391,8 +6370,7 @@ var chatroomSchema = discriminatedUnion("action", [
 	}),
 	schemas.agentchatroom_leave.extend({ action: literal("leave") })
 ]);
-//#endregion
-//#region assets/plugins/agentchatroom/src/index.ts
+// assets/plugins/agentchatroom/src/index.ts
 var apiVersion = 1;
 function fail(message) {
 	throw new Error(message);
@@ -6763,5 +6741,4 @@ function create(api) {
 		}
 	};
 }
-//#endregion
 export { apiVersion, create as default };

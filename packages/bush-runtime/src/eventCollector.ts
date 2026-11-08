@@ -35,6 +35,7 @@ function observationValue(tool: string, result: unknown) {
 export class EventCollector {
   constructor(private deps: Pick<ToolExecutionCoordinatorOptions, 'registry' | 'capabilities'> & {
     tasks(owner: string, id: string): SubagentTask | undefined;
+    prepareToolCatalog?: () => Promise<void> | undefined;
     executions: ToolExecutionStore;
     loadChild(session: string): Promise<RuntimeSessionTurnRequest | undefined>;
     messages(session: string, turn: string): ModelMessage[];
@@ -53,7 +54,11 @@ export class EventCollector {
     if ([parent, saved].some(context => context.metadata.toolExecutionPolicy === 'none' ||
       context.metadata.toolExecutionPolicy === 'web_restricted' || isSshExecution(context.metadata)))
       throw Error('Collector requires a locally permitted execution context.');
-    const registration = this.deps.registry.resolve(rule.tool);
+    let registration = this.deps.registry.resolve(rule.tool);
+    if (this.deps.prepareToolCatalog && (!registration || registration.mcpHook)) {
+      await this.deps.prepareToolCatalog();
+      registration = this.deps.registry.resolve(rule.tool);
+    }
     if (!registration || registration.forwardToolCall || registration.delegatesToolExecution || registration.registrationOwner?.startsWith('bridge:') ||
       (registration.mcpHook ? registration.mcpHook.readOnly !== true : registration.manifest.mutating && rule.tool !== 'terminal_exec'))
       throw Error('Choose an available read-only tool or a verified terminal_exec collector.');

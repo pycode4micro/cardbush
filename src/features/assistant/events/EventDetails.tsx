@@ -7,15 +7,15 @@ import { solutionInteractionAnswer } from '../../interactions/solutionSelectionM
 import { createRuntimeInteractions } from '../../../runtime-client/RuntimeInteractionBridge';
 import { eventBackend } from './eventBackend';
 
-export function FriendsEventDetails({ event, snapshot, language }: {
-  event?: FriendsWorkEvent; snapshot?: FriendsSnapshot; language: string;
+export function FriendsEventDetails({ event, snapshot, language, showHeading = true }: {
+  event?: FriendsWorkEvent; snapshot?: FriendsSnapshot; language: string; showHeading?: boolean;
 }) {
   const t = uiText(language);
   if (!event) return <p className="friends-empty">{t('yourFriends.noEvents')}</p>;
   const status = t(`yourFriends.status.${event.status}`);
   const due = event.recurrence && snapshot?.detections.find(timer => timer.eventId === event.id);
   return <div className="friends-event-details">
-    <h3>{event.title}</h3><p className="friends-aside">{event.subscription ? t('assistant.events.subscriptionStatus', { status }) : status}</p>
+    {showHeading && <><h3>{event.title}</h3><p className="friends-aside">{event.subscription ? t('assistant.events.subscriptionStatus', { status }) : status}</p></>}
     {due && event.recurrence && event.status !== 'failed' && event.status !== 'paused' && <p className="friends-aside">
       {t('assistant.events.nextOccurrence', {
         time: new Intl.DateTimeFormat(language, { timeZone: event.recurrence.timeZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(due.at)),

@@ -34,7 +34,7 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   const cachedIcon = await read(`document.querySelector('.app-center-tile[data-application-id^="web:"] img').src`);
   assert.ok(cachedIcon.length < 32768);
   assert.equal(await read(`window.cardbushDesktop.browser.readIcon('file:///C:/private.txt')`), '');
-  await read(`document.querySelector('.app-center-drawer button[aria-label="关闭应用中心"]').click(); void 0`);
+  await read(`document.querySelector('.app-center-drawer button[aria-label="关闭探索"]').click(); void 0`);
   await waitFor(`!document.querySelector('.app-center-drawer')`);
   await click(window.webContents, '.browser-install-button');
   await waitFor(`document.querySelector('.app-center-drawer')?.open`);
@@ -52,7 +52,7 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   await waitFor(`!document.querySelector('.app-center-tile[data-application-id^="web:"]')`);
   assert.equal((await prefs()).webApps.length, 0); assert.ok(!(await prefs()).shortcuts.includes(app.id));
   assert.equal(await launched.executeJavaScript(`localStorage.getItem('webapp-session')`), 'retained', 'removing app preserves site data');
-  await read(`document.querySelector('.app-center-drawer button[aria-label="关闭应用中心"]').click(); void 0`);
+  await read(`document.querySelector('.app-center-drawer button[aria-label="关闭探索"]').click(); void 0`);
   await waitFor(`!document.querySelector('.app-center-drawer')`);
 
   await launched.loadURL(origin + '/ordinary-webpage'); await activeReady();

@@ -69,6 +69,7 @@ module.exports = async ({ read, until, win, capture }) => {
   await read('delete document.documentElement.dataset.motionPreference;delete document.documentElement.dataset.reduceMotion;void 0');
   await read('renderCalendarWidgets("en",1)'); await until('document.querySelectorAll(".builtin-calendar").length===1');
   win.setSize(420,820); await until('innerWidth<450');
+  await until('!document.querySelector(".calendar-day-details")'); // Resize dismisses the old card with an exit transition.
   await read('document.querySelector(".widget-fixture").style.zoom="1.25";void 0');
   await move('.builtin-calendar [aria-current=date]'); await until(visible);
   assert.equal(await checkBounds(), true, '125% widget hover remains within a narrow viewport');

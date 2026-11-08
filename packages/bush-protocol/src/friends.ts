@@ -59,7 +59,30 @@ export const friendsCommandSchema = z.discriminatedUnion('action', [
 export type FriendInput = z.infer<typeof friendInputSchema>;
 export type FriendsProfile = z.infer<typeof friendsProfileSchema>;
 export type FriendEventStatus = 'queued' | 'running' | 'watching' | 'waiting_user' | 'completed' | 'paused' | 'failed';
+const pageLabel = z.string().trim().min(1).max(100);
+const pageId = z.string().regex(/^[a-z0-9_-]{1,48}$/i);
+export const eventPresentationSchema = z.object({
+  summary: z.string().trim().min(1).max(200),
+  cover: z.enum(['tide', 'fold', 'fern', 'prism']),
+  pages: z.array(z.object({
+    id: pageId.describe('Stable page ID within this event. Reuse it when updating the same subject.'),
+    parentId: pageId.optional().describe('ID of an earlier page. Omit for a direct child of the event.'),
+    title: pageLabel,
+    layout: z.enum(['article', 'list', 'facts']),
+    items: z.array(z.object({ label: pageLabel, text: z.string().trim().min(1).max(1600) }).strict()).min(1).max(8),
+    componentId: z.string().regex(/^[a-z0-9-]{1,80}$/i).optional().describe('Existing local HTML component ID, only if known and relevant.'),
+  }).strict()).max(8),
+}).strict().refine(value => {
+  const seen = new Set<string>();
+  return value.pages.every(page => {
+    if (seen.has(page.id) || (page.parentId && !seen.has(page.parentId))) return false;
+    seen.add(page.id);
+    return true;
+  });
+}, 'Page IDs must be unique. Declare each parent before its children.').describe('Optional desktop home card and drill-down pages. Design their hierarchy around this event. Use only verified facts. Use an empty pages array for a simple reminder.');
+export type EventPresentation = z.infer<typeof eventPresentationSchema>;
 export interface FriendsWorkEvent {
+  presentation?: EventPresentation;
   id: string; logicalKey: string; origin: 'user' | 'agent' | 'system'; title: string; intent: string;
   subscription?: true;
   recurrence?: EventRecurrence;

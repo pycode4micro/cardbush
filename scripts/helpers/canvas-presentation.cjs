@@ -32,6 +32,8 @@ module.exports = async ({ run, until, win, delay, pointer, readCanvas, path, chi
 
   await run(`document.querySelector('.canvas-present-button').focus();document.querySelector('.canvas-present-button').click()`);
   await until(`!!document.querySelector('.canvas-presentation[open]')`);
+  await run(`document.querySelector('.canvas-presentation-viewport').dispatchEvent(new Event('cancel',{bubbles:true,cancelable:true}));void 0`);
+  assert.equal(await run(`!!document.querySelector('.canvas-presentation[open]')`), true, 'child cancellation keeps the presentation open');
   assert.equal(await run(`document.querySelector('.canvas-presentation').dataset.layout`), 'canvas', 'presentation defaults to the original composition');
   assert.deepEqual(await visible(), ['interactive', 'alignment'], 'all regions form one presentation page');
   assert.equal(await run(`document.querySelectorAll('.canvas-presentation [aria-label=下一页]').length`), 0);

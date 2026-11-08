@@ -9,7 +9,7 @@ export class ConversationJournal {
   private cache = new Map<string, ConversationEntry[]>();
   private histories = new Map<string, AssistantModelHistory>();
   private reactions = new Map<string, Record<string, AssistantReaction>>();
-  constructor(private root: string) {}
+  constructor(private root: string, private onAppend?: (sessionId: string, entry: ConversationEntry) => void) {}
   private file(sessionId: string) { return join(this.root, createHash('sha256').update(sessionId).digest('hex') + '.jsonl'); }
   modelHistory(sessionId: string) {
     let history = this.histories.get(sessionId);
@@ -50,6 +50,7 @@ export class ConversationJournal {
     mkdirSync(this.root, { recursive: true });
     appendFileSync(this.file(sessionId), JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600, flush: true });
     this.cache.set(sessionId, [...entries, entry]);
+    this.onAppend?.(sessionId, entry);
     return entry;
   }
   readReactions(sessionId: string): Record<string, AssistantReaction> {

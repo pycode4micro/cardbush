@@ -43,7 +43,7 @@ try {
   const popup = await attach((await send('Target.createTarget', { url: `chrome-extension://${extensionId}/popup.html` })).targetId);
   const evaluate = expression => cdp.evaluate(expression, popup);
   const status = () => evaluate('chrome.runtime.sendMessage({action:"status"})');
-  await until(() => evaluate('Boolean(document.querySelector("button[data-action=reconnect]"))'), 'extension UI');
+  await until(() => evaluate('document.readyState === "complete" && Boolean(document.querySelector("button[data-action=reconnect]"))'), 'extension UI ready for connection');
   await evaluate('document.querySelector("button[data-action=reconnect]").click()');
   async function consent(page, button, screenshot) {
     const target = await until(async () => (await send('Target.getTargets')).targetInfos.find(t => t.url.includes(`/${page}#`)), `${kind} ${page}`);

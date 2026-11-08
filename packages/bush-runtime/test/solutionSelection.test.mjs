@@ -77,6 +77,19 @@ test('batch input rejects ambiguous formats, duplicate IDs, empty and oversized 
   }
 });
 
+test('free-text-only questions reject option answers and remain pending until text arrives', async () => {
+  const broker = new RuntimeSolutionBroker(new InMemoryRuntimeEventLog());
+  let settled = false;
+  const pending = broker.request(identity, 'text-only', { ...input, options: [] }).then(value => { settled = true; return value; });
+  const request = broker.list(identity.sessionId)[0];
+  assert.throws(() => broker.answer(answerFor(request, { kind: 'option', optionIndex: 0 })), /does not exist/);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(broker.list(identity.sessionId).length, 1);
+  broker.answer(answerFor(request, { kind: 'text', text: '先备份后处理' }));
+  assert.deepEqual(await pending, { status: 'selected', source: 'text', text: '先备份后处理' });
+});
+
 test('all answers are checked atomically, bound to question IDs and returned in question order', async () => {
   const log = new InMemoryRuntimeEventLog(), broker = new RuntimeSolutionBroker(log);
   let settled = false;

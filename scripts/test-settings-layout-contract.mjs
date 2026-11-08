@@ -170,8 +170,8 @@ assert.match(app, /void loadSettingsViewModule\(\)/);
 assert.match(settings, /useLayoutEffect\(\(\) => \{[\s\S]*?onReady\(\)/);
 assert.match(settings, /settings-inactive/);
 assert.match(settings, /inert=\{active \? undefined : true\}/);
-assert.match(app, /aria-hidden=\{settingsVisible\}/);
-assert.match(app, /inert=\{settingsVisible \? true : undefined\}/);
+assert.match(app, /aria-hidden=\{settingsVisible \|\| friendsOpen\}/);
+assert.match(app, /inert=\{settingsVisible \|\| friendsOpen \? true : undefined\}/);
 assert.match(
   css,
   /\.app > \.settings-shell\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*var\(--window-frame-height\) 0 0;[\s\S]*?z-index:\s*100;/,

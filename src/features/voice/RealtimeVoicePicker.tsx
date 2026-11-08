@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { uiText } from '../../i18n';
+import { dialogEventHandler } from '../../shared/dialogEvents';
 import type { RealtimeVoiceSettings, RealtimeCustomVoice } from '../../../electron/realtimeVoiceTypes';
 import { realtimeVoiceId, realtimeVoiceOptions, validRealtimeVoiceId } from '../../../electron/realtimeVoiceOptions';
 import { SettingsDropdown } from '../settings/SettingsDropdown';
@@ -32,7 +33,7 @@ export function RealtimeVoicePicker({value,language,compact=false,disabled=false
       }}/>
     </div>
     {error&&!dialog.current?.open&&<span className="voice-error" role="alert">{error}</span>}
-    <dialog ref={dialog} className="realtime-voice-dialog" aria-labelledby={heading} onCancel={()=>setError('')}>
+    <dialog ref={dialog} className="realtime-voice-dialog" aria-labelledby={heading} onCancel={dialogEventHandler(close)}>
       <form onSubmit={event=>{
         event.preventDefault();
         const voiceId=id.trim(), voiceName=name.trim();

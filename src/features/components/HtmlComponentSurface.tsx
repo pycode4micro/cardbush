@@ -6,15 +6,23 @@ import { componentProtocol, validateComponentText, type HtmlComponent } from './
 import { bookmarkUrl } from '../inspector/browserBookmarks';
 import { componentId } from './componentId';
 
-export function HtmlComponentSurface({ component, active = true }: { component: HtmlComponent; active?: boolean }) {
+import type { EventPresentation } from '@cardbush/bush-protocol';
+type EventPageContext = Pick<EventPresentation['pages'][number], 'id' | 'title' | 'layout' | 'items'>;
+export function HtmlComponentSurface({ component, active = true, eventPage }: { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext }) {
   const frame = useRef<HTMLIFrameElement>(null), host = useContext(HtmlComponentContext), latest = useRef(host);
   latest.current = host;
+  const page = useRef(eventPage); page.current = eventPage;
   const visible = useRef(active); visible.current = active;
   const [error, setError] = useState(''), loads = useRef(0), mounted = useRef(true);
   const token = useMemo(() => componentId(), [component.id, component.html]);
   const document = useMemo(() => componentDocument(component.html, token), [component.html, token]);
   const reply = (message: unknown) => frame.current?.contentWindow?.postMessage({ protocol: componentProtocol, token, ...message as object }, '*');
-  const context = () => { const current = latest.current; return current ? { revision: current.revision, sessionId: current.sessionId, language: current.language, running: current.running } : null; };
+  const context = () => { const current = latest.current;
+    if (page.current) {
+      const {id, title, layout, items} = page.current;
+      return {eventPage: {id, title, layout, items}};
+    }
+    return current ? { revision: current.revision, sessionId: current.sessionId, language: current.language, running: current.running } : null; };
   const publish = useRef(() => {});
   useEffect(() => {
     mounted.current = true; loads.current = 0; setError('');
@@ -31,8 +39,9 @@ export function HtmlComponentSurface({ component, active = true }: { component: 
         const params = message.params ?? {}; let result: unknown;
         const storageKey = 'cardbush.component-state.' + component.id;
         if (message.method === 'context.read') result = context();
-        else if (message.method === 'state.read') { const raw = localStorage.getItem(storageKey); result = raw ? JSON.parse(raw) : null; }
+        else if (message.method === 'state.read') { const raw = page.current ? null : localStorage.getItem(storageKey); result = raw ? JSON.parse(raw) : null; }
         else if (message.method === 'state.write') {
+          if (page.current) throw new Error('CAPABILITY_DENIED');
           if (!visible.current) throw new Error('INACTIVE_SURFACE');
           const json = JSON.stringify(params.value ?? null);
           if (new TextEncoder().encode(json).length > 16000) throw new Error('STATE_LIMIT');
@@ -40,7 +49,7 @@ export function HtmlComponentSurface({ component, active = true }: { component: 
         } else if (message.method === 'actions.invoke') {
           const current = latest.current;
           if (!visible.current) throw new Error('INACTIVE_SURFACE');
-          if (!component.allowActions || !current) throw new Error('CAPABILITY_DENIED');
+          if (page.current || !component.allowActions || !current) throw new Error('CAPABILITY_DENIED');
           if (params.contextRevision !== current.revision) throw new Error('STALE_CONTEXT');
           if (typeof params.idempotencyKey !== 'string' || params.idempotencyKey.length < 1 || params.idempotencyKey.length > 128) throw new Error('INVALID_IDEMPOTENCY_KEY');
           const key = current.revision + ':' + params.idempotencyKey, input = JSON.stringify([params.command, params.args]);
@@ -91,7 +100,7 @@ export function HtmlComponentSurface({ component, active = true }: { component: 
     update();
     return () => { cancelAnimationFrame(scheduled); observer.disconnect(); resize.disconnect(); };
   }, [token]);
-  useEffect(() => { publish.current(); }, [host?.revision, host?.language, host?.running, active]);
+  useEffect(() => { publish.current(); }, [host?.revision, host?.language, host?.running, active, eventPage]);
   if (error) return <div className="html-component-error" role="alert">{error}</div>;
   return <iframe ref={frame} className="html-component-frame" title={component.title} srcDoc={document} sandbox="allow-scripts"
     referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"

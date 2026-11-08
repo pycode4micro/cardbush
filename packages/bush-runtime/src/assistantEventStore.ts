@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { eventPredicateSchema, eventRecurrenceSchema, friendEvidenceSchema, friendDeliveryRouteSchema, friendsWebhookReceiptSchema, type FriendsWebhookReceipt, assistantProfileSchema, type AssistantProfile, friendsProfileSchema, runtimeSessionTurnRequestSchema,
+import { eventPredicateSchema, eventPresentationSchema, eventRecurrenceSchema, friendEvidenceSchema, friendDeliveryRouteSchema, friendsWebhookReceiptSchema, type FriendsWebhookReceipt, assistantProfileSchema, type AssistantProfile, friendsProfileSchema, runtimeSessionTurnRequestSchema,
   type FriendsDetection, type FriendsProfile, type FriendsWorkEvent, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 
 const timestamp = z.string().datetime();
@@ -12,6 +12,7 @@ const stateSchema = z.object({
   discoveryStarted: z.literal(true).optional(),
   configuration: z.object({ parent: runtimeSessionTurnRequestSchema.extend({ inputMessages: z.tuple([]) }), profile: friendsProfileSchema, assistant: assistantProfileSchema.optional(), defaultRoute: friendDeliveryRouteSchema.optional() }).optional(),
   events: z.array(z.object({ id, logicalKey: id, origin: z.enum(['user', 'agent', 'system']), title: z.string(), intent: z.string(),
+    presentation: eventPresentationSchema.optional(),
     trigger: eventPredicateSchema.optional(), triggerMatched: z.boolean().optional(), currentInputId: id.optional(), reminderText: z.string().min(1).max(8000).optional(),
     triggerKey: z.string().max(256).optional(), collectorVersion: z.string().optional(), collectorFailures: z.int().nonnegative().optional(),
     subscription: z.literal(true).optional(), recurrence: eventRecurrenceSchema.optional(), inputs: z.array(friendEvidenceSchema), deliveryRoute: friendDeliveryRouteSchema.optional(), status: z.enum(['queued', 'running', 'watching', 'waiting_user', 'completed', 'paused', 'failed']),

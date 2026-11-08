@@ -10,10 +10,15 @@ import { BrowserUseRouter } from '../dist-electron/browserUseHost.mjs';
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, emit(value) { this.listeners.forEach(fn => fn(value)); } });
 function worker(session, tabs) {
   const calls = [], root = path.resolve('assets/plugins/browser/extension');
-  const storage = data => ({ get: async keys => Object.fromEntries(keys.map(key => [key, data[key]])), set: async values => Object.assign(data, structuredClone(values)) });
+  const storage = data => ({
+    get: async keys => Object.fromEntries(keys.map(key => [key, data[key]])),
+    set: async values => Object.assign(data, structuredClone(values)),
+    remove: async keys => { for (const key of keys) delete data[key]; },
+    setAccessLevel: async ({ accessLevel }) => assert.equal(accessLevel, 'TRUSTED_CONTEXTS'),
+  });
   const chrome = {
     runtime: { onInstalled: event(), onStartup: event(), onMessage: event(), getManifest: () => ({ version: 'test' }) },
-    storage: { local: storage({}), session: storage(session) }, alarms: { onAlarm: event(), clear: async () => {}, create: async () => {} },
+    storage: { local: storage({ cardbushCredentialCacheVersion: 1 }), session: storage(session) }, alarms: { onAlarm: event(), clear: async () => {}, create: async () => {} },
     tabs: { onRemoved: event(), query: async () => [...tabs.values()],
       get: async id => { if (!tabs.has(id)) throw Error('Closed'); return { ...tabs.get(id) }; },
       update: async (id, patch) => { calls.push(['activate', id, patch]); if (!tabs.has(id)) throw Error('Closed'); return Object.assign(tabs.get(id), patch); },
@@ -42,7 +47,9 @@ test('extension references preserve the worker identity, focus without control, 
   await restarted.run(`activeScope={id:'still-running'};dispatch('tabs.reveal',{tabId:42,expectedTargetKey:${JSON.stringify(page.targetKey)}})`);
   assert.equal(restarted.run('activeScope.id'), 'still-running');
   assert.equal(restarted.run('attachedTabs.size'), 0);
-  assert.equal(restarted.run('sessionGrants.size'), 0);
+  assert.equal(restarted.run('managedScopes.size'), 0);
+  assert.equal(restarted.run('scopeLeases.size'), 0);
+  assert.equal(restarted.run('nativeReady'), false, 'revealing a reference does not establish an authorized connection');
   assert.deepEqual(restarted.calls.map(call => call[0]), ['group', 'activate', 'window']);
   assert.equal(tabs.get(42).url, 'https://example.test/current');
   restarted.chrome.tabs.onRemoved.emit(42);

@@ -1,5 +1,5 @@
 import { uiText } from '../i18n';
-import { ArrowLeft, ArrowRight, Check, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { AppLanguage } from '../types';
 import { WindowSidebarToggle } from './WindowSidebarToggle';
@@ -18,7 +18,7 @@ type Props = {
 };
 
 export function WindowFrame(props: Props) {
-  const { language, sidebarCollapsed, onToggleSidebar, menus, onBack, onForward } = props;
+  const { language, sidebarCollapsed, onToggleSidebar, menus, onBack } = props;
 
   const nativeControls = window.cardbushDesktop?.platform === 'win32';
   const shortcuts = useKeyboardShortcuts();
@@ -182,15 +182,16 @@ export function WindowFrame(props: Props) {
         setMenuInput('keyboard');
       }
     }}>
-    <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
     <div className="window-history-controls no-drag">
-      {([{ id: 'back', label: uiText(language)('windowFrame.back'), action: onBack, icon: ArrowLeft, shortcut: 'navigateBack' },
-        { id: 'forward', label: uiText(language)('app.forward'), action: onForward, icon: ArrowRight, shortcut: 'navigateForward' }] as const).map(item =>
-        <button key={item.id} type="button" className="frame-chip" data-history-action={item.id} disabled={!item.action}
-          aria-label={item.label} title={item.label} data-shortcut={item.shortcut}
-          onClick={() => { close(); item.action?.(); }}><item.icon size={15} /></button>)}
+      <button type="button" className="frame-chip" data-history-action="back" disabled={!onBack}
+        aria-label={uiText(language)('windowFrame.back')} title={uiText(language)('windowFrame.back')} data-shortcut="navigateBack"
+        onClick={() => { close(); onBack?.(); }}><ArrowLeft size={15}/></button>
     </div>
-    <div className="window-frame-menu-group no-drag" role="menubar" aria-label={uiText(language)('windowFrame.applicationMenu')}>
+    <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
+    {menus.length > 0 && <button type="button" className="frame-chip desktop-menu-toggle no-drag" aria-label={uiText(language)('windowFrame.applicationMenu')}
+      aria-haspopup="menu" aria-expanded={Boolean(open)} onPointerDown={event => event.preventDefault()}
+      onClick={event => open ? close() : void openMenu(menus[0].id, event.currentTarget, event.detail === 0 ? 'first' : undefined)}><MoreHorizontal/></button>}
+    <div className="window-frame-menu-group no-drag" data-expanded={Boolean(open)} role="menubar" aria-label={uiText(language)('windowFrame.applicationMenu')}>
       {menus.map(menu => <div className="window-frame-menu" key={menu.id}>
         <button className="frame-chip window-frame-menu-trigger no-drag" type="button" role="menuitem"
           data-menu-trigger={menu.id} aria-haspopup="menu" aria-expanded={open?.id === menu.id}

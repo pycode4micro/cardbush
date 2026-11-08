@@ -4,7 +4,7 @@
 
 开发、CI 与 Agent Docker 镜像统一使用 Node 24 LTS。`.nvmrc` 指定主版本，`package.json` 的 `engines` 为 `^24.0.0`，Node 类型定义也采用 24 系列。已安装 Node 25 的终端需要切换到 Node 24 后再运行 `npm install`；修改仓库配置不会更换系统 Node。
 
-本轮更新 Electron 42、MCP SDK 2 与 sharp 的安全修订版本，并通过锁文件更新其余受影响的传递依赖。Electron 虽列在 `devDependencies`，仍是发布产品的运行时，因此不能只看 `npm audit --omit=dev`。
+1.0.15 发布准备将 Electron 更新至 42.11.18、Vite 更新至 8.2.4，并在锁文件中更新 fast-uri、follow-redirects、joi 和构建工具的 undici 安全修订版本。Electron 虽列在 `devDependencies`，仍是发布产品的运行时，因此不能只看 `npm audit --omit=dev`。2026-11-06 的完整 npm 审计为 0 项已知告警；此结果对应当时的公告数据库，不代表不存在未知漏洞。
 
 新版 npm 默认拦截未声明的依赖安装脚本。仓库显式禁用 `cpu-features`、`ssh2` 的可选原生加速编译，与桌面打包的排除规则一致，SSH 继续使用 Node crypto；同时禁用未使用的 Squirrel 安装器 `electron-winstaller` 的 7-Zip 选择脚本，Windows 发布仍使用 NSIS / MSIX。不要使用全量允许来消除提示；引入确实需要的脚本时单独核对用途和版本。
 
@@ -15,10 +15,11 @@
 | 父包 | 覆盖版本 | 使用与验证 |
 | --- | --- | --- |
 | `@electron/get` | `global-agent@4.1.3` | 去掉旧日志依赖链；通过 electron-builder 实际使用的下载模块初始化代理，验证请求确实到达本机代理。 |
-| `@file-viewer/core` | `dompurify@3.4.16` | 采用同一主版本的安全修订，保留文件预览的 HTML 清理。 |
+| `@file-viewer/core` | `dompurify@3.4.17` | 采用同一主版本的安全修订，保留文件预览的 HTML 清理。 |
 | `concurrently` | `shell-quote@1.11.0` | 验证命令并发启动、正常参数解析，以及注释后换行注入被拒绝。 |
 | `exceljs` | `uuid@11.1.1` | 保留 CommonJS API；验证实际依赖 UUID 的扩展图标集条件格式写入、重新读取。 |
 | `pptxgenjs` | `image-size@2.0.4` | 当前 PptxGenJS 发布代码未调用此旧依赖；仍验证图片尺寸计算、嵌入内容与 PPTX 输出。 |
+| `app-builder-lib` | `minimatch@>=7 <11` → `11.0.1` | 仅覆盖打包工具依赖树中的受影响版本；保留旧版 3/5 的函数接口。通过真实 FileMatcher 验证资源包含、目录遍历、私有文件排除及 universal 的命名导出调用，再验证实际 MSIX。 |
 
 跨主版本覆盖需要调用路径验证，不能只凭 audit 数量判断兼容性。`npm run test:dependency-upgrades` 已加入 Windows / Linux 桌面 CI，覆盖上述运行路径和 sharp 的 SVG 渲染。
 

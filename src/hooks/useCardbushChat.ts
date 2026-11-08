@@ -1,3 +1,5 @@
+import { conversationAgentModel, modelConfigFor, selectedModelName, readInitialReferencePlanMode, readInitialPermissionMode, readInitialSubagentPermissionRouting, normalizeReferencePlanMode, normalizeSubagentPermissionRouting } from '../features/settings/agentRequestPreferences';
+export { modelConfigFor, selectedModelName } from '../features/settings/agentRequestPreferences';
 import { isDefaultConversationTitle } from '../i18n/conversationTitles';
 import { uiText } from '../i18n';
 import { readUserPrompt, promptContextMetadata, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
@@ -2890,18 +2892,14 @@ export function useCardbushChat(
     if (backend.scope) throw new Error(uiText()('useCardbushChat.realtime_delegation_requires_a_local_conversation'));
     const voiceModel = resolveConversationModelId(availableModels, fixedSessionId ?? activeConversationId, backend.scope, defaultModelId);
     if (!voiceModel.trim()) throw Object.assign(new Error(uiText()('useCardbushChat.configure_an_agent_model_first')), { code: 'realtime_model_required' });
-    const voiceModelConfig = modelConfigFor(managedModelConfigs, voiceModel);
-    const voiceReasoningLevel: ReasoningLevel = resolveModelReasoningEffort(voiceModelConfig ?? {}) ?? 'default';
     const conversation = fixedSessionId ? { id: fixedSessionId } as ConversationSummary
       : await persistPreparedConversation(activeConversation ?? prepareConversation(undefined, uiText()('useCardbushChat.voice_task')));
-    if (!readConversationModel(conversation.id)) selectConversationModel(voiceModel, conversation.id);
     return {
-      sessionId: conversation.id, userInput: '',
-      model: selectedModelName(managedModelConfigs, voiceModel), modelConfig: voiceModelConfig,
+      ...conversationAgentModel(managedModelConfigs, voiceModel, conversation.id),
       projectDir: conversationProjectRequestDir(conversation), workspaceDir: conversationWorkspaceRoot(conversation),
       teamInstructions: requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined, uiLanguage: languageRef.current,
       disabledSkills: [...(requestContext.disabledSkillNames ?? [])], referencePlanMode, permissionMode,
-      subagentPermissionRouting, reasoningLevel: voiceReasoningLevel, sourceEnabled: resolveConversationSource(conversation.id),
+      subagentPermissionRouting,
       interactiveRequestsEnabled: requestContext.interactiveRequestsAvailable === true,
       standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
       teamModeEnabled: requestContext.teamModeEnabled === true, teamId: requestContext.selectedTeamId,
@@ -4398,35 +4396,6 @@ function readInitialSelectedModel(availableModels: ManagedModelConfig[], storage
   return availableModels[0]?.id ?? '';
 }
 
-function readInitialReferencePlanMode(storage: Pick<Storage, 'getItem'> = window.localStorage): ReferencePlanMode {
-  if (storage.getItem('cardbush.reference_plan_mode_explicit') !== 'true') {
-    return 'auto';
-  }
-  return normalizeReferencePlanMode(
-    storage.getItem('cardbush.reference_plan_mode') ?? 'auto',
-  );
-}
-
-function readInitialPermissionMode(storage: Pick<Storage, 'getItem'> = window.localStorage): PermissionMode {
-  return normalizePermissionMode(
-    storage.getItem('cardbush.permission_mode') ?? 'task_free',
-  );
-}
-
-function readInitialSubagentPermissionRouting(storage: Pick<Storage, 'getItem'> = window.localStorage): SubagentPermissionRouting {
-  return normalizeSubagentPermissionRouting(
-    storage.getItem('cardbush.subagent_permission_routing') ?? 'user',
-  );
-}
-
-function normalizeReferencePlanMode(value: string): ReferencePlanMode {
-  return value.trim() === 'off' ? 'off' : 'auto';
-}
-
-function normalizeSubagentPermissionRouting(value: string): SubagentPermissionRouting {
-  return value.trim() === 'user' ? 'user' : 'parent';
-}
-
 function normalizeDisabledToolNames(values?: Set<string>) {
   if (!values || values.size === 0) {
     return undefined;
@@ -4440,27 +4409,6 @@ function normalizeDisabledToolNames(values?: Set<string>) {
 
 function queuedMessageConversationId(item: QueuedChatMessage) {
   return item.conversation?.id?.trim() ?? '';
-}
-
-export function modelConfigFor(configs: ManagedModelConfig[], selectedModel: string) {
-  const normalized = selectedModel.trim().toLowerCase();
-  if (!normalized) {
-    return undefined;
-  }
-  const exactId = configs.find(
-    (config) => config.id.trim().toLowerCase() === normalized,
-  );
-
-  if (exactId) {
-    return exactId;
-  }
-  return configs.find(
-    (config) => config.modelName.trim().toLowerCase() === normalized,
-  );
-}
-
-export function selectedModelName(configs: ManagedModelConfig[], selectedModel: string) {
-  return modelConfigFor(configs, selectedModel)?.modelName.trim() || selectedModel.trim();
 }
 
 function projectKey(projectDir: string) {

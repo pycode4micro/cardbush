@@ -16,11 +16,11 @@ import './app-center.css';
 
 const dragType = 'application/x-cardbush-app';
 const shortcutHoverHoldMs = 1200;
-type CenterContext = { open: () => void; launch: (app: ApplicationEntry) => void; dragging: string;
+type CenterContext = { open: () => void; manage: () => void; page: boolean; launch: (app: ApplicationEntry) => void; dragging: string;
   startDrag: (event: DragEvent, id: string) => void; endDrag: () => void;
   drop: (event: DragEvent, target?: string) => void;
   move: (event: KeyboardEvent, id: string) => void };
-const AppCenterContext = createContext<CenterContext>({ open: () => {}, launch: () => {}, dragging: '', startDrag: () => {}, endDrag: () => {}, drop: () => {}, move: () => {} });
+const AppCenterContext = createContext<CenterContext>({ open: () => {}, manage: () => {}, page: false, launch: () => {}, dragging: '', startDrag: () => {}, endDrag: () => {}, drop: () => {}, move: () => {} });
 const allowDrop = (event: DragEvent) => { if (event.dataTransfer.types.includes(dragType)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } };
 export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; size?: number }) {
   const [failedIcon, setFailedIcon] = useState('');
@@ -74,7 +74,7 @@ export function AppCenterDock({ language, unread = 0 }: { language: AppLanguage;
       hoverTimer.current = window.setTimeout(() => { hoverTimer.current = undefined; setHoverExpanded(false); }, shortcutHoverHoldMs);
     }}
     onDragOver={allowDrop} onDrop={event => center.drop(event)}>
-    <button type="button" className="app-center-launcher" onClick={center.open} aria-haspopup="dialog" data-shortcut="openAppCenter"
+    <button type="button" className="app-center-launcher" onClick={center.open} aria-haspopup={center.page ? undefined : 'dialog'} data-shortcut="openAppCenter"
       title={uiText(language)('appCenter.appCenter')}
       aria-label={uiText(language)('appCenter.appCenter')} aria-keyshortcuts={shortcuts.aria('openAppCenter')}>
       <LayoutGrid size={18} aria-hidden="true"/>
@@ -85,7 +85,9 @@ export function AppCenterDock({ language, unread = 0 }: { language: AppLanguage;
   </div>;
 }
 
-export function AppCenterProvider({ language, onNavigate, children }: { language: AppLanguage; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
+export function useExploreActions() { return useContext(AppCenterContext); }
+
+export function AppCenterProvider({ language, onNavigate, onExplore, children }: { language: AppLanguage; onExplore?: () => void; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
   const apps = useApplications(language), prefs = useAppCenterPreferences();
   const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [dragging, setDragging] = useState('');
   const [link, setLink] = useState<{ id?: string; title: string; url: string } | null>(null), [error, setError] = useState('');
@@ -124,7 +126,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     else { show(); setError(uiText(language)('appCenter.thisAppWasRemovedOrDisabled')); }
   }, [openApplication, show, language]);
   useEffect(() => {
-    const center = () => show();
+    const center = onExplore ?? show;
     const application = async (event: Event) => {
       const { id, environmentId, reference } = (event as CustomEvent).detail ?? {};
       const revision = ++requestRevision.current;
@@ -145,7 +147,7 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     };
     window.addEventListener(OPEN_APP_CENTER_EVENT, center); window.addEventListener(OPEN_APPLICATION_EVENT, application);
     return () => { requestRevision.current++; window.removeEventListener(OPEN_APP_CENTER_EVENT, center); window.removeEventListener(OPEN_APPLICATION_EVENT, application); };
-  }, [language, language, show, openApplication]);
+  }, [language, onExplore, show, openApplication]);
   useEffect(() => {
     if (!presence.mounted) return;
     const node = dialog.current; node?.showModal();
@@ -251,14 +253,14 @@ export function AppCenterProvider({ language, onNavigate, children }: { language
     if (index < 0 || next < 0 || next >= ids.length) return;
     reorder(id, ids[next + (next > index ? 1 : 0)]);
   }, [reorder]);
-  const context = useMemo(() => ({ open: show, launch, dragging, startDrag, endDrag, drop, move }), [show, launch, dragging, startDrag, endDrag, drop, move]);
+  const context = useMemo(() => ({ open: onExplore ?? show, manage: show, page: Boolean(onExplore), launch, dragging, startDrag, endDrag, drop, move }), [onExplore, show, launch, dragging, startDrag, endDrag, drop, move]);
   const filtered = apps.filter(app => `${app.title} ${app.description}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <AppCenterContext.Provider value={context}>
     {children}
     {presence.mounted && <dialog ref={dialog} className="app-center-drawer" data-visible={presence.visible} data-dragging={Boolean(dragging)} aria-labelledby="app-center-title" aria-modal={!dragging} role="dialog"
       onCancel={dialogEventHandler(event => { event.preventDefault(); setOpen(false); })} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
       <div className="app-center-content" inert={!open ? true : undefined}>
-        <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{uiText(language)('appCenter.appCenter')}</h2></div>
+        <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{uiText(language)(onExplore ? 'desktop.manageApps' : 'appCenter.appCenter')}</h2></div>
           <div className="app-center-header-actions">
             <AppCenterSettingsMenu language={language} active={open && !dragging} display={prefs.display} onDisplayChange={display => save({ ...current.current.prefs, display })}
               selectingLocal={selectingLocal} onAddLocal={() => void addLocal()} onAddLink={() => { setLink({ title: '', url: '' }); setError(''); }}/>

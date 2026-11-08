@@ -9,6 +9,8 @@ const pause = (ms = 80) => new Promise(resolve => setTimeout(resolve, ms));
 app.whenReady().then(async () => {
   const window = new BrowserWindow({ show: false, width: 1200, height: 800,
     webPreferences: { nodeIntegration: true, contextIsolation: false, offscreen: true, backgroundThrottling: false } });
+  const rendererErrors = [];
+  window.webContents.on('console-message', ({ level, message }) => { if (level === 'error') rendererErrors.push(message); });
   try {
     await window.loadURL('data:text/html,<div id="root"></div>');
     for (const file of ['theme.css', 'app.css', 'appearance.css']) {
@@ -21,13 +23,16 @@ app.whenReady().then(async () => {
     const shortcuts = Object.fromEntries(['keyboardShortcuts', 'useKeyboardShortcuts'].map(name => [name, ts.transpileModule(readSourceFile(path.join(root, 'src/features/shortcuts', name + '.ts'), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText]));
-    const run = code => window.webContents.executeJavaScript(code, true);
+    const run = async code => {
+      try { return await window.webContents.executeJavaScript(code, true); }
+      catch (error) { throw new Error(`Image preview expression failed: ${code.slice(0, 180)}\n${rendererErrors.join('\n')}`, { cause: error }); }
+    };
     await run(`
       const React=require(${JSON.stringify(require.resolve('react'))});
       const {flushSync}=require(${JSON.stringify(require.resolve('react-dom'))});
       const {createRoot}=require(${JSON.stringify(require.resolve('react-dom/client'))});
       const sourceRequire=require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))});
-      const uiRequire=id=>id.endsWith('/i18n')?sourceRequire('@cardbush/platform/i18n'):sourceRequire(id);
+      const uiRequire=id=>id.endsWith('/i18n')?sourceRequire('@cardbush/platform/i18n'):id==='../../../electron/shortcutBinding'?sourceRequire(${JSON.stringify(path.join(root, 'dist-electron/shortcutBinding.js'))}):sourceRequire(id);
       const sharedSources=${JSON.stringify(shared)},sharedModules={};
       const shortcutSources=${JSON.stringify(shortcuts)},shortcutModules={};
       const preferences = new Map();

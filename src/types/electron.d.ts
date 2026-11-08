@@ -66,6 +66,8 @@ declare global {
       readAgentInstructions: (projectDir?: string, workspaceDir?: string) => Promise<import('@cardbush/bush-product-agent').AgentInstructionDocument[]>;
       saveGlobalInstructions: (content: string, revision: string) => Promise<import('../backend/globalInstructions').GlobalInstructionsSnapshot>;
       rendererReady: () => Promise<void>;
+      retainAssistantWindow?: (retained: boolean) => Promise<void>;
+      openAssistantWorkspace?: (page: 'team') => Promise<void>;
       ensureTaskWorkspace: (sessionId: string) => Promise<string>;
       runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;
       retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;

@@ -4,7 +4,7 @@
 
 The official [cardbush npm package](https://www.npmjs.com/package/cardbush) includes an independent Agent service and terminal client. The same release serves Windows and Linux and requires Node.js 24 and npm 10 or later. API-key models do not require the desktop app.
 
-This guide follows current source. Published **1.0.13** does not include the new `cardbush worker` registration or removal of remote chat selection. Rebuild both ends from current source to use the worker features below. See the [1.0.13 release scope](https://github.com/pycode4micro/cardbush/blob/main/docs/releases/1.0.13.md).
+This guide describes the **1.0.15 candidate**. As of November 6, 2026, the latest public npm version is **1.0.14**; packaging and verification do not publish 1.0.15. To test this candidate's Webhook, CLI and browser fixes, install the verified `cardbush-1.0.15.tgz` and use matching builds at both worker endpoints. See the [1.0.15 release scope](https://github.com/pycode4micro/cardbush/blob/main/docs/releases/1.0.15.md).
 
 Users need not prepare a deployment archive in advance. Install a matching published version directly on the target; for unreleased code, the Agent can build a standalone directory or temporary tarball from accessible complete source during deployment. An existing verified `cardbush-VERSION.tgz` can also be installed directly: `npm install --global /absolute/path/cardbush-VERSION.tgz`, without npm publication. For tarball transfer, compare SHA-256 before/after and check the installed command version and service capabilities; `@latest` cannot substitute for an unpublished candidate.
 
