@@ -12,7 +12,6 @@ export type WindowMenuItem = {
   onSelect?: () => void | Promise<unknown>; children?: WindowMenuEntry[];
 };
 export type WindowMenuEntry = WindowMenuItem | { separator: true };
-export type ApplicationMenu = { id: string; label: string; items: WindowMenuEntry[] };
 type Actions = {
   newConversation: () => void; openProject?: () => void; openFiles?: () => void;
   openSettings: () => void; showShortcuts: () => void; openDiagnostics: () => void;
@@ -26,7 +25,7 @@ type Actions = {
 /** Menu items route to existing application actions; no parallel command backend. */
 export function applicationMenus(language: AppLanguage, actions: Actions, state: {
   sidebarVisible: boolean; inspectorVisible: boolean; native: boolean; externalLinks: boolean;
-}): ApplicationMenu[] {
+}): WindowMenuItem[] {
   const separator = { separator: true } as const;
   const item = (id: string, message: MessageKey, onSelect?: WindowMenuItem['onSelect'], shortcut?: ShortcutId,
     extra: Partial<WindowMenuItem> = {}): WindowMenuItem =>
@@ -35,8 +34,8 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
     ({ id, label: uiText(language)(message), nativeAction: id, shortcut, keyLabel, disabled: !state.native });
   const external = (id: string, message: MessageKey, suffix: string) => item(id, message,
     state.externalLinks ? () => window.cardbushDesktop?.openExternal(homepage + suffix) : undefined);
-  const menus: ApplicationMenu[] = [
-    { id: 'file', label: uiText(language)('reviewCommentModel.file'), items: [
+  return [
+    { id: 'file', label: uiText(language)('reviewCommentModel.file'), children: [
       item('newConversation', 'conversationSearchDialog.newChat', actions.newConversation, 'newConversation'), separator,
       item('openAppCenter', 'appCenter.appCenter', actions.openAppCenter, 'openAppCenter'),
       { id: 'applications', label: uiText(language)('composer.applications'), children: [
@@ -49,7 +48,7 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       native('close', 'keyboardShortcuts.closeWindow', 'closeWindow'),
       native('quit', 'keyboardShortcuts.quitCardbush', 'quitApp'),
     ] },
-    { id: 'edit', label: uiText(language)('common.edit'), items: [
+    { id: 'edit', label: uiText(language)('common.edit'), children: [
       native('undo', 'applicationMenus.undo', undefined, 'Ctrl + Z'),
       native('redo', 'applicationMenus.redo', undefined, 'Ctrl + Y'), separator,
       native('cut', 'applicationMenus.cut', undefined, 'Ctrl + X'),
@@ -59,7 +58,7 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       native('selectAll', 'applicationMenus.select_all', undefined, 'Ctrl + A'), separator,
       item('openSettings', 'common.settings', actions.openSettings, 'openSettings'),
     ] },
-    { id: 'view', label: uiText(language)('applicationMenus.view'), items: [
+    { id: 'view', label: uiText(language)('applicationMenus.view'), children: [
       item('toggleSidebar', 'keyboardShortcuts.toggleSidebar', actions.toggleSidebar, 'toggleSidebar', { checked: state.sidebarVisible }),
       item('toggleInspector', 'keyboardShortcuts.toggleRightSidebar', actions.toggleInspector, 'toggleInspector', { checked: state.inspectorVisible }),
       item('openReview', 'keyboardShortcuts.openReview', actions.openReview, 'openReview'),
@@ -78,7 +77,7 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       native('resetZoom', 'applicationMenus.actual_size', 'appZoomReset'), separator,
       native('toggleFullscreen', 'keyboardShortcuts.toggleFullScreen', 'toggleFullscreen'),
     ] },
-    { id: 'help', label: uiText(language)('applicationMenus.help'), items: [
+    { id: 'help', label: uiText(language)('applicationMenus.help'), children: [
       external('documentation', 'applicationMenus.documentation', '#readme'),
       item('showShortcuts', 'keyboardShortcuts.showKeyboardShortcuts', actions.showShortcuts, 'showShortcuts'), separator,
       item('diagnostics', 'applicationMenus.diagnostics_and_about', actions.openDiagnostics),
@@ -86,11 +85,8 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       external('releases', 'applicationMenus.view_releases', '/releases'),
     ] },
   ];
-  return menus;
 }
 
-export function windowMenuItems(menus: ApplicationMenu[]): WindowMenuItem[] {
-  const flatten = (entries: WindowMenuEntry[]): WindowMenuItem[] => entries.flatMap(entry =>
-    'separator' in entry ? [] : [entry, ...flatten(entry.children ?? [])]);
-  return menus.flatMap(menu => flatten(menu.items));
+export function windowMenuItems(entries: WindowMenuEntry[]): WindowMenuItem[] {
+  return entries.flatMap(entry => 'separator' in entry ? [] : [entry, ...windowMenuItems(entry.children ?? [])]);
 }

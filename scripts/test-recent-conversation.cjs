@@ -290,6 +290,7 @@ async function run() {
   await pause(300);
   assert.ok(await read("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.sidebar').getBoundingClientRect().right+1"),'menu remains within the expanded sidebar');
   await click('.desktop-menu-toggle');
+  await click('[data-menu-item=file]');
   await click('[data-menu-item=applications]');
   await click('[data-menu-item=manageApps]');
   await visible('.app-center-drawer:modal');

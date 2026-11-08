@@ -34,15 +34,15 @@ app.whenReady().then(async () => {
   const key = (value, options = {}) => run(`(document.activeElement??document.body).dispatchEvent(new KeyboardEvent('keydown',${JSON.stringify({key:value,bubbles:true,cancelable:true,...options})}))`);
   const menu = async id => {
     await click('.desktop-menu-toggle');
-    await until("!!document.querySelector('.window-frame-menu-popover [data-menu-trigger]')");
-    await click(`[data-menu-trigger="${id}"]`);
-    await until(`document.querySelector('[data-menu-trigger="${id}"]')?.getAttribute('aria-expanded')==='true'`, `menu ${id} opened`);
+    await until("!!document.querySelector('.window-frame-menu-popover [data-menu-item]')");
+    await click(`[data-menu-item="${id}"]`);
+    await until(`document.querySelector('[data-menu-item="${id}"]')?.getAttribute('aria-expanded')==='true'`, `menu ${id} opened`);
   };
   const item = async id => { await click(`[data-menu-item="${id}"]`); await until(`!document.querySelector('[role="menu"]')`); };
   try {
     await win.loadFile(path.join(directory, 'ui', 'index.html'));
     await until(`!!document.querySelector('.desktop-menu-toggle')`);
-    assert.equal(await run(`document.querySelectorAll('[data-menu-trigger]').length`), 0, 'categories are only mounted inside the open application menu');
+    assert.equal(await run(`document.querySelectorAll('[data-menu-item]').length`), 0, 'categories are only mounted inside the open application menu');
     // Exercise :focus styling without raising a test window on the user's desktop.
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -50,7 +50,21 @@ app.whenReady().then(async () => {
     assert.equal(await run(`document.querySelector('[data-history-action="back"]').disabled`), true);
     // Opening with the mouse must not choose the first row, even after typing.
     await run(`document.querySelector('#editor').focus()`);
-    await menu('file');
+    await click('.desktop-menu-toggle');
+    await until(`document.querySelectorAll('[role="menu"]').length===1`);
+    const categories = await run(`Array.from(document.querySelectorAll('[role="menu"] > button')).map(node => ({
+      id:node.dataset.menuItem, x:node.offsetLeft, y:node.offsetTop, expanded:node.getAttribute('aria-expanded')
+    }))`);
+    assert.deepEqual(categories.map(row=>row.id), ['file','edit','view','help']);
+    assert.ok(categories.every((row,i)=>row.expanded==='false' && row.x===categories[0].x && (!i || row.y>categories[i-1].y)));
+    await move('[data-menu-item="file"]');
+    await until(`!!document.querySelector('[data-menu-item="applications"]')`);
+    await move('[data-menu-item="applications"]');
+    await until(`document.querySelectorAll('[role="menu"]').length===3`);
+    await move('[data-menu-item="help"]');
+    await until(`!!document.querySelector('[data-menu-item="diagnostics"]') && document.querySelectorAll('[role="menu"]').length===2`);
+    assert.equal(await run(`!!document.querySelector('[data-menu-item="openPlugins"]')`),false);
+    await click('[data-menu-item="file"]');
     assert.equal(await run(`document.activeElement.getAttribute('role')`), 'menu');
     assert.equal(await run(`getComputedStyle(document.querySelector('[data-menu-item="newConversation"]')).backgroundColor`), 'rgba(0, 0, 0, 0)');
     await key('ArrowDown');
@@ -69,17 +83,19 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({type:'mouseMove',x:900,y:500});
     await until(`getComputedStyle(document.querySelector('[data-menu-item="openFiles"]')).backgroundColor==='rgba(0, 0, 0, 0)'`);
     assert.equal(await run(`document.activeElement.getAttribute('role')`), 'menu', 'moving off the rows clears the action target too');
-    await key('Escape');
+    await key('Escape'); await key('Escape');
     await menu('file'); await key('ArrowUp');
     assert.equal(await run(`document.activeElement.dataset.menuItem`), 'quit');
-    await key('Escape');
+    await key('Escape'); await key('Escape');
     await menu('view'); await move('[data-menu-item="browser"]');
-    await until(`document.querySelectorAll('[role="menu"]').length===2`);
+    await until(`document.querySelectorAll('[role="menu"]').length===3`);
     assert.equal(await run(`getComputedStyle(document.querySelector('[data-menu-item="openBrowser"]')).backgroundColor`), 'rgba(0, 0, 0, 0)');
     assert.equal(await run(`document.activeElement.dataset.menuItem`), 'browser');
     await key('ArrowRight');
     await until(`document.activeElement.dataset.menuItem==='openBrowser'`);
-    await key('Escape'); await key('Escape');
+    await key('ArrowLeft'); await until(`document.activeElement.dataset.menuItem==='browser'`);
+    await key('ArrowLeft'); await until(`document.activeElement.dataset.menuItem==='view'`);
+    await key('Escape');
     await click('[data-chat="b"]'); await click('[data-chat="c"]');
     await click('[data-history-action="back"]'); await until(`document.querySelector('#active').textContent==='b'`);
     await key(']', {ctrlKey:true}); await until(`document.querySelector('#active').textContent==='c'`);
@@ -103,11 +119,11 @@ app.whenReady().then(async () => {
     assert.equal(await run(`document.querySelector('[data-menu-item="toggleSidebar"] kbd').textContent`),'Ctrl + Shift + B');
     assert.equal(await run(`document.querySelector('[data-menu-item="toggleSidebar"]').getAttribute('aria-checked')`),'true');
     await run(`document.querySelector('[data-menu-item="browser"]').focus()`); await key('ArrowRight');
-    await until(`document.querySelectorAll('[role="menu"]').length===2`);
+    await until(`document.querySelectorAll('[role="menu"]').length===3`);
     assert.equal(await run(`document.querySelector('[data-menu-item="reloadBrowser"]').disabled`),true);
-    await key('Escape'); await until(`document.querySelectorAll('[role="menu"]').length===1`);
+    await key('Escape'); await until(`document.querySelectorAll('[role="menu"]').length===2`);
     assert.equal(await run(`document.activeElement.dataset.menuItem`),'browser');
-    await key('Escape'); await run(`fixture.setPreview(true)`); await pause();
+    await key('Escape'); await key('Escape'); await run(`fixture.setPreview(true)`); await pause();
     await run(`nativeKey({key:'r',code:'KeyR',ctrlKey:true,metaKey:false,altKey:false,shiftKey:false})`);
     await until(`calls.includes('reload')`);
 
@@ -123,7 +139,7 @@ app.whenReady().then(async () => {
     await run(`(()=>{const editor=document.querySelector('#rich-editor');editor.focus();const range=document.createRange();range.setStart(editor.firstChild,6);range.setEnd(editor.firstChild,11);const sel=getSelection();sel.removeAllRanges();sel.addRange(range)})()`);
     await menu('edit'); await item('delete'); await until(`document.querySelector('#rich-editor').textContent==='alpha gamma'`);
     await run(`document.querySelector('#editor').focus();document.querySelector('#editor').setSelectionRange(1,3)`);
-    await menu('file'); await key('Escape');
+    await menu('file'); await key('Escape'); await key('Escape');
     assert.deepEqual(await run(`[document.activeElement.id,document.querySelector('#editor').selectionStart,document.querySelector('#editor').selectionEnd]`),['editor',1,3]);
 
     const beforeZoom = win.webContents.getZoomLevel();
@@ -142,13 +158,13 @@ app.whenReady().then(async () => {
     for (const theme of ['dark','bright']) {
       await run(`fixture.setTheme('${theme}')`); await pause(); await menu('view');
       await run(`document.querySelector('[data-menu-item="browser"]').focus()`); await key('ArrowRight');
-      await until(`document.querySelectorAll('[role="menu"]').length===2`);
+      await until(`document.querySelectorAll('[role="menu"]').length===3`);
       const rects=await run(`Array.from(document.querySelectorAll('[role="menu"]')).map(node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}})`);
       for(const r of rects){assert.ok(r.left>=0&&r.right<=1180);assert.ok(r.top>=36&&r.bottom<=760);}
       await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
       await new Promise(resolve=>setTimeout(resolve,180));
       fs.writeFileSync(path.resolve('tmp', 'window-menu-'+theme+'.png'),(await win.webContents.capturePage()).toPNG());
-      await key('Escape'); await key('Escape');
+      await key('Escape'); await key('Escape'); await key('Escape');
     }
     win.setContentSize(620,280);
     await until('Math.abs(innerHeight-280)<=2', 'short content viewport applied');
@@ -158,13 +174,24 @@ app.whenReady().then(async () => {
     // Native offscreen pointer coordinates can lag a resize. This case tests
     // menu geometry; pointer opening is exercised above at the settled size.
     await run(`document.querySelector('.desktop-menu-toggle').click();void 0`);
-    await until(`!!document.querySelector('[data-menu-trigger="view"]')`);
-    await run(`document.querySelector('[data-menu-trigger="view"]').focus()`);
-    await key('ArrowDown');
-    await until(`document.querySelector('[data-menu-trigger="view"]').getAttribute('aria-expanded')==='true'`);
+    await until(`!!document.querySelector('[data-menu-item="view"]')`);
+    await key('Home'); await key('ArrowDown'); await key('ArrowDown');
+    assert.equal(await run(`document.activeElement.dataset.menuItem`),'view');
+    await key('ArrowRight');
+    await until(`document.querySelector('[data-menu-item="view"]').getAttribute('aria-expanded')==='true'`);
     await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    const bounds=await run(`(()=>{const n=document.querySelector('[role="menu"]');const r=n.getBoundingClientRect();return {bottom:r.bottom,height:r.height,scroll:n.scrollHeight,client:n.clientHeight,viewport:innerHeight}})()`);
+    const bounds=await run(`(()=>{const n=document.activeElement.closest('[role="menu"]');const r=n.getBoundingClientRect();return {bottom:r.bottom,height:r.height,scroll:n.scrollHeight,client:n.clientHeight,viewport:innerHeight}})()`);
     assert.ok(bounds.bottom<=bounds.viewport); assert.ok(bounds.scroll>bounds.client,'long menus scroll in short windows: ' + JSON.stringify(bounds));
+    await run(`document.querySelector('[data-menu-item="browser"]').focus()`);
+    await key('ArrowRight');
+    await until(`document.activeElement.dataset.menuItem==='openBrowser'`);
+    const narrowBounds=await run(`Array.from(document.querySelectorAll('[role="menu"]'), node => {
+      const {left,right,top,bottom}=node.getBoundingClientRect();return {left,right,top,bottom};
+    })`);
+    assert.equal(narrowBounds.length,3);
+    assert.ok(narrowBounds.every(r=>r.left>=0 && r.right<=620 && r.top>=0 && r.bottom<=282));
+    assert.ok(narrowBounds[2].right<=narrowBounds[1].left+2,'last submenu opens to the left when space is tight');
+    await key('ArrowLeft');
     await key('End'); assert.equal(await run(`document.activeElement.dataset.menuItem`),'toggleFullscreen');
     await key('Escape');
 

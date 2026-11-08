@@ -39,6 +39,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   `);
   const openManager = async () => {
     await run("document.querySelector('.desktop-menu-toggle').focus(); document.querySelector('.desktop-menu-toggle').click(); void 0");
+    await until("!!document.querySelector('[data-menu-item=file]')",'file category is available');
+    await run("document.querySelector('[data-menu-item=file]').click()");
     await until("!!document.querySelector('[data-menu-item=applications]')",'applications submenu is available');
     await run("document.querySelector('[data-menu-item=applications]').click()");
     await until("!!document.querySelector('[data-menu-item=manageApps]')",'management command is available');
