@@ -501,8 +501,7 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   transform: translateY(-50%) rotate(-45deg);
 }
 
-.desktop-shell,
-.settings-shell {
+.desktop-shell {
   --layout-sidebar-space: var(--sidebar-width);
   --conversation-pane-min-width: 340px;
   position: relative;
@@ -515,27 +514,27 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   overflow: hidden;
 }
 
-.app > .settings-shell {
+.desktop-shell > .settings-shell {
   position: absolute;
-  inset: var(--window-frame-height) 0 0;
-  z-index: 100;
+  inset: 0 0 0 var(--layout-sidebar-space, 0px);
+  z-index: 10;
+  display: flex;
+  height: auto;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
 }
+@media (min-width: 761px) {
+  .desktop-shell > .sidebar { anchor-name: --workspace-sidebar; }
+  .desktop-shell > .settings-shell {
+    left: max(0px, anchor(--workspace-sidebar right, var(--layout-sidebar-space, 0px)));
+  }
+}
+.app[data-desktop-workspace] .desktop-shell > .settings-shell { top: var(--window-frame-height); }
+.desktop-shell[data-settings-visible] > :is(.main-stage,.right-inspector) { visibility: hidden; pointer-events: none; }
+.settings-shell.settings-inactive { visibility: hidden; pointer-events: none; }
 
-.desktop-shell.app-content-suspended {
-  opacity: 0.001;
-  pointer-events: none;
-  user-select: none;
-}
-
-.settings-shell.settings-inactive {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.desktop-shell.sidebar-is-collapsed,
-.settings-shell.sidebar-is-collapsed {
-  --layout-sidebar-space: 0px;
-}
+.desktop-shell.sidebar-is-collapsed { --layout-sidebar-space: 0px; }
 
 .settings-shell {
   --text-soft: color-mix(in srgb, var(--text) 64%, transparent);

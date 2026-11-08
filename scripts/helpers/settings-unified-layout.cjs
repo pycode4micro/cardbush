@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // Exercise the actual settings pages at both sides of their responsive breakpoints.
-module.exports = async ({ run, until, pause, window: win, root }) => {
+module.exports = async ({ goTo, run, until, pause, window: win, root }) => {
   fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
   await run(`
     const sandboxCommand = cardbushDesktop.productHostCommand;
@@ -20,11 +20,11 @@ module.exports = async ({ run, until, pause, window: win, root }) => {
     settingsProps.settings.proxy={mode:'none',httpProxy:'',httpsProxy:'',noProxy:''};
     renderSettings();
   `);
-  const pages = ['appearance', 'general', 'notifications', 'profile', 'browser', 'computer-use', 'models', 'shortcuts', 'usage', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics', 'mcp'];
+  const pages = ['appearance', 'general', 'notifications', 'voice', 'profile', 'summary_for_user', 'browser', 'computer-use', 'models', 'shortcuts', 'usage', 'ssh', 'runtime', 'proxy', 'cache', 'diagnostics', 'mcp'];
   const inspect = `(() => {
     const content = document.querySelector('.settings-content');
     const visible = node => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
-    const cards = [...content.querySelectorAll('.settings-card,.settings-surface,.plugin-installed-section,.plugin-featured-section')].filter(visible);
+    const cards = [...content.querySelectorAll('.settings-category-section')].filter(visible);
     return {
       overflow:content.scrollWidth > content.clientWidth + 1,
       cards:cards.map(node=>({ radius:getComputedStyle(node).borderRadius, background:getComputedStyle(node).backgroundColor })),
@@ -45,15 +45,10 @@ module.exports = async ({ run, until, pause, window: win, root }) => {
     await run(`settingsTheme=${JSON.stringify(theme)};settingsProps.language=${JSON.stringify(language)};renderSettings()`);
     let reference;
     for (const page of pages) {
-      if (!await run("!!document.querySelector('.settings-nav')")) {
+      await goTo(page);
+      if (width < 900 && await run("!!document.querySelector('.desktop-shell > .sidebar')")) {
         await run("document.querySelector('.window-sidebar-toggle').click()");
-        await until("!!document.querySelector('.settings-nav')");
-      }
-      await run(`document.querySelector('[data-settings-section="${page}"]').click()`);
-      await until(`document.querySelector('[data-settings-section="${page}"]').getAttribute('aria-current') === 'page'`);
-      if (width < 900) {
-        await run("document.querySelector('.window-sidebar-toggle').click()");
-        await until("!document.querySelector('.settings-sidebar')");
+        await until("!document.querySelector('.desktop-shell > .sidebar')");
       }
       await pause(100);
       await run("document.querySelector('.settings-content').scrollTop=0");
@@ -76,5 +71,5 @@ module.exports = async ({ run, until, pause, window: win, root }) => {
       }
     }
   }
-  console.log('Unified settings layout passed: 15 pages, shared card surfaces, dark/light themes, Chinese/English and narrow controls without overlap or overflow.');
+  console.log('Unified settings layout passed: 17 pages, shared card surfaces, dark/light themes, Chinese/English and narrow controls without overlap or overflow.');
 };

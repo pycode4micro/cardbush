@@ -18,7 +18,7 @@ app.whenReady().then(async () => {
       'src/features/SettingsView.tsx', 'src/features/composer/Composer.tsx', 'src/features/chat/GitBranchMenu.tsx', 'src/features/chat/TaskWorkspaceBar.tsx',
       'src/features/settings/conversationStyle.ts', 'src/features/composer/ComposerReferenceContext.ts', 'src/features/conversationHost.ts',
       'src/features/settings/individuation.ts',
-      'src/features/settings/SettingsHostContext.ts',
+      'src/features/settings/SettingsHostContext.ts', 'src/features/settings/settingsNavigation.ts', 'src/i18n/index.ts',
       'src/features/appearance/appearancePreferences.ts', 'src/features/appearance/useAppearanceRuntime.ts',
       'src/features/notificationSound.ts',
       'src/features/shortcuts/keyboardShortcuts.ts',
@@ -60,7 +60,34 @@ app.whenReady().then(async () => {
     }
     throw Error('Timed out: ' + code + '\n' + await run('document.body.innerText') + '\nRenderer errors: ' + JSON.stringify(await run('failures')));
   };
-  const click = label => run(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
+  const tap = async selector => {
+    await until('!!document.querySelector(' + JSON.stringify(selector) + ')');
+    await run('document.querySelector(' + JSON.stringify(selector) + ').click(); void 0');
+  };
+  const overview = async () => {
+    if (await run("!!document.querySelector('[data-settings-overview]')")) await tap('[data-settings-overview]');
+    await until("!!document.querySelector('.settings-directory')");
+  };
+  const goTo = async id => {
+    const leaf = '[data-settings-section="' + id + '"]';
+    if (!await run('!!document.querySelector(' + JSON.stringify(leaf) + ')')) {
+      await overview();
+      if (await run('!!document.querySelector(' + JSON.stringify('.settings-directory [data-settings-target="' + id + '"]') + ')')) {
+        await tap('.settings-directory [data-settings-target="' + id + '"]');
+      } else {
+        if (await run("!!document.querySelector('.settings-search button')")) await tap('.settings-search button');
+        const group = await run('views.settingsDestination(' + JSON.stringify(id) + ').category.id');
+        await tap('[data-settings-target="' + group + '"]');
+      }
+    }
+    await until('!!document.querySelector(' + JSON.stringify(leaf) + ')');
+    if (!await run('document.querySelector(' + JSON.stringify(leaf) + ').getAttribute("aria-expanded")==="true"')) await tap(leaf);
+  };
+  const click = async label => {
+    const id = await run('document.querySelector(".settings-shell:not(.settings-inactive)") && Object.keys(views.settingsLabels).find(id => views.uiText(settingsProps.language)(views.settingsLabels[id]) === ' + JSON.stringify(label) + ')');
+    if (id) return goTo(id);
+    return run('Array.from(document.querySelectorAll("button")).find(button => button.checkVisibility() && button.textContent.trim() === ' + JSON.stringify(label) + ').click()');
+  };
   const choose = async (selector, value) => {
     await run(`document.querySelector(${JSON.stringify(selector)}).click()`);
     await until("!!document.querySelector('.settings-dropdown-popover:popover-open')");
@@ -148,11 +175,7 @@ app.whenReady().then(async () => {
           h('header', { className: 'window-frame window-drag' }, h(views.WindowBackButton, { language:'zh', fallback:active ? ()=>setActive(false) : undefined }), h(views.WindowSidebarToggle, {
             language: 'zh', collapsed, onToggle: () => setCollapsed(value => !value),
           })),
-          h(views.SettingsView, { ...settingsProps, active,
-            sidebarCollapsed: collapsed, sidebarPresence: presence, sidebarWidth: width,
-            onSidebarWidthChange: setWidth, onSidebarCollapse: () => setCollapsed(true),
-          }),
-          h('main', { className: 'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : '') + (active ? ' app-content-suspended' : ''), inert: active ? true : undefined },
+          h('main', { className: 'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-settings-visible':active || undefined },
             presence.mounted && h(views.ChatSidebar, {
               language:'zh', section:'chat', activeConversationId:'', projects:settingsProps.projects || [], conversations:settingsProps.conversations, changeReportsByConversation:{},
               onSectionChange:noop, onConversationChange:id => window.sidebarOpenedConversations?.push(id), onCreateConversation:noop, onAddProject:noop,
@@ -160,8 +183,9 @@ app.whenReady().then(async () => {
               onOpenSettings:() => setActive(true),
               onOpenArchives:() => { settingsProps.initialSection = 'cache'; setActive(true); renderSettings(); }, softVisible:presence.visible,
             }),
-            presence.mounted && h(views.SidebarResizer, { language:'zh', width, onWidthChange:setWidth,
-              onCollapse:() => setCollapsed(true), softVisible:presence.visible && !active }),
+            presence.mounted && h(views.SidebarResizer, { key:active ? 'settings' : 'workspace', language:'zh', width, onWidthChange:setWidth,
+              onCollapse:() => setCollapsed(true), softVisible:presence.visible }),
+            h(views.SettingsView,{...settingsProps,active}),
             h('section', { className:'main-stage' }, h('button', { onClick:() => setActive(true) }, '打开设置'))));
       }
       window.renderSettings = () => reactRoot.render(h(SettingsLayout));
@@ -177,51 +201,33 @@ app.whenReady().then(async () => {
     `);
     await until("document.querySelector('#global-agent-instructions')?.value.includes('中文')");
     if (process.env.CARDBUSH_SETTINGS_CASE === 'navigation') {
-      await run("settingsProps.initialSection='general'; renderSettings()");
-      await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general'");
-      assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav-group-label'), node => node.textContent)"), ['个人', '集成', '系统']);
-      assert.equal(await run("document.querySelector('.settings-nav')?.getAttribute('aria-current')"), 'page', 'the first entry is the default page');
+      await overview();
+      assert.equal(await run("document.querySelectorAll('.settings-directory > button').length"), 5);
+      assert.equal(await run("document.querySelectorAll('.sidebar').length"), 1);
+      await tap('[data-settings-target=preferences]');
       await choose('[name=language-mode] + [role=combobox]', 'system');
-      assert.equal(await run('settingsProps.languageMode'), 'system');
       await choose('[name=guidance-delivery-mode] + [role=combobox]', 'immediate');
-      assert.equal(await run('settingsProps.settings.guidance.deliveryMode'), 'immediate');
+      await tap('[data-settings-section=general]'); await tap('[data-settings-section=general]');
+      assert.equal(await run("document.querySelector('[name=guidance-delivery-mode]').value"), 'immediate');
       await click('通知'); await until("!!document.querySelector('#notification-sound-volume')");
-      await edit('.settings-search input', '语言');
-      await until("document.querySelectorAll('.settings-nav').length===1");
-      assert.equal(await run("document.querySelector('.settings-nav').dataset.settingsSection"), 'general', 'language search points to its new location');
-      // Reopening must reset even when the requested section has not changed.
-      for (let attempt = 0; attempt < 2; attempt++) {
-        await edit('.settings-search input', '没有这项设置');
-        await until("!!document.querySelector('.settings-search-empty')");
-        await run("document.querySelector('[data-history-action=back]').click()"); await until("!!document.querySelector('.settings-inactive')");
-        await run('setSettingsActive(true)');
-        await until("document.querySelector('.settings-search input').value==='' && document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general'");
-        assert.equal(await run("document.querySelector('.settings-navigation').scrollTop"), 0);
-        assert.equal(await run("document.querySelector('.settings-content').scrollTop"), 0);
-      }
-      await click('诊断与关于');
-      await run("document.querySelector('.settings-navigation').scrollTop=document.querySelector('.settings-navigation').scrollHeight");
-      await until("document.querySelector('.settings-navigation').scrollTop>0");
-      await run("document.querySelector('[data-history-action=back]').click()"); await until("!!document.querySelector('.settings-inactive')");
-      await run('setSettingsActive(true)');
-      await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='general' && document.querySelector('.settings-navigation').scrollTop===0");
-      assert.equal(await run("document.querySelector('[name=guidance-delivery-mode]').value"), 'immediate', 'moving settings retains user preferences');
-      fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
-      win.webContents.invalidate(); await pause(120);
-      fs.writeFileSync(path.join(root, 'tmp/settings-general-navigation.png'), (await win.webContents.capturePage()).toPNG());
-      await run("document.querySelector('[data-history-action=back]').click()"); await until("!!document.querySelector('.settings-inactive')");
-      await run("settingsProps.initialSection='shortcuts'; setSettingsActive(true); renderSettings()");
-      await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection==='shortcuts'");
-      assert.equal(await run("document.querySelector('.settings-search input').value"), '', 'explicit settings destinations remain supported');
+      await overview(); await edit('.settings-search input', '语言');
+      await until("!!document.querySelector('.settings-directory [data-settings-target=general]')");
+      await edit('.settings-search input', '没有这项设置'); await until("!!document.querySelector('.settings-search-empty')");
+      await run("setSettingsActive(false)"); await until("!!document.querySelector('.settings-inactive')");
+      await run("settingsProps.initialSection='overview';setSettingsActive(true);renderSettings()");
+      await until("document.querySelector('.settings-search input')?.value === ''");
+      await run("settingsProps.initialSection='shortcuts';renderSettings()");
+      await until("document.querySelector('[data-settings-section=shortcuts]')?.getAttribute('aria-expanded')==='true'");
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
-      console.log('Settings navigation passed: General first, relocated controls, search, clean reopen, scroll reset, preserved preferences and explicit destinations.');
-      return;
+      console.log('Settings directory, disclosure state, search, reopening and direct destinations passed.');
+      win.destroy(); app.exit(0); return;
     }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'version') {
       const expectedVersion = process.env.VITE_CARDBUSH_APP_VERSION || require('../package.json').version;
       await run(`Object.defineProperty(navigator, 'clipboard', { configurable:true,
         value:{ writeText:async value => { window.copiedEnvironment=value; } } });
-        document.querySelector('[data-settings-section="diagnostics"]').click();`);
+        void 0;`);
+      await goTo('diagnostics');
       for (const language of ['zh', 'en']) {
         const label = language === 'zh' ? '版本' : 'Version';
         await run(`settingsProps.language=${JSON.stringify(language)}; window.copiedEnvironment=''; renderSettings();`);
@@ -236,7 +242,7 @@ app.whenReady().then(async () => {
       win.destroy(); app.exit(0); return;
     }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'layout') {
-      await require('./helpers/settings-unified-layout.cjs')({ run, until, click, pause, window: win, root });
+      await require('./helpers/settings-unified-layout.cjs')({ run, until, goTo, click, pause, window: win, root });
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
       win.destroy(); app.exit(0); return;
     }
@@ -277,7 +283,7 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'notification-sound') {
       await run('window.notificationSoundTest = views; void 0');
-      await require('./helpers/settings-notification-sound.cjs')({ run, until, click, edit, window: win, root });
+      await require('./helpers/settings-notification-sound.cjs')({ run, until, overview, click, edit, window: win, root });
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
       return;
     }
@@ -340,7 +346,7 @@ app.whenReady().then(async () => {
       await require('./helpers/settings-maintenance.cjs')({ run, until, window: win, root, click });
       win.destroy(); app.exit(0); return;
     }
-    await require('./helpers/settings-sidebar.cjs')({ run, until, pause, window: win, root });
+    await require('./helpers/settings-sidebar.cjs')({ run, until, pause, window: win, root, goTo, overview });
     await edit('#global-agent-instructions', '全局偏好：先确认事实。', true);
     await run('failSave = true'); await click('保存');
     await until("document.querySelector('[role=alert]')?.textContent.includes('disk write failed')");
@@ -356,23 +362,25 @@ app.whenReady().then(async () => {
     await run('renderSettings()');
     await until("!!document.querySelector('.settings-content')");
 
-    const expectedSettingsSections = ['general', 'notifications', 'appearance', 'voice', 'profile', 'summary_for_user', 'shortcuts', 'usage', 'cache', 'mcp', 'models', 'browser', 'computer-use', 'ssh', 'runtime', 'proxy', 'diagnostics'];
-    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), expectedSettingsSections, 'each supported local setting page has one navigation entry');
+    await overview();
+    const categoryIds = ['preferences', 'personal', 'connections', 'tools', 'data'];
+    const directoryIds = "Array.from(document.querySelectorAll('.settings-directory [data-settings-target]'), el => el.dataset.settingsTarget)";
+    assert.deepEqual(await run(directoryIds), categoryIds, 'all five categories are reachable');
     await click('快捷键');
     await until("document.querySelectorAll('[data-shortcut-row]').length === views.shortcutDefinitions.length");
     assert.deepEqual(await run("Array.from(document.querySelectorAll('[data-shortcut-row]'), item => item.dataset.shortcutRow).sort()"), await run("views.shortcutDefinitions.map(item => item.id).sort()"), 'all registered shortcuts are configurable without duplicate rows');
-    assert.equal(await run("document.querySelector('.settings-nav[aria-current=page]').textContent.trim()"), '快捷键');
+    assert.equal(await run("document.querySelector('[data-settings-section=shortcuts][aria-expanded=true] strong').textContent.trim()"), '快捷键');
     await pause(100);
     fs.writeFileSync(path.join(root, 'tmp/settings-keyboard-full.png'), (await win.webContents.capturePage()).toPNG());
     assert.equal(await run("document.querySelector('.usage-stat-grid')"), null, 'personalization does not load usage statistics');
     assert.equal(await run('usageReads'), 0, 'unrelated pages must not fetch the full usage history');
     assert.equal(await run("document.querySelector('[name=theme-mode]')"), null, 'appearance is separate from conversation preferences');
-    await edit('.settings-search input', '浏览器');
-    await until("document.querySelectorAll('.settings-nav').length === 2");
-    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), ['mcp', 'browser'], 'browser search includes its dedicated settings and plugins');
+    await overview(); await edit('.settings-search input', '浏览器');
+    await until("document.querySelectorAll('.settings-directory button').length === 2");
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-directory button'), item => item.dataset.settingsTarget)"), ['mcp', 'browser'], 'browser search includes its dedicated settings and plugins');
     await click('插件');
-    await until("document.querySelector('.settings-nav[aria-current=page]')?.dataset.settingsSection === 'mcp'");
-    assert.equal(await run("document.querySelector('.settings-search input').value"), '');
+    await until("document.querySelector('[data-settings-section=mcp]')?.getAttribute('aria-expanded')==='true'");
+    assert.equal(await run("document.querySelector('.settings-search input')"), null);
     await click('网络代理');
     await until("!!document.querySelector('#proxy-panel-models .settings-dropdown-trigger')");
     await choose('#proxy-panel-models .settings-dropdown-trigger', 'manual');
@@ -402,7 +410,7 @@ app.whenReady().then(async () => {
       win.setContentSize(760, 850);
       await until("document.querySelector('#proxy-tab-models')?.textContent==='App default'");
       await run("document.querySelector('.window-sidebar-toggle').click()");
-      await until("!document.querySelector('.settings-sidebar')");
+      await until("!document.querySelector('.desktop-shell > .sidebar')");
       await pause(150);
       assert.equal(await run("document.querySelector('#proxy-panel-models').scrollWidth <= document.querySelector('#proxy-panel-models').clientWidth + 1"), true, 'proxy editor fits the narrow English layout');
       fs.writeFileSync(path.join(root, 'tmp/network-proxy-default-en.png'), (await win.webContents.capturePage()).toPNG());
@@ -459,12 +467,6 @@ app.whenReady().then(async () => {
     assert.equal(await run("getComputedStyle(document.querySelector('.usage-stat-grid')).gridTemplateColumns.split(' ').length"), 2);
     fs.writeFileSync(path.join(root, 'tmp/settings-usage-narrow.png'), (await win.webContents.capturePage()).toPNG());
     win.setContentSize(1200, 850); await run("settingsTheme = 'dark'; renderSettings()"); await pause(100);
-    await edit('.settings-search input', '不存在的设置');
-    await until("!!document.querySelector('.settings-search-empty')");
-    await run("document.querySelector('.settings-search input').dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }))");
-    await until(`document.querySelectorAll('.settings-nav').length === ${expectedSettingsSections.length}`);
-    assert.deepEqual(await run("Array.from(document.querySelectorAll('.settings-nav'), item => item.dataset.settingsSection)"), expectedSettingsSections, 'clearing search restores all local pages');
-
     // Failed reads must keep the last recorded totals, then recover on retry.
     await run("window.readUsageNormally = cardbushDesktop.usageStatistics; cardbushDesktop.usageStatistics = async () => { throw Error('fixture unavailable'); }; dispatchEvent(new Event('focus'));");
     await until("!!document.querySelector('.usage-load-error')");
@@ -475,6 +477,11 @@ app.whenReady().then(async () => {
     await require('./helpers/settings-models.cjs')({ run, until, click, edit, window: win, root });
     win.setContentSize(1100, 800);
     await require('./helpers/settings-maintenance.cjs')({ run, until, window: win, root, click });
+    await overview(); await edit('.settings-search input', '不存在的设置');
+    await until("!!document.querySelector('.settings-search-empty')");
+    await run("document.querySelector('.settings-search input').dispatchEvent(new KeyboardEvent('keydown', { key:'Escape', bubbles:true }))");
+    await until("document.querySelectorAll('.settings-directory button').length === 5");
+    assert.deepEqual(await run(directoryIds), categoryIds, 'clearing search restores all categories');
     await run('renderComposer()');
     await until("!!document.querySelector('.composer-surface')");
     await run("Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '添加' || button.title === '添加').click()");

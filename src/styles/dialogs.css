@@ -949,8 +949,7 @@
 }
 
 @media (max-width: 900px) {
-  .sidebar,
-  .settings-sidebar {
+  .sidebar {
     width: var(--sidebar-width);
     flex-basis: var(--sidebar-width);
   }

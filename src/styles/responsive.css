@@ -39,12 +39,12 @@
 
 /* Small desktop windows keep one usable content pane; sidebars become drawers. */
 @media (max-width: 760px) {
-  .desktop-shell, .settings-shell {
+  .desktop-shell {
     --layout-sidebar-space: 0px;
     --conversation-pane-min-width: 0px;
   }
 
-  .desktop-shell > .sidebar, .settings-shell > .sidebar {
+  .desktop-shell > .sidebar {
     --side-panel-width: min(var(--sidebar-width, 272px), calc(100cqw - 48px));
     position: absolute;
     inset: 0 auto 0 0;
@@ -53,7 +53,7 @@
     box-shadow: 10px 0 28px var(--shadow);
   }
 
-  .desktop-shell > .sidebar-resizer, .settings-shell > .sidebar-resizer,
+  .desktop-shell > .sidebar-resizer,
   .right-inspector-resizer { display: none; }
 
   .right-inspector {

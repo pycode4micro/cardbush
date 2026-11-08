@@ -1,3 +1,4 @@
+import type { SettingsPage } from './features/settings/settingsNavigation';
 import { ProfileCenter } from './features/profile/ProfileCenter';
 import { AssistantEventConnection } from './features/assistant/events/AssistantEventConnection';
 import { UiLanguageProvider } from './i18n/react';
@@ -182,7 +183,6 @@ import {
   type ConversationSummary,
   type RuntimeAssetCategory,
   type ProjectItem,
-  type SettingsSection,
   type ThemePreference,
   SUBAGENT_DISPATCH_EVENT_PROTOCOL,
 } from './types';
@@ -235,18 +235,19 @@ const LazySettingsView = recoverableLazy('settings', async () => {
   return { default: module.SettingsView };
 }, (props, retry) => <SettingsModuleFallback {...props} retry={retry} />);
 
-function SettingsModuleFallback({ active, onReady, language, retry }: {
+function SettingsModuleFallback({ active, obscured, onReady, language, retry }: {
   active: boolean;
+  obscured?: boolean;
   onReady: () => void;
   language: AppLanguage;
   retry: () => void;
 }) {
   useEffect(onReady, [onReady]);
-  return <main className={`settings-shell${active ? '' : ' settings-inactive'}`} aria-hidden={!active} inert={!active}>
+  return <section className={`settings-shell${active ? '' : ' settings-inactive'}`} aria-hidden={!active || obscured} inert={!active || obscured}>
     <section className="settings-content">
       <DeferredModuleNotice language={language} retry={retry} />
     </section>
-  </main>;
+  </section>;
 }
 
 type WallpaperAccent = {
@@ -304,7 +305,7 @@ function CardbushApp() {
   const [settingsMounted, setSettingsMounted] = useState(requestedWorkspace === 'settings');
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
-    useState<SettingsSection>('general');
+    useState<SettingsPage>('overview');
   const [settingsPluginTab, setSettingsPluginTab] = useState<'plugins' | 'skills'>('plugins');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectItem | null>(null);
@@ -1388,6 +1389,7 @@ function CardbushApp() {
           return { ...current, __new__: '', [target.id]: existing && existing !== unassigned ? `${existing}\n\n${unassigned}` : unassigned };
         });
       }
+      setSettingsOpen(false);
       setSection('chat');
       return target;
     },
@@ -1440,6 +1442,7 @@ function CardbushApp() {
     const target = chat.conversations.find((conversation) => conversation.id === normalized);
     if (!target) return false;
     chat.openConversation(normalized);
+    setSettingsOpen(false);
     setSection('chat');
     return true;
   }, [chat.conversations, chat.openConversation]);
@@ -1883,15 +1886,15 @@ function CardbushApp() {
   }, [chat.activeConversationId, openChangeReviewInspector]);
 
   const openSettings = useCallback((
-    targetSection: SettingsSection = 'general',
+    targetSection: SettingsPage = 'overview',
     pluginTab: 'plugins' | 'skills' = 'plugins',
   ) => {
+    if (compactLayout) collapseSidebar();
     setSettingsInitialSection(targetSection);
-
     setSettingsPluginTab(pluginTab);
     setSettingsMounted(true);
     setSettingsOpen(true);
-  }, []);
+  }, [compactLayout, collapseSidebar]);
   const markSettingsReady = useCallback(() => setSettingsReady(true), []);
   const settingsVisible = settingsOpen && settingsReady;
 
@@ -1929,6 +1932,7 @@ function CardbushApp() {
   // handlers used to be recreated by App on every message update, defeating
   // React.memo and making an unrelated stream interrupt title animations.
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
+    setSettingsOpen(false);
     if (nextSection === 'home') setHomePage({ kind: 'overview' });
     if (compactLayout) collapseSidebar();
     if (!['assistant'].includes(section) && !['assistant'].includes(nextSection)) revealConversation();
@@ -1956,6 +1960,7 @@ function CardbushApp() {
     void handleProjectAction(action, project);
   }, [handleProjectAction]);
   const handleSidebarOpenConversationChanges = useCallback((conversationId: string) => {
+    setSettingsOpen(false);
     openChangeReviewInspector(conversationId);
     if (compactLayout) collapseSidebar();
   }, [openChangeReviewInspector, compactLayout, collapseSidebar]);
@@ -1991,7 +1996,7 @@ function CardbushApp() {
     onOpenConversation: handlePreviousConversation,
   });
   const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
-  const showChatRail = sidebarPresence.mounted && section !== 'team' && section !== 'md-presentation';
+  const showChatRail = sidebarPresence.mounted && (settingsOpen || (section !== 'team' && section !== 'md-presentation'));
   const recentConversation = useRecentConversation(chat.conversations, section === 'chat' && !settingsOpen ? chat.activeConversationId : '');
   const [requestedTurn, setRequestedTurn] = useState<{ sessionId: string; messageId: string; turnId?: string } | null>(null);
   const clearRequestedTurn = useCallback(() => setRequestedTurn(null), []);
@@ -2159,72 +2164,18 @@ function CardbushApp() {
         onAddProject={window.cardbushDesktop?.pickProjectDirectory ? handleSearchAddProject : undefined}
         onOpenFiles={window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined}
       />}
-      {settingsMounted && (
-        <PageNavigationScope.Provider value="settings:shared">
-        <Suspense fallback={null}>
-          <LazySettingsView
-            onOpenPluginPrompt={openPluginPrompt}
-            active={settingsVisible}
-            onReady={markSettingsReady}
-            themePreference={themePreference}
-            windowMaterial={windowMaterial}
-            onWindowMaterialChange={setWindowMaterial}
-            language={language}
-            languageMode={languageMode}
-            systemLanguage={systemLanguage}
-            settings={appSettings}
-            selectedModel={chat.selectedModel}
-            defaultModelId={backendDefaultModelId}
-            availableModels={availableModels}
-            backendCapabilities={backendCapabilities}
-            conversations={chat.conversations}
-            projects={projectItems}
-            onRestoreProjects={ids => {
-              const restoredIds = new Set(ids);
-              setProjectItems(current => current.map(project =>
-                restoredIds.has(project.id) ? { ...project, archived: false } : project));
-            }}
-            skills={chat.skills}
-            disabledSkillNames={disabledSkillNames}
-            runtimeBusy={runningConversationIds.size > 0}
-            initialSection={settingsInitialSection}
-            onSectionChange={setSettingsInitialSection}
-            initialPluginTab={settingsPluginTab}
-            onThemePreferenceChange={setThemePreference}
-            onLanguageModeChange={setLanguageMode}
-            onSettingsChange={updateAppSettings}
-            onUseModel={setBackendDefaultModelId}
-            sidebarCollapsed={sidebarCollapsed}
-            compactLayout={compactLayout}
-            sidebarPresence={sidebarPresence}
-            sidebarWidth={sidebarWidth}
-            onSidebarCollapse={collapseSidebar}
-            onSidebarWidthChange={setSidebarWidth}
-            onConversationHistoryCleared={() => chat.reloadConversations()}
-            onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
-            onToggleSkill={toggleSkillEnabled}
-            onReloadSkills={chat.reloadSkills}
-            onLoadSkillDetail={chat.loadSkillDetail}
-            visualInputAvailable={visualInputAvailable}
-            visualInputEnabled={visualInputEnabledSetting}
-            onVisualInputEnabledChange={setVisualInputEnabled}
-          />
-        </Suspense>
-        </PageNavigationScope.Provider>
-      )}
       <PageNavigationScope.Provider value={`main:${section}`}>
       <RegionConversationContext.Provider value={setHostRegionConversation}>
       <ConversationInspectorContext.Provider value={{ ...conversationInspectorActions, outlets: conversationInspectorOutlets, visible: inspectorOpen, visibleTabIds: visibleInspectorTabIds }}>
       <main
-        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${inspectorCover ? ' inspector-covered' : conversationCovered ? ' inspector-conversation-covered' : ''}`}
-        aria-hidden={settingsVisible}
-        inert={settingsVisible ? true : undefined}
+        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'}${inspectorLayout ? ' inspector-multi-page' : ''}${!settingsOpen && inspectorCover ? ' inspector-covered' : !settingsOpen && conversationCovered ? ' inspector-conversation-covered' : ''}`}
+        data-settings-visible={settingsVisible || undefined}
       >
-          <CompactSidebarBackdrop visible={(compactLayout || inspectorCover) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
+          <CompactSidebarBackdrop visible={(compactLayout || (!settingsOpen && inspectorCover)) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
           {(showChatRail || recentList) && <ChatSidebar showRail={showChatRail} recentList={recentList}
             language={language}
-            section={section}
-            activeConversationId={section === 'chat' ? chat.activeConversationId : ''}
+            section={settingsOpen ? 'settings' : section}
+            activeConversationId={!settingsOpen && section === 'chat' ? chat.activeConversationId : ''}
             runningConversationIds={chat.processingConversationIds}
             onConversationWorkspaceChange={(conversationId, project) => chat.setConversationProject(conversationId, project?.rootPath ?? null, project?.id ?? null)}
             attentionByConversation={chat.attentionByConversation}
@@ -2247,27 +2198,76 @@ function CardbushApp() {
           />}
           {sidebarPresence.mounted && (
             <>
-              {section === 'team' ? (
+              {!settingsOpen && section === 'team' ? (
                 <NativeTeamSidebar
                   language={language}
                   onOpenSettings={() => openSettings()}
                   softVisible={sidebarPresence.visible}
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}
                 />
-              ) : section === 'md-presentation' ? (
+              ) : !settingsOpen && section === 'md-presentation' ? (
                 <CanvasSidebar language={language} softVisible={sidebarPresence.visible}
                   onSelect={() => { if (compactLayout) collapseSidebar(); }}/>
               ) : null}
               <SidebarResizer
+                key={settingsOpen ? 'settings' : 'workspace'}
                 language={language}
                 width={sidebarWidth}
                 onWidthChange={setSidebarWidth}
                 onCollapse={collapseSidebar}
-                softVisible={sidebarPresence.visible && !settingsVisible}
+                softVisible={sidebarPresence.visible}
               />
             </>
           )}
-          <section ref={mainStageRef} className="main-stage" inert={!floating && (inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen)) ? true : undefined}>
+          {settingsMounted && (
+            <PageNavigationScope.Provider value="settings:shared">
+            <Suspense fallback={null}>
+              <LazySettingsView
+                onOpenPluginPrompt={openPluginPrompt}
+                active={settingsVisible}
+                obscured={compactLayout && !sidebarCollapsed}
+                onReady={markSettingsReady}
+                themePreference={themePreference}
+                windowMaterial={windowMaterial}
+                onWindowMaterialChange={setWindowMaterial}
+                language={language}
+                languageMode={languageMode}
+                systemLanguage={systemLanguage}
+                settings={appSettings}
+                selectedModel={chat.selectedModel}
+                defaultModelId={backendDefaultModelId}
+                availableModels={availableModels}
+                backendCapabilities={backendCapabilities}
+                conversations={chat.conversations}
+                projects={projectItems}
+                onRestoreProjects={ids => {
+                  const restoredIds = new Set(ids);
+                  setProjectItems(current => current.map(project =>
+                    restoredIds.has(project.id) ? { ...project, archived: false } : project));
+                }}
+                skills={chat.skills}
+                disabledSkillNames={disabledSkillNames}
+                runtimeBusy={runningConversationIds.size > 0}
+                initialSection={settingsInitialSection}
+                onSectionChange={setSettingsInitialSection}
+                initialPluginTab={settingsPluginTab}
+                onThemePreferenceChange={setThemePreference}
+                onLanguageModeChange={setLanguageMode}
+                onSettingsChange={updateAppSettings}
+                onUseModel={setBackendDefaultModelId}
+                onConversationHistoryCleared={() => chat.reloadConversations()}
+                onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
+                onToggleSkill={toggleSkillEnabled}
+                onReloadSkills={chat.reloadSkills}
+                onLoadSkillDetail={chat.loadSkillDetail}
+                visualInputAvailable={visualInputAvailable}
+                visualInputEnabled={visualInputEnabledSetting}
+                onVisualInputEnabledChange={setVisualInputEnabled}
+              />
+            </Suspense>
+            </PageNavigationScope.Provider>
+          )}
+          <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || !floating && (inspectorControlsVisible || compactLayout && (!sidebarCollapsed || inspectorOpen)) ? true : undefined}>
             <AssistantView compactProfileMenu={floating} active={floating || section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
               inspectorOpen={!floating && inspectorOpen} onToggleInspector={floating ? undefined : toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
               composerPortalTarget={!floating && section === 'assistant' && quickInputOpen ? quickInputTarget : null}
@@ -2428,8 +2428,8 @@ function CardbushApp() {
               id="right-inspector"
               className={`right-inspector soft-panel-motion ${inspectorPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
               aria-label={uiText(language)('app.inspector')}
-              aria-hidden={!inspectorPresence.visible}
-              inert={!inspectorPresence.visible || ((compactLayout || inspectorCover) && !sidebarCollapsed) ? true : undefined}
+              aria-hidden={settingsVisible || !inspectorPresence.visible}
+              inert={settingsVisible || !inspectorPresence.visible || ((compactLayout || inspectorCover) && !sidebarCollapsed) ? true : undefined}
               style={{ '--right-inspector-width': `${inspectorWidth}px` } as CSSProperties}
             >
               <RightInspectorResizer
@@ -2879,7 +2879,7 @@ function CardbushApp() {
               </div>
             </aside>
           ) : null}
-          {inspectorControlsVisible && <InspectorCoverControls language={language} inputOpen={quickInputOpen}
+          {!settingsVisible && inspectorControlsVisible && <InspectorCoverControls language={language} inputOpen={quickInputOpen}
             status={activeCreationInspector?.inputStatus}
             inert={(compactLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
             onBack={leaveInspectorCover} onToggleInput={() => {

@@ -18,14 +18,13 @@ html[data-window-material="mica"] .app.theme-dark {
   --text-soft: #888888;
 }
 
-html[data-window-material="mica"] .app > .desktop-shell,
-html[data-window-material="mica"] .app > .settings-shell {
+html[data-window-material="mica"] .app > .desktop-shell {
   background: transparent;
   border-color: var(--window-chrome-border);
 }
 
 html[data-window-material="mica"] .app .window-frame,
-html[data-window-material="mica"] .app:not([data-translucent-sidebar="false"]) :is(.sidebar, .settings-sidebar) {
+html[data-window-material="mica"] .app:not([data-translucent-sidebar="false"]) .sidebar {
   background: var(--window-chrome-tint);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

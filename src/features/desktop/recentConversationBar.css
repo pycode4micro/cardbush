@@ -54,7 +54,7 @@
     content: ''; position: absolute; inset: 0 0 0 auto; width: var(--recent-drawer-width);
     z-index: -1; pointer-events: none; background: var(--surface);
   }
-  .app[data-desktop-workspace]:has(.recent-turn-drawer:popover-open) > :is(.desktop-shell, .settings-shell) {
+  .app[data-desktop-workspace]:has(.recent-turn-drawer:popover-open) > .desktop-shell {
     margin-inline-end: var(--recent-drawer-width);
   }
 }

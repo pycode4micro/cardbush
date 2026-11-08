@@ -12,7 +12,10 @@ app.whenReady().then(async () => {
   win.webContents.session.webRequest.onBeforeRequest((details, done) => done({ cancel: /^https?:/.test(details.url) }));
   const errors = [];
   win.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
-  const read = code => win.webContents.executeJavaScript(code);
+  const read = async code => {
+    try { return await win.webContents.executeJavaScript(code); }
+    catch (cause) { throw new Error('Renderer evaluation failed: ' + code, { cause }); }
+  };
   const until = async code => {
     const end = Date.now() + 5000;
     while (!await read(code)) {
@@ -132,8 +135,9 @@ app.whenReady().then(async () => {
     await read('document.querySelector(".core-capability-settings .settings-switch input").click(); void 0');
     await until('fixtureApps.plugins[1].enabled===false');
     await read('coreSection("computer-use"); void 0');
-    await until('document.body.innerText.includes("用户输入优先")');
-    await read('document.querySelectorAll(".settings-switch input")[1].click(); void 0');
+    const yieldSwitch = 'Array.from(document.querySelectorAll(".settings-switch")).find(label => label.textContent.includes("用户输入优先"))?.querySelector("input")';
+    await until(yieldSwitch + '?.checkVisibility()');
+    await read(yieldSwitch + '.click(); void 0');
     assert.notEqual(await read('fixtureApps.plugins[0].config.yieldToUser'), false, 'draft stays local until saved');
     await read('Array.from(document.querySelectorAll("button")).find(b=>b.textContent==="保存配置").click(); void 0');
     await until('fixtureApps.plugins[0].config.yieldToUser===false');

@@ -24,7 +24,7 @@ html[data-window-visible="false"] *::after {
   font-style: var(--code-font-style, normal);
 }
 .app .markdown-content :not(pre) > code { font-family: var(--mono-font-family, ui-monospace, Consolas, monospace); }
-html .app[data-translucent-sidebar="false"] :is(.sidebar, .settings-sidebar) {
+html .app[data-translucent-sidebar="false"] .sidebar {
   background: var(--surface);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

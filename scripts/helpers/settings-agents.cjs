@@ -8,8 +8,7 @@ module.exports = async ({run,until,click,edit,pause=ms=>new Promise(r=>setTimeou
     settingsProps.agentId='a';settingsProps.onAgentChange=()=>{throw Error('No environment selector expected')};renderSettings();`);
   await click('个性化');await until("!!document.querySelector('#conversation-style-mode')");
   assert.equal(await run("document.querySelector('.settings-target')===null"),true);
-  assert.deepEqual(await run("[...document.querySelectorAll('.settings-nav')].map(button=>button.dataset.settingsSection)"),
-    ['general','notifications','appearance','voice','profile','summary_for_user','shortcuts','usage','cache','mcp','models','browser','computer-use','ssh','runtime','proxy','diagnostics']);
+  assert.equal(await run("document.querySelector('[data-settings-section=profile]').getAttribute('aria-expanded')"), 'true');
   await edit('#global-agent-instructions','Shared rules for local and cloud.',true);await click('保存');
   await until("file.content==='Shared rules for local and cloud.'");
   await run("settingsProps.agentId='b';renderSettings()");

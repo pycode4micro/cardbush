@@ -9,6 +9,7 @@ const read = (...parts) => readSourceFile(path.join(process.cwd(), ...parts), 'u
 const app = readAppViewSources();
 const types = read('src', 'types.ts');
 const settings = read('src', 'features', 'SettingsView.tsx');
+const directory = read('src','features','settings','SettingsDirectory.tsx');
 const navigation = read('src', 'features', 'settings', 'settingsNavigation.ts');
 const controls = read('src', 'features', 'settings', 'SettingsControls.tsx');
 const profilePanel = read('src', 'features', 'settings', 'SettingsPersonalizationPanel.tsx');
@@ -66,9 +67,9 @@ assert.doesNotMatch(
   'The provisional Subagent runtime settings UI must remain hidden',
 );
 assert.match(navigation, /const settingsDescriptions:/);
-assert.match(settings, /className="settings-navigation"/);
-assert.match(settings, /aria-current=\{effectiveSection === id \? 'page' : undefined\}/);
-assert.match(settings, /className="settings-page-header"/);
+assert.match(directory, /className="settings-directory"/);
+assert.match(directory, /aria-expanded=\{open\} aria-controls=\{panelId\}/);
+assert.match(directory, /className="settings-page-header"/);
 assert.match(controls, /className="settings-card-body"/);
 assert.doesNotMatch(settings, /settings\.thinking\.accentColor|思考颜色|Thinking color/);
 assert.doesNotMatch(app, /defaultThinkingAccentColor|cardbush_thinking_accent_color'\s*,\s*normalizeHexColor/);
@@ -79,7 +80,7 @@ assert.match(app, /cardbush_guidance_delivery_mode/);
 assert.match(app, /settings\.guidance\?\.deliveryMode === 'immediate'/);
 assert.match(navigation, /profile: 'settingsNavigation.personalization'/);
 assertUiMessage(navigation, 'settingsNavigation.personalization', { zh: '个性化', en: 'Personalization' });
-assert.match(settings, /profile: SlidersHorizontal/);
+assert.match(directory, /personal: SlidersHorizontal/);
 const runtimePanel = settings.match(
   /if \(effectiveSection === 'runtime'\)[\s\S]*?if \(effectiveSection === 'proxy'\)/,
 )?.[0] ?? '';
@@ -158,38 +159,17 @@ assert.match(
 assert.match(css, /\.settings-radio:has\(input:checked\)/);
 assert.match(css, /\.settings-switch input:checked::after/);
 assert.match(css, /@media \(max-width: 760px\)[\s\S]*?\.settings-actions > button/);
-assert.match(
-  app,
-  /\{settingsMounted && \([\s\S]*?<LazySettingsView[\s\S]*?active=\{settingsVisible\}[\s\S]*?<main[\s\S]*?app-content-suspended/,
-  'Opening settings must keep the app shell mounted so chat geometry and scroll state survive the return.',
-);
-assert.match(app, /setSettingsMounted\(true\);[\s\S]*?setSettingsOpen\(true\);/);
+assert.match(app, /<main[\s\S]*?<ChatSidebar[\s\S]*?<SidebarResizer[\s\S]*?\{settingsMounted && \([\s\S]*?<LazySettingsView[\s\S]*?className="main-stage"/,
+  'Settings shares one application sidebar and keeps the conversation mounted.');
 assert.match(app, /const settingsVisible = settingsOpen && settingsReady/);
-assert.match(app, /<Suspense fallback=\{null\}>/);
+assert.match(app, /setSettingsMounted\(true\);[\s\S]*?setSettingsOpen\(true\);/);
 assert.match(app, /void loadSettingsViewModule\(\)/);
 assert.match(settings, /useLayoutEffect\(\(\) => \{[\s\S]*?onReady\(\)/);
-assert.match(settings, /settings-inactive/);
-assert.match(settings, /inert=\{active \? undefined : true\}/);
-assert.match(app, /aria-hidden=\{settingsVisible \|\| friendsOpen\}/);
-assert.match(app, /inert=\{settingsVisible \|\| friendsOpen \? true : undefined\}/);
-assert.match(
-  css,
-  /\.app > \.settings-shell\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*var\(--window-frame-height\) 0 0;[\s\S]*?z-index:\s*100;/,
-  'Settings must cover the preserved app shell below the native title bar.',
-);
-assert.match(
-  css,
-  /\.desktop-shell\.app-content-suspended\s*\{[\s\S]*?opacity:\s*0\.001;[\s\S]*?pointer-events:\s*none;/,
-  'The preserved app shell must keep its composited paint layer without remaining interactive.',
-);
+assert.match(settings, /inert=\{!active \|\| obscured\}/);
+assert.match(app, /className="main-stage" aria-hidden=\{settingsVisible \|\| undefined\} inert=\{settingsVisible/);
+assert.match(css, /\.desktop-shell > \.settings-shell\s*\{[\s\S]*?inset: 0 0 0 var\(--layout-sidebar-space/);
 assert.match(css, /\.settings-shell\.settings-inactive\s*\{[\s\S]*?visibility:\s*hidden/);
-assert.match(
-  settings,
-  /sidebar settings-sidebar soft-panel-motion/,
-  'Settings must reuse the main sidebar motion and layout styles.',
-);
-assert.match(app, /<LazySettingsView[\s\S]*?sidebarPresence=\{sidebarPresence\}[\s\S]*?sidebarWidth=\{sidebarWidth\}[\s\S]*?onSidebarCollapse=\{collapseSidebar\}/);
-assert.match(settings, /<SidebarResizer[\s\S]*?onCollapse=\{onSidebarCollapse\}/);
+assert.doesNotMatch(settings, /<SidebarResizer|settings-sidebar/);
 assert.match(sidebarResizer, /const minimumSidebarWidth = 220/);
 assert.match(
   sidebarResizer,

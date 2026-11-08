@@ -29,17 +29,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
       return h('div', {className:'app theme-'+theme,style:{height:'100vh','--sidebar-width':'272px'}},
         h(views.WindowFrame,{language:'zh',sidebarCollapsed:layout.sidebarCollapsed,onToggleSidebar:toggle,
           menus:views.applicationMenus('zh',actions,{sidebarVisible:!layout.sidebarCollapsed,inspectorVisible:inspector,native:false,externalLinks:false}),onError:noop}),
-        settings && h(views.SettingsView,{active:true,onReady:noop,themePreference:theme,language:'zh',languageMode:'zh',systemLanguage:'zh',settings:compactSettings,
-          selectedModel:'fixture',availableModels:[],backendCapabilities:{terminalRuntimes:['powershell'],runtimeAssetCategories:[]},runtimeBusy:false,conversations:[],skills:[],disabledSkillNames:new Set(),
-          initialSection:'runtime',initialPluginTab:'plugins',onThemePreferenceChange:noop,onLanguageModeChange:noop,
-          onSettingsChange:noop,onUseModel:noop,sidebarCollapsed:layout.sidebarCollapsed,compactLayout:layout.compactLayout,sidebarPresence:presence,sidebarWidth:272,
-          onSidebarCollapse:close,onSidebarWidthChange:noop,onToggleSkill:noop,onReloadSkills:async()=>[],onLoadSkillDetail:async()=>({})}),
-        h('main',{className:'desktop-shell'+(layout.sidebarCollapsed?' sidebar-is-collapsed':'')+(settings?' app-content-suspended':''),inert:settings},
+        h('main',{className:'desktop-shell'+(layout.sidebarCollapsed?' sidebar-is-collapsed':'') ,'data-settings-visible':settings || undefined},
           h(views.CompactSidebarBackdrop,{visible:layout.compactLayout&&!layout.sidebarCollapsed,language:'zh',onClose:close}),
           presence.mounted&&h(views.ChatSidebar,{language:'zh',section:'chat',activeConversationId:'draft',projects:[],
             conversations:[{id:'draft',title:'今天有更新邮件么',preview:'',updatedAt:''}],changeReportsByConversation:{},softVisible:presence.visible,
             onSectionChange:close,onConversationChange:()=>{setHistory(true);if(layout.compactLayout)close();},onCreateConversation:()=>{setHistory(false);if(layout.compactLayout)close();},
             onAddProject:noop,onProjectAction:noop,onDeleteConversation:noop,onRenameConversation:async()=>true,onOpenConversationChanges:noop,onOpenSettings:()=>{close();setSettings(true);},onOpenPlugins:noop,onOpenSearch:noop}),
+        settings && h(views.SettingsView,{active:true,onReady:noop,themePreference:theme,language:'zh',languageMode:'zh',systemLanguage:'zh',settings:compactSettings,
+          selectedModel:'fixture',availableModels:[],backendCapabilities:{terminalRuntimes:['powershell'],runtimeAssetCategories:[]},runtimeBusy:false,conversations:[],skills:[],disabledSkillNames:new Set(),
+          initialSection:'overview',initialPluginTab:'plugins',onThemePreferenceChange:noop,onLanguageModeChange:noop,
+          onSettingsChange:noop,onUseModel:noop,sidebarCollapsed:layout.sidebarCollapsed,compactLayout:layout.compactLayout,sidebarPresence:presence,sidebarWidth:272,
+          onSidebarCollapse:close,onSidebarWidthChange:noop,onToggleSkill:noop,onReloadSkills:async()=>[],onLoadSkillDetail:async()=>({})}),
           h('section',{className:'main-stage',inert:layout.compactLayout&&(!layout.sidebarCollapsed||inspector)},h(views.ChatPanel,{...chatProps,
             language:'zh',theme,loading:false,sidebarCollapsed:layout.sidebarCollapsed,draft,onDraftChange:setDraft,selectedModel:'long-model',
             availableModels:[{id:'long-model',provider:'deepseek',modelName:'deepseek-v4-1-with-a-long-name',apiKey:'',baseUrl:''}],
@@ -98,9 +98,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await fits('.settings-content');
   assert.ok(await run("document.querySelector('.settings-content').scrollWidth <= document.querySelector('.settings-content').clientWidth+1"), 'settings fit horizontally');
   await run("document.querySelector('.window-sidebar-toggle').click()"); await pause(260);
-  await fits('.settings-sidebar');
-  await run("document.querySelector('[data-settings-section=proxy]').click()");
-  await until('compactState.sidebarCollapsed', 'settings choice closes drawer');
+  await fits('.desktop-shell > .sidebar');
+  await run("document.querySelector('.compact-sidebar-backdrop').click()");
+  await until('compactState.sidebarCollapsed', 'backdrop closes shared drawer');
+  await run("document.querySelector('[data-settings-target=connections]').click()");
   await fits('.settings-content');
   await run('compactActions.setSettings(false); compactActions.setDraft("保留输入草稿")');
   await resize(1180,760);

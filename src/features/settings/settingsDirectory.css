@@ -1,0 +1,50 @@
+.settings-shell .settings-content {
+  flex: 1; min-width: 0; overflow: auto; padding: clamp(22px, 3vw, 42px);
+  box-shadow: none; border-radius: 0; background: var(--surface);
+}
+.settings-shell .settings-track { width: min(100%, 1000px); margin: 0; }
+.settings-shell .settings-page-header {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 12px 24px; margin-bottom: 20px;
+}
+.settings-page-header h1 {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0;
+  font-size: clamp(24px, 2.3vw, 32px); line-height: 1.25; letter-spacing: -.025em; margin: 0; outline: 0;
+}
+.settings-page-header h1 svg { width: 15px; height: 15px; color: var(--text-mid); }
+.settings-page-header h1 button { font: inherit; color: inherit; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.settings-page-header h1 button:hover { color: var(--accent); }
+.settings-page-header .settings-search { width: min(100%, 216px); box-sizing: border-box; margin: 0; }
+.settings-search svg { width: 15px; height: 15px; }
+.settings-directory, .settings-category { display: grid; gap: 5px; }
+.settings-directory button, .settings-category-section > h2 > button {
+  width: 100%; display: flex; align-items: center; gap: 16px; text-align: start; padding: 13px 17px;
+  min-height: 62px; border: 0; border-radius: 5px; background: var(--settings-row-surface); color: var(--text); cursor: pointer;
+}
+.settings-shell { --settings-row-surface: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.settings-directory button:hover, .settings-category-section > h2 > button:hover { background: color-mix(in srgb, var(--text) 10%, var(--surface)); }
+.settings-directory button > span, .settings-category-section > h2 button > span { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.settings-directory strong, .settings-category-section > h2 strong { font-size: calc(14px * var(--ui-font-scale, 1)); font-weight: 570; }
+.settings-directory small, .settings-category-section > h2 small { font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4; color: var(--text-mid); font-weight: 400; }
+.settings-directory svg { flex: none; width: 19px; height: 19px; }
+.settings-directory svg:last-child, .settings-category-section > h2 svg { flex: none; width: 15px; height: 15px; color: var(--text-mid); }
+.settings-about { margin-top: 27px; color: var(--text-mid); }
+.settings-about h2 { font-size: 13px; color: var(--text); margin: 0; }
+.settings-about p { font-size: 13px; margin: 6px 0 12px; }
+.settings-about button { border: 0; padding: 0; color: var(--accent); background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.settings-category { gap: 14px; margin-top: 26px; }
+.settings-category-section { min-width: 0; border: 1px solid var(--border); border-radius: 5px; }
+.settings-category-section > h2 { margin: 0; }
+.settings-category-section > h2 button[aria-expanded="true"] { border-radius: 4px 4px 0 0; }
+.settings-category-section > h2 button[aria-expanded="true"] svg { transform: rotate(180deg); }
+.category-settings-body { padding: 13px 16px; }
+.category-settings-body[hidden] { display: none; }
+.category-settings-body .settings-stack { gap: 16px; }
+.category-settings-body .settings-card { --settings-card-surface: transparent; --settings-card-inset: 0px; border: 0; border-radius: 0; background: transparent; }
+.category-settings-body .settings-card-header { padding-top: 4px; }
+.settings-directory button:focus-visible, .settings-about button:focus-visible, .settings-category-section > h2 button:focus-visible,
+.settings-page-header h1 button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@container settings-page (max-width: 480px) {
+  .settings-page-header .settings-search { width: 100%; }
+  .category-settings-body { padding: 10px; }
+}

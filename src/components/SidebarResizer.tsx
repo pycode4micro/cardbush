@@ -172,7 +172,7 @@ function readCurrentSidebarWidth(resizer: HTMLElement) {
   if (Number.isFinite(fromRoot)) {
     return fromRoot;
   }
-  const sidebar = document.querySelector<HTMLElement>('.sidebar, .settings-sidebar');
+  const sidebar = document.querySelector<HTMLElement>('.sidebar');
   return sidebar?.getBoundingClientRect().width ?? defaultSidebarWidth;
 }
 

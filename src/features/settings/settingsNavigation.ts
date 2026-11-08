@@ -2,14 +2,13 @@ import type { MessageKey } from '../../i18n';
 import { uiText, uiLanguages } from '../../i18n';
 import type { SettingsSection } from '../../types';
 
-export type VisibleSettingsSection = Exclude<SettingsSection, 'subagents' | 'instructions' | 'about'>;
+export type VisibleSettingsSection = Exclude<SettingsSection, 'subagents' | 'instructions' | 'about' | 'projects'>;
 type LocalizedText = MessageKey;
 
 export const settingsLabels: Record<VisibleSettingsSection, LocalizedText> = {
   general: 'settingsNavigation.general',
   notifications: 'settingsNavigation.notifications',
   voice: 'settingsNavigation.voice',
-  projects: 'archivedItemsPanel.projects',
   ssh: 'agentConnectionForm.sshConnections',
   profile: 'settingsNavigation.personalization',
   summary_for_user: 'settingsNavigation.memoryPredictions',
@@ -30,7 +29,6 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
   general: 'settingsNavigation.setTheInterfaceLanguageAndEverydayConversation',
   notifications: 'settingsNavigation.manageAlertsForCompletedResponsesRequestsFor',
   voice: 'settingsNavigation.configureTranscriptionVoiceCallsAndTheAgent',
-  projects: 'settingsNavigation.manageThisAgentSProjectDirectoriesAnd',
   ssh: 'settingsNavigation.manageRemoteHostsForProjectsAndReferences',
   profile: 'settingsNavigation.setTheResponseStyleAndSharedInstructions',
   summary_for_user: 'settingsNavigation.manageHabitsNextStepPredictionsAndMemory',
@@ -47,18 +45,37 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
   diagnostics: 'settingsNavigation.checkRuntimeHealthVersionAndEnvironmentInformation',
 };
 
-export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: VisibleSettingsSection[] }> = [
-  { label: 'pluginManagementPanel.personal', sections: ['general', 'notifications', 'appearance', 'voice', 'profile', 'summary_for_user', 'shortcuts', 'usage', 'cache'] },
-  { label: 'settingsNavigation.integrations', sections: ['mcp', 'models', 'browser', 'computer-use'] },
-  { label: 'settingsAppearancePanel.system', sections: ['ssh', 'runtime', 'proxy', 'diagnostics'] },
+export type SettingsCategoryId = 'preferences' | 'personal' | 'connections' | 'tools' | 'data';
+export type SettingsPage = 'overview' | SettingsCategoryId | SettingsSection;
+export type SettingsCategory = {
+  id: SettingsCategoryId; label: MessageKey; description: MessageKey; sections: VisibleSettingsSection[];
+};
+export const settingsNavigationGroups: SettingsCategory[] = [
+  { id: 'preferences', label: 'settingsNavigation.general', description: 'settingsDirectory.generalDescription',
+    sections: ['general', 'notifications', 'voice', 'shortcuts'] },
+  { id: 'personal', label: 'settingsNavigation.personalization', description: 'settingsDirectory.personalDescription',
+    sections: ['appearance', 'profile', 'summary_for_user'] },
+  { id: 'connections', label: 'settingsDirectory.connections', description: 'settingsDirectory.connectionsDescription',
+    sections: ['models', 'mcp', 'ssh', 'proxy'] },
+  { id: 'tools', label: 'settingsDirectory.tools', description: 'settingsDirectory.toolsDescription',
+    sections: ['browser', 'computer-use', 'runtime'] },
+  { id: 'data', label: 'settingsDirectory.data', description: 'settingsDirectory.dataDescription',
+    sections: ['usage', 'cache', 'diagnostics'] },
 ];
+
+export function settingsDestination(page: SettingsPage) {
+  if (page === 'overview') return {};
+  const category = settingsNavigationGroups.find(group => group.id === page);
+  if (category) return { category };
+  const section = visibleSettingsSection(page as SettingsSection);
+  return { section, category: settingsNavigationGroups.find(group => group.sections.includes(section)) };
+}
 
 const keywords: Record<VisibleSettingsSection, MessageKey> = {
   general: 'settingsKeywords.english_general_language_interaction_guidance_queue_thinking',
   notifications: 'settingsKeywords.notification_sound_volume_alerts_response_approval_error',
   voice: 'settingsKeywords.voice_audio_speech_microphone_transcription_call_tts',
   summary_for_user: 'settingsKeywords.token_summary_for_user_check_habit_memory',
-  projects: 'settingsKeywords.project_workspace_directory',
   ssh: 'settingsKeywords.ssh_remote_connection_server_key_project',
   profile: 'settingsKeywords.agents_md_instructions_tone_persona_style_natural',
   appearance: 'settingsKeywords.theme_font_size_color_background_foreground_accent',
@@ -74,13 +91,20 @@ const keywords: Record<VisibleSettingsSection, MessageKey> = {
   diagnostics: 'settingsKeywords.runtime_product_host_version_about_health',
 };
 
+export function settingsSectionLabel(section: VisibleSettingsSection): MessageKey {
+  if (section === 'general') return 'settingsDirectory.interaction';
+  if (section === 'profile') return 'settingsDirectory.style';
+  return settingsLabels[section];
+}
+
 export function settingsSectionMatchesQuery(section: VisibleSettingsSection, query: string) {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const text = uiLanguages.flatMap(locale => [uiText(locale.locale)(settingsLabels[section]), uiText(locale.locale)(settingsDescriptions[section]), uiText(locale.locale)(keywords[section])]).join(' ').toLocaleLowerCase();
+  const text = uiLanguages.flatMap(locale => [uiText(locale.locale)(settingsSectionLabel(section)), uiText(locale.locale)(settingsLabels[section]), uiText(locale.locale)(settingsDescriptions[section]), uiText(locale.locale)(keywords[section])]).join(' ').toLocaleLowerCase();
   return terms.every(term => text.includes(term));
 }
 
 export function visibleSettingsSection(value: SettingsSection): VisibleSettingsSection {
+  if (value === 'projects') return 'models';
   if (value === 'about') return 'diagnostics';
   if (value === 'instructions' || value === 'subagents') return 'profile';
   return value;

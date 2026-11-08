@@ -120,7 +120,7 @@
 .usage-heatmap-cell.level-2 { background: color-mix(in srgb, #3b82f6 44%, var(--surface)); }
 .usage-heatmap-cell.level-3 { background: color-mix(in srgb, #3b82f6 67%, var(--surface)); }
 .usage-heatmap-cell.level-4 { background: #3b82f6; }
-@keyframes usage-cell-enter { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes usage-cell-enter { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: scale(1); } }
 .usage-insights { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; color: var(--text-mid); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .usage-recording-note { margin: 0; color: var(--text-soft); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.7; }
 .usage-load-error { display: flex; align-items: center; gap: 10px; color: var(--danger); font-size: calc(12px * var(--ui-font-scale, 1)); }

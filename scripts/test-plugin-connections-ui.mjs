@@ -120,6 +120,7 @@ if (coreSettings) {
   source = source.replace('let fixtureRoot=createRoot', `
     import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts')}';
     import '${local('src/features/settings/settingsLayout.css')}';
+    import {SettingsDirectory} from '${local('src/features/settings/SettingsDirectory.tsx')}';
     window.fixtureBrowser={protocol:'cardbush.browser_config.v1',revision:1,startPage:'https://www.google.com/'};
     Object.assign(window.cardbushDesktop,{
       readBrowserConfiguration:async()=>structuredClone(fixtureBrowser),
@@ -137,7 +138,10 @@ if (coreSettings) {
     window.fixtureConnections=[{id:'a'.repeat(32),browser:'chrome',label:'Chrome 工作账号',connected:true,controlledTabCount:1},{id:'b'.repeat(32),browser:'edge',label:'Edge 个人账号',connected:true,controlledTabCount:0}];
     Object.assign(window.fixtureConnector,{connections:structuredClone(fixtureConnections),defaultConnectionId:'a'.repeat(32)});
     window.connectorActions=[];
-    function CoreFixture(){const [section,setSection]=React.useState('browser'),[theme,setTheme]=React.useState('bright'),[language,setLanguage]=React.useState('zh');window.coreLanguage=setLanguage;window.coreSection=setSection;window.coreTheme=setTheme;return <div className={'app '+themeClassNames(theme==='custom'?'dark':theme)} style={{height:'100vh',...(theme==='custom'?{'--surface':'#201b2c','--surface-strong':'#31273f','--border':'#675679','--text':'#f3eafc','--text-mid':'#cec1db','--text-soft':'#c1afce','--accent':'#d2a9f4'}:{})}}><main className="settings-shell"><aside className="settings-sidebar"><button onClick={()=>setSection('browser')}>浏览器</button><button onClick={()=>setSection('computer-use')}>电脑操控</button></aside><section className="settings-content" style={{overflow:'auto',flex:1}}><div className="settings-panel"><header className="settings-section-header"><h2>{section==='browser'?'浏览器':'电脑操控'}</h2></header>{section==='browser'?<BrowserSettingsPanel language={language}/>:<ComputerUseSettingsPanel language={language}/>}</div></section></main></div>}
+    function CoreFixture(){const [section,setSection]=React.useState('browser'),[theme,setTheme]=React.useState('bright'),[language,setLanguage]=React.useState('zh');window.coreLanguage=setLanguage;window.coreSection=setSection;window.coreTheme=setTheme;return <div className={'app '+themeClassNames(theme==='custom'?'dark':theme)} style={{height:'100vh',...(theme==='custom'?{'--surface':'#201b2c','--surface-strong':'#31273f','--border':'#675679','--text':'#f3eafc','--text-mid':'#cec1db','--text-soft':'#c1afce','--accent':'#d2a9f4'}:{})}}><main className="desktop-shell sidebar-is-collapsed" data-settings-visible>
+        <section className="settings-shell"><SettingsDirectory language={language} page={section} active version="1.0.0"
+          navigate={setSection} renderSection={id=>id==='browser'?<BrowserSettingsPanel language={language}/>:id==='computer-use'?<ComputerUseSettingsPanel language={language}/>:null}/></section>
+      </main></div>}
     let fixtureRoot=createRoot`).replaceAll('fixtureRoot.render(<Fixture/>);','fixtureRoot.render(<CoreFixture/>);');
 }
 if (appearanceNavigation) {

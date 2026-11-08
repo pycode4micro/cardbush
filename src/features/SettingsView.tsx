@@ -26,42 +26,27 @@ import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
 import { SettingsCard, SettingsDivider, SettingsRadio, SettingsInput, InfoRow } from './settings/SettingsControls';
 import './settings/settingsLayout.css';
 import { SettingsFormDialog } from './settings/SettingsFormDialog';
-import { settingsLabels, settingsDescriptions, settingsNavigationGroups, settingsSectionMatchesQuery, visibleSettingsSection, type VisibleSettingsSection } from './settings/settingsNavigation';
+import type { SettingsPage, VisibleSettingsSection } from './settings/settingsNavigation';
+import { SettingsDirectory } from './settings/SettingsDirectory';
 import { usePageState } from './navigation/PageNavigation';
 import type { WindowMaterialPreference } from './appearance/windowAppearance';
 import { useCapabilityCatalogRefresh } from '../hooks/useCapabilityCatalogRefresh';
-import type { SoftPanelPresence } from '../hooks/useSoftPanelPresence';
 import {
   AlertCircle,
   Archive,
-  BarChart3,
-  Bell,
-  Brain,
   Check,
   CheckCircle2,
   Clipboard,
   Copy,
-  Container,
-  Cpu,
-  Keyboard,
   LoaderCircle,
-  Monitor,
-  Mic,
-  Network,
   PackageOpen,
-  Search,
-  SlidersHorizontal,
-  Stethoscope,
-  Sun,
   Plus,
   RefreshCw,
   RotateCcw,
   Settings,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react';
-import type * as React from 'react';
 import {
   useCallback,
   useEffect,
@@ -91,8 +76,6 @@ import {
 } from '../backend/api';
 import { version as packageVersion } from '../../package.json';
 import { PluginIcon } from '../components/PluginIcon';
-import { SidebarResizer } from '../components/SidebarResizer';
-import { CompactSidebarBackdrop } from '../components/CompactSidebarBackdrop';
 import { basename } from '../shared/localPaths';
 import {
   IMPORTED_THEME_STYLE_PROTOCOL,
@@ -117,7 +100,6 @@ import type {
   RuntimeAssetCategory,
   RuntimeAssetResetPlan,
   RuntimeAssetResetResult,
-  SettingsSection,
   SkillDetail,
   SkillSummary,
   ThemePreference,
@@ -132,15 +114,8 @@ const defaultFontSettings = {
   displayName: '',
   filePath: '',
 };
-const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
-  general: Settings, notifications: Bell,
-  voice: Mic,
-  profile: SlidersHorizontal, summary_for_user: Brain, appearance: Sun, shortcuts: Keyboard, usage: BarChart3,
-  models: Cpu, mcp: PluginIcon, browser: Monitor, 'computer-use': Keyboard,
-  projects: PackageOpen, runtime: Container, ssh: Network, proxy: Monitor, cache: Archive, diagnostics: Stethoscope,
-};
 export function SettingsView({
-  active,
+  active, obscured = false,
   onReady,
   themePreference,
   windowMaterial = 'auto',
@@ -167,12 +142,6 @@ export function SettingsView({
   onLanguageModeChange,
   onSettingsChange,
   onUseModel,
-  sidebarCollapsed,
-  compactLayout = false,
-  sidebarPresence,
-  sidebarWidth,
-  onSidebarCollapse,
-  onSidebarWidthChange,
   onConversationHistoryCleared,
   onRuntimeAssetsReloaded,
   onToggleSkill,
@@ -184,6 +153,7 @@ export function SettingsView({
   onVisualInputEnabledChange,
 }: {
   active: boolean;
+  obscured?: boolean;
   onReady: () => void;
   themePreference: ThemePreference;
   windowMaterial?: WindowMaterialPreference;
@@ -203,19 +173,13 @@ export function SettingsView({
   agentConnections?: AgentConnection[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
-  initialSection: SettingsSection;
-  onSectionChange?: (section: SettingsSection) => void;
+  initialSection: SettingsPage;
+  onSectionChange?: (section: SettingsPage) => void;
   initialPluginTab: 'plugins' | 'skills';
   onThemePreferenceChange: (value: ThemePreference) => void;
   onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
   onUseModel: (model: string) => void;
-  sidebarCollapsed: boolean;
-  compactLayout?: boolean;
-  sidebarPresence: SoftPanelPresence;
-  sidebarWidth: number;
-  onSidebarCollapse: () => void;
-  onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
   onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
@@ -230,42 +194,17 @@ export function SettingsView({
     if (!active) return;
     return () => { window.dispatchEvent(new Event('cardbush:shared-configuration-updated')); };
   }, [active]);
-  const [localSection, setLocalSection] = useState<VisibleSettingsSection>(
-    visibleSettingsSection(initialSection),
-  );
-  const section = onSectionChange ? visibleSettingsSection(initialSection) : localSection;
-  const setSection = (value: VisibleSettingsSection) => onSectionChange ? onSectionChange(value) : setLocalSection(value);
-  const [settingsQuery, setSettingsQuery] = useState('');
+  const [localPage, setLocalPage] = useState<SettingsPage>(initialSection);
+  const page = onSectionChange ? initialSection : localPage;
+  const setSection = onSectionChange ?? setLocalPage;
   const [networkTab, setNetworkTab] = usePageState<'models' | 'plugins'>('network-tab', 'models');
-  const settingsContentRef = useRef<HTMLElement>(null);
-  const settingsNavigationRef = useRef<HTMLElement>(null);
-  const sectionScrollPositions = useRef<Record<string, number>>({});
-  const effectiveSection = section === 'projects' ? 'models' : section;
-  const scrollKey = effectiveSection;
-  const filteredNavigation = settingsNavigationGroups.map(group => ({
-    ...group, sections: group.sections.filter(id => settingsSectionMatchesQuery(id, settingsQuery)),
-  })).filter(group => group.sections.length > 0);
   const [toast, setToast] = useState('');
   const [pluginMcpTarget, setPluginMcpTarget, returnToMcpTarget] = usePageState<{ serverId?: string } | null>('mcp-target', null);
   useLayoutEffect(() => {
     onReady();
   }, [onReady]);
 
-  useLayoutEffect(() => {
-    if (!active) return;
-    setLocalSection(visibleSettingsSection(initialSection));
-    setSettingsQuery('');
-  }, [initialSection, active]);
-
-  useLayoutEffect(() => {
-    if (!active) return;
-    if (settingsContentRef.current) settingsContentRef.current.scrollTop = scrollKey === 'general' ? 0 : sectionScrollPositions.current[scrollKey] ?? 0;
-  }, [scrollKey, active]);
-
-  useLayoutEffect(() => {
-    if (!active) return;
-    if (effectiveSection === 'general') settingsNavigationRef.current?.scrollTo({ top: 0 });
-  }, [effectiveSection, settingsQuery, active]);
+  useLayoutEffect(() => { if (active) setLocalPage(initialSection); }, [active, initialSection]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -349,7 +288,7 @@ export function SettingsView({
     }));
   }, [updateSettings]);
 
-  const content = (() => {
+  const renderSection = (effectiveSection: VisibleSettingsSection, visible: boolean) => {
     if (effectiveSection === 'general') return <SettingsGeneralPanel language={language} languageMode={languageMode}
       systemLanguage={systemLanguage} settings={settings} reasoningStreamAvailable={backendCapabilities.reasoningStream}
       onLanguageModeChange={onLanguageModeChange} onSettingsChange={updateSettings} />;
@@ -363,7 +302,7 @@ export function SettingsView({
       onSettingsChange={updateSettings} />;
     if (effectiveSection === 'summary_for_user') return <SettingsSummaryPanel language={language} settings={settings}
       onSettingsChange={updateSettings} modelId={selectedModel} modelLabel={availableModels.find(model=>model.id===selectedModel)?.modelName} connections={agentConnections}/>;
-    if (effectiveSection === 'usage') return <UsageStatisticsPanel language={language} active={active} />;
+    if (effectiveSection === 'usage') return <UsageStatisticsPanel language={language} active={visible} />;
     if (effectiveSection === 'appearance') return <SettingsAppearancePanel
       themePreference={themePreference} windowMaterial={windowMaterial} onWindowMaterialChange={onWindowMaterialChange}
       language={language} settings={settings}
@@ -579,73 +518,12 @@ export function SettingsView({
         selectedModel={selectedModel}
       />
     );
-  })();
+  };
 
-  return (
-    <>
-    <main
-      className={`settings-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${active ? '' : ' settings-inactive'}`}
-      aria-hidden={!active}
-      inert={active ? undefined : true}
-    >
-      <CompactSidebarBackdrop visible={compactLayout && !sidebarCollapsed} language={language} onClose={onSidebarCollapse} />
-      {sidebarPresence.mounted && <>
-      <aside className={`sidebar settings-sidebar soft-panel-motion ${sidebarPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
-        aria-hidden={!sidebarPresence.visible} inert={sidebarPresence.visible ? undefined : true}>
-        <div className="sidebar-panel-content">
-        <label className="settings-search">
-          <Search size={15} aria-hidden="true" />
-          <input value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)}
-            aria-label={uiText(language)('settingsView.searchSettings')}
-            placeholder={uiText(language)('settingsView.searchSettings_5d017d7')}
-            onKeyDown={event => { if (event.key === 'Escape') setSettingsQuery(''); }} />
-          {settingsQuery && <button type="button" aria-label={uiText(language)('settingsView.clearSearch')} onClick={() => setSettingsQuery('')}><X size={14} /></button>}
-        </label>
-        <nav className="settings-navigation" ref={settingsNavigationRef} aria-label={uiText(language)('settingsView.settingsSections')}>
-          {filteredNavigation.map((group) => (
-            <div className="settings-nav-group" key={uiText('en')(group.label)}>
-              <span className="settings-nav-group-label">{uiText(language)(group.label)}</span>
-              {group.sections.map((id) => {
-                const Icon = settingsIcons[id];
-                return (
-                  <button
-                    key={id}
-                    className={`settings-nav ${effectiveSection === id ? 'active' : ''}`}
-                    type="button"
-                    aria-current={effectiveSection === id ? 'page' : undefined}
-                    data-settings-section={id}
-                    onClick={() => { setSection(id); setSettingsQuery(''); if (compactLayout) onSidebarCollapse(); }}
-                  >
-                    <Icon size={18} />
-                    <span>{uiText(language)(settingsLabels[id])}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-          {filteredNavigation.length === 0 && <p className="settings-search-empty" role="status">{uiText(language)('settingsView.noMatchingSettings')}</p>}
-        </nav>
-        </div>
-      </aside>
-      <SidebarResizer language={language} width={sidebarWidth} onWidthChange={onSidebarWidthChange}
-        onCollapse={onSidebarCollapse} softVisible={active && sidebarPresence.visible} />
-      </>}
-      <section className="settings-content" ref={settingsContentRef} inert={compactLayout && !sidebarCollapsed ? true : undefined}
-        onScroll={event => { sectionScrollPositions.current[scrollKey] = event.currentTarget.scrollTop; }}>
-        <div className={`settings-track${section === 'mcp' ? ' plugin-settings-track' : ''}`}>
-          {effectiveSection !== 'mcp' && <header className="settings-page-header">
-            <div>
-              <h2>{uiText(language)(settingsLabels[effectiveSection])}</h2>
-              <p>{uiText(language)(settingsDescriptions[effectiveSection])}</p>
-            </div>
-          </header>}
-          <div>{content}</div>
-        </div>
-      </section>
-    </main>
-    {active && toast && <div className="settings-toast">{toast}</div>}
-    </>
-  );
+  return <section className={`settings-shell${active ? '' : ' settings-inactive'}`} aria-hidden={!active || obscured} inert={!active || obscured}>
+    <SettingsDirectory language={language} page={page} active={active} version={applicationVersion} navigate={setSection} renderSection={renderSection}/>
+    {active && toast && <div className="settings-toast" role="status">{toast}</div>}
+  </section>;
 }
 
 export function CacheMaintenancePanel({

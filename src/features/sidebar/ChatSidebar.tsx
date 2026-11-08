@@ -243,7 +243,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   softVisible = true, showRail = true, recentList,
 }: {
   language: AppLanguage;
-  section: AppSection;
+  section: AppSection | 'settings';
   activeConversationId: string;
   runningConversationIds?: Set<string>;
   attentionByConversation?: Record<string, SessionAttentionState>;

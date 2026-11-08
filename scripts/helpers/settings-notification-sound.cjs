@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-module.exports = async ({ run, until, click, edit, window, root }) => {
+module.exports = async ({ overview, run, until, click, edit, window, root }) => {
   await click('通知');
   await until("!!document.querySelector('#notification-sound-volume')");
   await run(`window.soundToggle = () => [...document.querySelectorAll('.settings-switch')].find(node => node.textContent.includes('提醒音效')).querySelector('input');
@@ -59,9 +59,9 @@ module.exports = async ({ run, until, click, edit, window, root }) => {
     await run("document.querySelector('#notification-sound-volume').closest('.settings-card').scrollIntoView({block:'center'})");
     fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
     fs.writeFileSync(path.join(root, 'tmp', 'settings-notification-sound.png'), (await window.webContents.capturePage()).toPNG());
-    await edit('.settings-search input', '提醒');
-    await until("document.querySelectorAll('.settings-nav').length===1");
-    assert.equal(await run("document.querySelector('.settings-nav').dataset.settingsSection"), 'notifications');
+    await overview(); await edit('.settings-search input', '提醒');
+    await until("document.querySelectorAll('.settings-directory button').length===1");
+    assert.equal(await run("document.querySelector('.settings-directory button').dataset.settingsTarget"), 'notifications');
   } finally {
     await run('window.AudioContext = originalSoundContext; void 0');
   }

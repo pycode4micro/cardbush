@@ -91,7 +91,9 @@ app.whenReady().then(async () => {
   await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
   const css = ['theme.css', 'app.css', 'windowMaterial.css', 'appearance.css']
     .map(file => readSourceFile(path.join(root, 'src/styles', file), 'utf8')).join('\n');
-  await win.webContents.insertCSS(css + '\n' + readSourceFile(path.join(root, 'src/features/desktop/desktopCollection.css'), 'utf8') + '\n' + readSourceFile(path.join(root, 'src/features/desktop/recentConversationBar.css'), 'utf8'));
+  const pageStyles = ['desktop/desktopCollection.css', 'desktop/recentConversationBar.css', 'settings/settingsDirectory.css']
+    .map(file => readSourceFile(path.join(root, 'src/features', file), 'utf8')).join('\n');
+  await win.webContents.insertCSS(css + '\n' + pageStyles);
   await run(`
     const { ipcRenderer } = require('electron');
     window.failures = [];
@@ -138,12 +140,11 @@ app.whenReady().then(async () => {
             {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
           ]}] }, h(views.RecentConversationBar, {language:'zh',conversation:{id:'fixture',title:'Conversation',updatedAt:'',preview:''},
             conversations:[],transcripts:{},pageFor:()=>({hasMore:false,loadingOlder:false,historyError:''}),onRecentList:noop,read:noop,earlier:noop,open:noop})),
-        h('main', { className: settings ? 'settings-shell' : 'desktop-shell' },
-          settings ? h('aside', { className:'sidebar settings-sidebar' }, h('button', { className:'settings-nav active' }, '个性化')) :
+        h('main', { className:'desktop-shell', 'data-settings-visible':settings || undefined },
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
             softVisible:!collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
             onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:()=>setSettings(true) }),
-          h('section', { className: settings ? 'settings-content' : 'main-stage' }, h('div', { className:'chat-panel' },
+          h('section', { className: settings ? 'settings-shell' : 'main-stage' }, h('div', { className:settings ? 'settings-content' : 'chat-panel' },
             h(views.TopBar, { title:settings ? '个性化' : '新会话', language:'zh', inspectorOpen:false, onToggleInspector:noop }),
             settings ? h('div', { style:{padding:32} }, '通过视图菜单切换玻璃 / 纯色与浅色 / 深色。') :
             h(views.WelcomeComposer, { language:'zh', draft, onDraftChange:setDraft, sending:false, stopping:false, guidanceDeliveryMode:'immediate', cancelEnabled:false,
