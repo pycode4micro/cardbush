@@ -57,9 +57,7 @@ async function verify() {
   await click('[data-history-action=back]'); await wait("!!document.querySelector('.desktop-detail-heading')");
   await capture('event'); await click('[data-history-action=back]'); await active('overview');
   await click('[data-nav-section=explore]'); await active('explore'); await capture('explore');
-  await click('.desktop-manage'); await wait("document.querySelector('.app-center-dialog')?.open || !!document.querySelector('#app-center-title')?.closest('dialog[open]')");
-  await js("document.querySelector('#app-center-title').closest('dialog').querySelector('[aria-label=\"关闭探索\"]').click()");
-  await wait("!document.querySelector('#app-center-title')?.closest('dialog[open]')");
+  assert.equal(await js("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"), true, 'search immediately follows the Explore title');
   await js(`(()=>{const n=document.querySelector('.desktop-filter input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'xyz-no-match');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await wait("!document.querySelector('.desktop-explore .desktop-row')");
   await click('[data-nav-section=home]'); await active('overview');

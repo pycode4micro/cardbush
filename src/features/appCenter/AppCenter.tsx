@@ -1,7 +1,7 @@
 import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Search, Settings, SlidersHorizontal, Trash2, UsersRound, X } from 'lucide-react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Search, Settings, Trash2, UsersRound, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { PluginGlyph } from '../plugins/PluginGlyph';
@@ -12,8 +12,8 @@ import { applicationCatalog, applicationLink, type ApplicationEntry } from './ap
 import { OPEN_APPLICATION_EVENT, OPEN_APP_CENTER_EVENT, saveAppCenterPreferences, useAppCenterPreferences, useApplications } from './appCenterStore';
 import './app-center.css';
 
-type CenterContext = { manage(): void; launch(app: ApplicationEntry): void };
-const AppCenterContext = createContext<CenterContext>({manage: () => {}, launch: () => {}});
+const LaunchApplicationContext = createContext<(app: ApplicationEntry) => void>(() => {});
+
 export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; size?: number }) {
   const [failedIcon, setFailedIcon] = useState('');
   if (app.plugin) return <PluginGlyph plugin={app.plugin} />;
@@ -25,14 +25,7 @@ export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; siz
   return <Icon size={size} aria-hidden="true" />;
 }
 
-export function AppManagementButton({language}: {language: AppLanguage}) {
-  const { manage } = useContext(AppCenterContext);
-  return <button type="button" className="app-center-launcher desktop-manage" onClick={manage} aria-haspopup="dialog">
-    <SlidersHorizontal aria-hidden="true"/>{uiText(language)('desktop.manageApps')}
-  </button>;
-}
-
-export function useExploreActions() { return useContext(AppCenterContext); }
+export function useLaunchApplication() { return useContext(LaunchApplicationContext); }
 
 export function AppCenterProvider({ language, onNavigate, onExplore, children }: { language: AppLanguage; onExplore?: () => void; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
   const apps = useApplications(language), prefs = useAppCenterPreferences();
@@ -71,7 +64,10 @@ export function AppCenterProvider({ language, onNavigate, onExplore, children }:
     else { show(); setError(uiText(language)('appCenter.thisAppWasRemovedOrDisabled')); }
   }, [openApplication, show, language]);
   useEffect(() => {
-    const center = onExplore ?? show;
+    const center = (event: Event) => {
+      if ((event as CustomEvent).detail === 'manage' || !onExplore) show();
+      else onExplore();
+    };
     const application = async (event: Event) => {
       const { id, environmentId, reference } = (event as CustomEvent).detail ?? {};
       const revision = ++requestRevision.current;
@@ -144,9 +140,8 @@ export function AppCenterProvider({ language, onNavigate, onExplore, children }:
     });
     if (saved) dialog.current?.querySelector<HTMLInputElement>('.app-center-search input')?.focus({preventScroll:true});
   };
-  const context = useMemo(() => ({ manage: show, launch }), [show, launch]);
   const filtered = apps.filter(app => `${app.title} ${app.description}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  return <AppCenterContext.Provider value={context}>
+  return <LaunchApplicationContext.Provider value={launch}>
     {children}
     {presence.mounted && <dialog ref={dialog} className="app-center-drawer" data-visible={presence.visible} aria-labelledby="app-center-title" aria-modal="true" role="dialog"
       onCancel={dialogEventHandler(event => { event.preventDefault(); setOpen(false); })} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
@@ -182,5 +177,5 @@ export function AppCenterProvider({ language, onNavigate, onExplore, children }:
         {error && <p className="app-center-error" role="alert">{error}</p>}
       </div>
     </dialog>}
-  </AppCenterContext.Provider>;
+  </LaunchApplicationContext.Provider>;
 }

@@ -173,19 +173,19 @@ async function run() {
   await click('[data-nav-section=explore]');
   await visible('[data-desktop-page=explore]');
   await wait(()=>read("pageEntrances.includes('main-stage')"),'Explore enters with the Windows page transition');
-  const manage = '.desktop-page-heading .desktop-manage';
-  const point = await read("(()=>{const r=document.querySelector('.desktop-manage').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()");
-  win.webContents.sendInputEvent({type:'mouseMove',...point});
-  await pause(300);
-  assert.equal(await read("document.querySelectorAll('.desktop-page-heading button').length"),1,'hover keeps a single manage action');
+  assert.ok(await read("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"),'Explore has a title followed directly by search');
+  assert.equal(await read("!!document.querySelector('.desktop-explore button[aria-haspopup=dialog]')"),false,'no app management button on Explore');
   assert.equal(await read("!!document.querySelector('.desktop-menu-toggle')"),false);
   assert.ok(await read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return Math.abs((r.left+r.right)/2-innerWidth/2)<9})()"),'compact-rail summary is centered in the window');
-  await click(manage); await visible('.app-center-drawer:modal');
-  await click('.app-center-content>header button:last-child.app-center-icon');
-  await wait(()=>read("!document.querySelector('.app-center-drawer')"),'manager dismissed');
   await click('.window-sidebar-toggle'); await visible('.desktop-menu-toggle');
   await pause(300);
   assert.ok(await read("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.sidebar').getBoundingClientRect().right+1"),'menu remains within the expanded sidebar');
+  await click('.desktop-menu-toggle');
+  await click('[data-menu-item=applications]');
+  await click('[data-menu-item=manageApps]');
+  await visible('.app-center-drawer:modal');
+  await click('.app-center-content>header button:last-child.app-center-icon');
+  await wait(()=>read("!document.querySelector('.app-center-drawer')"),'manager dismissed');
   await click('.window-sidebar-toggle'); await pause(300);
   fs.writeFileSync(path.join(project,'tmp','explore-titlebar-alignment.png'),(await win.webContents.capturePage()).toPNG());
   await click('.sidebar-footer .profile-trigger');
@@ -204,7 +204,7 @@ async function run() {
     await click('[data-nav-section=home]'); await visible('[data-desktop-page=overview]'); await pause(300);
     assert.deepEqual(await read('pageEntrances'),[], 'reduced motion skips the transition');
   } finally { win.webContents.debugger.detach(); }
-  console.log('Workspace navigation passed: compact rail and caption alignment, hover-free management, section/category entrance and reduced motion.');
+  console.log('Workspace navigation passed: compact rail and caption alignment, Explore without a management button, section/category entrance and reduced motion.');
   console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
   app.quit();
 }

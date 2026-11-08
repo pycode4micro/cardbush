@@ -28,7 +28,7 @@
 .native-team-workspace [role="alert"] { color: var(--danger, #c85845); }
 .native-team-workspace > [role="alert"] { margin: 12px 26px; }
 .native-team-sidebar .team-sidebar-content { display: flex; flex: 1; height: auto; min-height: 0; flex-direction: column; padding: 14px 10px 0; gap: 5px; font-size: 13px; }
-.native-team-sidebar button:not(.app-center-launcher) { display: flex; align-items: center; gap: 9px; color: var(--text); font: inherit; border: 0; background: transparent; padding: 7px 10px; min-height: 32px; border-radius: 8px; cursor: pointer; text-align: left; }
+.native-team-sidebar button { display: flex; align-items: center; gap: 9px; color: var(--text); font: inherit; border: 0; background: transparent; padding: 7px 10px; min-height: 32px; border-radius: 8px; cursor: pointer; text-align: left; }
 .native-team-sidebar button:hover { background: var(--surface-hover); }
 .native-team-sidebar button:focus-visible { outline: 2px solid var(--accent); }
 .native-team-sidebar button:disabled { opacity: .5; cursor: default; }

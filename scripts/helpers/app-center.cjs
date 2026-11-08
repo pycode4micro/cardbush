@@ -5,7 +5,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.setSize(1120, 780);
   window.webContents.focus();
   for (const file of ['src/features/appCenter/app-center.css', 'src/components/global-tooltip.css']) await window.webContents.insertCSS(fs.readFileSync(path.join(root, file), 'utf8'));
-  await window.webContents.insertCSS('.app { width: 100% !important; } .test-center-layout{display:flex;height:calc(100vh - 36px)}.test-center-layout>.app-center-launcher{position:fixed;left:10px;bottom:8px;width:220px;z-index:2}.test-center-layout>.chat-panel{flex:1;min-width:0}');
+  await window.webContents.insertCSS('.app { width: 100% !important; } .test-center-layout{display:flex;height:calc(100vh - 36px)}.test-center-layout>.chat-panel{flex:1;min-width:0}');
   const localAppIcon = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'assets/plugins/browser/extension/icons/cardbush-32.png')).toString('base64');
   await run(`
     window.centerEvents=[]; window.centerSent=[];
@@ -16,18 +16,19 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.localSelection=null; window.localOpened=[]; window.localPickLanguages=[]; window.localOpenError='';
     window.cardbushDesktop.localApplications={pick:async language=>{localPickLanguages.push(language);return localSelection;},open:async target=>{if(localOpenError)throw Error(localOpenError);localOpened.push(target);}};
     window.cardbushDesktop.isMaximized = async () => false;
+    window.cardbushDesktop.windowMenuContext = async () => ({});
     window.centerHost={id:'fixture',environmentId:'cloud-demo', plugins:[{id:'demo',name:'Design plugin',description:'Design workspace',longDescription:'Design workspace',version:'1.0.0',developerName:'Fixture',category:'Tools',keywords:[],capabilities:[],defaultPrompts:[],installed:true,enabled:true,logoPath:'',logoDarkPath:'',manifestPath:'',components:[{kind:'app',id:'canvas',name:'Design canvas',app:{kind:'url',url:'https://example.test/canvas'}},{kind:'app',id:'slack',name:'Slack',mcp:{registeredAppId:'slack'}},{kind:'runtime',id:'demo',runtime:{settings:true}}]}],pluginCommands:[]};
     window.cardbushDesktop.agents={connect:async()=>({}),call:async()=>({plugins:centerHost.plugins})};
     window.centerSidebarProps={language:'zh',section:'chat',activeConversationId:'draft',projects:[],conversations:[],changeReportsByConversation:{},
       onSectionChange:()=>{},onConversationChange:()=>{},onCreateConversation:()=>centerEvents.push(['new']),onAddProject:()=>{},onProjectAction:()=>{},
       onDeleteConversation:()=>{},onRenameConversation:async()=>true,onOpenConversationChanges:()=>{},onOpenSettings:()=>{},onOpenSearch:()=>centerEvents.push(['search'])};
-    window.centerMenus=views.applicationMenus('zh',{newConversation:()=>centerEvents.push(['new']),openAppCenter:views.requestAppCenter,
+    window.centerMenus=views.applicationMenus('zh',{newConversation:()=>centerEvents.push(['new']),openAppCenter:views.requestAppCenter,manageApps:()=>views.requestAppCenter('manage'),
       openPlugins:()=>centerEvents.push(['plugins']),openAutomations:()=>centerEvents.push(['automations']),openSettings:()=>centerEvents.push(['settings']),
       showShortcuts:()=>{},openDiagnostics:()=>{},toggleSidebar:()=>{},toggleInspector:()=>{},search:()=>{},openBrowser:()=>{}},
       {sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
     window.mountCenter=()=>renderView(h(views.ConversationHostContext.Provider,{value:centerHost},h(views.AppCenterProvider,{language:'zh',onNavigate:(app,environment)=>centerEvents.push(['navigate',app.id,environment])},
       h(views.GlobalTooltip),h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,menus:centerMenus,onError:error=>failures.push(String(error))}),
-      h('div',{className:'test-center-layout'},h(views.AppManagementButton,{language:'zh'}),h(views.ChatSidebar,centerSidebarProps),h('main',{className:'main-stage'},h(views.ChatPanel,chatProps))))));
+      h('div',{className:'test-center-layout'},h(views.ChatSidebar,centerSidebarProps),h('main',{className:'main-stage'},h(views.ChatPanel,chatProps))))));
     Object.assign(chatProps,{language:'zh',loading:false,historyLoading:false,draft:'',availableModels:[{id:'fixture',modelName:'fixture',provider:'fixture',enabled:true}],
       onDraftChange:draft=>{chatProps.draft=draft;mountCenter();},onSend:async text=>{centerSent.push(text);chatProps.draft='';mountCenter();}});
     window.viewTheme='theme-bright'; mountCenter();
@@ -36,7 +37,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.centerInput=(label,value)=>{const node=document.querySelector('input[aria-label="'+label+'"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));};
     undefined;
   `);
-  await until("!!document.querySelector('.app-center-launcher')", 'manage apps mounted');
+  const openManager = async () => {
+    await run("document.querySelector('.desktop-menu-toggle').focus(); document.querySelector('.desktop-menu-toggle').click(); void 0");
+    await until("!!document.querySelector('[data-menu-item=applications]')",'applications submenu is available');
+    await run("document.querySelector('[data-menu-item=applications]').click()");
+    await until("!!document.querySelector('[data-menu-item=manageApps]')",'management command is available');
+    await run("document.querySelector('[data-menu-item=manageApps]').click()");
+  };
+  await until("!!document.querySelector('.desktop-menu-toggle')", 'application menu mounted');
   await pause(150);
   const messages = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/locales/zh.json'), 'utf8')).messages;
   assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), [messages['desktop.home'], messages['appCenter.appCenter'], messages['conversationSearchDialog.newChat'], 'assistant'], 'primary navigation exposes Home, Explore, new chat and the personal assistant');
@@ -44,7 +52,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run("getComputedStyle(document.querySelector('[data-shortcut=searchConversations]')).opacity"), '1');
   await run("document.querySelector('[data-shortcut=searchConversations]').click()");
   assert.deepEqual(await run('centerEvents'), [['search']]);
-  await run("document.querySelector('.app-center-launcher').focus();document.querySelector('.app-center-launcher').click()");
+  await openManager();
   await until("document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-drawer')?.dataset.visible==='true'", 'drawer opened');
   assert.equal(await run("document.querySelectorAll('.app-center-tile').length"), 7);
   assert.equal(await run("document.querySelectorAll('[data-application-id=\"builtin:components\"]').length"), 1, 'components are available in the app center without a new default dock shortcut');
@@ -56,7 +64,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("document.querySelector('.app-center-tile[data-application-id=\"builtin:team\"] .app-center-tile-open').click()");
   await until("!document.querySelector('.app-center-drawer')?.open", 'Team launch closes the application center');
   assert.deepEqual(await run('centerEvents.pop()'), ['navigate', 'builtin:team', undefined], 'Team uses the existing application navigation handler');
-  await run("document.querySelector('.app-center-launcher').focus(); document.querySelector('.app-center-launcher').click()");
+  await openManager();
   await until("document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-drawer')?.dataset.visible==='true'", 'application center reopens after Team launch');
   await pause(230);
   const output = path.join(root,'tmp'); fs.mkdirSync(output,{recursive:true});
@@ -92,7 +100,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('.app-center-tile[data-application-id^=\"external:\"] .browser-site-icon img')?.naturalWidth>0", 'external links reuse the real website icon');
   await run("centerClick('关闭探索')");
   await until("!document.querySelector('.app-center-drawer')", 'animated close completes');
-  assert.ok(await run("document.activeElement.matches('.app-center-launcher')"));
+  assert.ok(await run("document.activeElement.matches('.desktop-menu-toggle')"));
   // This offscreen window no longer receives native focus from a drag-and-drop gesture.
   window.webContents.debugger.attach('1.3');
   try {
@@ -168,9 +176,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!document.querySelector('.app-center-drawer')",'Escape closes the drawer');
   window.webContents.debugger.detach();
   await run('renderView(null)');await pause(30);await run('mountCenter()');
-  await until("!!document.querySelector('.app-center-launcher')",'management button mounted');
+  await until("!!document.querySelector('.desktop-menu-toggle')",'application menu mounted');
   window.setSize(1120,780);
-  await run("document.querySelector('.app-center-launcher').click()");
+  await openManager();
   await until("!!document.querySelector('.app-center-drawer:modal')", 'open to add local app');
   assert.equal(await run("document.querySelectorAll('.app-center-display,.app-center-add-actions').length"), 0, 'reopening app center does not reopen settings');
   await run("centerSetting('添加本地应用')");
@@ -184,8 +192,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("centerSetting('添加本地应用')");await pause(40);
   assert.equal(await run("JSON.parse(localStorage.getItem('cardbush_app_center_v1')).localApps.length"),1,'adding same local app is idempotent');
   await run('renderView(null)');await pause(30);await run('mountCenter()');
-  await until("!!document.querySelector('.app-center-launcher')",'management button mounted');
-  await run("document.querySelector('.app-center-launcher').click()");
+  await until("!!document.querySelector('.desktop-menu-toggle')",'application menu mounted');
+  await openManager();
   await until("!!document.querySelector('.app-center-tile[data-application-id=\"local:editor\"]')",'local app survives remount');
   await run("centerClick('本地编辑器')");
   await until('localOpened.length===1','manager launches local app');

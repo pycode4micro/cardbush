@@ -30,7 +30,7 @@ import { BrowserSiteIcon } from '${local('src/features/browser/BrowserSiteIcon.t
 import { BrowserTabAudioButton } from '${local('src/features/browser/BrowserTabAudioButton.tsx')}';
 import { BrowserMenu } from '${local('src/features/browser/BrowserMenu.tsx')}';
 import { BrowserInstallButton } from '${local('src/features/browser/BrowserInstallButton.tsx')}';
-import { AppCenterProvider, AppManagementButton } from '${local('src/features/appCenter/AppCenter.tsx')}';
+import { AppCenterProvider } from '${local('src/features/appCenter/AppCenter.tsx')}';
 import { installWebApplication } from '${local('src/features/appCenter/appCenterStore.ts')}';
 import { ConversationHostContext } from '${local('src/features/conversationHost.ts')}';
 import { toggleBrowserBookmark, importBrowserBookmarks } from '${local('src/features/inspector/useBrowserBookmarks.ts')}';
@@ -94,7 +94,7 @@ function Harness() {
     <ConversationHostContext.Provider value={{id:'browser-fixture',plugins:[],pluginCommands:[]}}><AppCenterProvider language={language} onNavigate={app=>open({target:app.target,title:app.title})}>
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
     <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/>
-      {citation && <MarkdownContent content={citation} language="zh"/>}</div><AppManagementButton language={language}/></section>
+      {citation && <MarkdownContent content={citation} language="zh"/>}</div></section>
     {(presence.mounted || tabs.allTabs.length > 0) && <aside id="right-inspector" className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
       inert={!presence.visible} aria-hidden={!presence.visible} style={{'--right-inspector-width':width+'px'}}>
     <RightInspectorResizer width={width} windowMaximized={false} onWidthChange={setWidth} onExpand={()=>setCovered(true)} softVisible={presence.visible} label="Resize workspace"/>

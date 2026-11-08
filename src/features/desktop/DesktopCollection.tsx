@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types';
 import { uiText } from '../../i18n';
 import { useApplications } from '../appCenter/appCenterStore';
-import { useExploreActions } from '../appCenter/AppCenter';
+import { useLaunchApplication } from '../appCenter/AppCenter';
 import { useConversationArchives } from '../sidebar/conversationArchives';
 import { useComponents } from '../components/componentStore';
 import { isBuiltinComponent } from '../components/componentModel';
@@ -33,7 +33,7 @@ export function DesktopHome(props: Props) {
 }
 export function DesktopExplore({language}: {language: AppLanguage}) {
   const apps = useApplications(language);
-  const center = useExploreActions();
+  const launch = useLaunchApplication();
   const [query, setQuery] = useState('');
   const needle = query.trim().toLocaleLowerCase(language);
   const matches = apps.filter(app => [app.title, app.description].some(value => value.toLocaleLowerCase(language).includes(needle)));
@@ -44,5 +44,5 @@ export function DesktopExplore({language}: {language: AppLanguage}) {
   ].filter(group => group.entries.length);
   return <ExploreView language={language} groups={groups} query={query} onQuery={setQuery}
     featured={needle ? [] : ['builtin:md-presentation','builtin:team'].flatMap(id => apps.find(app => app.id === id) ?? [])}
-    onLaunch={center.launch}/>;
+    onLaunch={launch}/>;
 }

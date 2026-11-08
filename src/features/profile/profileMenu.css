@@ -35,5 +35,4 @@
 .app[data-floating-assistant] > .desktop-shell > :not(.main-stage),
 .app[data-floating-assistant] .window-frame :is(.desktop-menu-toggle,.window-brand,.window-history-controls) { display: none; }
 .app[data-floating-assistant] > .desktop-shell > .main-stage { position: relative; inset: auto; width: 100%; min-width: 0; max-width: none; flex: 1; display: flex; visibility: visible; transform: none; opacity: 1; pointer-events: auto; }
-.desktop-page-heading .app-center-launcher.desktop-manage { width: auto; }
 .app[data-floating-assistant] .main-stage > :not(.assistant-view) { display: none; }

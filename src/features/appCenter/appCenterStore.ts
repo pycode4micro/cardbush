@@ -38,4 +38,4 @@ export function useApplications(language: AppLanguage) {
 export const OPEN_APPLICATION_EVENT = 'cardbush-open-application';
 export const OPEN_APP_CENTER_EVENT = 'cardbush-open-app-center';
 export function requestApplication(id: string, environmentId?: string, reference?: ApplicationPromptReference) { window.dispatchEvent(new CustomEvent(OPEN_APPLICATION_EVENT, { detail: { id, environmentId, reference } })); }
-export function requestAppCenter() { window.dispatchEvent(new Event(OPEN_APP_CENTER_EVENT)); }
+export function requestAppCenter(view: 'explore' | 'manage' = 'explore') { window.dispatchEvent(new CustomEvent(OPEN_APP_CENTER_EVENT, {detail: view})); }

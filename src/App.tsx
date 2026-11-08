@@ -2052,6 +2052,7 @@ function CardbushApp() {
   const toggleSidebar = () => setSidebarCollapsed(collapsed => !collapsed);
   const windowMenus = applicationMenus(language, {
     openAppCenter: requestAppCenter,
+    manageApps: () => requestAppCenter('manage'),
     openPlugins: () => { setSettingsOpen(false); setSection('plugins'); },
     openAutomations: () => { setSettingsOpen(false); setSection('automations'); },
     newConversation: () => { handleSearchCreateConversation(); setConversationPromptFocus(value => value + 1); },
