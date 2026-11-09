@@ -2463,7 +2463,6 @@ export function ChatPanel({
                   remapProjectPath(resolveChangedFilePath(filePath, activeProjectDir), projectPathAliases), { language })}
                 onOpen={filePath => onOpenChangeReview(filePath, activeTurnId)} />}
               portalCommands={showWelcome}
-              workspacePicker={showWelcome && (host ? welcomeWorkspaceControl : <WorkspaceLocationButton language={language} projects={availableProjects} root={selectedProjectDir} disabled={sending} onSelect={onWelcomeProjectChange}/>)}
               fileDropTarget={chatBodyRef}
               compact
               language={language}
@@ -2549,7 +2548,11 @@ export function ChatPanel({
         {loading ? (
           <BackendLoading language={language} history={historyLoading} />
         ) : showWelcome ? (
-          <WelcomeComposer><div ref={composerMount.attach} /></WelcomeComposer>
+          <WelcomeComposer workspaceControl={host ? welcomeWorkspaceControl : <WorkspaceLocationButton
+            language={language} projects={availableProjects} root={selectedProjectDir}
+            disabled={sending} onSelect={onWelcomeProjectChange} />}>
+            <div ref={composerMount.attach} />
+          </WelcomeComposer>
         ) : (
           <div
             key={activeConversationId.trim() || 'new-session'}

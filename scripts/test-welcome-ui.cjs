@@ -157,7 +157,7 @@ app.whenReady().then(async () => {
               h(TopBar, { title:'新会话', language:'zh', inspectorOpen:true, onToggleInspector:noop,
                 workspaceControl:!shown && h(WorkspaceLocationButton, {key:activeId, placement:'toolbar', language:'zh', projects:projects.filter(p=>!p.missing),
                   root:routing.projectDir, disabled:running.has(activeId), onSelect:routing.changeWelcomeProject}) }),
-              h('div', { className: 'chat-body' }, h('div', { className: 'chat-content-frame' }, shown && h(WelcomeComposer, null, h(Composer, {workspacePicker:h(WorkspaceLocationButton,{language:'zh',projects,root:routing.projectDir,onSelect:routing.changeWelcomeProject}),
+              h('div', { className: 'chat-body' }, h('div', { className: 'chat-content-frame' }, shown && h(WelcomeComposer, {workspaceControl:h(WorkspaceLocationButton,{language:'zh',projects,root:routing.projectDir,onSelect:routing.changeWelcomeProject})}, h(Composer, {
                 key: activeId || 'new-session', language: 'zh', draft, onDraftChange: setDraft, sending: false, stopping: false, guidanceDeliveryMode: 'immediate', cancelEnabled: false,
                 queuedMessageCount: 0, queuedMessagePreview: '', queuedMessages: [], selectedModel: 'fixture', availableModels: [], goalAvailable: false, referencePlanAvailable: false,
                 referencePlanMode: 'off', permissionMode: 'full-access', subagentPermissionRouting: 'inherit', reasoningLevelAvailable: false, reasoningLevel: 'medium', reasoningLevels: [],
@@ -171,17 +171,13 @@ app.whenReady().then(async () => {
     `);
     await until("!!document.querySelector('.new-chat-input [data-composer-input]')", 'centered new-chat input');
     await run("changeDraft('保留我的输入草稿')"); await pause(30);
-    await run("if(!document.querySelector('.workspace-location-control > button'))document.querySelector('.composer-tools button').click()");
-      await until("!!document.querySelector('.workspace-location-control > button')",'workspace menu');
-      await run("document.querySelector('.workspace-location-control > button').click()");
+    await run("document.querySelector('.new-chat-input .workspace-location-control > button').click()");
     await until("!!document.querySelector('.ssh-dialog')", 'open project selector');
     await run("[...document.querySelectorAll('.ssh-dialog .ssh-project-list button, .ssh-dialog > button')].find(item=>item.textContent.includes('Fixture')).click()");
     await until("routing.projectDir === 'D:/fixture' && draftValue === '保留我的输入草稿'", 'attach project and transfer anonymous draft');
     const draftId = await run('routing.chat.activeConversationId');
     for (let index = 0; index < 4; index++) {
-      await run("if(!document.querySelector('.workspace-location-control > button'))document.querySelector('.composer-tools button').click()");
-      await until("!!document.querySelector('.workspace-location-control > button')",'workspace menu');
-      await run("document.querySelector('.workspace-location-control > button').click()");
+      await run("document.querySelector('.new-chat-input .workspace-location-control > button').click()");
       await until("!!document.querySelector('.ssh-dialog')", 'project menu');
       const label = index % 2 === 0 ? '不在项目中工作' : 'Fixture';
       await run(`[...document.querySelectorAll('.ssh-dialog .ssh-project-list button, .ssh-dialog > button')].find(item=>item.textContent.includes(${JSON.stringify(label)})).click()`);
@@ -258,9 +254,7 @@ app.whenReady().then(async () => {
     await until('workspaceErrors.length === 1', 'failed move is reported');
     assert.equal(await run('routing.projectDir'), '', 'failed move leaves original binding visible');
     await run('failWorkspaceSwitch = false');
-    await run("if(!document.querySelector('.workspace-location-control > button'))document.querySelector('.composer-tools button').click()");
-      await until("!!document.querySelector('.workspace-location-control > button')",'workspace menu');
-      await run("document.querySelector('.workspace-location-control > button').click()");
+    await run("document.querySelector('.workspace-location-control > button').click()");
     await until("!!document.querySelector('.ssh-dialog')", 'toolbar picker opens');
     assert.ok(await run("document.querySelector('.ssh-dialog').getBoundingClientRect().top >= 0"), 'location picker stays on screen');
     await run("[...document.querySelectorAll('.ssh-dialog .ssh-project-list button')].find(button=>button.textContent.includes('Second')).click()");

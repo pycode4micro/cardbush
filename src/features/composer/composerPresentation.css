@@ -14,5 +14,4 @@
 .composer-stack.simple .composer-surface.is-multiline > .composer-footer { display: flex; grid-column: 1 / -1; grid-row: auto; }
 @container composer (max-width:400px) { .composer-stack.simple .model-select { width: 26px; min-width: 0; padding: 3px; } .composer-stack.simple .model-select > span { display: none; } }
 
-.composer-add-menu .workspace-location-control { margin: 0; min-height: 0; padding: 4px; border-radius: 6px; background: transparent; }
 .composer-add-menu { overflow-y: auto; max-height: calc(var(--composer-popover-max-height, 460px) - 40px); }

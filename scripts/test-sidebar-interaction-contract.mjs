@@ -309,7 +309,7 @@ assert.match(workspaceLocationSource, /allowNone\s*&&[\s\S]*?onSelect\(null\)[\s
   'The shared picker retains an explicit choice to start without a project');
 assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);
 assert.match(stylesSource, /\.new-chat-input\s*\{/);
-assert.match(appSource, /workspacePicker=\{showWelcome/);
+assert.match(appSource, /<WelcomeComposer workspaceControl=\{host \? welcomeWorkspaceControl : <WorkspaceLocationButton/);
 assert.doesNotMatch(appSource, /<u>\{selectedProjectDir/);
 
 console.log('sidebar interaction contract tests passed');

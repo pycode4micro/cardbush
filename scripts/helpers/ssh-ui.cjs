@@ -26,12 +26,7 @@ module.exports = async ({run,until,pause,window,root}) => {
     fs.mkdirSync(path.join(root,'tmp'),{recursive:true});fs.writeFileSync(path.join(root,`tmp/ssh-settings-${theme}.png`),(await window.capturePage()).toPNG());
   }
   await run(`updateChat({language:'zh',loading:false,historyLoading:false,selectedProjectDir:'',activeProjectDir:'',messages:[],onWelcomeProjectChange:async (uri,reference)=>{selected.push(uri);updateChat({selectedProjectDir:uri||'',activeProjectDir:uri||'',...(reference?{draft:reference}: {})});},onDraftChange:draft=>updateChat({draft})})`);
-  const openWorkspaceMenu = async () => {
-    await run("if(!document.querySelector('.workspace-location-control button'))document.querySelector('.composer-tools button').click()");
-    await until("!!document.querySelector('.workspace-location-control button')",'workspace choices in plus');
-  };
-  await until("!!document.querySelector('.new-chat-input .composer-tools button')",'new composer'); await openWorkspaceMenu();
-  await until("!!document.querySelector('.workspace-location-control > button')",'welcome local/SSH switch');
+  await until("!!document.querySelector('.new-chat-input .workspace-location-control > button')",'welcome local/SSH switch');
   await run("window.pickerProjects=[{id:'project',title:'CardBush',rootPath:'D:/projects/cardbush'},{id:'long',title:'服务端 API',rootPath:'D:/projects/team/backend/service-api/production'},{id:'archived',title:'Archived hidden',rootPath:'D:/archived',archived:true},{id:'missing',title:'Missing hidden',rootPath:'D:/missing',missing:true},{id:'remote',title:'远程服务',rootPath:'ssh://test-server/home/developer/projects/service-api'}];updateChat({availableProjects:pickerProjects})");
   const key = async (keyCode, modifiers=[]) => {
     window.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});
@@ -120,15 +115,13 @@ module.exports = async ({run,until,pause,window,root}) => {
   await until("chatProps.draft.includes('cardbush-reference://ssh')",'@ switches actual workspace and inserts reference');
   assert.equal(await run('selected.length'),2);
   await run("updateChat({messages:[],draft:''})");await until("!!document.querySelector('.new-chat-input')",'new chat');
-  await openWorkspaceMenu();
   await run("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').click()");await until("!!document.querySelector('.ssh-dialog')",'switch back');await run("clickText('此计算机')");await until("!document.querySelector('.workspace-picker') && chatProps.selectedProjectDir === ''",'local location');
-  await openWorkspaceMenu();
   await until("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').textContent.trim() === '此计算机'", 'local location committed');
   await run("document.querySelector('.workspace-project-chip').click()");await until("document.body.textContent.includes('选择本地文件夹')",'local projects');await run("clickText('选择本地文件夹')");await until("selected.at(-1)==='D:/local-project'",'local selection');
   window.setContentSize(480, 640);
   for (const theme of ['dark', 'bright']) {
-    await run(`saved=[];viewTheme='theme-${theme}';renderView(h(React.Fragment,null,h('header',{className:'window-frame'},h(views.WindowBackButton,{language:'zh'})),h(views.WorkspaceLocationPicker,{key:'compact-'+viewTheme,language:'zh',remote:true,onSelect:()=>{}})));undefined;`);
-    await until("!!document.querySelector('.workspace-picker')",'empty SSH picker');
+    await run(`window.previousPicker=document.querySelector('.workspace-picker');saved=[];viewTheme='theme-${theme}';renderView(h(React.Fragment,null,h('header',{className:'window-frame'},h(views.WindowBackButton,{language:'zh'})),h(views.WorkspaceLocationPicker,{key:'compact-'+viewTheme,language:'zh',remote:true,onSelect:()=>{}})));undefined;`);
+    await until("!!document.querySelector('.workspace-picker') && document.querySelector('.workspace-picker') !== previousPicker",'fresh empty SSH picker');
     await run("clickText('管理 SSH 连接')");
     await until("!!document.querySelector('.ssh-compact-add')",'compact add action');
     assert.equal(await run("document.querySelector('.ssh-settings-compact h3')===null"),true,'embedded manager avoids duplicate settings header');

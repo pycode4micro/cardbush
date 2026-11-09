@@ -362,10 +362,10 @@ export function Composer({
   retainUntilAccepted = false,
   optimisticSubmission: immediateSubmission = false,
   onRetainDraft,
-  topAccessory, workspacePicker,
+  topAccessory,
 }: {
   compact?: boolean;
-  topAccessory?: ReactNode; workspacePicker?: ReactNode;
+  topAccessory?: ReactNode;
   fileDropTarget?: React.RefObject<HTMLElement | null>;
   autoFocus?: boolean;
   language: AppLanguage;
@@ -1448,7 +1448,7 @@ export function Composer({
             <ComposerPopover
               menu={activeMenu}
               simpleModels={simple}
-              workspacePicker={workspacePicker} canSwitchStyle={!presentation?.style}
+              canSwitchStyle={!presentation?.style}
               language={language}
               contextWindow={contextWindow ?? contextWindowMetrics(undefined, selectedModelConfig?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, selectedModelConfig?.maxCompletionTokens)}
               skills={skillCatalog}
@@ -1936,7 +1936,7 @@ export function composerGoalDraftPresentation(value: string) {
 function ComposerPopover({
   sourceEnabled, onSourceChange,
   menu,
-  simpleModels, workspacePicker, canSwitchStyle,
+  simpleModels, canSwitchStyle,
   language,
   contextWindow,
   skills,
@@ -1969,7 +1969,7 @@ function ComposerPopover({
   sourceEnabled: boolean;
   onSourceChange: (enabled: boolean) => void;
   menu: Exclude<ComposerMenu, null>;
-  simpleModels: boolean; workspacePicker?: ReactNode; canSwitchStyle: boolean;
+  simpleModels: boolean; canSwitchStyle: boolean;
   language: AppLanguage;
   contextWindow?: ContextWindowUsage;
   skills: SkillSummary[];
@@ -2052,7 +2052,6 @@ function ComposerPopover({
               <small>{uiText(language)('composer.attachToThisMessage')}</small>
             </span>
           </button>
-          {workspacePicker}
           {canSwitchStyle && <button type="button" className="composer-add-action" role="switch" aria-checked={simpleModels}
             aria-label={uiText(language)('homeComponents.simpleComposer')} onClick={() => setComposerStyle(simpleModels ? 'standard' : 'simple')}>
             <SlidersHorizontal/><span className="composer-add-copy"><strong>{uiText(language)('homeComponents.simpleComposer')}</strong></span>

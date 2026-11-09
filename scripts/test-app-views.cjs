@@ -730,7 +730,10 @@ app.whenReady().then(async () => {
         reasoningLevels: [], gitAvailable: false, draft: '',
       };
       for (const name of ${JSON.stringify(loadChatCallbackNames())}) chatProps[name] = noop;
-      window.updateChat = patch => { Object.assign(chatProps, patch); renderView(h(views.ChatPanel, chatProps)); };
+      window.updateChat = patch => { Object.assign(chatProps, patch);
+        const panel = h(views.ChatPanel, chatProps);
+        renderView(${JSON.stringify(['ssh', 'composer-layout'].includes(process.env.CARDBUSH_APP_VIEWS_CASE))} ? h('section', {className:'main-stage',style:{height:'100%'}}, panel) : panel);
+      };
       updateChat({});
     `);
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'attachment-layout') {
@@ -840,8 +843,7 @@ app.whenReady().then(async () => {
     await until("document.querySelector('.loading-view')?.textContent.includes('Loading conversation')", 'history loading');
     await run('updateChat({ loading: false, historyLoading: false })');
     await until("!!document.querySelector('.welcome-composer .composer-tools button')", 'centered new chat composer');
-    await run("document.querySelector('.composer-tools button').click()");
-    await until("!!document.querySelector('.workspace-location-control > button')", 'welcome composer');
+    await until("!!document.querySelector('.new-chat-input .workspace-location-control > button')", 'project selector above welcome composer');
     await run("document.querySelector('.workspace-location-control > button').click()");
     await until("!!document.querySelector('.ssh-dialog')", 'welcome project menu');
     await run("(document.querySelector('.ssh-dialog') || document).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
