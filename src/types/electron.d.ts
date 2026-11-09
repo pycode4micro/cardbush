@@ -374,6 +374,9 @@ declare global {
         outputTruncated?: boolean;
       }>;
       pastedTextAttachments: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
+      assembleHomeComponent?: (files: {name: string; text: string}[]) => Promise<string>;
+      homeComponentLibrary?: (action: 'read' | 'save' | 'migrate', revision?: number, items?: import('../features/components/componentModel').HtmlComponent[]) => Promise<import('../features/components/componentModel').ComponentCollection | null>;
+      onHomeComponentsChanged?: (listener: () => void) => () => void;
       captureInspectorRegion: (input: import('../../electron/inspectorRegionCapture').InspectorRegionCapture) => Promise<string>;
       saveImageDataUrl: (
         dataUrl: string,

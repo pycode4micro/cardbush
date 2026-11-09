@@ -110,3 +110,5 @@
   .automation-command-bar .automation-actions { margin-left: auto; }
   .automation-search-field { flex-basis: 160px; }
 }
+
+.automation-calendar-page { width:min(100%, 48rem); height: min(65vh, 36rem); }

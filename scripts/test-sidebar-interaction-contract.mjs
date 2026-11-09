@@ -305,30 +305,11 @@ assert.match(
   /const resolvedProjectDir = projectDir\?\.trim\(\) \|\| undefined;[\s\S]*?chat\.prepareConversation\(resolvedProjectDir, undefined, resolvedProjectId\)/,
   'New chat must reserve a draft using only an explicitly selected project',
 );
-assert.match(appSource, /function WelcomeProjectSwitcher\(/);
-assert.match(appSource, /function WelcomeProjectSwitcher\([\s\S]*?<WorkspaceLocationButton/,
-  'The welcome project selector delegates to the shared local/SSH location picker');
 assert.match(workspaceLocationSource, /allowNone\s*&&[\s\S]*?onSelect\(null\)[\s\S]*?t\('workspace\.noProject'\)/,
   'The shared picker retains an explicit choice to start without a project');
-assert.match(
-  appSource,
-  /className="builtin-workspace-control">\{workspaceControl !== undefined \? workspaceControl : <WelcomeProjectSwitcher[\s\S]*?\{composer === undefined \? welcomeComposer : composer\}/,
-  'The optional project selector must always be available above the welcome composer',
-);
 assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);
-assert.match(stylesSource, /\.welcome-project-switcher\s*\{/);
-assert.match(stylesSource, /\.welcome-input-stack\s*\{[\s\S]*?margin:\s*0 auto/);
-assert.match(
-  stylesSource,
-  /\.welcome-input-stack \.composer-surface,[\s\S]*?border-radius:\s*24px/,
-  'The inset project rail must join a fully rounded welcome composer',
-);
-assert.match(
-  stylesSource,
-  /\.welcome-project-switcher\s*\{[\s\S]*?width:\s*calc\(100% - 30px\)[\s\S]*?margin:\s*0 15px -1px[\s\S]*?border-radius:\s*16px 16px 0 0/,
-  'The project rail must be inset and visually joined to the welcome composer',
-);
-assert.match(readSourceFile('src/features/components/WelcomePage.tsx', 'utf8'), /<StarWordmark\s*\/>/);
+assert.match(stylesSource, /\.new-chat-input\s*\{/);
+assert.match(appSource, /workspacePicker=\{showWelcome/);
 assert.doesNotMatch(appSource, /<u>\{selectedProjectDir/);
 
 console.log('sidebar interaction contract tests passed');

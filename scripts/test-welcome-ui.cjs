@@ -74,12 +74,14 @@ async function bundle() {
     }`;
   const result = await build({ configFile: false, logLevel: 'error', plugins: [react(), {
     name: 'welcome-fixture', enforce: 'pre',
-    resolveId: id => id.endsWith('__welcome__.ts') ? '\0welcome-entry.ts' : id.endsWith('/backend/welcomeHistory') ? '\0welcome-history' : undefined,
+    resolveId: id => id.endsWith('__welcome__.ts') ? '\0welcome-entry.ts' : undefined,
     load: id => id === '\0welcome-entry.ts' ? `export * from ${JSON.stringify(path.join(root, 'src/features/chat/WelcomeComposer.tsx'))};
+      export * from ${JSON.stringify(path.join(root, 'src/features/ssh/WorkspaceLocationPicker.tsx'))};
+      export * from ${JSON.stringify(path.join(root, 'src/features/composer/Composer.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/components/TopBar.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/features/desktop/WorkspaceChatNavigation.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/features/sidebar/ChatSidebar.tsx'))};\n${navigationFixture}`
-      : id === '\0welcome-history' ? `export async function fetchWelcomeHistory(signal) { window.historyRequests++; const rows = await window.historyGate; return rows; }` : undefined,
+ : undefined,
   }], build: { write: false, minify: false, lib: { entry: path.join(root, '__welcome__.ts'), formats: ['cjs'] },
     rolldownOptions: { external: /^react(?:-dom)?(?:\/|$)/, output: { codeSplitting: false } } } });
   const output = (Array.isArray(result) ? result : [result]).flatMap(item => item.output);
@@ -118,30 +120,11 @@ app.whenReady().then(async () => {
           getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key),
         }});
       }
-      window.historyGate = new Promise(resolve => { window.deliverHistory = resolve; });
-      const nativeMatchMedia = window.matchMedia.bind(window), motion = new EventTarget();
-      motion.matches = false; motion.media = '(prefers-reduced-motion: reduce)';
-      window.matchMedia = query => query === motion.media ? motion : nativeMatchMedia(query);
-      window.setReduced = value => { motion.matches = value; motion.dispatchEvent(new Event('change')); };
-      let hidden = false;
-      Object.defineProperty(document, 'hidden', { get: () => hidden });
-      Object.defineProperty(document, 'visibilityState', { get: () => hidden ? 'hidden' : 'visible' });
-      window.setHidden = value => { hidden = value; document.dispatchEvent(new Event('visibilitychange')); };
-      const clear = CanvasRenderingContext2D.prototype.clearRect, move = CanvasRenderingContext2D.prototype.moveTo;
-      window.draws = 0; window.points = [];
-      CanvasRenderingContext2D.prototype.clearRect = function(...args) {
-        if (this.canvas.className === 'welcome-star-wordmark') { window.draws++; window.points = []; }
-        return clear.apply(this, args);
-      };
-      CanvasRenderingContext2D.prototype.moveTo = function(x,y) {
-        if (this.canvas.className === 'welcome-star-wordmark') window.points.push([x,y]);
-        return move.call(this,x,y);
-      };
       const React = require(${JSON.stringify(require.resolve('react'))});
       const { createRoot } = require(${JSON.stringify(require.resolve('react-dom/client'))});
       const module = { exports: {} };
       new Function('require','module','exports', ${JSON.stringify(code)})(require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))}), module, module.exports);
-      const { WelcomeComposer, WelcomeProjectSwitcher, TopBar, ChatSidebar, WorkspaceChatNavigation, useNavigationFixture } = module.exports, h = React.createElement, noop = () => {};
+      const { WelcomeComposer, Composer, WorkspaceLocationButton, TopBar, ChatSidebar, WorkspaceChatNavigation, useNavigationFixture } = module.exports, h = React.createElement, noop = () => {};
       localStorage.setItem('cardbush_only_talk_mode', 'false');
       localStorage.setItem('cardbush_recent_project_dir', 'D:/fixture');
       window.navigationRenders = [];
@@ -172,32 +155,32 @@ app.whenReady().then(async () => {
             h('div',{ref:setProjectsHost}), h('aside', {className:'recent-turn-drawer', ref:setRecentHost}),
             h('section', { className: 'main-stage' }, h('div', { className: 'chat-panel' },
               h(TopBar, { title:'新会话', language:'zh', inspectorOpen:true, onToggleInspector:noop,
-                workspaceControl:!shown && h(WelcomeProjectSwitcher, {key:activeId, placement:'toolbar', language:'zh', projects:projects.filter(p=>!p.missing),
-                  selectedProjectDir:routing.projectDir, disabled:running.has(activeId), onSelect:routing.changeWelcomeProject}) }),
-              h('div', { className: 'chat-body' }, h('div', { className: 'chat-content-frame' }, shown && h(WelcomeComposer, {
+                workspaceControl:!shown && h(WorkspaceLocationButton, {key:activeId, placement:'toolbar', language:'zh', projects:projects.filter(p=>!p.missing),
+                  root:routing.projectDir, disabled:running.has(activeId), onSelect:routing.changeWelcomeProject}) }),
+              h('div', { className: 'chat-body' }, h('div', { className: 'chat-content-frame' }, shown && h(WelcomeComposer, null, h(Composer, {workspacePicker:h(WorkspaceLocationButton,{language:'zh',projects,root:routing.projectDir,onSelect:routing.changeWelcomeProject}),
                 key: activeId || 'new-session', language: 'zh', draft, onDraftChange: setDraft, sending: false, stopping: false, guidanceDeliveryMode: 'immediate', cancelEnabled: false,
                 queuedMessageCount: 0, queuedMessagePreview: '', queuedMessages: [], selectedModel: 'fixture', availableModels: [], goalAvailable: false, referencePlanAvailable: false,
                 referencePlanMode: 'off', permissionMode: 'full-access', subagentPermissionRouting: 'inherit', reasoningLevelAvailable: false, reasoningLevel: 'medium', reasoningLevels: [],
                 selectedProjectDir:routing.projectDir, availableProjects:projects, onProjectChange:routing.changeWelcomeProject, onOpenConversation:routing.openConversation, skills: [], disabledSkillNames: new Set(), onToggleSkill: noop, onModelChange: noop,
                 onReferencePlanModeChange: noop, onPermissionModeChange: noop, onSubagentPermissionRoutingChange: noop, onReasoningLevelChange: noop, onConfigureModels: noop,
                 onEditQueuedMessage: noop, onGuideQueuedMessage: async()=>{}, onRemoveQueuedMessage: noop, onSend: async()=>{window.sent++}, onCancel: async()=>{},
-              })))))));
+              }))))))));
       }
       window.reactRoot = createRoot(document.getElementById('root'));
       reactRoot.render(h(React.StrictMode, null, h(Fixture)));
     `);
-    await until("document.querySelectorAll('.welcome-suggestion').length === 3 && draws > 3", 'welcome cards and animation');
-    assert.equal(await run("document.querySelector('.welcome-star-wordmark').getAttribute('aria-label')"), 'cardbush');
-    assert.ok(await run('points.length > 100'), 'word must contain visible stars');
-    assert.equal(await run("document.querySelector('.workspace-project-chip').textContent.trim()"), '选择项目', 'saved global preferences cannot select a project');
-    assert.equal(await run("document.querySelector('.only-talk-toggle')"), null);
+    await until("!!document.querySelector('.new-chat-input [data-composer-input]')", 'centered new-chat input');
     await run("changeDraft('保留我的输入草稿')"); await pause(30);
-    await run("document.querySelector('.workspace-location-control > button').click()");
+    await run("if(!document.querySelector('.workspace-location-control > button'))document.querySelector('.composer-tools button').click()");
+      await until("!!document.querySelector('.workspace-location-control > button')",'workspace menu');
+      await run("document.querySelector('.workspace-location-control > button').click()");
     await until("!!document.querySelector('.ssh-dialog')", 'open project selector');
     await run("[...document.querySelectorAll('.ssh-dialog .ssh-project-list button, .ssh-dialog > button')].find(item=>item.textContent.includes('Fixture')).click()");
     await until("routing.projectDir === 'D:/fixture' && draftValue === '保留我的输入草稿'", 'attach project and transfer anonymous draft');
     const draftId = await run('routing.chat.activeConversationId');
     for (let index = 0; index < 4; index++) {
+      await run("if(!document.querySelector('.workspace-location-control > button'))document.querySelector('.composer-tools button').click()");
+      await until("!!document.querySelector('.workspace-location-control > button')",'workspace menu');
       await run("document.querySelector('.workspace-location-control > button').click()");
       await until("!!document.querySelector('.ssh-dialog')", 'project menu');
       const label = index % 2 === 0 ? '不在项目中工作' : 'Fixture';
@@ -239,71 +222,7 @@ app.whenReady().then(async () => {
     assert.ok(await run("draftValue.startsWith('保留我的输入草稿')"), 'plugin prompts keep the project draft');
     await run('routing.newChat()'); await pause(30);
     await run("changeDraft('')"); await pause(30);
-    const suggestionDraftId = await run('routing.chat.activeConversationId');
-    await run("document.querySelector('.welcome-suggestion').click()");
-    await until("document.activeElement?.hasAttribute('data-composer-input') && draftValue.length > 0", 'default suggestion fills and focuses draft');
-    assert.equal(await run('routing.chat.activeConversationId'), suggestionDraftId, 'a default suggestion does not navigate');
-    assert.equal(await run('sent'), 0);
-    const defaultDraft = await run('draftValue');
-    await run("document.querySelectorAll('.welcome-suggestion')[1].click()");
-    assert.equal(await run('draftValue'), defaultDraft, 'default suggestions do not overwrite an existing draft');
-    await run("changeDraft('')"); await until('draftValue === ""', 'clear the default suggestion');
-    const history = [
-      ['帮我优化缓存命中率，排查动态上下文的变化。', 'a'], ['检查缓存命中率与上下文拼接，保留稳定前缀。', 'b'],
-      ['分析缓存命中率下降的原因。', 'c'], ['修复插件代理连接失败，检查网络配置。', 'a'], ['给插件增加独立的代理配置。', 'b'],
-      ['根据参考图片生成一张苹果照片。', 'a'], ['根据参考照片调整图片的背景。', 'b'],
-    ].map(([content, sessionId], i) => ({ content, sessionId: sessionId === 'b' ? 'saved-task-chat' : 'saved-project-chat', messageId: String(i), createdAt: new Date(Date.now() - 3600000).toISOString(), truncated: false }));
-    await run(`deliverHistory(${JSON.stringify(history)})`);
-    await until("document.querySelector('.welcome-suggestions-caption').textContent.includes('7 天')", 'history suggestions');
-    for (const draft of ['', '跳转时保留这份草稿']) {
-      await run(`changeDraft(${JSON.stringify(draft)})`); await pause(30);
-      const text = await run("document.querySelector('.welcome-suggestion-text').textContent");
-      const source = history.find(row => row.content === text);
-      assert.ok(source, 'the card retains a real history source');
-      assert.equal(await run("document.querySelector('.welcome-suggestion').disabled"), false, 'history navigation remains available with a draft');
-      await run("document.querySelector('.welcome-suggestion').click()");
-      await until(`routing.chat.activeConversationId === ${JSON.stringify(source.sessionId)}`, 'history suggestion opens its source conversation');
-      assert.equal(await run('draftValue'), '', 'history navigation does not paste into the destination conversation');
-      assert.equal(await run('sent'), 0, 'history navigation does not submit a new message');
-      await run('routing.newChat()');
-      await until(`routing.chat.activeConversationId === ${JSON.stringify(suggestionDraftId)}`, 'return to the original draft');
-      assert.equal(await run('draftValue'), draft, 'history navigation preserves the original draft');
-      await until("document.querySelector('.welcome-suggestions-caption').textContent.includes('7 天')", 'history restored on return');
-    }
-    await run("changeDraft('')");
-    await until('draftValue === ""', 'draft cleared');
-
-    // Movement changes star positions; removing the pointer restores the word.
-    await run('window.homePoints = points.map(point => [...point])');
-    await run(`const canvas = document.querySelector('canvas'), rect = canvas.getBoundingClientRect();
-      canvas.dispatchEvent(new PointerEvent('pointermove', {clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, pointerType:'mouse'}));`);
-    await pause(350);
-    assert.ok(await run('points.some((point,i) => Math.hypot(point[0]-homePoints[i][0],point[1]-homePoints[i][1]) > 3)'), 'pointer scatters the lettering');
-    await run("document.querySelector('canvas').dispatchEvent(new PointerEvent('pointerleave'))");
-    await pause(900);
-    assert.ok(await run('points.every((point,i) => Math.hypot(point[0]-homePoints[i][0],point[1]-homePoints[i][1]) < 2)'), 'word reassembles');
-    await run('setReduced(true)'); await pause(50);
-    let before = await run('draws'); await pause(180);
-    assert.equal(await run('draws'), before, 'reduced motion stops animation');
-    fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'tmp/welcome-redesign-dark.png'), (await win.webContents.capturePage()).toPNG());
-    await run("changeTheme('bright')"); await pause(150);
-    fs.writeFileSync(path.join(root, 'tmp/welcome-redesign-light.png'), (await win.webContents.capturePage()).toPNG());
-
-    win.setSize(780, 620); await pause(180);
-    assert.equal(await run("getComputedStyle(document.querySelector('.welcome-suggestions-list')).gridTemplateColumns.split(' ').length"), 1);
-    assert.ok(await run("document.querySelector('.welcome-hero').scrollWidth <= document.querySelector('.welcome-hero').clientWidth + 1"), 'narrow welcome does not overflow horizontally');
-    assert.ok(await run("document.querySelector('.welcome-input-stack').getBoundingClientRect().bottom <= innerHeight"), 'composer stays reachable at short height');
-    fs.writeFileSync(path.join(root, 'tmp/welcome-redesign-narrow.png'), (await win.webContents.capturePage()).toPNG());
-    await run('setReduced(false)'); await pause(90); await run('setHidden(true)');
-    before = await run('draws'); await pause(160);
-    assert.equal(await run('draws'), before, 'hidden page pauses animation');
-    await run('setHidden(false)'); await pause(120);
-    assert.ok(await run('draws') > before, 'visible page resumes animation');
-    await run('showWelcome(false)'); await until("!document.querySelector('canvas')", 'welcome unmount');
-    before = await run('draws'); await pause(180);
-    assert.equal(await run('draws'), before, 'no orphan animation after leaving welcome');
-
+    await run('showWelcome(false)');
     // Exercise actual sidebar drag handlers and the persisted-conversation hook.
     win.setSize(1180, 760);
     await run("routing.openConversation('saved-task-chat')");
@@ -339,7 +258,9 @@ app.whenReady().then(async () => {
     await until('workspaceErrors.length === 1', 'failed move is reported');
     assert.equal(await run('routing.projectDir'), '', 'failed move leaves original binding visible');
     await run('failWorkspaceSwitch = false');
-    await run("document.querySelector('.workspace-location-control > button').click()");
+    await run("if(!document.querySelector('.workspace-location-control > button'))document.querySelector('.composer-tools button').click()");
+      await until("!!document.querySelector('.workspace-location-control > button')",'workspace menu');
+      await run("document.querySelector('.workspace-location-control > button').click()");
     await until("!!document.querySelector('.ssh-dialog')", 'toolbar picker opens');
     assert.ok(await run("document.querySelector('.ssh-dialog').getBoundingClientRect().top >= 0"), 'location picker stays on screen');
     await run("[...document.querySelectorAll('.ssh-dialog .ssh-project-list button')].find(button=>button.textContent.includes('Second')).click()");
@@ -418,6 +339,6 @@ app.whenReady().then(async () => {
     assert.equal(await run("routing.chat.conversations.find(item=>item.id==='saved-project-chat').projectDir"),'D:/fixture');
     fs.writeFileSync(path.join(root, 'tmp/workspace-switch-ui.png'), (await win.webContents.capturePage()).toPNG());
     assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
-    console.log('Welcome/workspace UI passed: draft and history navigation, toolbar switching, project-to-project drag, detach, drop highlighting, busy/missing targets, failed-switch recovery, dark/light/narrow layout, animation lifecycle.');
+    console.log('Welcome/workspace UI passed: draft and history navigation, toolbar switching, project-to-project drag, detach, drop highlighting, busy/missing targets, failed-switch recovery, centered input and workspace selection.');
   } finally { win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

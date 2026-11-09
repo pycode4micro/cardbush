@@ -5,7 +5,6 @@ import { useApplications } from '../appCenter/appCenterStore';
 import { useLaunchApplication } from '../appCenter/AppCenter';
 import { useConversationArchives } from '../sidebar/conversationArchives';
 import { useComponents } from '../components/componentStore';
-import { isBuiltinComponent } from '../components/componentModel';
 import { useAssistantProfile } from '../assistant/assistantProfile';
 import { useEventExecution } from '../assistant/events/useEventExecution';
 import type { HomePage } from '../navigation/appPage';
@@ -17,14 +16,14 @@ type Props = {
   language: AppLanguage; page: HomePage; ready: boolean; unavailable: boolean; visible: boolean; conversationsLoading: boolean;
   projects: ProjectItem[]; conversations: ConversationSummary[]; onPage(page: HomePage): void;
   onProject(project: ProjectItem): void; onConversation(id: string): void; onAssistant(): void;
-  onNew(): void; onAddProject(): void; onExplore(): void;
+  onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void; onExplore(): void;
 };
 export function DesktopHome(props: Props) {
   const needsEvents = props.page.kind === 'overview' || props.page.kind === 'events' || props.page.kind === 'event';
   const { snapshot, error, refresh } = useEventExecution(props.ready && props.visible && needsEvents, props.page.kind === 'event' ? 1500 : 15000);
   const archived = useConversationArchives();
   const collection = useComponents();
-  const components = useMemo(() => collection.items.filter(item => !isBuiltinComponent(item)), [collection.items]);
+  const components = collection.items;
   const profile = useAssistantProfile();
   const projects = useMemo(() => props.projects.filter(project => !project.archived), [props.projects]);
   const conversations = useMemo(() => props.conversations.filter(item => !archived.has(item.id) && !item.metadata?.hidden)

@@ -7,11 +7,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const originalSize = window.getContentSize();
   const results = [];
   await run(String.raw`
-    window.pasteStabilitySaved = { props: { ...chatProps }, theme: window.viewTheme, components: localStorage.getItem(views.componentStorageKey) };
+    window.pasteStabilitySaved = { props: { ...chatProps }, theme: window.viewTheme, style: localStorage.getItem('cardbush.composer-style') };
     window.startPasteCase = (style, welcome, rich) => {
-      const saved = JSON.parse(localStorage.getItem(views.componentStorageKey)) || views.defaultComponents;
-      views.saveComponents({ ...saved, welcomeLayout: undefined,
-        items: saved.items.map(item => item.id === 'system-input' ? { ...item, inputStyle: style } : item) }, saved.revision);
+      views.setComposerStyle(style);
       window.pasteInitial = rich ? '[fixture](<D:/skills/fixture/SKILL.md>) ' : '';
       updateChat({ activeConversationId: welcome ? '' : 'overflow-paste', language: 'zh',
         loading: false, historyLoading: false, sending: false, stopping: false, activeTurnId: '',
@@ -87,8 +85,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     console.log('Paste stability passed: 32 overflowing/continued pastes, standard/simple, welcome/history, plain/rich, wrapped/multiline and narrow widths.');
   } finally {
     await run(`cancelAnimationFrame(window.pasteSampleFrame); window.viewTheme=pasteStabilitySaved.theme;
-      views.saveComponents(pasteStabilitySaved.components ? JSON.parse(pasteStabilitySaved.components) : views.defaultComponents,
-        JSON.parse(localStorage.getItem(views.componentStorageKey)).revision);
+      views.setComposerStyle(pasteStabilitySaved.style || 'standard');
       updateChat(pasteStabilitySaved.props);`);
     window.setContentSize(...originalSize);
     await window.webContents.removeInsertedCSS(css);

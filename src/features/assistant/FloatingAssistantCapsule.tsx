@@ -14,7 +14,7 @@ type Props = CapsuleInput & {
 };
 export function FloatingAssistantCapsule(p: Props) {
   const t = uiText(p.language);
-  const voice = useVoiceComposer(true);
+  const voice = useVoiceComposer();
   const {input, toolbar, sheet, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach} = useCapsuleControls(p);
   const bell = t('capsule.replies', { count: p.unread });
   return <div className="floating-assistant-surface" data-replies={p.repliesOpen || undefined}

@@ -99,7 +99,7 @@ async function buildViews() {
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components' ? [
       'src/shared/dialogEvents.ts',
-      'src/features/conversationHost.ts', 'src/features/components/BuiltinComponentSurface.tsx',
+      'src/features/conversationHost.ts',
       'src/features/components/ComponentsApp.tsx', 'src/features/components/HtmlComponentSurface.tsx',
       'src/features/components/HtmlComponentContext.ts', 'src/features/components/componentStore.ts',
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',
@@ -108,7 +108,7 @@ async function buildViews() {
       'src/features/inspector/useBrowserBookmarks.ts', 'src/features/composer/ComposerPortalContext.ts',
     ] : []),
     ...(['composer-presentation', 'composer-layout', 'composer-reference-sizing', 'first-submission', 'composer-paste-stability'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
-      'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
+      'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts', 'src/features/composer/composerStyle.ts',
       'src/features/composer/ComposerPortalContext.ts',
       'src/features/components/ComponentsApp.tsx',
       'src/features/components/HtmlComponentContext.ts',
@@ -128,7 +128,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll' ? ['src/hooks/useConversationHistoryPages.ts'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory' ? [
       'src/features/settings/SettingsSummaryPanel.tsx', 'src/features/settings/useAppSettings.ts',
-      'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts',
+      'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts', 'src/features/composer/composerStyle.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-prediction' ? [
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',
@@ -310,7 +310,6 @@ app.whenReady().then(async () => {
       + '\n' + readSourceFile(path.join(root, 'src/features/components/components.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/composer/composerPresentation.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/composer/queueActions.css'), 'utf8')
-      + '\n' + readSourceFile(path.join(root, 'src/features/components/welcomeLayout.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/chat/conversationComposerLayout.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/features/settings/summarySettings.css'), 'utf8')
       + '\n' + readSourceFile(path.join(root, 'src/styles/settings-controls.css'), 'utf8')
@@ -382,8 +381,6 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-components') {
       await require('./helpers/html-components-ui.cjs')({ run, until, pause, window, root });
-      await require('./helpers/builtin-components-ui.cjs')({ run, until, pause, window, root });
-      await require('./helpers/welcome-layout-ui.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no component/workspace renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'page-navigation') {
@@ -773,9 +770,7 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), [], 'no Team composer renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-layout') {
-      await require('./helpers/composer-layout.cjs')({ run, until, pause, window, root });
-      await require('./helpers/composer-centered-layout.cjs')({ run, until, pause, window, root });
-      await require('./helpers/welcome-responsive-layout.cjs')({ run, until, pause, window, root });
+      await require('./helpers/home-composer-layout.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no composer layout renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory') {
@@ -844,6 +839,8 @@ app.whenReady().then(async () => {
     await run('updateChat({ loading: true, historyLoading: true })');
     await until("document.querySelector('.loading-view')?.textContent.includes('Loading conversation')", 'history loading');
     await run('updateChat({ loading: false, historyLoading: false })');
+    await until("!!document.querySelector('.welcome-composer .composer-tools button')", 'centered new chat composer');
+    await run("document.querySelector('.composer-tools button').click()");
     await until("!!document.querySelector('.workspace-location-control > button')", 'welcome composer');
     await run("document.querySelector('.workspace-location-control > button').click()");
     await until("!!document.querySelector('.ssh-dialog')", 'welcome project menu');

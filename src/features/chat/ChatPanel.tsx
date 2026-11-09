@@ -5,7 +5,6 @@ import { VoiceConversation } from '../voice/VoiceConversation';
 import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import { QuickInputStatus } from '../composer/QuickInputStatus';
 import { ComposerPortalContext } from '../composer/ComposerPortalContext';
-import { ComposerPresentationContext } from '../composer/ComposerPresentationContext';
 import { createPortal } from 'react-dom';
 import { useConversationComposerMount } from './useConversationComposerMount';
 import { composerLayoutBox } from './composerLayoutBox';
@@ -123,6 +122,7 @@ import {
   RuntimeStatusBanner,
   ConversationConnectionNotice,
 } from './ChatStatusViews';
+import { WorkspaceLocationButton } from '../ssh/WorkspaceLocationPicker';
 import { WelcomeComposer } from './WelcomeComposer';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { TopBar } from '../../components/TopBar';
@@ -207,7 +207,6 @@ export function ChatPanel({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
-  onOpenConversation,
   onToggleSkill,
   onRefreshActiveSession,
   onSend,
@@ -317,7 +316,6 @@ export function ChatPanel({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation: () => void;
-  onOpenConversation: (conversationId: string) => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onRefreshActiveSession: RefreshActiveSession;
   onSend: (text: UserPromptInput) => Promise<void | boolean>;
@@ -369,7 +367,6 @@ export function ChatPanel({
 }) {
   const host = useContext(ConversationHostContext);
   const quickInputTarget = useContext(ComposerPortalContext);
-  const composerPresentation = useContext(ComposerPresentationContext);
   const composerMount = useConversationComposerMount(activeConversationId, host?.id);
   const runtimeSessionId = host?.sessionId ?? activeConversationId;
   const [draftContext, setDraftContext] = useConversationViewState<PromptContext[]>(
@@ -504,10 +501,10 @@ export function ChatPanel({
     window.addEventListener('keydown', toggle);
     return () => window.removeEventListener('keydown', toggle);
   }, [keyboardShortcuts, onToggleQueueLock, queueLockPending]);
+  const scrollPositionKey = JSON.stringify([host?.id ?? 'local', activeConversationId]);
   const composerDockRef = useRef<HTMLDivElement>(null);
-  const { anchored: composerAnchored, flow: composerFlow, capture: captureComposerPosition, inputStyle, customWelcome } = useConversationComposerLayout({
-    bodyRef: chatBodyRef, dockRef: composerDockRef, scrollerRef: listScrollerRef,
-    scope: JSON.stringify([host?.id ?? 'local', activeConversationId]), welcome: showWelcome, loading, embedded, interaction: hasInteraction,
+  const { capture: captureComposerPosition } = useConversationComposerLayout({
+    bodyRef: chatBodyRef, dockRef: composerDockRef, welcome: showWelcome, loading, interaction: hasInteraction,
   });
   const scrollBottomButtonRef = useRef<HTMLButtonElement>(null);
   const scrollMotion = useMemo(() => createChatScrollMotion(), []);
@@ -533,7 +530,6 @@ export function ChatPanel({
     source: string;
     scrollTop: number;
   } | null>(null);
-  const scrollPositionKey = JSON.stringify([host?.id ?? 'local', activeConversationId]);
   const scrollActivationRef = useRef<{
     scroller: HTMLElement;
     position: ConversationScrollPosition | undefined;
@@ -880,7 +876,7 @@ export function ChatPanel({
       const scroller = listScrollerRef.current;
       if (!scroller || scrollActivationRef.current?.restoring ||
           scroller.dataset.cardbushPreserveScroll === '1' || conversationReflowRef.current?.isReflowing()) return;
-      const following = !composerAnchored && autoFollowStreamRef.current &&
+      const following = autoFollowStreamRef.current &&
         !userDetachedFromBottomRef.current && !scrollbarDragActiveRef.current &&
         Date.now() >= scrollbarDragUntilRef.current && Date.now() >= manualScrollDetachUntilRef.current;
       const changed = reconcileResponseLayout(scroller, {
@@ -899,7 +895,7 @@ export function ChatPanel({
       }
       if (following && !scrollMotion.isActive()) setScrollBottomVisible(false);
     },
-    [scrollMotion, composerAnchored, setScrollBottomVisible],
+    [scrollMotion, setScrollBottomVisible],
   );
   useLayoutEffect(() => { reconcileTranscriptRef.current = reconcileTranscriptLayout; });
 
@@ -1100,7 +1096,6 @@ export function ChatPanel({
 
   const handleListWheelCapture = useCallback(
     (event: WheelEvent<HTMLElement>) => {
-      if (composerAnchored) { scrollMotion.cancel(); return; }
       if (event.defaultPrevented || wheelAlreadyHandled(event)) {
         return;
       }
@@ -1141,13 +1136,12 @@ export function ChatPanel({
       releaseWheelBottomFreeze,
       scrollMotion,
       wheelAlreadyHandled,
-      composerAnchored,
     ],
   );
 
   const handleChatBodyWheelCapture = useCallback(
     (event: WheelEvent<HTMLElement>) => {
-      if (composerAnchored) return;
+
       if (
         event.defaultPrevented ||
         wheelAlreadyHandled(event) ||
@@ -1176,7 +1170,6 @@ export function ChatPanel({
       releaseWheelBottomFreeze,
       wheelAlreadyHandled,
       wheelTargetIsListSurface,
-      composerAnchored,
     ],
   );
 
@@ -1186,7 +1179,7 @@ export function ChatPanel({
       return undefined;
     }
     const handleNativeWheel = (event: globalThis.WheelEvent) => {
-      if (composerAnchored) return;
+
       if (
         event.defaultPrevented ||
         wheelAlreadyHandled(event) ||
@@ -1224,7 +1217,6 @@ export function ChatPanel({
     releaseWheelBottomFreeze,
     wheelAlreadyHandled,
     wheelTargetIsListSurface,
-    composerAnchored,
   ]);
 
   const lockStreamFollow = useCallback(
@@ -1429,12 +1421,6 @@ export function ChatPanel({
       lastScrollTopRef.current = scroller.scrollTop;
       const metrics = readBottomMetrics(scroller);
       atBottomRef.current = metrics.visualAtBottom;
-      if (composerAnchored) {
-        autoFollowStreamRef.current = false;
-        userDetachedFromBottomRef.current = true;
-        setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
-        return;
-      }
       const now = Date.now();
       const recentLock = lastWheelLockRef.current;
       const recentWheel = now - lastWheelEventAtRef.current <= 250;
@@ -1564,7 +1550,6 @@ export function ChatPanel({
       scrollMotion,
       setScrollBottomVisible,
       shouldShowScrollBottomForMetrics,
-      composerAnchored,
     ],
   );
 
@@ -1601,7 +1586,7 @@ export function ChatPanel({
         ? composerLayoutBox(firstVisibleElement, chatBody).top
         : dockRect.top;
       const nextDockHeight = Math.ceil(dockRect.height);
-      const nextBottomInset = composerAnchored && !hasInteraction ? 0 : Math.ceil(Math.max(0, dockRect.top + dockRect.height - visibleTop));
+      const nextBottomInset = Math.ceil(Math.max(0, dockRect.top + dockRect.height - visibleTop));
       if (chatBody) {
         chatBody.style.setProperty(
           '--composer-content-top',
@@ -1685,10 +1670,10 @@ export function ChatPanel({
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
       chatBody?.style.removeProperty('--message-list-viewport-height');
     };
-  }, [captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome, composerAnchored]);
+  }, [captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome]);
 
   useLayoutEffect(() => {
-    if (loading || showWelcome || composerAnchored) return undefined;
+    if (loading || showWelcome) return undefined;
     const chatBody = chatBodyRef.current;
     const chatPanel = chatBody?.closest('.chat-panel');
     const mainStage = chatBody?.closest('.main-stage');
@@ -1761,7 +1746,6 @@ export function ChatPanel({
     scrollMountRevision,
     activeConversationId,
     showWelcome,
-    composerAnchored,
   ]);
 
   useEffect(() => {
@@ -1824,14 +1808,6 @@ export function ChatPanel({
       messageSnapshotRef.current = { conversationId: activeConversationId, ids };
       return;
     }
-    if (composerAnchored) {
-      pendingSubmittedUserFocusRef.current = false;
-      autoFollowStreamRef.current = false;
-      userDetachedFromBottomRef.current = true;
-      setScrollBottomVisible(shouldShowScrollBottomForScroller(listScrollerRef.current));
-      messageSnapshotRef.current = { conversationId: activeConversationId, ids };
-      return;
-    }
     if (
       !loading &&
       !scrollActivationRef.current?.restoring &&
@@ -1862,7 +1838,6 @@ export function ChatPanel({
     renderMessages,
     sending,
     setScrollBottomVisible,
-    composerAnchored,
     shouldShowScrollBottomForScroller,
   ]);
 
@@ -1988,14 +1963,14 @@ export function ChatPanel({
       scrollActivationRef.current = null;
       if (!scroller) return;
       const position = conversationScrollPositions.get(scrollPositionKey);
-      const freshSubmission = !composerAnchored && messageSnapshotRef.current.conversationId === activeConversationId
+      const freshSubmission = messageSnapshotRef.current.conversationId === activeConversationId
         && pendingSubmittedUserFocusRef.current;
       scrollActivationRef.current = { scroller, position, restoring: !freshSubmission };
       if (!freshSubmission) scroller.dataset.scrollRestoring = 'true';
       // Ref replay can remount a keyed child without rerunning its parent's
       // effects (StrictMode). Every activation must own a restoration commit.
       setScrollMountRevision((revision) => revision + 1);
-      autoFollowStreamRef.current = !composerAnchored && (position?.followLatest ?? true);
+      autoFollowStreamRef.current = position?.followLatest ?? true;
       userDetachedFromBottomRef.current = !autoFollowStreamRef.current;
       atBottomRef.current = autoFollowStreamRef.current;
       manualScrollDetachUntilRef.current = 0;
@@ -2009,14 +1984,14 @@ export function ChatPanel({
       if (!freshSubmission) {
         pendingSubmittedUserFocusRef.current = false;
         pendingSubmittedUserEntryUntilRef.current = 0;
-        assistantStageAnchorRef.current = composerAnchored ? '' : position?.responseAnchorKey ?? '';
+        assistantStageAnchorRef.current = position?.responseAnchorKey ?? '';
         if (position?.submittedUserReadingAnchor) {
           scroller.style.setProperty('--submitted-user-reading-anchor', position.submittedUserReadingAnchor);
         }
       }
       setScrollBottomVisible(false);
     };
-  }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible, composerAnchored]);
+  }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible]);
 
   const prependAnchor = useRef<{ sessionId: string; firstId?: string; position: ReturnType<typeof captureConversationScrollPosition> } | undefined>(undefined);
   const capturePrependAnchor = useCallback(() => {
@@ -2062,9 +2037,7 @@ export function ChatPanel({
     if (!activation?.restoring) return;
     const restore = () => {
       if (scrollActivationRef.current !== activation || !activation.restoring) return;
-      const position = composerAnchored ? { scrollTop: 0, responseAnchorKey: '', submittedUserReadingAnchor: '', anchor: null,
-        ...activation.position, followLatest: false } : activation.position;
-      restoreConversationScrollPosition(activation.scroller, position);
+      restoreConversationScrollPosition(activation.scroller, activation.position);
       lastScrollTopRef.current = activation.scroller.scrollTop;
       scrollDebug('session-scroll-restore', {
         conversationId: activeConversationId,
@@ -2099,7 +2072,6 @@ export function ChatPanel({
     readBottomMetrics,
     setScrollBottomVisible,
     shouldShowScrollBottomForMetrics,
-    composerAnchored,
   ]);
 
   useLayoutEffect(() => {
@@ -2123,7 +2095,7 @@ export function ChatPanel({
   const reflowOptions = {
     paused: () => Boolean(scrollActivationRef.current?.restoring || scrollbarDragActiveRef.current ||
       listScrollerRef.current?.dataset.cardbushPreserveScroll === '1'),
-    following: () => !composerAnchored && autoFollowStreamRef.current && !userDetachedFromBottomRef.current,
+    following: () => autoFollowStreamRef.current && !userDetachedFromBottomRef.current,
     beforeRestore: cancelScheduledStreamFollow,
     followTop: (readingTop: number) => {
       const scroller = listScrollerRef.current!;
@@ -2259,7 +2231,7 @@ export function ChatPanel({
           finishConversationScrollRestoration();
           pendingSubmittedUserEntryUntilRef.current = Date.now() + 2000;
           const shouldFollowSubmission =
-            !composerAnchored && (!showScrollBottomRef.current || !userDetachedFromBottomRef.current);
+            (!showScrollBottomRef.current || !userDetachedFromBottomRef.current);
           pendingSubmittedUserFocusRef.current = shouldFollowSubmission;
           releaseAssistantStageReservation();
           if (shouldFollowSubmission) {
@@ -2287,7 +2259,6 @@ export function ChatPanel({
       draftContext,
       sending,
       setScrollBottomVisible,
-      composerAnchored,
       captureComposerPosition,
       composerMount.beginSubmission,
     ],
@@ -2437,9 +2408,7 @@ export function ChatPanel({
       hidden={progressive}
       role={headerActionsTarget !== undefined ? 'region' : undefined}
       aria-label={headerActionsTarget !== undefined ? conversationDisplayTitle(title) : undefined}
-      className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${composerAnchored ? ' composer-anchored' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
-      data-composer-after-send={composerFlow.afterSend}
-      data-conversation-output={composerFlow.output}
+      className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
     >
       {!embedded && <TopBar
         title={title}
@@ -2486,7 +2455,6 @@ export function ChatPanel({
         onWheelCapture={handleChatBodyWheelCapture}
       >
         {!loading && (showWelcome || !hasInteraction) && createPortal(
-          <ComposerPresentationContext.Provider value={showWelcome && !composerPresentation ? { style: inputStyle } : composerPresentation}>
             <Composer
               key={composerMount.key}
               topAccessory={!showWelcome && currentTurnChangeSummary && <TurnChangeSummary
@@ -2494,7 +2462,8 @@ export function ChatPanel({
                 onContextMenu={host ? undefined : (event, filePath) => openFileContextMenu(event,
                   remapProjectPath(resolveChangedFilePath(filePath, activeProjectDir), projectPathAliases), { language })}
                 onOpen={filePath => onOpenChangeReview(filePath, activeTurnId)} />}
-              portalCommands={showWelcome && customWelcome}
+              portalCommands={showWelcome}
+              workspacePicker={showWelcome && (host ? welcomeWorkspaceControl : <WorkspaceLocationButton language={language} projects={availableProjects} root={selectedProjectDir} disabled={sending} onSelect={onWelcomeProjectChange}/>)}
               fileDropTarget={chatBodyRef}
               compact
               language={language}
@@ -2547,8 +2516,7 @@ export function ChatPanel({
               onQuickLoad={applyQuickLoad}
               onConfigureModels={onConfigureModels}
               onCreateConversation={onCreateConversation}
-            />
-          </ComposerPresentationContext.Provider>, composerMount.container)}
+            />, composerMount.container)}
         {!loading && workSummaryPresence.mounted && (
           <ConversationWorkSummary
             language={language}
@@ -2581,59 +2549,7 @@ export function ChatPanel({
         {loading ? (
           <BackendLoading language={language} history={historyLoading} />
         ) : showWelcome ? (
-          <WelcomeComposer
-            key={activeConversationId || 'new-session'}
-            composer={<div ref={composerMount.attach} />}
-            fileDropTarget={chatBodyRef}
-            language={language}
-            draft={draft}
-            onDraftChange={onDraftChange}
-            sending={sending}
-            stopping={stopping}
-            guidanceDeliveryMode={guidanceDeliveryMode}
-            cancelEnabled={Boolean(activeTurnId)}
-            queuedMessageCount={queuedMessageCount}
-            queuedMessagePreview={queuedMessagePreview}
-            queuedMessages={queuedMessages}
-            queueLocked={queueLocked}
-            queueLockPending={queueLockPending}
-            onToggleQueueLock={onToggleQueueLock}
-            selectedModel={selectedModel}
-            availableModels={availableModels}
-            teamAvailable={teamAvailable}
-            goalAvailable={goalAvailable}
-            referencePlanAvailable={referencePlanAvailable}
-            referencePlanMode={referencePlanMode}
-            permissionMode={permissionMode}
-            subagentPermissionRouting={subagentPermissionRouting}
-            reasoningLevelAvailable={reasoningLevelAvailable}
-            reasoningLevel={reasoningLevel}
-            reasoningLevels={reasoningLevels}
-            onModelChange={onModelChange}
-            onReferencePlanModeChange={onReferencePlanModeChange}
-            onPermissionModeChange={onPermissionModeChange}
-            onSubagentPermissionRoutingChange={onSubagentPermissionRoutingChange}
-            onReasoningLevelChange={onReasoningLevelChange}
-            onConfigureModels={onConfigureModels}
-            onCreateConversation={onCreateConversation}
-            onOpenConversation={onOpenConversation}
-            selectedProjectDir={selectedProjectDir}
-            availableProjects={availableProjects}
-            onProjectChange={onWelcomeProjectChange}
-            skills={skills}
-            disabledSkillNames={disabledSkillNames}
-            onToggleSkill={onToggleSkill}
-            onEditQueuedMessage={editQueuedMessage}
-            onGuideQueuedMessage={(queuedId) =>
-              onGuideQueuedMessage(queuedId, 'interrupt_and_continue')
-            }
-            onRemoveQueuedMessage={onRemoveQueuedMessage}
-            onReorderQueuedMessage={onReorderQueuedMessage}
-            onSend={handleComposerSend}
-            onCancel={onCancel}
-            workspaceControl={host ? welcomeWorkspaceControl ?? null : undefined}
-            submissionPending={submissionPending}
-          />
+          <WelcomeComposer><div ref={composerMount.attach} /></WelcomeComposer>
         ) : (
           <div
             key={activeConversationId.trim() || 'new-session'}

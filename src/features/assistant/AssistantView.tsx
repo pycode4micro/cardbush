@@ -340,8 +340,8 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
         }}/>, capsule.host);
   if (!active && !hasOpened.current) return null;
   if (!composerControls) return <VoiceConversation target={target} language={language} disabled={!ready} active={active}>{floatingView}</VoiceConversation>;
-  return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
-    data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
+  return <section className={`assistant-view chat-panel composer-layout-managed${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
+    hidden={!active} aria-label={profile.name}>
     {floatingView}
     <TopBar title={profile.name} actionsTarget={headerActionsTarget} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
       titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}

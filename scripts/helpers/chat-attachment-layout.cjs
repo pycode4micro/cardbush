@@ -55,9 +55,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
       window.setContentSize(width, 760);
       await run(`document.querySelector('.app').className='app ${theme}'`);
       await pause(150);
-      const geometry = await run(`(()=>{const surface=document.querySelector('.composer-surface'),s=surface.getBoundingClientRect(),tray=document.querySelector('.composer-attachments'),t=tray.getBoundingClientRect(),input=document.querySelector('[data-composer-input]').getBoundingClientRect(),bar=document.querySelector('.builtin-workspace-control').getBoundingClientRect();return{contained:surface.contains(tray)&&t.top>=s.top&&t.bottom<=s.bottom,above:t.bottom<=input.top,stripGap:s.top-bar.bottom,bottom:s.bottom,viewport:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth}})()`);
+      const geometry = await run(`(()=>{const surface=document.querySelector('.composer-surface'),s=surface.getBoundingClientRect(),tray=document.querySelector('.composer-attachments'),t=tray.getBoundingClientRect(),input=document.querySelector('[data-composer-input]').getBoundingClientRect(),pane=document.querySelector('.chat-content-frame').getBoundingClientRect();return{contained:surface.contains(tray)&&t.top>=s.top&&t.bottom<=s.bottom,above:t.bottom<=input.top,centerOffset:(s.top+s.bottom-pane.top-pane.bottom)/2,bottom:s.bottom,viewport:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth}})()`);
       assert.ok(geometry.contained && geometry.above, JSON.stringify(geometry));
-      assert.ok(geometry.stripGap<=1 && geometry.stripGap>=-24, 'workspace strip remains attached: '+JSON.stringify(geometry));
+      assert.ok(Math.abs(geometry.centerOffset)<=2, 'attached images stay in the centered input: '+JSON.stringify(geometry));
       assert.ok(!geometry.overflow && geometry.bottom<=geometry.viewport, JSON.stringify(geometry));
       fs.writeFileSync(path.join(root, 'tmp', `welcome-attachments-${theme}-${width}.png`), (await window.webContents.capturePage()).toPNG());
     }

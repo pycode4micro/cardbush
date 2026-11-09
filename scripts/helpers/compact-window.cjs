@@ -70,7 +70,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   for (const [width, height] of [[750,620],[560,520],[480,480]]) {
     await resize(width,height);
     assert.equal(await run('compactState.sidebarCollapsed'), true, JSON.stringify(await run('({width:innerWidth,height:innerHeight,compact:compactState.compactLayout, media:matchMedia("(max-width: 760px)").matches, errors:failures})')));
-    await fits('.window-frame'); await fits('.welcome-input-stack'); await fits('.composer-footer');
+    await fits('.window-frame'); await fits('.new-chat-input'); await fits('.composer-footer');
     await fits('.composer-actions button:last-child');
     assert.equal(await run("!!document.querySelector('.desktop-menu-toggle')"), false, 'collapsed rail contains only Back in the title bar');
     assert.equal(await run('document.documentElement.scrollWidth <= innerWidth'), true, 'no page horizontal overflow');

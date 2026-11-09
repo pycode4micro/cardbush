@@ -119,6 +119,10 @@ async function run() {
   releaseData();
   await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录' && !!document.querySelector('.desktop-covers[aria-busy=false]')"), 'conversation and events arrived');
   assert.deepEqual(await positions(), initialPositions, 'real data fills the initial toolbar and card slots without reflow');
+  if (process.argv.includes('--home-components')) {
+    await require('./helpers/home-component-publish.cjs')({root,project,win,read,visible,click,wait});
+    app.quit(); return;
+  }
   if (materialTest) {
     await click('.recent-bar-chat');
     await visible('.chat-panel[role=region] .message-list');
@@ -412,12 +416,12 @@ async function run() {
   await visible('.right-inspector');
   await click(inspector);
   win.setContentSize(1180, 760);
-  await visible('.welcome-slot-input .composer-surface');
+  await visible('.new-chat-input .composer-surface');
   await visible('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed');
-  await checkChatMargins('Welcome input centers beside the rail', '.welcome-slot-input .composer-surface');
+  await checkChatMargins('Welcome input centers beside the rail', '.new-chat-input .composer-surface');
   await click('.window-sidebar-toggle');
   await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width > 240"), 'welcome drawer opens');
-  await checkChatMargins('Welcome input centers beside the expanded drawer', '.welcome-slot-input .composer-surface');
+  await checkChatMargins('Welcome input centers beside the expanded drawer', '.new-chat-input .composer-surface');
   await click('[data-nav-section=assistant]');
   await visible('.recent-bar-chat:enabled');
   assert.equal(await titleText(), customName, 'Assistant keeps its saved name after reload even with no ordinary chats');
@@ -429,7 +433,7 @@ async function run() {
   await visible('.desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)');
   await wait(() => read("['chat','projects','assistant'].every(section => { const b = document.querySelector('.window-frame [data-nav-section='+section+']'); const r = b.getBoundingClientRect(); return r.width>=24 && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })"), 'both title bar buttons remain reachable above the open sidebar');
   await click('.window-frame [data-nav-section=chat]');
-  await visible('.desktop-shell.sidebar-is-collapsed .welcome-slot-input .composer-surface');
+  await visible('.desktop-shell.sidebar-is-collapsed .new-chat-input .composer-surface');
   await click('.window-frame [data-nav-section=projects]');
   await visible('[data-desktop-page=projects] .project-list-actions');
   await visible('[data-desktop-page=projects] [data-workspace-drop=fixture-project] .project-row');

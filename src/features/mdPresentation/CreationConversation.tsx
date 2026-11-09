@@ -129,7 +129,7 @@ export function CreationConversation({ sessionId, root, language, visible, befor
         referencePlanAvailable referencePlanMode={chat.referencePlanMode} onReferencePlanModeChange={chat.setReferencePlanMode}
         reasoningLevelAvailable reasoningLevel={chat.reasoningLevel} reasoningLevels={['none', 'low', 'medium', 'high', 'xhigh', 'max']} onReasoningLevelChange={chat.setReasoningLevel}
         skills={chat.skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
-        onSend={send} submissionPending={pending} onCancel={chat.cancelSending} onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={none} onOpenConversation={none}
+        onSend={send} submissionPending={pending} onCancel={chat.cancelSending} onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={none}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
         onGuideMessage={chat.sendTurnGuidance} onRetryGuidance={chat.retryTurnGuidance} onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance} onRemoveQueuedMessage={chat.removeQueuedMessage} onReorderQueuedMessage={chat.reorderQueuedMessage}
         onRevertChangeReport={revert} onOpenChangeReview={(path = '', turnId) => onOpenChangeReview ? onOpenChangeReview(sessionId, path, turnId) : setReview({ path, turnId })} onReplyInteraction={chat.replyToInteraction} onCancelInteraction={chat.cancelPendingInteraction} onCancelGoal={chat.cancelActiveGoal}/>

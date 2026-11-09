@@ -26,6 +26,11 @@ module.exports = async ({run,until,pause,window,root}) => {
     fs.mkdirSync(path.join(root,'tmp'),{recursive:true});fs.writeFileSync(path.join(root,`tmp/ssh-settings-${theme}.png`),(await window.capturePage()).toPNG());
   }
   await run(`updateChat({language:'zh',loading:false,historyLoading:false,selectedProjectDir:'',activeProjectDir:'',messages:[],onWelcomeProjectChange:async (uri,reference)=>{selected.push(uri);updateChat({selectedProjectDir:uri||'',activeProjectDir:uri||'',...(reference?{draft:reference}: {})});},onDraftChange:draft=>updateChat({draft})})`);
+  const openWorkspaceMenu = async () => {
+    await run("if(!document.querySelector('.workspace-location-control button'))document.querySelector('.composer-tools button').click()");
+    await until("!!document.querySelector('.workspace-location-control button')",'workspace choices in plus');
+  };
+  await until("!!document.querySelector('.new-chat-input .composer-tools button')",'new composer'); await openWorkspaceMenu();
   await until("!!document.querySelector('.workspace-location-control > button')",'welcome local/SSH switch');
   await run("window.pickerProjects=[{id:'project',title:'CardBush',rootPath:'D:/projects/cardbush'},{id:'long',title:'服务端 API',rootPath:'D:/projects/team/backend/service-api/production'},{id:'archived',title:'Archived hidden',rootPath:'D:/archived',archived:true},{id:'missing',title:'Missing hidden',rootPath:'D:/missing',missing:true},{id:'remote',title:'远程服务',rootPath:'ssh://test-server/home/developer/projects/service-api'}];updateChat({availableProjects:pickerProjects})");
   const key = async (keyCode, modifiers=[]) => {
@@ -64,7 +69,7 @@ module.exports = async ({run,until,pause,window,root}) => {
 
     await run("updateChat({availableProjects:[]})");await pause(30);await openProjects();await pause(80);
     assert.ok(await run("document.querySelector('.workspace-picker').getBoundingClientRect().height<90"),'empty menu stays compact');
-    assert.ok(await run("document.querySelector('.workspace-picker').getBoundingClientRect().bottom<document.querySelector('.workspace-project-chip').getBoundingClientRect().top"),'short bottom-anchored menu opens above the composer');
+    assert.ok(await run("(()=>{const menu=document.querySelector('.workspace-picker').getBoundingClientRect(), anchor=document.querySelector('.workspace-project-chip').getBoundingClientRect();return menu.bottom<=anchor.top || menu.top>=anchor.bottom})()"),'the project menu fits beside its opener without covering it');
     fs.writeFileSync(path.join(root,'tmp','project-picker-empty-'+theme+'.png'),(await window.capturePage()).toPNG());
     await dismissOutside();assert.deepEqual(await run('selected'),[],'dismissal never changes the workspace');
 
@@ -114,8 +119,10 @@ module.exports = async ({run,until,pause,window,root}) => {
   await until("!!document.querySelector('.ssh-dialog')",'@ opens remote picker');await until("document.querySelector('.workspace-picker')?.textContent.includes('连接并使用此目录')",'remote connection ready');await run("clickText('连接并使用此目录')");
   await until("chatProps.draft.includes('cardbush-reference://ssh')",'@ switches actual workspace and inserts reference');
   assert.equal(await run('selected.length'),2);
-  await run("updateChat({messages:[],draft:''})");await until("!!document.querySelector('.welcome-input-stack .workspace-location-control > button')",'welcome keeps workspace selection');
+  await run("updateChat({messages:[],draft:''})");await until("!!document.querySelector('.new-chat-input')",'new chat');
+  await openWorkspaceMenu();
   await run("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').click()");await until("!!document.querySelector('.ssh-dialog')",'switch back');await run("clickText('此计算机')");await until("!document.querySelector('.workspace-picker') && chatProps.selectedProjectDir === ''",'local location');
+  await openWorkspaceMenu();
   await until("document.querySelector('.workspace-location-control button[aria-label=选择工作位置]').textContent.trim() === '此计算机'", 'local location committed');
   await run("document.querySelector('.workspace-project-chip').click()");await until("document.body.textContent.includes('选择本地文件夹')",'local projects');await run("clickText('选择本地文件夹')");await until("selected.at(-1)==='D:/local-project'",'local selection');
   window.setContentSize(480, 640);

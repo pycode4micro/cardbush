@@ -45,7 +45,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const list=document.querySelector('.permission-mode-list');
       return popup.left >= 0 && popup.right <= innerWidth + 1 && popup.top >= 0 &&
         popup.bottom <= innerHeight + 1 && list.scrollWidth <= list.clientWidth + 1;
-    })()`), true, `${label}: popup fits without horizontal clipping`);
+    })()`), true, `${label}: popup fits without horizontal clipping ${await run('JSON.stringify(document.querySelector(".composer-popover.permissions").getBoundingClientRect())')}`);
   };
   try {
     for (const [language, theme, width, height, fontScale] of [

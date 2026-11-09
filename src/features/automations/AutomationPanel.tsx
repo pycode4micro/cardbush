@@ -5,6 +5,7 @@ import { isAutomationResult } from '@cardbush/bush-protocol';
 import { openAutomationRun } from './automationEvents';
 import type { AutomationCommand, AutomationDefinition, AutomationJob, AutomationOverview, AutomationRun } from '@cardbush/bush-protocol';
 import { usePageState } from '../navigation/PageNavigation';
+import { AutomationCalendar } from './AutomationCalendar';
 import { AutomationPlanCard } from './AutomationPlanCard';
 import './automations.css';
 
@@ -35,8 +36,7 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('');
-  const [savedView, setView] = usePageState<'calendar' | 'unread' | 'today' | 'all' | 'plans'>('automation-view', 'plans');
-  const view = savedView === 'calendar' ? 'plans' : savedView;
+  const [view, setView] = usePageState<'calendar' | 'unread' | 'today' | 'all' | 'plans'>('automation-view', 'plans');
   const [form, setForm] = useState<{ id: string; revision: number; name: string; prompt: string; sessionId: string; executionMode: 'isolated' | 'conversation'; kind: 'once' | 'interval' | 'event'; at: string; minutes: number; event: 'Stop' | 'PostToolUse' | 'PostToolUseFailure'; tool: string; cooldown: number; timeZone: string }>();
   const generation = useRef(0), mutation = useRef(false);
   const refresh = useCallback(async () => {
@@ -123,16 +123,16 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   return <div className="feature-content automation-panel">
     <header className="automation-heading">
       <nav className="automation-tabs" aria-label={uiText(language)('automationPanel.automationViews')}>
-        {(['plans', 'unread', 'today', 'all'] as const).map(tab => <button type="button" key={tab} aria-pressed={view === tab} onClick={() => { setView(tab); setForm(undefined); }}>
-          {{ unread: uiText(language)('automationPanel.unread'), today: uiText(language)('automationPanel.today'), all: uiText(language)('automationPanel.allResults'), plans: uiText(language)('automationPanel.plans') }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
+        {(['plans', 'calendar', 'unread', 'today', 'all'] as const).map(tab => <button type="button" key={tab} aria-pressed={view === tab} onClick={() => { setView(tab); setForm(undefined); }}>
+          {{ calendar: uiText(language)('automationPanel.calendarView'), unread: uiText(language)('automationPanel.unread'), today: uiText(language)('automationPanel.today'), all: uiText(language)('automationPanel.allResults'), plans: uiText(language)('automationPanel.plans') }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
         </button>)}
       </nav>
     </header>
-    <div className="automation-command-bar">
+    {view === 'calendar' ? <div className="automation-calendar-page"><AutomationCalendar language={language}/></div> : <div className="automation-command-bar">
       <label className="automation-search-field"><Search size={15}/><input className="automation-search" aria-label={uiText(language)('automationPanel.searchAutomations')} placeholder={uiText(language)('automationPanel.searchAutomations')} value={filter} onChange={event => setFilter(event.target.value)}/></label>
       <div className="automation-actions"><button type="button" aria-label={uiText(language)('automationPanel.refreshAutomations')} title={uiText(language)('automationPanel.refresh')} onClick={() => void refresh()}><RefreshCw size={15}/></button>
         <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={uiText(language)('automationPanel.setUpAScheduledTaskInA')}><Plus size={15}/>{uiText(language)('automationPanel.newAutomation')}</button></div>
-    </div>
+    </div>}
     {error && <p className="automation-error" role="alert">{error}</p>}
     {form && <form className="automation-form" onSubmit={event => { event.preventDefault(); save(); }}>
       <h2>{uiText(language)('automationPanel.editAutomation')}</h2>
@@ -159,8 +159,8 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
         <div className="automation-actions"><button type="button" onClick={() => setForm(undefined)}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" className="primary-button">{busy === 'form' ? (uiText(language)('automationPanel.saving')) : (uiText(language)('automationPanel.saveAutomation'))}</button></div>
       </fieldset></form>}
     {!overview && !error && <p role="status">{uiText(language)('automationPanel.loadingAutomations')}</p>}
-    {overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (uiText(language)('automationPanel.noMatchingAutomations')) : (uiText(language)('automationPanel.noAutomationsYetClickNewAutomationTo'))}</p></div>}
-    {view !== 'plans' && <section className="automation-inbox">
+    {view !== 'calendar' && overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (uiText(language)('automationPanel.noMatchingAutomations')) : (uiText(language)('automationPanel.noAutomationsYetClickNewAutomationTo'))}</p></div>}
+    {view !== 'calendar' && view !== 'plans' && <section className="automation-inbox">
       {unreadIds.length > 0 && <div className="automation-inbox-heading automation-actions"><button disabled={Boolean(busy)} type="button" onClick={() => void operate({ action: 'mark_read', runIds: unreadIds }, 'read-batch')}><Check size={14}/>{uiText(language)('automationPanel.markTheseRead', { value1: unreadIds.length })}</button></div>}
       {overview && jobs.length > 0 && !entries.length && <div className="automation-empty"><Check size={28}/><p>{view === 'unread' ? (uiText(language)('automationPanel.noUnreadResultsNewResultsWillAppear')) : (uiText(language)('automationPanel.noExecutionResultsYet'))}</p><button type="button" onClick={() => setView('plans')}>{uiText(language)('automationPanel.viewPlans')}</button></div>}
       {[...groups].map(([date, items]) => <section className="automation-day" key={date}><h2>{date}</h2>{items.map(({ job, run }) => <article key={run.id} className="automation-result" data-unread={!run.readAt && isAutomationResult(run)}>

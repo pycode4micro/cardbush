@@ -1,7 +1,7 @@
 import { uiText } from '../../i18n';
 import type { CanvasItem, CanvasSnapshot } from '@cardbush/bush-protocol';
 import { getComponents, saveComponents } from '../components/componentStore';
-import { isBuiltinComponent, maxComponentBytes, type HtmlComponent } from '../components/componentModel';
+import { maxComponentBytes, type HtmlComponent } from '../components/componentModel';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
 async function componentHtml(item: CanvasItem): Promise<string> {
@@ -21,19 +21,18 @@ async function componentHtml(item: CanvasItem): Promise<string> {
   const data = canvas.toDataURL('image/jpeg', .7);
   return `<style>body{margin:0}img{display:block;width:100%;height:100vh;object-fit:contain}</style><img alt="${escape(uiText()('canvasComponents.title_canvas_snapshot', { title: item.title }))}" src="${data}">`;
 }
-export async function extractCanvasComponents(snapshot: CanvasSnapshot, selectedId?: string, welcome = false) {
-  const selected = welcome ? snapshot.document.items : snapshot.document.items.filter(item => item.id === selectedId);
+export async function extractCanvasComponents(snapshot: CanvasSnapshot, selectedId?: string, home = false) {
+  const selected = home ? snapshot.document.items : snapshot.document.items.filter(item => item.id === selectedId);
   if (!selected.length) throw Error(uiText()('canvasComponents.select_content_to_extract_first'));
-  const previous = getComponents();
-  if (previous.items.filter(item => !isBuiltinComponent(item)).length + selected.length > 12) throw Error(uiText()('canvasComponents.the_component_library_holds_12_custom_components'));
+  const previous = await getComponents();
+  if (previous.items.length + selected.length > 12) throw Error(uiText()('canvasComponents.the_component_library_holds_12_custom_components'));
   const items: HtmlComponent[] = [];
   for (const item of selected) {
     const html = await componentHtml(item);
     if (new TextEncoder().encode(html).length > maxComponentBytes) throw Error(uiText()('canvasComponents.extract_a_smaller_region_this_component_exceeds'));
     items.push({ id: crypto.randomUUID(), title: item.title || snapshot.document.title || uiText()('canvasComponents.canvas'), html, allowActions: false,
-      width: Math.max(3, Math.min(12, Math.round(item.frame.width / snapshot.document.width * 12))), height: Math.min(1200, item.frame.height), order: previous.items.length + items.length });
+      width: Math.max(3, Math.min(12, Math.round(item.frame.width / snapshot.document.width * 12))), height: Math.min(1200, item.frame.height), home, order: previous.items.length + items.length });
   }
-  const placements = items.map((component, index) => { const f = selected[index].frame; return { componentId: component.id, x: f.x / snapshot.document.width * 100, y: f.y, width: f.width / snapshot.document.width * 100, height: f.height }; });
-  saveComponents({ ...previous, items: [...previous.items, ...items], ...(welcome ? { welcomeLayout: { viewportHeight: snapshot.document.height + 200, items: [...placements, { componentId: 'system-input', x: 15, y: snapshot.document.height, width: 70, height: 180, composerDock: 'bottom' as const }] } } : {}) }, previous.revision);
+  await saveComponents({ ...previous, items: [...previous.items, ...items] }, previous.revision);
   return selected.some(item => item.kind === 'file');
 }

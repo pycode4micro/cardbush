@@ -8,7 +8,7 @@ import { useCalendarDayDetails } from './useCalendarDayDetails';
 import { CalendarMonthGrid } from './CalendarMonthGrid';
 import { calendarDayKey, calendarEntriesForDays, calendarMonthDays, importedEntriesForDays, localDay, shiftCalendarDay, shiftCalendarMonth } from './automationCalendarModel';
 
-export function CalendarWidget({ language }: { language: string }) {
+export function AutomationCalendar({ language }: { language: string }) {
   const uiLanguage = language, locale = language;
   const [now, setNow] = useState(Date.now), [selected, setSelected] = useState(() => localDay(new Date()));
   const [settingsOpen, setSettingsOpen] = useState(false);

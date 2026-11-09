@@ -24,7 +24,7 @@ export function AssistantComposer({ controls, language, draft, onDraftChange, re
   quote?: ReactNode;
 }) {
   return <ComposerReferenceContext.Provider value={{ sessionId: PERSONAL_ASSISTANT_SESSION, browserTabs, messages, nextStepPrediction, predictionPending }}>
-    <ComposerPresentationContext.Provider value={{ style: 'simple', preservePermissions: true }}>
+    <ComposerPresentationContext.Provider value={{ style: 'simple' }}>
       <Composer {...controls} compact language={language} draft={draft} onDraftChange={onDraftChange}
         topAccessory={(interaction || quote) && <div className="assistant-composer-accessories">{interaction}{quote}</div>}
         fileDropTarget={fileDropTarget} inputReadOnly={!ready} submissionPending={submitting}

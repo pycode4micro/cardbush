@@ -5,6 +5,4 @@ import { createContext } from 'react';
 export const ComposerPresentationContext = createContext<{
   style?: 'standard' | 'simple';
   portalInputOnly?: boolean;
-  preview?: boolean;
-  preservePermissions?: boolean;
 } | null>(null);

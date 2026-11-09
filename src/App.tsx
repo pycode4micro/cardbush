@@ -2269,13 +2269,11 @@ function CardbushApp() {
                 skills: chat.skills, disabledSkillNames, onToggleSkill: toggleSkillEnabled }}
               onManageHosts={() => { showTeamWorkspaceTab('agents'); setSection('team'); }}/>
               <HtmlComponentContext.Provider value={{ revision: chat.activeConversationId || '__new__', sessionId: chat.activeConversationId, language, running: chat.sending,
-                draft: activeDraft, notice: chat.error || chat.notice || undefined,
-                selectSuggestion: suggestion => { if (suggestion.sessionId) openConversation(suggestion.sessionId); else setActiveDraft(suggestion.text); },
                 fill: text => { setActiveDraft(text); setSection('chat'); },
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
                   onError: error => { void showUiError(uiText(language)('app.componentMessageFailed'), error instanceof Error ? error.message : String(error)); } }),
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
-            {section === 'home' ? <DesktopHome projectsRef={setProjectsHost} language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
+            {section === 'home' ? <DesktopHome onCreateComponent={openPluginPrompt} projectsRef={setProjectsHost} language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
               page={homePage} onPage={setHomePage} projects={projectItems} conversations={chat.conversations}
               conversationsLoading={runtimeStartup.phase === 'initializing' || chat.loading}
               onProject={project => handleSidebarProjectAction('newChat', project)} onAddProject={handleSidebarAddProject}
@@ -2363,7 +2361,6 @@ function CardbushApp() {
                 onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
                 onCreateConversation={handleSidebarCreateConversation}
-                onOpenConversation={openConversation}
                 onToggleSkill={toggleSkillEnabled}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}

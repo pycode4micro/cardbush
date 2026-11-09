@@ -533,6 +533,13 @@ const desktopApi = {
       stderr: string;
       outputTruncated?: boolean;
     }>,
+  assembleHomeComponent: (files: {name: string; text: string}[]) => ipcRenderer.invoke('home-components:assemble', files),
+  homeComponentLibrary: (action: string, revision?: number, items?: unknown[]) => ipcRenderer.invoke('home-components:library', action, revision, items),
+  onHomeComponentsChanged: (listener: () => void) => {
+    const changed = () => listener();
+    ipcRenderer.on('home-components:changed', changed);
+    return () => { ipcRenderer.removeListener('home-components:changed', changed); };
+  },
   captureInspectorRegion: (input: import('./inspectorRegionCapture').InspectorRegionCapture) => ipcRenderer.invoke('inspector:capture-region', input),
   saveImageDataUrl: (
     dataUrl: string,

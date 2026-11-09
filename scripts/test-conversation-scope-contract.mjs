@@ -152,17 +152,17 @@ assert.doesNotMatch(
 );
 assert.match(
   hookSource,
-  /conversation = await persistPreparedConversation\(candidate\)/,
+  /conversation = await persistPreparedConversation\(candidate, titleSource\)/,
   'a prepared conversation must be persisted only from the first send path',
 );
 assert.match(
   hookSource,
-  /markSessionRunning\(sessionId\);[\s\S]*?conversation = await persistPreparedConversation\(candidate\)/,
+  /markSessionRunning\(sessionId\);[\s\S]*?conversation = await persistPreparedConversation\(candidate, titleSource\)/,
   'the first send must claim its local session before asynchronous persistence to prevent duplicate submissions',
 );
 assert.match(
   hookSource,
-  /conversation = await persistPreparedConversation\(candidate\);[\s\S]*?catch \{[\s\S]*?clearSessionRunning\(sessionId\)/,
+  /conversation = await persistPreparedConversation\(candidate, titleSource\);[\s\S]*?catch \{[\s\S]*?clearSessionRunning\(sessionId\)/,
   'a failed first persistence must release the local send lock and preserve a retryable draft',
 );
 assert.match(
@@ -207,7 +207,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /<WelcomeProjectSwitcher[\s\S]*?disabled=\{(?:chat\.)?sending\}/,
+  /<WorkspaceLocationButton[\s\S]*?disabled=\{(?:chat\.)?sending\}/,
   'a project draft cannot change scope while its first Turn is being created or executed',
 );
 assert.match(fs.readFileSync(path.join(root, 'src/features/ssh/WorkspaceLocationPicker.tsx'), 'utf8'), /disabled=\{disabled \|\| busy\}/);

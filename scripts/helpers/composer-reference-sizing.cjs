@@ -14,9 +14,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.referenceSends=[];
     window.referenceOpens=[];
     window.addEventListener('cardbush-open-application',event=>referenceOpens.push(event.detail));
-    const previous=JSON.parse(localStorage.getItem(views.componentStorageKey))||views.defaultComponents;
-    views.saveComponents({...previous,items:previous.items.map(item=>item.id==='system-input'?{...item,inputStyle:'simple'}:item),
-      welcomeLayout:{items:[{componentId:'system-input',x:10,y:460,width:80,height:100,inputStyle:'simple'}]}},previous.revision);
+    views.setComposerStyle('simple');
     window.referenceInput=()=>document.querySelector('[data-composer-input]');
     window.selectReferenceInput=(end=false)=>{
       const input=referenceInput();input.focus();const range=document.createRange();range.selectNodeContents(input);
@@ -32,7 +30,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       availableModels:[{id:'fixture',modelName:'Test model',provider:'fixture',enabled:true}],
       onDraftChange:draft=>updateChat({draft}),onSend:async text=>{referenceSends.push(text);updateChat({draft:''});}});
   `);
-  await until('!!document.querySelector(".custom-layout .composer-stack.simple textarea")', 'custom simple welcome composer');
+  await until('!!document.querySelector(".welcome-composer .composer-stack.simple textarea")', 'custom simple welcome composer');
   const baseline = await run('referenceGeometry()');
   await run('referenceInput().focus()'); await window.webContents.insertText('@插件');
   await until('!!document.querySelector("[data-command-id=\\"application:builtin:plugins\\"]")', 'plugin application in mention menu');

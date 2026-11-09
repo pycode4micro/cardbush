@@ -203,7 +203,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         reasoningLevelAvailable reasoningLevel={chat.reasoningLevel} reasoningLevels={['none', 'low', 'medium', 'high', 'xhigh', 'max']} onReasoningLevelChange={chat.setReasoningLevel}
         skills={chat.skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
         onSend={send} onVoiceSend={chat.sendVoiceMessage} submissionPending={submissionPending} onCancel={chat.cancelSending}
-        onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={nothing} onOpenConversation={nothing}
+        onRefreshActiveSession={chat.refreshActiveSession} onCreateConversation={nothing}
         onRetryMessage={chat.retryFailedUserMessage} onRegenerate={chat.regenerateAssistantMessage} onEditUserMessage={chat.editUserMessageAndRegenerate}
         onGuideMessage={async (message, text, mode) => { const accepted = await chat.sendTurnGuidance({ ...message, conversationId: sessionId }, text, mode); if (accepted) setDraft(current => current.trim() === readUserPrompt(text).text.trim() ? '' : current); return accepted; }}
         onRetryGuidance={message => chat.retryTurnGuidance(message, () => setDraft(current => current.trim() === message.content.trim() ? '' : current))}

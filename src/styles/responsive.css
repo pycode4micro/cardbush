@@ -76,8 +76,6 @@
 }
 
 @media (max-height: 540px) {
-  .welcome-star-wordmark { height: 66px; }
-  .welcome-hero { padding-bottom: 10px; }
   .welcome-composer { padding-top: 8px; padding-bottom: 8px; }
   .composer-dock { padding-top: 24px; padding-bottom: 8px; }
   .composer-surface > textarea, .composer-surface > .composer-prompt-editor { max-height: 24vh; }

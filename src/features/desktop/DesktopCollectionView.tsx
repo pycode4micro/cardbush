@@ -6,6 +6,7 @@ import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types'
 import { ApplicationIcon } from '../appCenter/AppCenter';
 import type { ApplicationEntry } from '../appCenter/appCenterModel';
 import { FriendsEventDetails, FriendsExecutionRequests } from '../assistant/events/EventDetails';
+import { ComponentsApp } from '../components/ComponentsApp';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
 import { HtmlComponentContext } from '../components/HtmlComponentContext';
 import type { HtmlComponent } from '../components/componentModel';
@@ -73,7 +74,7 @@ type HomeProps = {
   language: AppLanguage; page: HomePage; conversationsLoading: boolean; projects: ProjectItem[]; conversations: ConversationSummary[]; assistantName: string;
   events: FriendsWorkEvent[]; snapshot?: FriendsSnapshot; components: HtmlComponent[]; error: boolean; retry(): Promise<void>;
   onPage(page: HomePage): void; onProject(project: ProjectItem): void; onConversation(id: string): void;
-  onAssistant(): void; onExplore(): void; onNew(): void; onAddProject(): void;
+  onAssistant(): void; onExplore(): void; onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void;
 };
 export function DesktopHomeView(p: HomeProps) {
   const {language, page, events, projects, conversations, onPage} = p;
@@ -133,12 +134,12 @@ export function DesktopHomeView(p: HomeProps) {
       <FeaturedShelf language={language} busy={waitingForEvents}>
         <CoverCard card={lead}/><CoverCard card={assistant}/><CoverCard card={projectCard}/><CoverCard card={last}/>
       </FeaturedShelf>
+      <ComponentsApp language={language} home onCreate={p.onCreateComponent}/>
       <Shelf title={eventLabel} open={() => onPage({kind:'events'})}><div className="desktop-rows">{waitingForEvents ? pendingRow : events.length ? eventRows(events.slice(0,6)) :
         <Row title={p.error ? t('desktop.retryEvents') : t('desktop.openAssistant')} detail={p.error ? undefined : p.assistantName} icon={<Waves/>} open={p.error ? p.retry : p.onAssistant}/>}</div></Shelf>
       <Shelf title={projectLabel} open={() => onPage({kind:'projects'})}><div className="desktop-rows">{projects.length ? projectRows(projects.slice(0,6)) : addProject}</div></Shelf>
       <Shelf title={recent} open={() => onPage({kind:'recent'})}><div className="desktop-rows">{conversations.length ? recentRows(conversations.slice(0,6)) : p.conversationsLoading ? pendingRow : newChat}</div></Shelf>
-      {p.components.length > 0 && <Shelf title={t('appCenterModel.components')}><div className="desktop-rows">{p.components.map(item =>
-        <Row key={item.id} title={item.title} icon={<Blocks/>} open={() => onPage({kind:'component',id:item.id})}/>)}</div></Shelf>}
+
     </>}
     {page.kind === 'events' && <div className="desktop-list">{eventRows(events)}{!events.length && <p role="status">{t(p.error ? 'desktop.eventsUnavailable' : !p.snapshot ? 'desktop.loadingEvents' : 'yourFriends.noEvents')}</p>}
       {p.error && <Row title={t('desktop.retryEvents')} icon={<Waves/>} open={p.retry}/>}

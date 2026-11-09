@@ -171,9 +171,9 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
       reference: { mode: 'snapshot', source, page: region.page, sheet: region.sheet, cells: region.cells?.join(',').slice(0, 200), locator: region.locator.slice(0, 8000), text: region.text.slice(0, 20000), rect: region.pageRect ?? region.documentRect } }], { width, height }), snapshot.revision);
     setSelectedId(id); setFileView(undefined); setNotice(uiText(language)('creationCanvasApp.excerptSnapshotAddedWithItsSourceLocation'));
   };
-  const extract = (welcome: boolean) => action(async () => {
-    if (!current.current) return; const snapshots = await extractCanvasComponents(current.current, selectedId, welcome);
-    setNotice((welcome ? uiText(language)('creationCanvasApp.appliedToTheNewChatLayout') : uiText(language)('creationCanvasApp.savedToComponents')) + (snapshots ? uiText(language)('creationCanvasApp.fileContentWasSavedAsAVisible') : ''));
+  const extract = (home: boolean) => action(async () => {
+    if (!current.current) return; const snapshots = await extractCanvasComponents(current.current, selectedId, home);
+    setNotice((home ? uiText(language)('homeComponents.placed') : uiText(language)('creationCanvasApp.savedToComponents')) + (snapshots ? uiText(language)('creationCanvasApp.fileContentWasSavedAsAVisible') : ''));
   });
   return <div className="creation-canvas-app" onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => {
     if (!event.dataTransfer.files.length) return; event.preventDefault(); const paths = Array.from(event.dataTransfer.files).map(file => window.cardbushDesktop?.getPathForFile(file) || '').filter(Boolean); void addPaths(paths);
@@ -199,7 +199,7 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
         {teamChoices.error && <small role="alert">{teamChoices.error}</small>}
         <button role="menuitem" disabled={busy || !snapshot} onClick={() => void action(async () => { const value = current.current!; const result = await window.cardbushDesktop!.creationCanvas({ action: 'export', path: value.path, expectedRevision: value.revision }); if (result) setNotice(`${uiText(language)('creationCanvasApp.savedTo')} ${result.path}`); })}><FolderDown size={16}/>{uiText(language)('creationCanvasApp.saveToFolder')}</button>
         <button role="menuitem" disabled={busy || !selectedId} onClick={() => void extract(false)}><Copy size={16}/>{uiText(language)('creationCanvasApp.extractSelectionAsAComponent')}</button>
-        <button role="menuitem" disabled={busy || !snapshot?.document.items.length} onClick={() => void extract(true)}><LayoutTemplate size={16}/>{uiText(language)('creationCanvasApp.useAsNewChatLayout')}</button>
+        <button role="menuitem" disabled={busy || !snapshot?.document.items.length} onClick={() => void extract(true)}><LayoutTemplate size={16}/>{uiText(language)('homeComponents.placeCanvas')}</button>
       </div></>}</div>
     </div>
     <div className="canvas-workspace">

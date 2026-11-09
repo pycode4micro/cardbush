@@ -7,11 +7,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await window.webContents.insertCSS(fs.readFileSync(path.join(root,'src/features/inspector/inspectorWorkspace.css'),'utf8'));
   await run(`
     window.presentationPermissions=[];window.presentationSends=[];
-    window.saveInputStyle=(catalog,placement)=>{
-      const previous=JSON.parse(localStorage.getItem(views.componentStorageKey))||views.defaultComponents;
-      views.saveComponents({...previous,items:previous.items.map(item=>item.id==='system-input'?{...item,inputStyle:catalog}:item),
-        welcomeLayout:placement?{items:[{componentId:'system-input',x:10,y:200,width:80,height:120,inputStyle:placement}]}:undefined},previous.revision);
-    };
+    window.saveInputStyle=(style, selected) => views.setComposerStyle(selected ?? style);
     saveInputStyle('simple');
     updateChat({loading:false,historyLoading:false,language:'zh',activeConversationId:'presentation',welcomeEnabled:true,
       messages:[],draft:'第一条消息',sending:false,activeTurnId:'',permissionMode:'task_free',
@@ -21,16 +17,16 @@ module.exports = async ({ run, until, pause, window, root }) => {
       onCancel:async()=>updateChat({sending:false,activeTurnId:''})});
   `);
   await until('!!document.querySelector(".welcome-composer .composer-stack.simple")','welcome uses saved simple style');
-  await until('chatProps.permissionMode==="all_free"','new simple conversation sets its default permission');
+  assert.equal(await run('chatProps.permissionMode'),'task_free','changing presentation preserves the permission choice');
   const checkSimpleWelcome = async () => {
-    assert.equal(await run('getComputedStyle(document.querySelector(".welcome-input-stack.simple")).boxShadow'),'none','simple welcome has no painted outer card');
-    assert.equal(await run('getComputedStyle(document.querySelector(".welcome-input-stack.simple")).backgroundColor'),'rgba(0, 0, 0, 0)','simple layout spacing is transparent');
+    assert.equal(await run('getComputedStyle(document.querySelector(".new-chat-input")).boxShadow'),'none','simple welcome has no painted outer card');
+    assert.equal(await run('getComputedStyle(document.querySelector(".new-chat-input")).backgroundColor'),'rgba(0, 0, 0, 0)','simple layout spacing is transparent');
     assert.equal(await run('getComputedStyle(document.querySelector(".composer-surface")).borderRadius'),'30px','only the input capsule keeps its rounded surface');
   };
   await run('updateChat({draft:""})'); await until('document.querySelector("[data-composer-input]").value===""','empty welcome draft');
   await checkSimpleWelcome();
   await run('document.querySelector(".app").classList.replace("theme-dark","theme-light");saveInputStyle("simple","simple");');
-  await until('!!document.querySelector(".custom-layout .welcome-input-stack.simple")','custom simple welcome layout');
+  await until('!!document.querySelector(".welcome-composer .composer-stack.simple")','custom simple welcome layout');
   await checkSimpleWelcome(); await pause();
   fs.writeFileSync(path.join(root,'tmp','welcome-input-simple-light.png'),(await window.webContents.capturePage()).toPNG());
   await run('updateChat({draft:"第一条消息"});document.querySelector(".app").classList.replace("theme-light","theme-dark");');
@@ -57,7 +53,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('document.querySelector(".model-select").click()');await until('!!document.querySelector(".model-context-section")','standard menu restores context controls');
   await run('document.querySelector(".model-select").click();saveInputStyle("standard","simple");');
   await until('!!document.querySelector(".composer-stack.simple")','layout simple override applies to existing conversation');
-  assert.deepEqual(await run('presentationPermissions'),['all_free'],'presentation updates never escalate existing session permission');
+  assert.deepEqual(await run('presentationPermissions'),[],'presentation updates never escalate existing session permission');
   await run('renderView(null)');await until('!document.querySelector(".chat-panel")','unmounted');
   await run('updateChat({activeConversationId:"reopened"})');
   await until('!!document.querySelector(".composer-dock .composer-stack.simple")','reopened conversations use saved style');

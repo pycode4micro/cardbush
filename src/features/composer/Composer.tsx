@@ -16,8 +16,7 @@ import { ApplicationIcon } from '../appCenter/AppCenter';
 import { ConversationHostContext } from '../conversationHost';
 import { ComposerPortalContext } from './ComposerPortalContext';
 import { ComposerPresentationContext } from './ComposerPresentationContext';
-import { useComponents } from '../components/componentStore';
-import { welcomeInputStyle } from '../components/componentModel';
+import { setComposerStyle, useComposerStyle } from './composerStyle';
 import './composerPresentation.css';
 import { ComposerCommandPortal } from './ComposerCommandPortal';
 import { useSshConnections } from '../ssh/SshConnectionsPanel';
@@ -283,7 +282,8 @@ function composerPopoverAnchorFromTrigger(
     Math.max(180, window.innerWidth - padding * 2),
   );
   const roomBelow = window.innerHeight - rect.bottom - padding;
-  const placement: ComposerPopoverPlacement = roomBelow >= 170 ? 'below' : 'above';
+  const roomAbove = rect.top - padding;
+  const placement: ComposerPopoverPlacement = roomBelow >= Math.min(420, roomAbove) ? 'below' : 'above';
   const targetY = placement === 'below' ? rect.bottom + gap : rect.top - gap;
   const targetX = rect.left;
   return {
@@ -362,10 +362,10 @@ export function Composer({
   retainUntilAccepted = false,
   optimisticSubmission: immediateSubmission = false,
   onRetainDraft,
-  topAccessory,
+  topAccessory, workspacePicker,
 }: {
   compact?: boolean;
-  topAccessory?: ReactNode;
+  topAccessory?: ReactNode; workspacePicker?: ReactNode;
   fileDropTarget?: React.RefObject<HTMLElement | null>;
   autoFocus?: boolean;
   language: AppLanguage;
@@ -437,22 +437,9 @@ export function Composer({
   }, [draft, rememberDraft]);
   const portalTarget = useContext(ComposerPortalContext);
   const presentation = useContext(ComposerPresentationContext);
-  const components = useComponents();
-  const simple = (presentation?.style ?? welcomeInputStyle(components)) === 'simple';
+  const preferredStyle = useComposerStyle();
+  const simple = (presentation?.style ?? preferredStyle) === 'simple';
   const inputOnly = Boolean(portalTarget) && (presentation?.portalInputOnly ?? true);
-  const initializePermissions = Boolean(presentation?.style && !presentation.preview && !presentation.preservePermissions);
-  const simplePermissionInitialized = useRef(false);
-  useEffect(() => {
-    // Continuing a conversation changes presentation only, preserving its permissions.
-    if (!initializePermissions) return;
-    if (!simple) {
-      simplePermissionInitialized.current = false;
-    } else if (!simplePermissionInitialized.current) {
-      // Apply the default on entry, without overwriting later permission changes.
-      simplePermissionInitialized.current = true;
-      if (permissionMode !== 'all_free') onPermissionModeChange('all_free');
-    }
-  }, [simple, initializePermissions, permissionMode, onPermissionModeChange]);
   const runtimeStartup = useRuntimeStartupStatus(!host);
   const keyboardShortcuts = useKeyboardShortcuts();
   const immediatePendingRef = useRef(false);
@@ -473,7 +460,7 @@ export function Composer({
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
-  const voiceComposer = useVoiceComposer(!presentation?.preview);
+  const voiceComposer = useVoiceComposer();
   const textareaRef = useRef<ComposerPromptInputHandle>(null);
   const commandSelection = useRef<{ draft: string; caret: number } | null>(null);
   useLayoutEffect(() => {
@@ -486,10 +473,10 @@ export function Composer({
     textareaRef.current?.setSelectionRange(selection.caret, selection.caret);
   }, [draft]);
   useEffect(() => {
-    if (!portalTarget || presentation?.preview) return;
+    if (!portalTarget) return;
     const frame = requestAnimationFrame(() => textareaRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [portalTarget, presentation?.preview]);
+  }, [portalTarget]);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
@@ -563,7 +550,7 @@ export function Composer({
     draft.trim().length > 0 ||
     imageAttachments.length > 0 ||
     fileAttachments.length > 0;
-  const predictionAvailable = memory.predictions && !presentation?.preview && runtimeReady && !sending && !stopping &&
+  const predictionAvailable = memory.predictions && runtimeReady && !sending && !stopping &&
     !referenceContext.predictionPending && !submissionPending && !inputReadOnly && !hasContent && draft.length === 0 &&
     attachmentUploads === 0 && queuedMessageCount === 0 && !commandState && !voiceComposer.visible;
   const nextStep = useNextStepPrediction(referenceContext.messages, referenceContext.sessionId, host?.id, predictionAvailable, referenceContext.nextStepPrediction);
@@ -1461,6 +1448,7 @@ export function Composer({
             <ComposerPopover
               menu={activeMenu}
               simpleModels={simple}
+              workspacePicker={workspacePicker} canSwitchStyle={!presentation?.style}
               language={language}
               contextWindow={contextWindow ?? contextWindowMetrics(undefined, selectedModelConfig?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS, selectedModelConfig?.maxCompletionTokens)}
               skills={skillCatalog}
@@ -1509,7 +1497,7 @@ export function Composer({
                 if (activeMenu === 'teams') focusComposer(teamInsertionCaret.current);
                 if (activeMenu === 'skills') focusComposer(skillInsertion.current.end);
               }}
-              anchor={popoverAnchor}
+              anchor={popoverAnchor} maxHeight={popoverMaxHeight}
             />
           );
           const portalRoot = document.querySelector<HTMLElement>('.app') ?? document.body;
@@ -1582,7 +1570,7 @@ export function Composer({
           skills={skillCatalog}
           pluginCommands={pluginCommands}
           language={language}
-          autoFocus={autoFocus && !presentation?.preview}
+          autoFocus={autoFocus}
           value={composerInputValue}
           onChange={(next, caret) => {
             if (goalDraft) {
@@ -1741,8 +1729,8 @@ export function Composer({
               <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
-            <VoiceButton language={language} onTranscript={insertDictation} onTranscriptUpdate={insertDictation} disabled={inputReadOnly || submissionPending || Boolean(presentation?.preview)} />
-            <VoiceCallButton callEnabled={!sending && !submissionPending && !inputReadOnly && !presentation?.preview && runtimeReady}
+            <VoiceButton language={language} onTranscript={insertDictation} onTranscriptUpdate={insertDictation} disabled={inputReadOnly || submissionPending} />
+            <VoiceCallButton callEnabled={!sending && !submissionPending && !inputReadOnly && runtimeReady}
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
               disabled={submissionPending || attachmentUploads > 0 || (!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
@@ -1948,7 +1936,7 @@ export function composerGoalDraftPresentation(value: string) {
 function ComposerPopover({
   sourceEnabled, onSourceChange,
   menu,
-  simpleModels,
+  simpleModels, workspacePicker, canSwitchStyle,
   language,
   contextWindow,
   skills,
@@ -1975,12 +1963,13 @@ function ComposerPopover({
   selectedTeamId,
   onSelectTeam,
   onClose,
-  anchor,
+  anchor, maxHeight,
 }: {
+  maxHeight: number;
   sourceEnabled: boolean;
   onSourceChange: (enabled: boolean) => void;
   menu: Exclude<ComposerMenu, null>;
-  simpleModels: boolean;
+  simpleModels: boolean; workspacePicker?: ReactNode; canSwitchStyle: boolean;
   language: AppLanguage;
   contextWindow?: ContextWindowUsage;
   skills: SkillSummary[];
@@ -2032,6 +2021,7 @@ function ComposerPopover({
   };
   const anchorStyle = anchor
     ? ({
+        '--composer-popover-max-height': maxHeight + 'px',
         left: anchor.x,
         top: anchor.y,
         width: anchor.width,
@@ -2062,6 +2052,12 @@ function ComposerPopover({
               <small>{uiText(language)('composer.attachToThisMessage')}</small>
             </span>
           </button>
+          {workspacePicker}
+          {canSwitchStyle && <button type="button" className="composer-add-action" role="switch" aria-checked={simpleModels}
+            aria-label={uiText(language)('homeComponents.simpleComposer')} onClick={() => setComposerStyle(simpleModels ? 'standard' : 'simple')}>
+            <SlidersHorizontal/><span className="composer-add-copy"><strong>{uiText(language)('homeComponents.simpleComposer')}</strong></span>
+            <span className={`composer-add-toggle${simpleModels ? ' on' : ''}`} aria-hidden="true"/>
+          </button>}
           <button className="composer-add-action" type="button" role="switch" aria-checked={sourceEnabled}
             aria-label={uiText(language)('composer.source')} onClick={() => onSourceChange(!sourceEnabled)}>
             <Quote size={18} />

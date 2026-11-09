@@ -18,7 +18,7 @@ async function bundleViews() {
   const files = [
     'src/features/appearance/windowAppearance.ts', 'src/components/WindowFrame.tsx', 'src/components/WindowSidebarToggle.tsx',
     'src/components/TopBar.tsx', 'src/features/sidebar/ChatSidebar.tsx',
-    'src/features/chat/WelcomeComposer.tsx', 'src/features/desktop/RecentConversationBar.tsx', 'src/features/desktop/WorkspaceChatNavigation.tsx',
+    'src/features/chat/WelcomeComposer.tsx', 'src/features/composer/Composer.tsx', 'src/features/desktop/RecentConversationBar.tsx', 'src/features/desktop/WorkspaceChatNavigation.tsx',
   ];
   const result = await build({
     configFile: false, logLevel: 'error', plugins: [react(), {
@@ -148,12 +148,12 @@ app.whenReady().then(async () => {
           h('section', { className: settings ? 'settings-shell' : 'main-stage' }, h('div', { className:settings ? 'settings-content' : 'chat-panel' },
             h(views.TopBar, { title:settings ? '个性化' : '新会话', language:'zh', inspectorOpen:false, onToggleInspector:noop }),
             settings ? h('div', { style:{padding:32} }, '通过视图菜单切换玻璃 / 纯色与浅色 / 深色。') :
-            h(views.WelcomeComposer, { language:'zh', draft, onDraftChange:setDraft, sending:false, stopping:false, guidanceDeliveryMode:'immediate', cancelEnabled:false,
+            h(views.WelcomeComposer, null, h(views.Composer, { language:'zh', draft, onDraftChange:setDraft, sending:false, stopping:false, guidanceDeliveryMode:'immediate', cancelEnabled:false,
               queuedMessageCount:0, queuedMessagePreview:'', queuedMessages:[], selectedModel:'preview', availableModels:[{id:'preview',provider:'preview',modelName:'CardBush 预览'}],
               goalAvailable:false, referencePlanAvailable:false, referencePlanMode:'off', permissionMode:'full-access', subagentPermissionRouting:'inherit', reasoningLevelAvailable:false, reasoningLevel:'medium', reasoningLevels:[],
               selectedProjectDir:'', availableProjects:[], skills:[], disabledSkillNames:new Set(), onProjectChange:async()=>{}, onToggleSkill:noop, onModelChange:noop, onReferencePlanModeChange:noop,
               onPermissionModeChange:noop, onSubagentPermissionRoutingChange:noop, onReasoningLevelChange:noop, onConfigureModels:noop, onEditQueuedMessage:noop, onGuideQueuedMessage:async()=>{},
-              onRemoveQueuedMessage:noop, onSend:async()=>{}, onCancel:async()=>{} })))));
+              onRemoveQueuedMessage:noop, onSend:async()=>{}, onCancel:async()=>{} }))))));
     }
     createRoot(document.getElementById('root')).render(h(React.StrictMode, null, h(Preview)));
   `);
@@ -239,7 +239,7 @@ app.whenReady().then(async () => {
     win.destroy(); app.exit(0); return;
   }
   // The isolated data: page cannot resolve the production-relative logo URL.
-  assert.equal(await run("document.querySelector('.welcome-star-wordmark')?.getAttribute('aria-label')"), 'cardbush');
+  assert.ok(await run("document.querySelector('.new-chat-input [data-composer-input]') !== null"));
   await run("document.title = 'CardBush · 窗口材质预览'");
   win.show(); win.focus();
   win.on('closed', () => app.exit(0));

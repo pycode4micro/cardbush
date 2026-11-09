@@ -191,7 +191,7 @@ const TeamConversation = memo(function TeamConversation({ teamId, title, languag
   beforeSend: (input: UserPromptInput) => Promise<UserPromptInput>; onContext: (context: CreationInspectorContext | null) => void; onOpen: () => void;
 }) {
   const [session] = useState(() => prepareTeamConversation(teamId));
-  return <ComposerPresentationContext.Provider value={{ portalInputOnly: !!chatOptions.composerPortalTarget, preservePermissions: true }}>
+  return <ComposerPresentationContext.Provider value={{ portalInputOnly: !!chatOptions.composerPortalTarget }}>
     <Suspense fallback={null}><Conversation {...chatOptions} {...session} scope="team" language={language} visible={visible} beforeSend={beforeSend}
       preparation={session.draft ? { title: `${uiText(language)('teamGraphWorkspace.workflow')} · ${title}`, metadata: { team_workspace: true, team_workspace_id: teamId },
         onCreated: conversation => persistTeamConversation(teamId, conversation) } : undefined}

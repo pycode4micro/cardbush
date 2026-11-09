@@ -20,7 +20,7 @@
 | 应用菜单 | [English](application-menu.en.md) | [简体中文](application-menu.md) |
 | CardBush 外观样式配置 | [English](APPEARANCE_STYLE_CONFIG.md) | [简体中文](APPEARANCE_STYLE_CONFIG.zh-CN.md) |
 | ChatGPT 套餐接入（SIWC） | [English](SIWC_INTEGRATION.md) | [简体中文](SIWC_INTEGRATION.zh-CN.md) |
-| 欢迎建议与星光字标 | [English](WELCOME_PERSONALIZATION.md) | [简体中文](WELCOME_PERSONALIZATION.zh-CN.md) |
+| Home · 主页组件 | [CardBush component guide](../assets/skills/cardbush-docs/references/home-components.md) |
 | 安装与更新 | [English](INSTALLATION.md) | [简体中文](INSTALLATION.zh-CN.md) |
 | 终端 CLI | [English](CLI.md) | [简体中文](CLI.zh-CN.md) |
 | 日常使用流程 | [English](USAGE.md) | [简体中文](USAGE.zh-CN.md) |

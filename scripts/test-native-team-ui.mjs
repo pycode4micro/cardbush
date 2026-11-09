@@ -18,10 +18,10 @@ import { takeBushItDocumentRequest } from '${local('src/features/mdPresentation/
 import * as pages from '${local('src/features/mdPresentation/bushItPageStore.ts')}';
 import { publishFileEditEvent } from '${local('src/backend/fileEditEvents.ts')}';
 import { useTeamWorkspace, useTeamChoices, refreshTeamWorkspace } from '${local('src/features/team/teamWorkspaceStore.ts')}';
-import { saveComponents, useComponents } from '${local('src/features/components/componentStore.ts')}';
+import { setComposerStyle } from '${local('src/features/composer/composerStyle.ts')}';
 import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
-window.saveComponents=saveComponents; window.publishFileEditEvent=publishFileEditEvent; window.records = { agents: [], teams: [], runs: [] }; window.calls = []; window.sessionInputs=[];window.fixtureConversations={};window.workspaceCalls=[];
+window.setComposerStyle=setComposerStyle; window.publishFileEditEvent=publishFileEditEvent; window.records = { agents: [], teams: [], runs: [] }; window.calls = []; window.sessionInputs=[];window.fixtureConversations={};window.workspaceCalls=[];
 window.refreshTeamWorkspace=refreshTeamWorkspace;
 const TeamChoiceProbe=React.memo(function TeamChoiceProbe(){window.teamChoiceState=useTeamChoices();window.teamChoiceRenders=(window.teamChoiceRenders||0)+1;return null;});
 window.fileResult=null; window.fileCalls=[]; window.cardbushDesktop={ensureTaskWorkspace:async id=>{workspaceCalls.push(id);return 'D:/task-workspaces/'+id},markdownFile:async input=>{fileCalls.push(input);if(input.action==='save')return {path:'D:/workflow.md',text:input.text,revision:'file-v1'};return fileResult;}};
@@ -41,7 +41,7 @@ window.command = async ({kind,payload:input}) => {
   if(input.action==='stop') { records.runs.find(run=>run.id===input.run_id).status='stopped'; return {stopped:true}; }
   throw Error('Unexpected command: '+JSON.stringify(input));
 };
-function Fixture(){ window.teamState=useTeamWorkspace(); window.componentState=useComponents();
+function Fixture(){ window.teamState=useTeamWorkspace();
   React.useEffect(()=>{const listener=event=>{ if(event.detail.id==='builtin:md-presentation')window.documentRequest=takeBushItDocumentRequest(); };window.addEventListener('cardbush-open-application',listener);return()=>window.removeEventListener('cardbush-open-application',listener);},[]);
 
   const [portal,setPortal]=React.useState(null);window.setCreationPortal=setPortal;

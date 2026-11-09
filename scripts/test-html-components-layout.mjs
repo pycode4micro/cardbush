@@ -1,84 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import library from '../assets/skills/cardbush-docs/scripts/home-library.cjs';
 import './coding-benchmark/register-loader.mjs';
 
 const p = await import('../src/features/inspector/panelLayout.ts');
 const b = await import('../src/features/inspector/browserBookmarks.ts');
 const c = await import('../src/features/components/componentModel.ts');
 const { dispatchComponentMessage } = await import('../src/features/components/dispatchComponentMessage.ts');
-const g = await import('../src/features/components/welcomeLayoutGeometry.ts');
-const composer = await import('../src/features/components/composerLayoutGeometry.ts');
-const viewport = await import('../src/features/components/welcomeViewportGeometry.ts');
-
-test('welcome layouts retain aligned proportions through maximize, restore and editor rebasing', () => {
-  const layout = { viewportHeight: 700, items: [
-    { componentId: 'system-calendar', x: 10, y: 140, width: 36, height: 280 },
-    { componentId: 'system-digital-clock', x: 54, y: 140, width: 36, height: 280 },
-    { componentId: 'system-input', x: 10, y: 560, width: 80, height: 52 },
-    { componentId: 'system-brand', x: 10, y: 1000, width: 80, height: 200 },
-  ] };
-  const stored = c.normalizeComponents({ ...c.defaultComponents, welcomeLayout: layout }).welcomeLayout;
-  assert.equal(stored.viewportHeight, 700);
-  const enlarged = viewport.resolveWelcomeLayout(stored, 1050);
-  assert.equal(enlarged.items[0].y, 210); assert.equal(enlarged.items[0].height, 420);
-  assert.equal(enlarged.items[1].y, enlarged.items[0].y, 'aligned component edges remain aligned');
-  assert.equal(enlarged.items[2].y, 840); assert.equal(enlarged.items[2].height, 52, 'input height follows its contents');
-  assert.equal(enlarged.items[3].y, 1500, 'off-screen placements do not redefine the viewport');
-  assert.deepEqual(viewport.resolveWelcomeLayout(enlarged, 700), layout, 'rebasing and restoring does not accumulate drift');
-  for (const invalid of [undefined, 0, -10, NaN, Infinity, '700']) {
-    const legacy = c.normalizeComponents({ ...c.defaultComponents, welcomeLayout: { ...layout, viewportHeight: invalid } }).welcomeLayout;
-    assert.equal(legacy.viewportHeight, undefined);
-    assert.deepEqual(viewport.resolveWelcomeLayout(legacy, 700).items, layout.items, 'legacy placements remain unchanged until first measured');
-  }
-});
-
-test('composer is centered before storage and cannot move horizontally or resize its empty height', () => {
-  const input = { componentId: 'system-input', x: 0, y: 150, width: 60, height: 52 };
-  const stored = c.normalizeComponents({ ...c.defaultComponents, welcomeLayout: { items: [input] } }).welcomeLayout.items[0];
-  assert.equal(stored.x, 20);
-  const space = { width: 1000, height: 800, scaleX: 1.25, scaleY: 1.25 };
-  const moved = g.alignPlacement(stored, [], 'move', { x: 400, y: 60 }, space, false).placement;
-  assert.equal(moved.x, 20); assert.equal(moved.y, 210); assert.equal(moved.width, 60);
-  const resized = g.alignPlacement(moved, [], 'resize', { x: 50, y: 500 }, space, false).placement;
-  assert.equal(resized.width, 70); assert.equal(resized.x, 15); assert.equal(resized.height, 52);
-  const narrow = g.alignPlacement(input, [], 'resize', { x: -500, y: 0 }, { ...space, width: 240 }).placement;
-  assert.equal(narrow.width * 240 / 100, 216); assert.equal(narrow.x * 240 / 100, 12);
-  const pinned = { ...stored, y: 728, composerDock: 'bottom', composerFlow: { afterSend: 'keep', output: 'above' } };
-  assert.equal(g.alignPlacement(pinned, [], 'move', { x: 80, y: 0 }, space, false).placement.composerDock, 'bottom',
-    'horizontal-only dragging cannot remove the vertical pin');
-});
-
-test('bottom placements snap or leave meaningful travel, including tall inputs and small windows', () => {
-  for (const viewport of [300, 480, 680, 900, 1200]) for (const height of [52, 104, 240]) {
-    for (const y of [12, 200, viewport - height - 70, viewport + 200]) {
-      const auto = composer.composerVerticalBounds(viewport, height, y, 'bottom');
-      assert.ok(auto.minimumTravel >= 120 && auto.minimumTravel <= 160);
-      assert.ok(auto.bottom - auto.top === 0 || auto.bottom - auto.top >= auto.minimumTravel);
-      assert.ok(auto.top >= 12 && auto.top <= auto.bottom);
-      if (viewport === 300) assert.equal(auto.top, auto.bottom);
-    }
-  }
-  const kept = composer.composerVerticalBounds(680, 52, 560, 'keep');
-  assert.equal(kept.top, 560, 'keep allows a small gap without silently moving');
-  const pinned = composer.composerVerticalBounds(900, 52, 560, 'bottom', true);
-  assert.equal(pinned.top, 828, 'saved bottom pin follows viewport height');
-  assert.equal(composer.composerHorizontalBounds(1000, 60, 704).left, 200);
-  assert.deepEqual(composer.composerHorizontalBounds(1800, 80, 704), { left: 548, width: 704 }, 'saved widths fit the reading column when maximized');
-  assert.deepEqual(composer.composerHorizontalBounds(320, undefined, 218), { left: 51, width: 218 }, 'default composer fits the narrow transcript track');
-  assert.deepEqual(composer.composerHorizontalBounds(700, 90, 648), { left: 35, width: 630 }, 'a custom width follows the available pane after docking a summary');
-});
-
-test('composer flow defaults, validates choices and lets a placement override the catalog', () => {
-  assert.deepEqual(c.welcomeComposerFlow(c.defaultComponents), { afterSend: 'bottom', output: 'above' });
-  const catalog = { ...c.defaultComponents, items: c.defaultComponents.items.map(item => item.id === 'system-input'
-    ? { ...item, composerFlow: { afterSend: 'keep', output: 'below' } } : item) };
-  assert.deepEqual(c.welcomeComposerFlow(c.normalizeComponents(catalog)), { afterSend: 'keep', output: 'below' });
-  const placed = c.normalizeComponents({ ...catalog, welcomeLayout: { items: [{ componentId: 'system-input', x: 10, y: 260, width: 80, height: 120,
-    composerFlow: { afterSend: 'bottom', output: 'above' } }] } });
-  assert.deepEqual(c.welcomeComposerFlow(placed), { afterSend: 'bottom', output: 'above' });
-  assert.deepEqual(c.normalizeComposerFlow({ afterSend: 'invalid', output: 'invalid' }), { afterSend: 'bottom', output: 'above' });
-});
-
 function assertPartition(tree) {
   const rects = Object.values(p.panelRects(tree));
   assert.ok(Math.abs(rects.reduce((sum, rect) => sum + rect.width * rect.height, 0) - 1) < 1e-9);
@@ -110,22 +41,16 @@ test('bookmarks keep distinct URLs but reject executable, credential and duplica
 test('component imports bound executable document size, layout, identity and explicit grants', () => {
   const valid = {id:'example',html:'<h1>Hello</h1>',title:' Hello ',width:999,height:1,allowActions:'true'};
   const value = c.normalizeComponents({version:1,revision:4,items:[valid,valid,{...valid,id:'../foreign'},{...valid,id:'large',html:'界'.repeat(c.maxComponentBytes)}]});
-  const custom = value.items.filter(item => !c.isBuiltinComponent(item));
+  const custom = value.items;
   assert.equal(custom.length,1); assert.equal(custom[0].width,12); assert.equal(custom[0].height,120); assert.equal(custom[0].allowActions,false);
   assert.throws(()=>c.validateComponentText(' ')); assert.throws(()=>c.validateComponentText('x'.repeat(32001))); assert.equal(c.validateComponentText('hello'),'hello');
 });
 
-test('built-ins survive deletion and old layouts migrate without replacing custom components', () => {
-  const builtinIds = c.defaultComponents.items.map(item => item.id);
-  const migrated = c.normalizeComponents({version:1,revision:3,items:[{id:'old-html',title:'Old',html:'<p>Keep me</p>',width:9,height:350,order:4,allowActions:true}]});
-  assert.equal(migrated.revision,3); assert.equal(migrated.items[0].html,'<p>Keep me</p>'); assert.equal(migrated.items[0].width,9);
-  assert.deepEqual(migrated.items.filter(c.isBuiltinComponent).map(item=>item.id),builtinIds);
-  const removed = c.normalizeComponents({...migrated,items:[]});
-  assert.deepEqual(removed.items.map(item=>item.id),builtinIds,'saving a removal cannot delete a system definition');
-  const altered = c.normalizeComponents({...removed,items:removed.items.map(item=>({...item,html:'<script>bad()</script>',allowActions:true,inputStyle:'simple',width:8}))});
-  assert.equal(altered.items.find(item=>item.id==='system-input').inputStyle,'simple');
-  assert.equal(altered.items.every(item=>!('html' in item)&&!('allowActions' in item)),true,'stored settings cannot replace a built-in renderer');
-  assert.equal(c.normalizeComponents({...removed,items:[{id:123,html:'x'},null,...removed.items]}).items.length,builtinIds.length);
+test('only custom components survive migration; previously placed custom content moves to home', () => {
+  const items = [{id:'system-clock',kind:'builtin'}, {id:'draft',html:'<p>Draft</p>'}, {id:'placed',html:'<p>Shown</p>'}];
+  const result = c.normalizeComponents({version:1, items, welcomeLayout:{items:[{componentId:'placed'}]}});
+  assert.deepEqual(result.items.map(({id,home})=>[id,home]), [['draft',false],['placed',true]]);
+  assert.equal(c.defaultComponents.items.length,0);
 });
 
 test('component dispatch acknowledges locally without waiting for a long model turn, rejects unavailable configuration', async () => {
@@ -142,48 +67,21 @@ test('component dispatch acknowledges locally without waiting for a long model t
   assert.equal(failure.message, 'backend failure');
 });
 
-test('welcome placements are independent from the catalog, bounded and retain an intentionally empty page', () => {
-  const empty = c.normalizeComponents({...c.defaultComponents,welcomeLayout:{items:[]}});
-  assert.deepEqual(empty.welcomeLayout.items,[]);
-  assert.equal(empty.items.length,7,'clearing the page retains all system definitions');
-  const layout = c.normalizeComponents({...empty,welcomeLayout:{items:[
-    {componentId:'system-clock',x:98,y:-5,width:70,height:Infinity},
-    {componentId:'system-clock',x:0,y:0,width:40,height:100},
-    {componentId:'deleted-custom',x:0,y:0,width:40,height:100},null,
-  ]}}).welcomeLayout;
-  assert.deepEqual(layout.items,[{componentId:'system-clock',x:30,y:0,width:70,height:200}]);
-  assert.equal(c.normalizeComponents({...empty,welcomeLayout:undefined}).welcomeLayout,undefined,'reset to the default welcome page is distinct from clear');
-});
-
-test('layout coordinates account for scaled viewport, borders and scrolling without changing the grab offset', () => {
-  const element = { getBoundingClientRect: () => ({ left: 80, top: 40, width: 1000, height: 750 }),
-    offsetWidth: 800, offsetHeight: 600, clientWidth: 796, clientHeight: 596, clientLeft: 2, clientTop: 2, scrollLeft: 0, scrollTop: 170 };
-  const space = g.layoutSpace(element);
-  assert.deepEqual(g.layoutPoint(space, 332.5, 292.5), { x: 200, y: 370 });
-  const first = g.layoutPoint(space, 332.5, 292.5), moved = g.layoutPoint({ ...space, scrollTop: 210 }, 382.5, 317.5);
-  assert.deepEqual({ x: moved.x-first.x, y: moved.y-first.y }, { x: 40, y: 60 });
-});
-
-test('move and resize snap to peer edges, centers and page bounds, with screen-space tolerance and Alt escape', () => {
-  const item = { componentId: 'drag', x: 10, y: 80, width: 20, height: 100 };
-  const peer = { componentId: 'peer', x: 50, y: 300, width: 20, height: 100 };
-  const space = { width: 1000, height: 800, scaleX: 1.25, scaleY: 1.25 };
-  const moved = g.alignPlacement(item, [item, peer], 'move', { x: 396, y: 216 }, space);
-  assert.equal(moved.placement.x, 50); assert.equal(moved.placement.y, 300);
-  assert.ok(moved.guides.some(guide => guide.axis === 'x' && guide.position === 500));
-  const free = g.alignPlacement(item, [item, peer], 'move', { x: 396, y: 216 }, space, false);
-  assert.equal(free.placement.x, 49.6); assert.equal(free.placement.y, 296); assert.deepEqual(free.guides, []);
-  const beyond = g.alignPlacement(item, [item, peer], 'move', { x: 395, y: 215 }, space);
-  assert.equal(beyond.placement.x, 49.5, '5 CSS px exceeds 6 screen px at 125%');
-  const resized = g.alignPlacement(item, [peer], 'resize', { x: 296, y: 116 }, space);
-  assert.equal(resized.placement.width, 50, 'right edge aligns to peer center'); assert.equal(resized.placement.height, 220);
-  assert.equal(g.alignPlacement(item, [], 'move', { x: -98, y: -78 }, space).placement.x, 0);
-  assert.equal(g.alignPlacement(item, [], 'resize', { x: -5000, y: -5000 }, space).placement.width, 10);
-  const far = g.alignPlacement(item, [], 'resize', { x: 5000, y: 5000 }, space).placement;
-  assert.equal(far.width, 90); assert.equal(far.height, 1200);
-});
-
-test('toolbar stays inside the content area and below the app header after dragging or resizing', () => {
-  assert.deepEqual(g.boundToolbar({ x: 1000, y: 900 }, { width: 800, height: 600 }, { width: 400, height: 40 }, 58), { x: 392, y: 552 });
-  assert.deepEqual(g.boundToolbar({ x: -400, y: -300 }, { width: 340, height: 600 }, { width: 320, height: 40 }, 58), { x: 8, y: 58 });
+test('desktop and chat edits share a durable revision and migrate legacy content once', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'cardbush-home-test-'));
+  const editor = library.openLibrary(profile), agent = library.openLibrary(profile);
+  const sample = {id:'checklist',title:'Checklist',html:'<p>Checklist</p>',width:6,height:280};
+  try {
+    const first = agent.publish(sample,true);
+    const old = {...sample,id:'legacy',order:1,home:false,allowActions:true};
+    const migrated = editor.migrate([old]);
+    assert.deepEqual(migrated.items.map(item=>item.id), ['checklist','legacy']);
+    assert.throws(()=>editor.save([],first.revision),/REVISION_CONFLICT/);
+    const updated = agent.publish({...sample,id:'legacy',html:'<p>Updated</p>'},undefined);
+    assert.equal(updated.items[1].allowActions,false);
+    editor.save(updated.items.filter(item=>item.id!=='legacy'),updated.revision);
+    assert.equal(agent.migrate([old]).items.length,1);
+    const reopened = library.openLibrary(profile);
+    try { assert.equal(reopened.snapshot().items[0].home,true); } finally { reopened.close(); }
+  } finally { agent.close(); editor.close(); rmSync(profile,{recursive:true,force:true}); }
 });

@@ -24,7 +24,7 @@ module.exports = async function testQuickContextVisual({ run, until, pause, wind
   await run(`sessionStorage.setItem('cardbush_scroll_debug','true');
     renderView(h(views.QuickContextPreTest, { language: 'zh' })); void 0;`);
   try {
-    await until("document.querySelector('.quick-context-ticks')?.clientHeight > 0", 'visible pre-test rail');
+    await until("document.querySelector('.quick-context-pre-test-feed') && document.querySelector('.quick-context-ticks')?.clientHeight > 0", 'visible pre-test rail');
     await run(`window.limitTrack = document.querySelector('.quick-context-ticks');
       window.limitFeed = document.querySelector('.quick-context-pre-test-feed');
       window.limitSample = () => window.__cardbushScrollDebug?.filter(row => row.label === 'quick-context-viewport').at(-1);

@@ -20,7 +20,7 @@ Historical investigations, benchmark results and licensing records retain their 
 | Application menu | [English](application-menu.en.md) | [简体中文](application-menu.md) |
 | CardBush appearance style configuration | [English](APPEARANCE_STYLE_CONFIG.md) | [简体中文](APPEARANCE_STYLE_CONFIG.zh-CN.md) |
 | ChatGPT plan access (SIWC) | [English](SIWC_INTEGRATION.md) | [简体中文](SIWC_INTEGRATION.zh-CN.md) |
-| Welcome suggestions and star wordmark | [English](WELCOME_PERSONALIZATION.md) | [简体中文](WELCOME_PERSONALIZATION.zh-CN.md) |
+| Home · 主页组件 | [CardBush component guide](../assets/skills/cardbush-docs/references/home-components.md) |
 | Installation and updates | [English](INSTALLATION.md) | [简体中文](INSTALLATION.zh-CN.md) |
 | Terminal CLI | [English](CLI.md) | [简体中文](CLI.zh-CN.md) |
 | Everyday workflows | [English](USAGE.md) | [简体中文](USAGE.zh-CN.md) |

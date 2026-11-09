@@ -20,9 +20,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       window.firstFrame=requestAnimationFrame(sampleFirst);
     };
     window.startFirst=(style,custom,long,completeAtAdmission)=>{
-      const saved=JSON.parse(localStorage.getItem(views.componentStorageKey))||views.defaultComponents;
-      views.saveComponents({...saved,items:saved.items.map(item=>item.id==='system-input'?{...item,inputStyle:style}:item),
-        welcomeLayout:custom?{viewportHeight:750,items:[{componentId:'system-input',x:10,y:260,width:80,height:120,inputStyle:style,composerFlow:{afterSend:'bottom',output:'above'}}]}:undefined},saved.revision);
+      views.setComposerStyle(style);
       window.firstSends=0;
       updateChat({language:'zh',activeConversationId:'',messages:[],loading:false,historyLoading:false,sending:false,activeTurnId:'',draft:long?('第一条消息的多行内容\\n'.repeat(10)):'第一条消息',
         availableModels:[{id:'fixture',modelName:'Test model',provider:'fixture',enabled:true}],
@@ -73,7 +71,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     assert.ok(Math.abs(settled.surfaceTop-settled.buttonBottom-8*zoom)<2,'bottom shortcut follows the final composer position, including zoom');
     const transcriptFrames=state.frames.filter(frame=>!frame.welcome);
     assert.ok(Math.max(...transcriptFrames.map(f=>f.dockTop))-Math.min(...transcriptFrames.map(f=>f.dockTop))<2,'the transcript backdrop stays at its final position');
-    if(!custom)assert.ok(state.frames.every((frame,index)=>index===0||frame.surfaceTop>=state.frames[index-1].surfaceTop-1),'a docked welcome input never jumps up to replay its old multiline height');
+    if(!custom)assert.ok(state.frames.every((frame,index)=>index===0||frame.surfaceTop>=state.frames[index-1].surfaceTop-1),'input descends without jumping back: ' + JSON.stringify({style,long, frames:state.frames.map(f=>[f.welcome,Math.round(f.surfaceTop),Math.round(f.surfaceHeight)])}));
     assert.equal(await run('firstSends'),1,'repeated confirmation cannot submit twice before admission');
     assert.notEqual(await run('document.querySelector(".send-button")?.getAttribute("aria-label")'),'正在提交','running turns release the local submission lock without waiting for their completion');
     if(!completeAtAdmission)await run('finishFirstTurn();void 0');

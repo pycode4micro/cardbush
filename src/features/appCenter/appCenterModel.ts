@@ -34,7 +34,7 @@ export function applicationCatalog(language: AppLanguage, plugins: CardbushAppPl
   const entries: ApplicationEntry[] = [
     { id: 'builtin:plugins', kind: 'builtin', target: 'plugins', title: uiText(language)('appCenterModel.plugins'), description: uiText(language)('appCenterModel.discoverAndManageSkillsToolsAndPlugins'), shortcut: 'openPlugins' },
     { id: 'builtin:automations', kind: 'builtin', target: 'automations', title: uiText(language)('appCenterModel.automations'), description: uiText(language)('appCenterModel.calendarScheduledTasksAndResults'), shortcut: 'openAutomations' },
-    { id: 'builtin:components', kind: 'builtin', target: 'components', title: uiText(language)('appCenterModel.components'), description: uiText(language)('appCenterModel.arrangeAndResizeBuiltInViewsAnd') },
+    { id: 'builtin:components', kind: 'builtin', target: 'components', title: uiText(language)('appCenterModel.components'), description: uiText(language)('homeComponents.description') },
     { id: 'builtin:team', kind: 'builtin', target: 'team', title: uiText(language)('appCenterModel.workflows'), description: uiText(language)('appCenterModel.buildWorkflowsThroughConversationAndInspectProgress') },
     { id: 'builtin:md-presentation', kind: 'builtin', target: 'md-presentation', title: uiText(language)('appCenterModel.create'), description: uiText(language)('appCenterModel.writeProjectMarkdownWithAnAgentAnd') },
     ...plugins.filter(plugin => plugin.installed && plugin.enabled && !plugin.removalPending).flatMap(plugin => plugin.components.filter(component => component.kind === 'app' && (

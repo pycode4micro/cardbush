@@ -23,8 +23,7 @@ async function buildFixture(directory) {
   const { build } = await import('vite');
   const file = name => JSON.stringify(path.resolve(name).replaceAll('\\', '/'));
   const source = `import React from 'react'; import {createRoot} from 'react-dom/client';
-import {StarWordmark} from ${file('src/features/chat/StarWordmark.tsx')};
-import {installWindowVisibility,isWindowVisible} from ${file('src/shared/windowVisibility.ts')};
+import {installWindowVisibility,isWindowVisible,watchWindowVisibility} from ${file('src/shared/windowVisibility.ts')};
 import {createFrameStreamBuffers} from ${file('src/features/chatMessages/transcript/frameStreamBuffer.ts')};
 import ${file('src/styles/appearance.css')};
 const ipc=window.require('electron').ipcRenderer;
@@ -34,16 +33,18 @@ window.cardbushDesktop={isWindowVisible:()=>ipc.invoke('window:is-visible'),onWi
 }};
 const stop=installWindowVisibility();
 window.paints=0;window.workTicks=0;window.received='';
-const original=CanvasRenderingContext2D.prototype.clearRect;
-CanvasRenderingContext2D.prototype.clearRect=function(...args){if(this.canvas.classList.contains('welcome-star-wordmark'))window.paints++;return original.apply(this,args)};
+let frame;
+function paint(){window.paints++;frame=requestAnimationFrame(paint);}
+function update(){cancelAnimationFrame(frame);if(isWindowVisible())frame=requestAnimationFrame(paint);}
+const unwatch=watchWindowVisibility(update);update();
 const timer=setInterval(()=>window.workTicks++,20);
 const stream=createFrameStreamBuffers(delta=>window.received+=delta,{replace:text=>window.received=text});
 const route={turnId:'turn',messageId:'message',segmentId:'segment'};
 window.pushStream=text=>stream.push(text,route);
 const root=createRoot(document.getElementById('root'));
-root.render(<StarWordmark/>);
+root.render(<canvas/>);
 window.fixture={visible:isWindowVisible,listeners:()=>ipc.listenerCount('window:visibility-changed'),
-  dispose:()=>{root.unmount();stream.dispose();clearInterval(timer);stop();}};`;
+  dispose:()=>{unwatch();cancelAnimationFrame(frame);root.unmount();stream.dispose();clearInterval(timer);stop();}};`;
   const result = await build({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{
     name: 'visibility-fixture', resolveId: id => id.endsWith('__window_visibility__.tsx') ? '\0visibility.tsx' : undefined,
     load: id => id === '\0visibility.tsx' ? source : undefined,

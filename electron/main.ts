@@ -3179,6 +3179,42 @@ ipcMain.handle('files:pasted-text', async (event, action: string, input: unknown
   throw new Error('Unknown text attachment action.');
 });
 
+type HomeLibraryItem = {id: string; title: string; html: string; width: number; height: number; order: number; home?: boolean; allowActions: boolean};
+type HomeLibrarySnapshot = { version: 1; revision: number; items: HomeLibraryItem[] };
+type HomeLibrary = {snapshot(revision?: number): HomeLibrarySnapshot | null; save(items: HomeLibraryItem[], revision: number): HomeLibrarySnapshot;
+  migrate(items: HomeLibraryItem[]): HomeLibrarySnapshot; close(): void};
+let homeLibrary: HomeLibrary | undefined;
+function desktopHomeLibrary(): HomeLibrary {
+  if (homeLibrary) return homeLibrary;
+  const profile = app.getPath('userData');
+  const {openLibrary} = require(path.join(bundledProductSkillRoot(), 'cardbush-docs', 'scripts', 'home-library.cjs'));
+  const db: HomeLibrary = openLibrary(profile);
+  homeLibrary = db;
+  let timer: ReturnType<typeof setTimeout>;
+  const watcher = fs.watch(profile, {persistent: false}, (_event, file) => {
+    if (file && !String(file).startsWith('home-components.sqlite')) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-components:changed'); }, 100);
+  });
+  app.once('will-quit', () => { clearTimeout(timer); watcher.close(); db.close(); });
+  return db;
+}
+ipcMain.handle('home-components:assemble', (event, files) => {
+  assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
+  const {assembleComponent} = require(path.join(bundledProductSkillRoot(), 'cardbush-docs', 'scripts', 'component-files.cjs'));
+  return assembleComponent(files);
+});
+ipcMain.handle('home-components:library', (event, action, revision, items) => {
+  assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
+  const db = desktopHomeLibrary();
+  if (action === 'read') return db.snapshot(revision);
+  if (action === 'migrate') return db.migrate(items);
+  if (action === 'save') return db.save(items, revision);
+  throw Error('INVALID_ACTION');
+});
+
 ipcMain.handle('inspector:capture-region', async (event, input: import('./inspectorRegionCapture').InspectorRegionCapture) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner || (owner !== mainWindow && !shadowWindows.has(event.sender.id))) throw Error('Invalid preview capture sender.');

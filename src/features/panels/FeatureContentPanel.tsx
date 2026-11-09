@@ -65,7 +65,7 @@ export function FeatureContentPanel({
   onOpenConversation: (conversationId: string) => void;
   creationChatOptions?: CreationChatOptions;
 }) {
-  if (section === 'components') return <ComponentsApp language={language}/>;
+  if (section === 'components') return <ComponentsApp language={language} onCreate={onOpenPluginPrompt}/>;
   if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><CreationCanvasApp {...creationChatOptions} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}/></Suspense>;
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}

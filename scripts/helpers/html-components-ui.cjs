@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 module.exports = async ({ run, until, pause, window, root }) => {
-  for (const file of ['src/features/inspector/inspectorWorkspace.css','src/features/components/components.css','src/features/components/welcomeLayout.css']) await window.webContents.insertCSS(fs.readFileSync(path.join(root,file),'utf8'));
+  for (const file of ['src/features/inspector/inspectorWorkspace.css','src/features/components/components.css']) await window.webContents.insertCSS(fs.readFileSync(path.join(root,file),'utf8'));
   await run(`
     window.componentEvents=[];window.componentReports=[];
     // The bookmark fixture uses an embedded favicon; external requests stay forbidden.
@@ -109,14 +109,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   await until('outerCancelCount===1','the parent still handles its own Escape');
   await run('showComponents()');
-  await run('[...document.querySelectorAll("button")].find(x=>x.textContent==="编辑布局").click();');
-  await until('!!document.querySelector(".welcome-layout-editor")','new conversation layout edit');
-  assert.equal(await run('document.querySelectorAll("[data-welcome-component]").length'),4,'editor starts with the welcome page, not the component catalog');
-  await run('[...document.querySelectorAll(".welcome-layout-toolbar button")].find(x=>x.textContent==="取消").click();');
-  await until('!!document.querySelector(".components-grid")','cancel returns to component catalog');
-  await pause();
-  fs.writeFileSync(path.join(root,'tmp','html-components-canvas.png'),(await window.webContents.capturePage()).toPNG());
-  await run('localStorage.setItem("cardbush.component-state.canvas-a","{}");views.saveComponents({...canvasSnapshot,items:[]},1);');
+  await run('renderView(h(views.ComponentsApp,{language:"zh",home:true}));');
+  await until('!!document.querySelector(".home-components")','home component shelf');
+  assert.equal(await run('document.querySelectorAll(".html-component-frame").length'),0);
+  await run('document.querySelector(".home-components header button").click()');
+  await run('document.querySelector(".home-component-picker [aria-pressed]").click()');
+  await until('!!document.querySelector(".html-component-frame")','selected component runs on home');
+  await run('document.querySelector(".html-component-card header button").click()');
+  await until('document.querySelector(".component-import textarea").value === componentHtml','edit the existing HTML');
+  await run('document.querySelector(".component-import button[type=submit]").click()');
+  await until('!document.querySelector(".component-import")','saved edits');
+  await run('localStorage.setItem("cardbush.component-state.canvas-a","{}");views.getComponents().then(state=>views.saveComponents({...state,items:[]},state.revision));');
   assert.equal(await run('localStorage.getItem("cardbush.component-state.canvas-a")'),null,'removing a saved component clears only its state');
   await run('renderView(h(views.BrowserBookmarkButton,{address:"https://example.test/a",title:"Example",language:"zh"}));');
   await until('!!document.querySelector(".inspector-bookmark-button")','bookmark control');

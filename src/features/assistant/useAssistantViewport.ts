@@ -1,5 +1,4 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
-import { useConversationComposerLayout } from '../chat/useConversationComposerLayout';
 import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { createChatScrollMotion } from '../chat/chatScrollMotion';
 import { connectConversationWheelScrolling } from '../chat/conversationWheelScrolling';
@@ -12,13 +11,11 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
   active: boolean; bodyRef: RefObject<HTMLDivElement | null>; dockRef: RefObject<HTMLDivElement | null>;
   scrollerRef: RefObject<HTMLDivElement | null>; revision: string | undefined; portaled: boolean;
 }) {
-  const layout = useConversationComposerLayout({ bodyRef, dockRef, scrollerRef, scope: PERSONAL_ASSISTANT_SESSION,
-    welcome: false, loading: !active || portaled, embedded: false, interaction: false });
   const following = useRef(true), followTail = useRef(false), motion = useMemo(createChatScrollMotion, []);
   const previousRevision = useRef(revision);
   const anchoring = useRef<{ frame: number; release(): void } | null>(null);
-  const state = useRef({ revision, anchored: layout.anchored });
-  state.current = { revision, anchored: layout.anchored };
+  const state = useRef({ revision });
+  state.current = { revision };
   const trace = useCallback((reason: string, detail: Record<string, unknown> = {}) => {
     const scroller = scrollerRef.current;
     scrollDebug('assistant-viewport', { reason, following: following.current, followTail: followTail.current,
@@ -58,13 +55,13 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
   }, []);
   const reveal = useCallback(() => {
     const scroller = scrollerRef.current;
-    if (!scroller || !following.current || layout.anchored) return;
+    if (!scroller || !following.current) return;
     motion.cancel(); releaseAnchoring();
     const release = suspendScrollAnchoring(scroller), target = followTarget();
     scroller.scrollTo({ top: target, behavior: 'instant' });
     trace('revealed', { target });
     anchoring.current = { frame: requestAnimationFrame(releaseAnchoring), release };
-  }, [scrollerRef, layout.anchored, motion, releaseAnchoring, followTarget, trace]);
+  }, [scrollerRef, motion, releaseAnchoring, followTarget, trace]);
   useLayoutEffect(() => releaseAnchoring, [active, releaseAnchoring]);
   const scrollToBottom = useCallback(() => {
     const scroller = scrollerRef.current;
@@ -150,7 +147,7 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
         body.style.setProperty('--composer-surface-center-x', `${(rect.left + rect.width / 2 - bounds.left) / scaleX}px`);
       }
       body.style.setProperty('--message-list-scrollbar-inset', `${Math.max(0, scroller.offsetWidth - scroller.clientWidth)}px`);
-      if (portaled || layout.anchored) content.style.removeProperty('--assistant-dock-height');
+      if (portaled) content.style.removeProperty('--assistant-dock-height');
       else content.style.setProperty('--assistant-dock-height', `${dock.offsetHeight}px`);
       trace('measure', { dockHeight: dock.offsetHeight });
       // Markdown mounts and image dimensions may settle after the entry itself.
@@ -162,7 +159,7 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     const observer = new ResizeObserver(measure);
     for (const node of [body, dock, content]) observer.observe(node);
     return () => observer.disconnect();
-  }, [active, bodyRef, dockRef, scrollerRef, layout.anchored, portaled, trace, reveal]);
+  }, [active, bodyRef, dockRef, scrollerRef, portaled, trace, reveal]);
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (!revision) { following.current = true; followTail.current = false; }
@@ -171,9 +168,9 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     // later Markdown/image measurements; deliberate history reading stays put.
     if (previousRevision.current !== revision) followTail.current = false;
     previousRevision.current = revision;
-    trace('revision', { action: following.current && !layout.anchored ? 'reveal' : 'preserve' });
+    trace('revision', { action: following.current ? 'reveal' : 'preserve' });
     reveal();
-  }, [active, revision, layout.anchored, scrollerRef, trace, reveal]);
-  return { ...layout, scrollBottomVisible, scrollToBottom, scrollToMessage,
-    prepareSend: () => { layout.capture(true); following.current = true; followTail.current = false; } };
+  }, [active, revision, scrollerRef, trace, reveal]);
+  return { scrollBottomVisible, scrollToBottom, scrollToMessage,
+    prepareSend: () => { following.current = true; followTail.current = false; } };
 }

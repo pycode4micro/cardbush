@@ -1,6 +1,6 @@
 ---
 name: cardbush-docs
-description: CardBush 使用、配置、开发与部署文档。用于 Webhook 配置、将微信或飞书 Bot 接入当前会话、外部 Agent 与 Assistant 双向对话，以及插件打包、本机或远程 Agent 的插件安装与更新、环境与依赖配置、MCP、主题、日历导入与万年历/中国农历转换、Agent 服务部署、创作文档与 Team 协作、assistant 通话和实时语音接入。CardBush docs, webhook bridge setup, local and remote plugin installation, agent deployment, Create and Team. 不用于其他宿主或无关应用的配置与部署。
+description: CardBush 使用、配置、开发与部署文档。用于通过对话创建、编辑和发布主页交互组件、Webhook 配置、将微信或飞书 Bot 接入当前会话、外部 Agent 与 Assistant 双向对话，以及插件打包、本机或远程 Agent 的插件安装与更新、环境与依赖配置、MCP、主题、日历导入与万年历/中国农历转换、Agent 服务部署、创作文档与 Team 协作、assistant 通话和实时语音接入。CardBush docs, webhook bridge setup, local and remote plugin installation, agent deployment, Create and Team. 不用于其他宿主或无关应用的配置与部署。
 license: Apache-2.0
 ---
 
@@ -10,6 +10,7 @@ license: Apache-2.0
 
 | 任务 | 读取文档 |
 |---|---|
+| 通过对话创建自定义主页组件，使用 HTML、CSS、TypeScript、JavaScript 或打包后的前端项目，添加到主页或只存入组件库 | [主页自定义组件](references/home-components.md) |
 | 应用中心、快捷方式、@ 应用引用、独立应用链接 | [应用中心](references/app-center.md) |
 | 创作文档、Team 的文档可视化、从写作到协作实践 | [创作与 Team](references/bush-it.md) |
 | 添加 MCP 服务、检查连接、配置插件 OAuth | [MCP 接入](references/mcp-management.md) |

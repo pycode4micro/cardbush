@@ -15,11 +15,13 @@ app.whenReady().then(async () => {
   const capture = async name => { await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); await new Promise(resolve=>setTimeout(resolve,180)); writeFileSync(resolve('tmp',name),(await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); };
   try {
     await win.loadFile(join(directory,'index.html')); await until('document.body.innerText.includes("还没有自动化")');
-    assert.deepEqual(await read('Array.from(document.querySelectorAll(".automation-tabs button")).map(b=>b.textContent.trim())'), ['计划管理','未读0','今天','全部结果']);
+    assert.deepEqual(await read('Array.from(document.querySelectorAll(".automation-tabs button")).map(b=>b.textContent.trim())'), ['计划管理','日历','未读0','今天','全部结果']);
     assert.equal(await read('document.querySelector(".automation-tabs [aria-pressed=true]").textContent'), '计划管理');
     assert.equal(await read('document.querySelectorAll(".automation-calendar,.calendar-data-controls").length'),0,'scheduling page no longer renders a calendar');
     assert.equal(await read('calendarCalls.length'),0,'scheduling no longer requests calendar data');
     assert.equal(await read('getComputedStyle(document.querySelector(".automation-panel")).scrollbarGutter'),'stable');
+    await click('日历'); await until('!!document.querySelector(".automation-calendar-page .calendar-month-heading")');
+    await click('计划管理');
     await click('新建自动化');
     assert.equal(await read('setupRequests'),1,'new automation opens conversational setup');
     assert.equal(await read('!!document.querySelector(".automation-form")'),false,'creation does not open a manual form');

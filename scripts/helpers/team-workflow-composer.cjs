@@ -10,8 +10,7 @@ module.exports = async ({ read, until, frame, key, pointerClick, capture, win })
   await until(`!!document.querySelector('${dock} textarea')`);
   assert.equal(await read('document.querySelector(".team-flow-body").getBoundingClientRect().height'), graphHeight, 'floating input does not shrink the graph');
   const setStyle = async (style, placement) => {
-    await read(`saveComponents({...componentState,items:componentState.items.map(item=>item.id==='system-input'?{...item,inputStyle:${JSON.stringify(style)}}:item),
-      welcomeLayout:${placement ? `{items:[{componentId:'system-input',x:0,y:0,width:100,height:120,inputStyle:${JSON.stringify(placement)}}]}` : 'undefined'}},componentState.revision)`);
+    await read(`setComposerStyle(${JSON.stringify(placement ?? style)})`);
     await frame();
   };
   const draft = async value => {

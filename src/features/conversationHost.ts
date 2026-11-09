@@ -3,7 +3,6 @@ import type { ConversationRuntime } from '../backend/conversationRuntime';
 import type { WorkSummaryInspectorDetail } from './subagents/subagentObservabilityEvents';
 import type { CardbushAppPlugin, ChatMessage, ChatToolArtifact, ChatToolExecution, PluginCommandSummary } from '../types';
 import type { WorkspaceDirectoryPage } from '../../electron/workspaceFiles';
-import type { RuntimeUserPrompt } from '@cardbush/bush-protocol';
 
 /** Explicit host services; absence keeps the existing desktop behavior. */
 export interface ConversationHost {
@@ -33,7 +32,6 @@ export interface ConversationHost {
   fileReferencePath?(source: string): string | undefined;
   openExternal?(url: string): void;
   readDirectory?(input: { directoryPath?: string; offset?: number }): Promise<WorkspaceDirectoryPage>;
-  welcomeHistory?(signal: AbortSignal): Promise<RuntimeUserPrompt[]>;
   toolDetails(sessionId: string, turnId: string): Promise<ChatToolExecution[]>;
 }
 export const ConversationHostContext = createContext<ConversationHost | undefined>(undefined);

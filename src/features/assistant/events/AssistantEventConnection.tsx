@@ -3,7 +3,6 @@ import type { ChatStreamRequest } from '../../../backend/api';
 import { eventBackend } from './eventBackend';
 import { useAssistantProfile } from '../assistantProfile';
 import { useComponents } from '../../components/componentStore';
-import { isBuiltinComponent } from '../../components/componentModel';
 
 /** Mounted with the App, so closing the Assistant surface never owns its scheduler. */
 export function AssistantEventConnection({ prepare, language, configuration, enabled }: {
@@ -11,7 +10,7 @@ export function AssistantEventConnection({ prepare, language, configuration, ena
 }) {
   const profile = useAssistantProfile(), prepareRef = useRef(prepare), profileRef = useRef(profile);
   prepareRef.current = prepare; profileRef.current = profile;
-  const componentCatalog = JSON.stringify(useComponents().items.filter(item => !isBuiltinComponent(item)).slice(0, 40).map(({id, title}) => ({id, title})));
+  const componentCatalog = JSON.stringify(useComponents().items.slice(0, 40).map(({id, title}) => ({id, title})));
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
