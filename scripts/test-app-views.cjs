@@ -185,7 +185,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'page-navigation' ? [
       'src/features/navigation/PageNavigation.tsx', 'src/features/plugins/PluginManagementPanel.tsx',
       'src/features/plugins/PluginWorkspace.tsx', 'src/features/plugins/pluginNavigationRequests.ts',
-      'src/features/settings/SettingsHostContext.ts', 'src/features/automations/AutomationPanel.tsx',
+      'src/features/settings/SettingsHostContext.ts', 'src/features/assistant/events/EventDetails.tsx',
       'src/features/windowMenu/applicationMenus.ts',
     ] : []),
     'src/features/shortcuts/usePreviousConversationShortcut.ts',

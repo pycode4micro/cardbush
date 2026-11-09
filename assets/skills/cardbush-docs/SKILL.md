@@ -19,7 +19,7 @@ license: Apache-2.0
 | 创建、打包、安装、更新、停用或卸载 CardBush 插件；在本机或远程 Agent 安装指定包、配置依赖、修复 MCP 启动 | [插件管理](references/plugin-management.md)，格式与入口见 [插件契约](references/plugin-contract.md) |
 | 修改主题、配色、应用界面样式 | [样式管理](references/style-management.md)；新主题或全局变化再读 [主题契约](references/theme-contract.md) |
 | 导入日历、转换万年历/农历、查看每天安排 | [日历转换协议](references/calendar-protocol.md)；可用 [日期转换脚本](scripts/convert-date.mjs) |
-| 设置闹钟、定时任务，理解独立执行会话 | [定时与自动化](references/automations.md) |
+| 设置闹钟、定时任务，理解独立执行会话 | [会话事件与订阅](references/automations.md) |
 | 通过 npm 或源码现场构建部署纯净 Agent、后台服务启停、Ubuntu 沙箱排障、低内存配置、更新和恢复 | [Agent 部署](references/agent-deploy.md)，具体命令见 [部署与更新](references/agent-deployment.md) |
 | 将远程服务注册为子 Agent，分配任务、追加引导、回答问题，验收续接、文件任务与重启恢复 | [远程 worker 与交互协议](references/remote-workers.md) |
 | 切换语音服务/模型、解释 assistant 的任务气泡和播报 | [语音与 assistant](references/voice-assistant.md) |

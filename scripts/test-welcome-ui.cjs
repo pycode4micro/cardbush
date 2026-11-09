@@ -14,7 +14,7 @@ async function bundle() {
   const { default: react } = await import('@vitejs/plugin-react');
   const appSource = ts.createSourceFile('App.tsx', readSourceFile(path.join(root, 'src/App.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const statements = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'CardbushApp').body.statements;
-  const navigationCallbacks = ['createConversation', 'openConversationPrompt', 'openPluginPrompt', 'createAutomationConversation', 'openConversation', 'changeWelcomeProject', 'handleProjectAction', 'handleSidebarCreateConversation'].map(name => statements.find(node =>
+  const navigationCallbacks = ['createConversation', 'openPluginPrompt', 'openConversation', 'changeWelcomeProject', 'handleProjectAction', 'handleSidebarCreateConversation'].map(name => statements.find(node =>
     ts.isVariableStatement(node) && node.declarationList.declarations[0].name.getText(appSource) === name).getText(appSource));
   const hookSource = ts.createSourceFile('useCardbushChat.ts', readSourceFile(path.join(root, 'src/hooks/useCardbushChat.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
   const hookStatements = hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useCardbushChat').body.statements;
@@ -29,7 +29,6 @@ async function bundle() {
     import { samePath, basename } from ${JSON.stringify(path.join(root, 'src/shared/localPaths.ts'))};
     import { pickWorkspace } from ${JSON.stringify(path.join(root, 'src/features/ssh/WorkspaceLocationPicker.tsx'))};
     import { showUiError } from ${JSON.stringify(path.join(root, 'src/shared/showUiError.ts'))};
-    import { automationSetupPrompt } from ${JSON.stringify(path.join(root, 'src/features/automations/automationPrompts.ts'))};
     import { stableProjectId } from ${JSON.stringify(path.join(root, 'src/features/sidebar/projectStore.ts'))};
     import { adoptDraftConversationStyle } from ${JSON.stringify(path.join(root, 'src/features/settings/conversationStyle.ts'))};
     import { adoptDraftConversationSource } from ${JSON.stringify(path.join(root, 'src/features/settings/conversationSource.ts'))};
@@ -69,7 +68,7 @@ async function bundle() {
       const drawerLayout = false, collapseSidebar = () => {};
       const [, setSettingsOpen] = useState(false), [, setFriendsOpen] = useState(false), [, setConversationPromptFocus] = useState(0);
       ${navigationCallbacks.join('\n')}
-      return { chat, createConversation, openConversation, changeWelcomeProject, handleProjectAction, createAutomationConversation, openPluginPrompt, newChat: handleSidebarCreateConversation,
+      return { chat, createConversation, openConversation, changeWelcomeProject, handleProjectAction, openPluginPrompt, newChat: handleSidebarCreateConversation,
         projectDir: conversationProjectDir(chat.activeConversation) };
     }`;
   const result = await build({ configFile: false, logLevel: 'error', plugins: [react(), {
@@ -208,10 +207,6 @@ app.whenReady().then(async () => {
     await until("draftValue === '独立工作草稿'", 'independent draft is retained');
     assert.equal(await run('routing.chat.activeConversationId'), independentDraftId);
     assert.equal(await run('routing.chat.conversations.length'), 2, 'drafts are not persisted by navigation');
-    await run("routing.openConversation('saved-project-chat')"); await pause(30);
-    await run('routing.createAutomationConversation()');
-    await until("routing.projectDir === '' && draftValue.includes('我想创建一个定时任务')", 'automation opens the same independent conversation entry');
-    assert.ok(await run("draftValue.startsWith('独立工作草稿')"), 'automation keeps the existing independent draft');
     await run("routing.openConversation('saved-project-chat')"); await pause(30);
     await run("routing.openPluginPrompt('使用插件检查依赖')");
     await until("routing.projectDir === 'D:/fixture' && draftValue.includes('使用插件检查依赖')", 'plugin prompts retain the explicitly selected project');

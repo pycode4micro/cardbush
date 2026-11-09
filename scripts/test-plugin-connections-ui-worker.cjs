@@ -846,7 +846,7 @@ app.whenReady().then(async()=>{
   await draft('/Chrome');await until('document.querySelectorAll(".composer-command-row").length===1');
   assert.deepEqual(await menuIds(),['/chrome:review']);
   await draft('@');await until('document.body.innerText.includes("当前对话 · 用户指令")');
-  const persistentIds = ['application:builtin:plugins','application:builtin:automations','application:builtin:components','application:builtin:team','application:builtin:md-presentation','ssh:manage','reference:files'];
+  const persistentIds = ['application:builtin:plugins','application:builtin:components','application:builtin:team','application:builtin:md-presentation','ssh:manage','reference:files'];
   const resources = (await menuIds()).filter(id=>id.startsWith('plugin:') || id.startsWith('skill:'));
   assert.ok(['plugin:personal.tools','plugin:chrome','skill:chrome:debug'].every(id=>resources.includes(id)));
   assert.deepEqual(await menuIds(),[...persistentIds,'browser:cardbush-tab','turn:source-user',...resources]);

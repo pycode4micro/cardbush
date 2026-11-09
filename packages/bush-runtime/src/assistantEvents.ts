@@ -1,4 +1,6 @@
 import { AutomationClock } from './automationClock.js';
+import type { AutomationScheduler } from './automationScheduler.js';
+import { conversationEventSnapshot, conversationJobId, manageConversationEvent } from './conversationEvents.js';
 import { presentExistingScheduleActions } from './extendedBuiltins.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -41,6 +43,7 @@ export class AssistantEvents {
   private automaticActivation = false;
   private clock: () => number;
   constructor(path: string, private deps: {
+    conversationScheduler?: AutomationScheduler;
     preferredName?: (signal: AbortSignal) => Promise<string | undefined>;
     tools: ToolRegistry; run: Runner; now?: () => number; clock?: AutomationClock; collector?: Pick<EventCollector, 'resolve'>;
     botContext?: (ref?: string) => Promise<BotContext>;
@@ -111,6 +114,13 @@ export class AssistantEvents {
       return this.store.select(state => state.webhookReceipts?.[`webhook-input-${command.receiptId}`] ?? null);
     }
     if (this.closed) throw Error('FRIENDS_CLOSED');
+    const jobId = 'eventId' in command ? conversationJobId(command.eventId) : undefined;
+    if (jobId && 'eventId' in command) {
+      if (delivery || !this.deps.conversationScheduler) throw Error('FRIENDS_EVENT_NOT_FOUND');
+      await this.deps.conversationScheduler.manage({ action: command.action, id: jobId }, undefined, { cancelOnDelete: true });
+      return this.snapshot();
+    }
+    if (command.action === 'run' || command.action === 'stop') throw Error('FRIENDS_EVENT_ACTION_UNAVAILABLE');
     if (command.action === 'receive_webhook') {
       const id = `webhook-input-${command.receiptId}`, sourceRef = `webhook:${command.receiptId}`;
       const receipt = await this.store.change(state => {
@@ -165,6 +175,16 @@ export class AssistantEvents {
       for (const probe of this.probes.values()) probe.controller.abort();
       this.configured = true;
     } else if (command.action === 'submit') {
+      if (conversationJobId(command.input.id)) throw Error('FRIENDS_INPUT_ID_CONFLICT');
+      const related = conversationJobId(command.input.relatesTo);
+      if (related) {
+        const scheduler = this.deps.conversationScheduler;
+        if (!scheduler || delivery) throw Error('FRIENDS_EVENT_NOT_FOUND');
+        const job = (await scheduler.list()).jobs.find(item => item.id === related);
+        if (!job) throw Error('FRIENDS_EVENT_NOT_FOUND');
+        await manageConversationEvent(scheduler, job.sessionId, { action: 'continue', text: job.prompt + '\n\n' + command.input.text, eventId: command.input.relatesTo }, command.input.id, this.clock());
+        return this.snapshot();
+      }
       await this.submit(command.input, delivery);
       return this.snapshot();
     } else {
@@ -302,7 +322,8 @@ export class AssistantEvents {
   async snapshot(): Promise<FriendsSnapshot> {
     const state = await this.store.read();
     const workspaceDir = state.configuration?.parent.metadata.workspaceDir;
-    return { configured: this.configured, events: state.events, detections: state.detections,
+    const scoped = this.deps.conversationScheduler ? conversationEventSnapshot(await this.deps.conversationScheduler.list()) : { events: [], detections: [] };
+    return { configured: this.configured, events: [...state.events, ...scoped.events], detections: [...state.detections, ...scoped.detections],
       ...(typeof workspaceDir === 'string' ? { workspaceDir } : {}),
       ...(state.active ? { active: { eventId: state.active.eventId, turnId: state.active.turnId } } : {}),
       ...(this.deps.interactions?.() ?? emptyInteractions()) };
@@ -680,24 +701,34 @@ export class AssistantEvents {
       topic: z.string().trim().min(1).max(160).optional(), include_archived: z.boolean().optional(), eventId: z.string().min(1).optional(), text: z.string().trim().min(1).max(8000).optional(),
       at: z.string().datetime({ offset: true }).optional(),
       recurrence: eventRecurrenceSchema.optional().describe('Fixed cadence for subscribe, or an explicitly requested schedule change with continue. Use instead of at. Runtime calculates each due time.'),
+      session_hook: z.object({ event: z.enum(['Stop','PostToolUse','PostToolUseFailure']), tool: z.string().max(256).default(''), cooldownSeconds: z.int().min(60).max(86400).default(60) }).strict().optional().describe('Regular conversations only. Subscribe to an outcome of the originating conversation.'),
       trigger: eventPredicateSchema.optional().describe('Agent-authored local condition without a date. interval sees time, runtime sees local outcome metadata, collector reuses a successful child tool receipt and sees fresh observation.value. Return 0, 1, or return match(stableKey, conciseEvidence) for a qualifying collector update.'),
       presentation: eventPresentationSchema.optional(),
       reminderText: reminderTextSchema,
       destination: z.enum(['here','external']).optional().describe('here means the originating conversation. Use external only for an explicitly requested bridge.'),
       source_ref: z.string().min(1).max(100).optional() }).strict().refine(input =>
-        [input.at, input.recurrence, input.trigger].filter(Boolean).length <= 1 &&
+        [input.at, input.recurrence, input.trigger, input.session_hook].filter(Boolean).length <= 1 &&
+        (!input.session_hook || ['subscribe','continue'].includes(input.action)) &&
         (!input.presentation || ['create','subscribe','continue'].includes(input.action)) &&
         (!input.recurrence || ['subscribe', 'continue'].includes(input.action)) &&
         (!(input.trigger || input.reminderText || input.at) || ['create','subscribe','continue'].includes(input.action)),
       'Register one trigger type on create, subscribe or continue. Fixed recurrence uses subscribe or continue.');
     this.deps.tools.register({
-      definition: { name: 'assistant_event', description: 'Manage the personal assistant’s durable proactive events. Use create for one outcome. Use subscribe for ongoing informational updates: provide a stable short topic, a self-contained text describing what to report across updates, and optionally at for the first check. Reuse the same subscription on its delivery route. Continue, read, pause, resume or permanently delete by eventId. Pause a temporary stop. Delete only on an explicit user request for one identifiable event. Ask which event if ambiguous. List with include_archived to locate archived events. Events use their own evidence. Notification routing inherits the current message, or an explicitly selected verified source_ref for a local request.', inputSchema: z.toJSONSchema(schema) },
+      definition: { name: 'assistant_event', description: 'Register and manage events. In an ordinary conversation register future work on user request. Use create with at for one task, or subscribe with recurrence or session_hook for recurring work. Runs inherit the source conversation’s project, model and permissions. Read, continue, pause, resume or delete events owned by this conversation. In the personal Assistant, manage proactive events as follows. Use create for one outcome. Use subscribe for ongoing informational updates: provide a stable short topic, a self-contained text describing what to report across updates, and optionally at for the first check. Reuse the same subscription on its delivery route. Continue, read, pause, resume or permanently delete by eventId. Pause a temporary stop. Delete only on an explicit user request for one identifiable event. Ask which event if ambiguous. List with include_archived to locate archived events. Events use their own evidence. Notification routing inherits the current message, or an explicitly selected verified source_ref for a local request.', inputSchema: z.toJSONSchema(schema) },
       manifest: { effect_kind: 'mutation', operation: 'assistant.event', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
-      modelAvailable: request => request.sessionId === PERSONAL_ASSISTANT_SESSION && request.metadata.agentRole !== 'child',
+      visibleToChild: false,
+      modelAvailable: request => request.metadata.agentRole !== 'child' && request.metadata.toolExecutionPolicy !== 'none' &&
+        (request.sessionId === PERSONAL_ASSISTANT_SESSION || Boolean(this.deps.conversationScheduler) && request.sessionId !== FRIENDS_SESSION &&
+          !request.metadata.automationRunId && request.metadata.toolExecutionPolicy !== 'web_restricted'),
       decodeInput: value => schema.parse(value),
       execute: async ({ input, turn, sessionId, toolCall }) => {
-        if (sessionId !== PERSONAL_ASSISTANT_SESSION || !turn) throw Error('FRIENDS_IDENTITY_REQUIRED');
+        if (!turn || turn.request.metadata.agentRole === 'child' || turn.request.metadata.toolExecutionPolicy === 'none') throw Error('FRIENDS_IDENTITY_REQUIRED');
         const meta = turn.request.metadata;
+        if (sessionId !== PERSONAL_ASSISTANT_SESSION) {
+          if (sessionId === FRIENDS_SESSION || !this.deps.conversationScheduler || meta.automationRunId || meta.toolExecutionPolicy === 'web_restricted' || meta.botSourceRef || meta.botSourceRefs) throw Error('Conversation event registration is unavailable in this context.');
+          return manageConversationEvent(this.deps.conversationScheduler, sessionId, input, JSON.stringify([turn.request.turnId, toolCall.id]), this.clock());
+        }
+        if (input.session_hook) throw Error('Use a runtime trigger for an Assistant event.');
         const refs = typeof meta.botSourceRef === 'string' ? [meta.botSourceRef] :
           Array.isArray(meta.botSourceRefs) ? meta.botSourceRefs.filter((r): r is string => typeof r === 'string') : [];
         if (refs.length > 1 && !input.source_ref) throw Error('bridge_source_ambiguous');
@@ -710,7 +741,16 @@ export class AssistantEvents {
         if (ref && !route) throw Error('bridge_source_unavailable');
         const snapshot = await this.store.read();
         const events = snapshot.events.filter(event => !refs.length || (route && this.matchesRoute(event, route)));
-        if (input.action === 'list') return events.filter(event => input.include_archived || !event.archived).slice(-100).map(({ id, title, status, archived, subscription }) => ({ id, title, status, ...(subscription ? { subscription } : {}), ...(archived ? { archived } : {}) }));
+        const scheduler = this.deps.conversationScheduler;
+        if (conversationJobId(input.eventId)) {
+          if (refs.length || ref || !scheduler || ['create', 'subscribe'].includes(input.action)) throw Error('FRIENDS_EVENT_NOT_FOUND');
+          if (input.action === 'delete' && meta.assistantUserRequest !== true) throw Error('ASSISTANT_EVENT_USER_REQUEST_REQUIRED');
+          return manageConversationEvent(scheduler, sessionId, input, toolCall.id, this.clock());
+        }
+        if (input.action === 'list') {
+          const saved = !ref && !refs.length && scheduler ? conversationEventSnapshot(await scheduler.list(sessionId)).events : [];
+          return [...events, ...saved].filter(event => input.include_archived || !event.archived).slice(-100).map(({ id, title, status, archived, subscription }) => ({ id, title, status, ...(subscription ? { subscription } : {}), ...(archived ? { archived } : {}) }));
+        }
         const event = events.find(item => item.id === input.eventId);
         const creating = input.action === 'create' || input.action === 'subscribe';
         if (!creating && !event) throw Error('FRIENDS_EVENT_NOT_FOUND');

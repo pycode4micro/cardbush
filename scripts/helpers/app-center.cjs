@@ -57,7 +57,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await openManager();
   await until("document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-drawer')?.dataset.visible==='true'", 'drawer opened');
   assert.deepEqual(await run("Array.from(document.querySelectorAll('.app-center-tile'), el => el.dataset.applicationId).sort()"),
-    ['builtin:automations','builtin:components','builtin:md-presentation','builtin:plugins','builtin:team','plugin:demo:canvas']);
+    ['builtin:components','builtin:md-presentation','builtin:plugins','builtin:team','plugin:demo:canvas']);
   assert.equal(await run("document.querySelectorAll('[data-application-id=\"builtin:components\"]').length"), 1, 'components are available in the app center without a new default dock shortcut');
   assert.equal(await run("document.activeElement.getAttribute('aria-label')"), '搜索应用');
   assert.equal(await run('centerEvents.length'), 1, 'opening the center cannot execute an app');
@@ -130,10 +130,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("centerEvents.some(event=>event[0]==='external')", 'external app opens only on click');
   assert.deepEqual(await run("centerEvents.find(event=>event[0]==='external')"), ['external','http://localhost:8888/dashboard']);
   await until("!document.querySelector('.app-center-drawer')", 'drawer closed after launch');
-  await run("const input=document.querySelector('textarea[data-composer-input]');input.focus();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'@定时');input.setSelectionRange(3,3);input.dispatchEvent(new Event('input',{bubbles:true}));");
-  await until("!!document.querySelector('[data-command-id=\"application:builtin:automations\"]')", 'app appears in mention menu');
+  await run("const input=document.querySelector('textarea[data-composer-input]');input.focus();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'@组件');input.setSelectionRange(3,3);input.dispatchEvent(new Event('input',{bubbles:true}));");
+  await until("!!document.querySelector('[data-command-id=\"application:builtin:components\"]')", 'app appears in mention menu');
   const before=await run('centerEvents.length');
-  await run("document.querySelector('[data-command-id=\"application:builtin:automations\"]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await run("document.querySelector('[data-command-id=\"application:builtin:components\"]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
   await pause(120);
   assert.match(await run('chatProps.draft'), /cardbush-reference:\/\/application/, await run("JSON.stringify({draft:chatProps.draft,textarea:document.querySelector('[data-composer-input]')?.outerHTML})"));
   await until("!!document.querySelector('[data-context-reference]')", 'application chip inserted');
@@ -141,7 +141,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('centerEvents.length'),before,'mention does not launch app');
   await run("document.querySelector('.send-button').click()");
   await until('centerSent.length===1','application reference submitted');
-  assert.match(await run('centerSent[0]'),/builtin%3Aautomations/);
+  assert.match(await run('centerSent[0]'),/builtin%3Acomponents/);
   await run("views.requestApplication('plugin:demo:canvas','cloud-demo',{applicationKind:'plugin',title:'Design canvas',target:'demo',componentId:'canvas'})");
   await until("centerEvents.at(-1)?.[1]==='https://example.test/canvas'", 'remote app opens its verified page URL');
   assert.deepEqual(await run('centerEvents.at(-1)'),['external','https://example.test/canvas']);

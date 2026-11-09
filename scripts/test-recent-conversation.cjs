@@ -73,6 +73,8 @@ async function run() {
     store.commitTurn(sessionId, { turnId, turnSequence: i, createdAt: stamp, completedAt: stamp, status: 'completed', reason: 'stop', usage: {}, messages });
   }
   store.ensureSession('local-hidden', { title: 'Hidden session', hidden: true });
+  const inboxTest = process.argv.includes('--notifications');
+  if (inboxTest) require('./helpers/workspace-inbox.cjs').seed(root, sessionId);
   journal.close();
   // Hold real runtime replies until the workspace is mounted, including on fast machines.
   let releaseData;
@@ -97,7 +99,6 @@ async function run() {
     throw Error('Timed out: ' + label);
   };
   const win = await wait(() => BrowserWindow.getAllWindows().find(w => !w.isDestroyed()), 'workspace');
-  win.setContentSize(1400, 800);
   const read = code => win.webContents.executeJavaScript(code, true);
   const visible = selector => wait(() => read('Boolean(document.querySelector(' + JSON.stringify(selector) + ')?.checkVisibility())'), selector);
   const click = async selector => { await visible(selector); await read('document.querySelector(' + JSON.stringify(selector) + ').click();void 0'); };
@@ -119,6 +120,14 @@ async function run() {
   releaseData();
   await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录' && !!document.querySelector('.desktop-covers[aria-busy=false]')"), 'conversation and events arrived');
   assert.deepEqual(await positions(), initialPositions, 'real data fills the initial toolbar and card slots without reflow');
+  // Measure cold start at the actual launch size. A resize also changes the
+  // native caption and rail breakpoint, independently of runtime hydration.
+  win.setContentSize(1400, 800);
+  await visible('.desktop-shell[data-sidebar-layout=docked]');
+  if (inboxTest) {
+    await require('./helpers/workspace-inbox.cjs').verify({ win, read, wait, visible, click, sessionId });
+    app.quit(); return;
+  }
   if (process.argv.includes('--home-components')) {
     await require('./helpers/home-component-publish.cjs')({root,project,win,read,visible,click,wait});
     app.quit(); return;
@@ -129,7 +138,7 @@ async function run() {
     const toggle = '.window-frame [data-inspector-toggle]';
     for (const [key, selector] of [
       ['components', '.components-app > header h1'], ['plugins', '.plugin-catalog-heading h2'],
-      ['automations', '.automation-heading h1'], ['workflows', '.team-flow-header h1'], ['create', '.canvas-toolbar input'],
+      ['workflows', '.team-flow-header h1'], ['create', '.canvas-toolbar input'],
     ]) {
       await visible('.desktop-explore .desktop-row');
       const labels = ['zh', 'en'].map(locale => require('../src/i18n/locales/' + locale + '.json').messages['appCenterModel.' + key]);
@@ -147,7 +156,7 @@ async function run() {
       await click('[data-history-action=back]:enabled');
     }
     await visible('.desktop-explore');
-    console.log('Workspace headings and title bar inspector passed for all five built-in feature pages.');
+    console.log('Workspace headings and title bar inspector passed for all built-in feature pages.');
     app.quit(); return;
   }
   if (materialTest) {

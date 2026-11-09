@@ -6,6 +6,7 @@ import { InteractionCard } from '../../interactions/InteractionCard';
 import { solutionInteractionAnswer } from '../../interactions/solutionSelectionModel';
 import { createRuntimeInteractions } from '../../../runtime-client/RuntimeInteractionBridge';
 import { eventBackend } from './eventBackend';
+import { EventResultDisclosure } from '../../automations/EventResultDisclosure';
 
 export function FriendsEventDetails({ event, snapshot, language, showHeading = true }: {
   event?: FriendsWorkEvent; snapshot?: FriendsSnapshot; language: string; showHeading?: boolean;
@@ -13,19 +14,28 @@ export function FriendsEventDetails({ event, snapshot, language, showHeading = t
   const t = uiText(language);
   if (!event) return <p className="friends-empty">{t('yourFriends.noEvents')}</p>;
   const status = t(`yourFriends.status.${event.status}`);
-  const due = event.recurrence && snapshot?.detections.find(timer => timer.eventId === event.id);
+  const due = snapshot?.detections.find(timer => timer.eventId === event.id);
+  const zone = event.recurrence?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const execution = event.conversationExecution;
+  const date = new Intl.DateTimeFormat(language, { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' });
   return <div className="friends-event-details">
     {showHeading && <><h3>{event.title}</h3><p className="friends-aside">{event.subscription ? t('assistant.events.subscriptionStatus', { status }) : status}</p></>}
-    {due && event.recurrence && event.status !== 'failed' && event.status !== 'paused' && <p className="friends-aside">
+    {execution?.sourceTitle && <p className="friends-aside">{t('assistant.events.sourceConversation', { title: execution.sourceTitle })}</p>}
+    {due && event.status !== 'failed' && event.status !== 'paused' && <p className="friends-aside">
       {t('assistant.events.nextOccurrence', {
-        time: new Intl.DateTimeFormat(language, { timeZone: event.recurrence.timeZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(due.at)),
-        zone: event.recurrence.timeZone,
+        time: date.format(new Date(due.at)), zone,
       })}
     </p>}
+    {execution && execution.runs.length > 0 && <details className="event-history">
+      <summary>{t('assistant.events.runHistory')}</summary><ul>{[...execution.runs].reverse().map(run => {
+        const label = <><time dateTime={run.at}>{date.format(new Date(run.at))}</time> · {t(run.status === 'awaiting_user_action' ? 'automationPanel.needsAttention' : `automationPanel.${run.status}`)}</>;
+        return <li key={run.id}>{run.status === 'queued' || run.status === 'running' ? label :
+          <EventResultDisclosure jobId={execution.jobId} runId={run.id} summary={run.summary} language={language} ResultContent={MarkdownContent}>{label}</EventResultDisclosure>}</li>;
+      })}</ul></details>}
     {event.error && <p className="your-friends-error" role="alert">{t(event.interruptedTurnId ? 'yourFriends.executionInterrupted' : 'yourFriends.executionFailed')} <code>{event.error}</code></p>}
-    {event.result && <><h3>{t('yourFriends.latestResult')}</h3><div className="friends-result"><MessageFileReferenceScope workspaceRoot={snapshot?.workspaceDir}>
+    {event.result && <><h3>{t('yourFriends.latestResult')}</h3><div className="friends-result">{execution ? <p>{event.result.text}</p> : <MessageFileReferenceScope workspaceRoot={snapshot?.workspaceDir}>
       <MarkdownContent content={event.result.text} language={language}/>
-    </MessageFileReferenceScope></div></>}
+    </MessageFileReferenceScope>}</div></>}
     {event.inputs.length > 0 && <><h3>{t(event.inputs.some(input => input.authoredBy === 'assistant') ? 'assistant.events.evidence' : 'yourFriends.originalInputs')}</h3>{event.inputs.map(input => <p className="friends-original-input" key={input.id}>{input.text}</p>)}</>}
   </div>;
 }

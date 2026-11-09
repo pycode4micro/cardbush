@@ -1058,7 +1058,7 @@ function MessageBubbleView({
                 : <UserMessageContent content={text} language={language}/>}
             </UserMessageDisclosure>
           )}
-          <AutomationReminderCard value={message.metadata?.automationReminder} language={language}/>
+          <AutomationReminderCard value={message.metadata?.automationReminder} language={language} ResultContent={MarkdownContent}/>
           {messageDelivery === 'failed' && (
             <div
               className="message-delivery-status failed"

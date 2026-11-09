@@ -8,7 +8,9 @@ import { useCalendarDayDetails } from './useCalendarDayDetails';
 import { CalendarMonthGrid } from './CalendarMonthGrid';
 import { calendarDayKey, calendarEntriesForDays, calendarMonthDays, importedEntriesForDays, localDay, shiftCalendarDay, shiftCalendarMonth } from './automationCalendarModel';
 
-export function AutomationCalendar({ language }: { language: string }) {
+import type { FriendsSnapshot } from '@cardbush/bush-protocol';
+
+export function AutomationCalendar({ language, snapshot }: { language: string; snapshot?: FriendsSnapshot }) {
   const uiLanguage = language, locale = language;
   const [now, setNow] = useState(Date.now), [selected, setSelected] = useState(() => localDay(new Date()));
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -17,7 +19,20 @@ export function AutomationCalendar({ language }: { language: string }) {
   const calendars = useMemo(() => data.state.datasets.filter(item => item.enabled).map(item => item.calendar), [data.state.datasets]);
   const entries = useMemo(() => calendarEntriesForDays(jobs, days, now), [jobs, days, now]);
   const notes = useMemo(() => importedEntriesForDays(calendars, days, '', 0), [calendars, days]);
-  const details = useCalendarDayDetails({ jobs, calendars, now, chineseLunar: data.state.chineseLunar, language });
+  const assistantDates = useMemo(() => {
+    const events = new Map(snapshot?.events.filter(event => !event.archived && !event.conversationExecution && ['queued','watching','running'].includes(event.status)).map(event => [event.id, event.title]));
+    const dates = new Map<string, Array<{ id: string; title: string; at: number }>>();
+    for (const detection of snapshot?.detections ?? []) {
+      const title = events.get(detection.eventId);
+      if (!title) continue;
+      const day = calendarDayKey(new Date(detection.at));
+      const entries = dates.get(day) ?? [];
+      entries.push({ id: detection.id, title, at: Date.parse(detection.at) });
+      dates.set(day, entries);
+    }
+    return dates;
+  }, [snapshot]);
+  const details = useCalendarDayDetails({ jobs, calendars, assistantDates, now, chineseLunar: data.state.chineseLunar, language });
   const today = calendarDayKey(new Date(now)), selectedKey = calendarDayKey(selected), buttons = useRef(new Map<string, HTMLButtonElement>()), focus = useRef(false);
   useEffect(() => {
     const tick = () => setNow(Date.now()), timer = setInterval(tick, 30000);
@@ -37,7 +52,7 @@ export function AutomationCalendar({ language }: { language: string }) {
       </div>
     </div>
     <CalendarMonthGrid className="builtin-calendar-grid" days={days} month={selected.getMonth()} language={language} renderDay={day => {
-      const key = calendarDayKey(day), handlers = details.dayProps(day), count = (entries.get(key)?.length ?? 0) + (notes.get(key)?.count ?? 0);
+      const key = calendarDayKey(day), handlers = details.dayProps(day), count = (entries.get(key)?.length ?? 0) + (notes.get(key)?.count ?? 0) + (assistantDates.get(key)?.length ?? 0);
       return <button type="button" className="calendar-day-button" data-date={key} data-selected={key === selectedKey} aria-current={key === today ? 'date' : undefined}
         tabIndex={key === selectedKey ? 0 : -1} aria-label={`${day.toLocaleDateString(locale, { month: 'long', day: 'numeric', weekday: 'long' })} · ${count} ${uiText(language)('calendarWidget.items')}`}
         ref={node => { if (node) buttons.current.set(key, node); else buttons.current.delete(key); }} {...handlers}

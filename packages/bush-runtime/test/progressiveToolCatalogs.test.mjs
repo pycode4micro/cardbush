@@ -91,8 +91,11 @@ test('schedule discovery returns receipts while explicit configuration and resul
     tools: [], permissionMode: 'all_free', requestCapabilities: { interactiveRequests: true, vision: false }, metadata: {} });
   registerExtendedBuiltins(registry, { dataRoot: root, automation: scheduler });
   const created = [];
-  for (const name of ['First', 'Second']) created.push(await call(registry, 'schedule_task', { action: 'create', name, prompt,
-    trigger: { kind: 'once', at: '2099-10-09T00:00:00Z' } }));
+  for (const name of ['First', 'Second']) {
+    const job = await scheduler.manage({ action: 'create', definition: { sessionId: 'session', name, prompt, trigger: { kind: 'once', at: '2099-10-09T00:00:00Z' } } });
+    const page = await call(registry, 'schedule_task', { action: 'list', query: name });
+    created.push(page.jobs.find(item => item.id === job.id));
+  }
   assert.equal(created[0].revision, 1);
   assert.doesNotMatch(JSON.stringify(created), /PRIVATE AUTOMATION|"runs"/);
   const first = await call(registry, 'schedule_task', { action: 'list', limit: 1 });

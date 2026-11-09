@@ -16,7 +16,7 @@ export const shortcutDefinitions = [
   { id: 'openPlugins', group: 'application', contexts: appContexts, defaultBinding: { key: 'p', ctrl: true, alt: true },
     title: 'appCenterModel.plugins', description: 'keyboardShortcuts.openPluginManagement' },
   { id: 'openAutomations', group: 'application', contexts: appContexts, defaultBinding: { key: 't', ctrl: true, alt: true },
-    title: 'appCenterModel.automations', description: 'keyboardShortcuts.openTheCalendarAndScheduledTasks' },
+    title: 'desktop.events', description: 'keyboardShortcuts.openTheCalendarAndScheduledTasks' },
   { id: 'extractConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'e', ctrl: true, shift: true },
     title: 'conversationExtraction.extractConversation', description: 'keyboardShortcuts.extractTheCurrentConversationAsMarkdown' },
   { id: 'newConversation', group: 'conversation', contexts: appContexts, defaultBinding: { key: 'n', ctrl: true },

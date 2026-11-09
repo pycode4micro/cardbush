@@ -1,4 +1,5 @@
 import { AutomationClock } from './automationClock.js';
+import { nextEventOccurrence } from './eventRecurrence.js';
 import { mkdir, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { blobCacheEntries } from './cacheMaintenance.js';
@@ -14,12 +15,14 @@ const runSchema = z.object({ id: z.string(), turnId: z.string(), queuedAt: z.str
   status: z.enum(['queued', 'running', 'completed', 'failed', 'stopped', 'interrupted', 'awaiting_user_action']), reason: z.string(), error: z.string().optional(),
   sessionId: z.string().optional(), readAt: z.string().optional(), summary: z.string().optional(), result: z.string().optional() });
 const jobSchema = automationDefinitionSchema.extend({ id: z.string(), revision: z.number().int().positive(), state: z.enum(['active', 'paused', 'completed']), createdAt: z.string(),
+  registrationKey: z.string().optional(), archived: z.boolean().optional(),
   nextRunAt: z.string().optional(), lastEventAt: z.string().optional(), lastEventIds: z.array(z.string()), runs: z.array(runSchema),
   plugin: z.object({ id: z.string(), hookId: z.string(), definitionHash: z.string() }).optional() });
 const activeRun = (job: AutomationJob) => job.runs.find(run => run.status === 'queued' || run.status === 'running');
 const executionMode = (definition: { trigger: AutomationJob['trigger']; executionMode?: AutomationJob['executionMode'] }) =>
   definition.trigger.kind === 'event' ? (definition.executionMode ?? 'conversation') : 'isolated';
 const nextInterval = (job: AutomationJob, now: number) => {
+  if (job.trigger.kind === 'recurrence') return nextEventOccurrence(job.trigger.rule, now);
   if (job.trigger.kind !== 'interval') return undefined;
   const anchor = Date.parse(job.trigger.at), step = job.trigger.seconds * 1000;
   return new Date(anchor + Math.max(0, Math.floor((now - anchor) / step) + 1) * step).toISOString();
@@ -105,7 +108,7 @@ export class AutomationScheduler {
     return this.options.sessionExists?.(sessionId) ?? Object.hasOwn(this.state.contexts, sessionId);
   }
   private launchContext(job: AutomationJob) {
-    return job.executionMode === 'isolated' ? this.state.jobContexts[job.id] : this.state.contexts[job.sessionId];
+    return job.registrationKey || job.executionMode === 'isolated' ? this.state.jobContexts[job.id] : this.state.contexts[job.sessionId];
   }
   async list(sessionId?: string): Promise<AutomationOverview> {
     await this.ready; await this.queue;
@@ -152,7 +155,7 @@ export class AutomationScheduler {
     }))).sort((a, b) => (b.finishedAt ?? '').localeCompare(a.finishedAt ?? ''));
     return { asOf: new Date(this.now()).toISOString(), total: unread.length, items: unread.slice(0, 8) };
   }
-  async manage(input: unknown, ownerSessionId?: string) {
+  async manage(input: unknown, ownerSessionId?: string, eventOperation?: { registrationKey?: string; editKey?: string; cancelOnDelete?: boolean }) {
     const command = automationCommandSchema.parse(input);
     if (command.action === 'list') return this.list(ownerSessionId);
     if (command.action === 'reminder') return this.reminder();
@@ -198,22 +201,32 @@ export class AutomationScheduler {
       if (definition && ownerSessionId && definition.sessionId !== ownerSessionId) throw new Error('This tool can only manage automations in its own conversation.');
       if (command.action === 'create') {
         if (!definition) throw new Error('An automation definition is required.');
+        const key = eventOperation?.registrationKey;
+        const existing = key && this.state.jobs.find(item => item.sessionId === definition.sessionId && item.registrationKey === key &&
+          (!key.startsWith('topic:') || !item.archived && item.state !== 'completed'));
+        if (existing) return existing;
         if (!this.state.contexts[definition.sessionId] || !this.sourceExists(definition.sessionId)) throw new Error('Send a message in the target conversation before scheduling it.');
         if (this.state.jobs.length >= 500) throw new Error('Remove an automation before creating more (limit: 500).');
         const job: AutomationJob = { ...definition, executionMode: executionMode(definition), id: `automation_${randomUUID()}`, revision: 1, state: 'active', createdAt: new Date(this.now()).toISOString(),
           ...(definition.trigger.kind !== 'event' ? { nextRunAt: definition.trigger.at } : {}), lastEventIds: [], runs: [] };
-        if (job.executionMode === 'isolated') this.state.jobContexts[job.id] = structuredClone(this.state.contexts[job.sessionId]);
+        if (key) job.registrationKey = key;
+        if (key || job.executionMode === 'isolated') this.state.jobContexts[job.id] = structuredClone(this.state.contexts[job.sessionId]);
         this.state.jobs.push(job); return job;
       }
       const job = this.state.jobs.find(job => job.id === command.id && (!ownerSessionId || job.sessionId === ownerSessionId));
       if (!job) throw new Error('Automation not found.');
+      if (eventOperation?.editKey && job.lastEventIds.includes(eventOperation.editKey)) return job;
       if (command.expectedRevision !== undefined && job.revision !== command.expectedRevision) throw new Error('Automation changed. Refresh before saving.');
       const active = activeRun(job);
       if (command.action === 'delete') {
-        if (active?.status === 'running') throw new Error('Stop the running automation before deleting it.');
+        if (active?.status === 'running') {
+          if (!eventOperation?.cancelOnDelete) throw new Error('Stop the running automation before deleting it.');
+          stopRunId = active.id;
+        }
         this.state.jobs = this.state.jobs.filter(item => item.id !== job.id); delete this.state.jobContexts[job.id]; return { deleted: true, id: job.id };
       }
       if (command.action === 'update') {
+        if (job.plugin) throw new Error('The originating plugin owns this hook definition.');
         if (!definition) throw new Error('An automation definition is required.');
         if (active) throw new Error('Stop the queued or running automation before editing it.');
         const mode = executionMode(definition), sameSource = definition.sessionId === job.sessionId;
@@ -222,18 +235,26 @@ export class AutomationScheduler {
         if ((!source && !saved) || ((mode === 'conversation' || definition.trigger.kind === 'event') && !source)) throw new Error('Send a message in the target conversation before scheduling it.');
         // Saving explicitly refreshes configuration; ordinary source turns never
         // silently change a timer's settings. A deleted source is optional.
-        if (mode === 'isolated') this.state.jobContexts[job.id] = structuredClone(source ?? saved!);
+        if (job.registrationKey || mode === 'isolated') this.state.jobContexts[job.id] = structuredClone(((eventOperation || job.registrationKey) && saved) || source || saved!);
         else delete this.state.jobContexts[job.id];
-        Object.assign(job, definition, { executionMode: mode }); delete job.plugin;
-        job.nextRunAt = definition.trigger.kind === 'event' ? undefined : definition.trigger.at;
-        if (job.state === 'completed') job.state = 'active';
-      } else if (command.action === 'pause') {
+        const rearm = !eventOperation || JSON.stringify(definition.trigger) !== JSON.stringify(job.trigger);
+        Object.assign(job, definition, { executionMode: mode });
+        if (eventOperation?.editKey) job.lastEventIds = [...job.lastEventIds, eventOperation.editKey].slice(-128);
+        if (rearm) {
+          job.nextRunAt = definition.trigger.kind === 'event' ? undefined : definition.trigger.at;
+          if (job.state === 'completed') job.state = 'active';
+        }
+      } else if (command.action === 'restore') {
+        job.archived = false;
+      } else if (command.action === 'pause' || command.action === 'archive') {
+        if (command.action === 'archive') { job.archived = true; if (active?.status === 'running') stopRunId = active.id; }
         job.state = 'paused';
         if (active?.status === 'queued') { active.status = 'stopped'; active.finishedAt = new Date(this.now()).toISOString(); }
       } else if (command.action === 'resume') {
         if (!this.launchContext(job) || (job.trigger.kind === 'event' && !this.sourceExists(job.sessionId))) throw new Error('No conversation execution context is available.');
         job.state = 'active';
-        if (job.trigger.kind !== 'event') job.nextRunAt = job.trigger.kind === 'interval' ? nextInterval(job, this.now()) : job.trigger.at;
+        job.archived = false;
+        if (job.trigger.kind !== 'event') job.nextRunAt = nextInterval(job, this.now()) ?? job.trigger.at;
       } else if (command.action === 'run') {
         if (active) throw new Error('This automation is already queued or running.');
         if (!this.launchContext(job)) throw new Error('No conversation execution context is available.');
@@ -349,7 +370,7 @@ export class AutomationScheduler {
       Object.assign(run, { status, error: error?.slice(0, 2400), result: resultText, summary: (resultText || error || '').replace(/\s+/g, ' ').slice(0, 240), finishedAt: new Date(this.now()).toISOString() }); job.revision++;
       if (status === 'failed' || status === 'awaiting_user_action' || status === 'stopped') job.state = 'paused';
       else if (job.trigger.kind === 'once' && job.state === 'active') { job.state = 'completed'; delete job.nextRunAt; }
-      if (job.trigger.kind === 'interval' && job.nextRunAt && Date.parse(job.nextRunAt) <= this.now()) job.nextRunAt = nextInterval(job, this.now());
+      if (job.nextRunAt && Date.parse(job.nextRunAt) <= this.now()) job.nextRunAt = nextInterval(job, this.now());
     }); } catch (caught) { this.options.onError?.(caught); }
   }
   async close() { this.closed = true; this.clock.cancel(this.wake); for (const controller of this.running.values()) controller.abort(); await Promise.allSettled([...this.executions]); await this.queue; }

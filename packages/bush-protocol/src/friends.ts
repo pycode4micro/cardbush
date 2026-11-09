@@ -54,7 +54,7 @@ export const friendsCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('submit'), input: friendInputSchema }),
   z.object({ action: z.literal('receive_webhook'), receiptId: z.string().uuid(), createdAt: z.string().datetime(), text: webhookText, recipientKey: friendDeliveryRouteSchema.shape.recipientKey }).strict(),
   z.object({ action: z.literal('read_webhook'), receiptId: z.string().uuid() }).strict(),
-  z.object({ action: z.enum(['pause', 'resume', 'archive', 'restore', 'delete']), eventId: z.string().min(1) }),
+  z.object({ action: z.enum(['pause', 'resume', 'archive', 'restore', 'delete', 'run', 'stop']), eventId: z.string().min(1) }),
 ]);
 export type FriendInput = z.infer<typeof friendInputSchema>;
 export type FriendsProfile = z.infer<typeof friendsProfileSchema>;
@@ -82,6 +82,8 @@ export const eventPresentationSchema = z.object({
 }, 'Page IDs must be unique. Declare each parent before its children.').describe('Optional desktop home card and drill-down pages. Design their hierarchy around this event. Use only verified facts. Use an empty pages array for a simple reminder.');
 export type EventPresentation = z.infer<typeof eventPresentationSchema>;
 export interface FriendsWorkEvent {
+  conversationExecution?: { jobId: string; sessionId: string; sourceTitle?: string; pluginId?: string;
+    runs: Array<{ id: string; status: import('./automation.js').AutomationRun['status']; at: string; summary?: string }> };
   presentation?: EventPresentation;
   id: string; logicalKey: string; origin: 'user' | 'agent' | 'system'; title: string; intent: string;
   subscription?: true;

@@ -6,6 +6,8 @@ import { readUserPrompt, promptContextMetadata, type UserPromptInput, type Promp
 import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision, streamAttachmentsFromChatAttachments } from '../shared/chatAttachments';
 import { createRealtimeAgentExecutor } from '../backend/realtimeAgent';
 import { journalMessages } from '../backend/conversationJournal';
+import { useConversationEventInbox, observeConversationEvents, type ConversationEventResult } from '../features/automations/conversationEventResults';
+import { workspaceInbox } from '../features/desktop/workspaceNotifications';
 import type { ConversationEntry } from '@cardbush/bush-protocol';
 import type { VoiceTarget } from '../features/voice/voiceSession';
 import { adoptDraftConversationSource, resolveConversationSource } from '../features/settings/conversationSource';
@@ -301,7 +303,7 @@ export function useCardbushChat(
   const goalByConversationRef = useRef(goalByConversation);
   goalByConversationRef.current = goalByConversation;
   const goalTurnControllersRef = useRef<
-    Record<string, { turnId: string; controller: AbortController }>
+    Record<string, { turnId: string; controller: AbortController; resultInSource: boolean }>
   >({});
   const goalTurnCursorRef = useRef<
     Record<string, { sequence: number; lastEventId: string }>
@@ -459,6 +461,7 @@ export function useCardbushChat(
     body: string,
     turnId = '',
     notificationId?: string,
+    receiptOwner: 'session' | 'event' = 'session',
   ) => {
     const normalized = sessionId.trim();
     if (!normalized || !sessionAttentionNeedsNotification({ kind, interactionId: notificationId })) return;
@@ -490,6 +493,7 @@ export function useCardbushChat(
     // Native window state decides toast delivery. Chromium can still report
     // focus/visibility while a minimize event is on its way to this renderer.
     if (!backend.scope) void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
+    if (receiptOwner === 'event') return;
     if (
       kind === 'completed' &&
       viewActiveRef.current &&
@@ -530,14 +534,9 @@ export function useCardbushChat(
   useEffect(() => {
     if (backend.scope) return;
     persistSessionAttentionState(attentionByConversation);
-    void window.cardbushDesktop
-      ?.setSessionAttentionCount?.(Object.values(attentionByConversation).filter(sessionAttentionNeedsNotification).length)
-      .catch(() => undefined);
   }, [attentionByConversation]);
 
-  useEffect(() => {
-    if (loading) return;
-    const knownIds = new Set(conversations.map((item) => item.id));
+  const pruneSessionAttention = useCallback((knownIds: Set<string>) => {
     const staleIds = Object.keys(attentionByConversationRef.current).filter(
       (sessionId) => !knownIds.has(sessionId),
     );
@@ -546,7 +545,7 @@ export function useCardbushChat(
     for (const sessionId of staleIds) delete next[sessionId];
     attentionByConversationRef.current = next;
     setAttentionByConversation(next);
-  }, [conversations, loading]);
+  }, []);
 
   useEffect(() => {
     const clearVisibleCompletion = () => {
@@ -767,6 +766,9 @@ export function useCardbushChat(
         if (cancelled || conversationListRevisionRef.current !== revision) {
           return;
         }
+        // A dormant or failed runtime has no session list yet. Only a successful listing can retire unread hints.
+        pruneSessionAttention(new Set([...loadedConversations.map(item => item.id), ...Object.keys(preparedConversationsRef.current),
+          ...conversationsRef.current.filter(item => item !== startedWith.get(item.id)).map(item => item.id)]));
         setConversations((current) =>
           mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations, startedWith),
         );
@@ -803,7 +805,7 @@ export function useCardbushChat(
     return () => {
       cancelled = true;
     };
-  }, [requestContext.runtimeReady]);
+  }, [requestContext.runtimeReady, pruneSessionAttention]);
 
   const setSelectedModel = useCallback((model: string) => {
     const config = modelConfigFor(availableModels, model);
@@ -1198,9 +1200,8 @@ export function useCardbushChat(
       historyLoadingRequestsRef.current.delete(id); liveTranscriptSessionsRef.current.delete(id);
     }
     messagesByConversationRef.current = prune(messagesByConversationRef.current);
-    attentionByConversationRef.current = prune(attentionByConversationRef.current);
+    pruneSessionAttention(keep);
     setMessagesByConversation(prune);
-    setAttentionByConversation(prune);
     setRunningByConversation(prune);
     setTeamFlowsByConversation(prune); setTeamFlowLoadingByConversation(prune); setTeamFlowActionByConversation(prune);
     setContextWindowUsageByConversation(prune); setGoalByConversation(prune); setGoalCancellingByConversation(prune);
@@ -1218,7 +1219,7 @@ export function useCardbushChat(
           ? current
           : '',
     );
-  }, []);
+  }, [pruneSessionAttention]);
 
   const reloadSkills = useCallback(async () => {
     const loadedSkills = await fetchSkills();
@@ -1296,7 +1297,7 @@ export function useCardbushChat(
     [],
   );
 
-  const subscribeGoalTurn = useCallback((sessionId: string, turnId: string) => {
+  const subscribeGoalTurn = useCallback((sessionId: string, turnId: string, resultInSource = false) => {
     const normalizedSessionId = sessionId.trim();
     const normalizedTurnId = turnId.trim();
     if (!normalizedSessionId || !normalizedTurnId || controllersRef.current[normalizedSessionId]) {
@@ -1304,14 +1305,13 @@ export function useCardbushChat(
     }
     const current = goalTurnControllersRef.current[normalizedSessionId];
     if (current?.turnId === normalizedTurnId) {
+      if (resultInSource) current.resultInSource = true;
       return;
     }
     current?.controller.abort();
     const controller = new AbortController();
-    goalTurnControllersRef.current[normalizedSessionId] = {
-      turnId: normalizedTurnId,
-      controller,
-    };
+    const subscription = { turnId: normalizedTurnId, controller, resultInSource };
+    goalTurnControllersRef.current[normalizedSessionId] = subscription;
     const assistantId = `goal-turn-${normalizedTurnId}`;
     let terminalSnapshot: TurnTerminalSnapshot | null = null;
     let finalAssistantText = '';
@@ -1467,7 +1467,7 @@ export function useCardbushChat(
       onDone: (terminal) => {
         terminalSnapshot = withTerminalTurnId(terminal, normalizedTurnId);
         // Delivery must not wait for the transport's final history reconciliation.
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && !subscription.resultInSource) {
           terminalAttentionPromise ??= markTurnAttention(normalizedSessionId, terminalSnapshot, finalAssistantText);
         }
         terminalTurnIdsRef.current.add(normalizedTurnId);
@@ -1559,7 +1559,7 @@ export function useCardbushChat(
             clearSessionRunning(normalizedSessionId);
           }
         }
-        if (!terminalSnapshot && !controller.signal.aborted) {
+        if (!terminalSnapshot && !controller.signal.aborted && !subscription.resultInSource) {
           await markTurnAttention(
             normalizedSessionId,
             matchingTerminalSnapshot(loaded?.latestTurn, normalizedTurnId),
@@ -1699,46 +1699,46 @@ export function useCardbushChat(
   // Notifications can arrive while the previous read is in flight, or after a
   // short turn has already finished. Preserve both updates and committed history.
   const automationHistoryRef = useRef(new Map<string, string>());
+  const eventAttention = useCallback((item: ConversationEventResult) => {
+    if (attentionByConversationRef.current[item.sourceId]?.kind === 'interaction') return;
+    markSessionAttention(item.sourceId, item.status === 'failed' || item.status === 'interrupted' ? 'error' : 'completed',
+      item.summary || item.title, item.turnId, undefined, 'event');
+  }, [markSessionAttention]);
+  const { receive: receiveEventResults, unreadEventResults, latestEventArrival } = useConversationEventInbox(eventAttention);
+  const inbox = useMemo(() => workspaceInbox(attentionByConversation, unreadEventResults), [attentionByConversation, unreadEventResults]);
   useEffect(() => {
-    if (backend.scope || requestContext.runtimeReady === false || !window.cardbushDesktop?.automationCommand) return;
-    let disposed = false, reading = false, dirty = false, timer = 0;
-    let listChanged = false;
-    const refresh = async () => {
-      if (disposed) return;
-      if (reading) { dirty = true; return; }
-      reading = true; dirty = false;
-      const reloadList = listChanged;
-      listChanged = false;
-      try {
-        const state = await window.cardbushDesktop!.automationCommand({ action: 'list' }) as import('@cardbush/bush-protocol').AutomationOverview;
-        if (disposed) return;
-        let refreshHistory = false;
-        for (const job of state.jobs) {
-          const run = job.runs.at(-1);
-          const sessionId = run?.sessionId ?? job.sessionId;
-          if (run?.status === 'running') subscribeGoalTurn(sessionId, run.turnId);
-          if (!run || run.status === 'running' || run.status === 'queued' || sessionId !== activeConversationId ||
-              controllersRef.current[sessionId] || goalTurnControllersRef.current[sessionId]) continue;
-          const key = `${run.id}:${run.status}`;
-          if (automationHistoryRef.current.get(job.id) !== key) refreshHistory = true;
+    if (!backend.scope) void window.cardbushDesktop?.setSessionAttentionCount?.(inbox.notices.length).catch(() => undefined);
+  }, [backend.scope, inbox.notices.length]);
+  useEffect(() => {
+    if (backend.scope || requestContext.runtimeReady === false) return;
+    return observeConversationEvents(async (state, reloadList, signal) => {
+      receiveEventResults(state);
+      let refreshHistory = false;
+      for (const job of state.jobs) {
+        // Older clients also persisted isolated results as session completion hints.
+        const hint = attentionByConversationRef.current[job.sessionId];
+        if (hint?.turnId && hint.kind !== 'interaction' && job.runs.some(run =>
+          run.sessionId && run.sessionId !== job.sessionId && run.turnId === hint.turnId)) clearSessionAttention(job.sessionId, hint.kind);
+        const run = job.runs.at(-1);
+        const sessionId = run?.sessionId ?? job.sessionId;
+        if (run?.status === 'running') {
+          const resultInSource = sessionId !== job.sessionId && state.sessions.some(source => source.id === job.sessionId);
+          subscribeGoalTurn(sessionId, run.turnId, resultInSource);
         }
-        if (refreshHistory) {
-          await refreshActiveSession({ silent: true });
-          if (!disposed) for (const job of state.jobs) {
-            const run = job.runs.at(-1);
-            if (run && (run.sessionId ?? job.sessionId) === activeConversationId && run.status !== 'running' && run.status !== 'queued') automationHistoryRef.current.set(job.id, `${run.id}:${run.status}`);
-          }
-        } else if (reloadList) await reloadConversations();
-      } catch { /* Startup and reconnect are retried on the next notification or focus. */ }
-      finally { reading = false; if (dirty && !disposed) update(); }
-    };
-    const update = () => { listChanged = true; dirty = true; window.clearTimeout(timer); timer = window.setTimeout(() => void refresh(), 100); };
-    const unsubscribe = window.cardbushDesktop.onAutomationChanged?.(update);
-    window.addEventListener('focus', update);
-    // The initial session list already has an owner. Still reattach running jobs.
-    void refresh();
-    return () => { disposed = true; window.clearTimeout(timer); unsubscribe?.(); window.removeEventListener('focus', update); };
-  }, [backend.scope, requestContext.runtimeReady, activeConversationId, refreshActiveSession, subscribeGoalTurn, reloadConversations]);
+        if (!run || run.status === 'running' || run.status === 'queued' || sessionId !== activeConversationId ||
+            controllersRef.current[sessionId] || goalTurnControllersRef.current[sessionId]) continue;
+        const key = `${run.id}:${run.status}`;
+        if (automationHistoryRef.current.get(job.id) !== key) refreshHistory = true;
+      }
+      if (refreshHistory) {
+        await refreshActiveSession({ silent: true });
+        if (!signal.aborted) for (const job of state.jobs) {
+          const run = job.runs.at(-1);
+          if (run && (run.sessionId ?? job.sessionId) === activeConversationId && run.status !== 'running' && run.status !== 'queued') automationHistoryRef.current.set(job.id, `${run.id}:${run.status}`);
+        }
+      } else if (reloadList) await reloadConversations();
+    });
+  }, [backend.scope, requestContext.runtimeReady, activeConversationId, refreshActiveSession, subscribeGoalTurn, reloadConversations, receiveEventResults, clearSessionAttention]);
 
   useEffect(() => {
     const sessionId = activeConversationId.trim();
@@ -2067,7 +2067,7 @@ export function useCardbushChat(
     return optimistic;
   }, [setMessageHistoryLoading, selectedModel, backend.scope]);
 
-  const openStoredConversation = useCallback(async (conversationId: string) => {
+  const openStoredConversation = useCallback(async (conversationId: string, { allowPromotion = true } = {}) => {
     const normalized = conversationId.trim();
     if (!normalized) return false;
     const revision = ++navigationRevisionRef.current;
@@ -2075,9 +2075,12 @@ export function useCardbushChat(
       // Visible sessions need no promotion write. A late promotion response may
       // update the list, but must not steal a newer navigation selection.
       const existing = conversationsRef.current.find(item => item.id === normalized);
-      // Explicitly opening a temporary execution promotes this existing session;
-      // opening the result inspector alone never puts it in Recent.
-      const conversation = existing ?? await updateConversation({ sessionId: normalized, metadata: { hidden: false } });
+      // An inbox click can precede list hydration. Resolve its visible source
+      // without changing any stored session's visibility.
+      const conversation = existing ?? (allowPromotion
+        ? await updateConversation({ sessionId: normalized, metadata: { hidden: false } })
+        : (await fetchConversations()).find(item => item.id === normalized));
+      if (!conversation) return false;
       setConversations(current => [conversation, ...current.filter(item => item.id !== normalized)]);
       if (navigationRevisionRef.current !== revision) return false;
       setMessageHistoryLoading(normalized, messagesByConversationRef.current[normalized] === undefined);
@@ -4340,7 +4343,9 @@ export function useCardbushChat(
     activeTurnId,
     runningByConversation,
     processingConversationIds,
-    attentionByConversation,
+    attentionByConversation: inbox.attentionByConversation,
+    workspaceNotices: inbox.notices,
+    unreadEventResults, latestEventArrival,
     clearSessionAttention,
     activeTeamFlow,
     activeTeamFlowLoading,

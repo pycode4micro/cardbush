@@ -2,7 +2,7 @@ import { uiText } from '../../i18n';
 import { fetchCardbushAppsConfiguration } from '../../backend/api';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppWindow, Blocks, CalendarClock, ExternalLink, FileText, LayoutGrid, Pencil, Search, Trash2, UsersRound, X } from 'lucide-react';
+import { AppWindow, Blocks, ExternalLink, FileText, LayoutGrid, Pencil, Search, Trash2, UsersRound, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { PluginGlyph } from '../plugins/PluginGlyph';
@@ -23,7 +23,7 @@ export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; siz
   if (app.kind === 'local') return app.icon && app.icon !== failedIcon
     ? <img className="composer-plugin-option-logo" src={app.icon} alt="" draggable={false} onError={() => setFailedIcon(app.icon ?? '')}/>
     : <AppWindow size={size} aria-hidden="true"/>;
-  const Icon = app.target === 'plugins' ? PluginIcon : app.target === 'automations' ? CalendarClock : app.target === 'components' ? Blocks : app.target === 'team' ? UsersRound : app.target === 'md-presentation' ? FileText : AppWindow;
+  const Icon = app.target === 'plugins' ? PluginIcon : app.target === 'components' ? Blocks : app.target === 'team' ? UsersRound : app.target === 'md-presentation' ? FileText : AppWindow;
   return <Icon size={size} aria-hidden="true" />;
 }
 

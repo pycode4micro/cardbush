@@ -21,8 +21,17 @@ export function useEventExecution(enabled: boolean, refreshInterval = 1500) {
     };
     void poll();
     const onVisible = () => { if (!document.hidden) void refresh(); };
+    let changedTimer: ReturnType<typeof setTimeout>;
+    const unsubscribe = window.cardbushDesktop?.onAutomationChanged?.(() => {
+      clearTimeout(changedTimer);
+      changedTimer = setTimeout(async () => {
+        await refreshTask.current;
+        if (!disposed && !document.hidden) await refresh();
+      }, 100);
+    });
     document.addEventListener('visibilitychange', onVisible);
-    return () => { disposed = true; mounted.current = false; clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); };
+    return () => { disposed = true; mounted.current = false; clearTimeout(timer); clearTimeout(changedTimer);
+      unsubscribe?.(); document.removeEventListener('visibilitychange', onVisible); };
   }, [enabled, refresh, refreshInterval]);
   return { snapshot, setSnapshot, error, refresh };
 }

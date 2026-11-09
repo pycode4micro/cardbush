@@ -37,7 +37,7 @@ export const eventBackend = {
     } finally { runtime.dispose(); }
   },
   submit: (input: FriendInput) => command({ action: 'submit', input }),
-  manage: (action: 'pause' | 'resume' | 'archive' | 'restore' | 'delete', eventId: string) => command({ action, eventId }),
+  manage: (action: 'pause' | 'resume' | 'archive' | 'restore' | 'delete' | 'run' | 'stop', eventId: string) => command({ action, eventId }),
   async answerPermission(answer: RuntimePermissionAnswer) {
     const runtime = createDesktopRuntimeSession();
     try { return await runtime.answerPermission(answer); } finally { runtime.dispose(); }

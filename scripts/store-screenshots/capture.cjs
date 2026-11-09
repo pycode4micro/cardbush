@@ -16,7 +16,7 @@ app.whenReady().then(async () => {
   const report = { packageVersion: '1.0.5.0', resolution: '1920x1080', method: 'Unmodified product React views with synthetic, bilingual display data; no model or desktop tasks executed.', screenshots: [] };
   const captions = {
     'conversation': ['把会议记录整理成行动清单，在同一个工作空间里持续推进任务。', 'Turn meeting notes into a clear action list and keep work organized in one workspace.'],
-    'app-center': ['从探索打开插件、自动化和设置，并整理个人网页快捷方式。', 'Open plugins, automations and settings from App Center, alongside your own web shortcuts.'],
+    'app-center': ['从探索打开插件和工作区应用，并整理个人网页快捷方式。', 'Open plugins and workspace apps from App Center, alongside your own web shortcuts.'],
     'browser-use': ['分别管理 Chrome 和 Edge 连接，选择默认浏览器，并随时撤销配对。', 'Manage Chrome and Edge connections, choose a default browser and revoke pairings at any time.'],
     'automations': ['在日历中查看定时安排与任务详情，管理每天的自动化工作。', 'View scheduled tasks and their details in a calendar, and manage daily automations.'],
   };
@@ -53,10 +53,7 @@ app.whenReady().then(async () => {
           await until('document.querySelectorAll(".browser-connection-row").length === 2');
           await read('document.querySelector(".core-capability-settings").scrollIntoView({block:"start"});void 0');
         } else if (scene === 'automations') {
-          await until('document.querySelectorAll(".automation-calendar-date").length > 0');
-          await read(`document.querySelector(${JSON.stringify('[data-date="2026-09-29"]')}).click();void 0`);
-          await until('document.querySelector(".automation-plan-toggle") !== null');
-          await read('document.querySelector(".automation-plan-toggle").click();void 0');
+          await until('document.querySelector(".calendar-month-heading") !== null');
         } else {
           await until('document.querySelectorAll(".markdown-body table").length > 0 || document.querySelectorAll("table").length > 0');
           if (scene === 'app-center') {

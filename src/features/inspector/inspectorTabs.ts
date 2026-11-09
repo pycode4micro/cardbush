@@ -27,10 +27,9 @@ export type InspectorSubagentTab = {
 export type InspectorDefinitionTab = {
   id: string; kind: 'agent-definition'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'agent-definition' }>; title: string;
 };
-export type InspectorAutomationTab = { id: string; kind: 'automation'; jobId: string; runId: string; title: string };
 export type InspectorConversationTab = { id: string; kind: 'conversation'; title: string };
 export type InspectorTab = InspectorResourceTab | InspectorReviewTab | InspectorShadowTab
-  | InspectorHistoryTab | InspectorSubagentTab | InspectorDefinitionTab | InspectorAutomationTab | InspectorConversationTab;
+  | InspectorHistoryTab | InspectorSubagentTab | InspectorDefinitionTab | InspectorConversationTab;
 
 export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, language: AppLanguage): InspectorHistoryTab | InspectorSubagentTab | InspectorDefinitionTab {
   if (detail.kind === 'agent-definition') return {

@@ -40,7 +40,7 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       item('openAppCenter', 'appCenter.appCenter', actions.openAppCenter, 'openAppCenter'),
       { id: 'applications', label: uiText(language)('composer.applications'), children: [
         item('openPlugins', 'appCenterModel.plugins', actions.openPlugins, 'openPlugins'),
-        item('openAutomations', 'appCenterModel.automations', actions.openAutomations, 'openAutomations'),
+        item('openAutomations', 'desktop.events', actions.openAutomations, 'openAutomations'),
         ...(actions.manageApps ? [separator, item('manageApps', 'desktop.manageApps', actions.manageApps)] : []),
       ] }, separator,
       item('openProject', 'applicationMenus.open_folder', actions.openProject, 'openProject'),

@@ -8,7 +8,7 @@ import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { ModelImageStore } from "./modelImageStore.js";
 import { renderTextFields } from "./toolResultText.js";
 import type { AutomationScheduler } from './automationScheduler.js';
-import { FRIENDS_SESSION, PERSONAL_ASSISTANT_SESSION, type AutomationJob, type ToolDefinition } from '@cardbush/bush-protocol';
+import { type AutomationJob, type ToolDefinition } from '@cardbush/bush-protocol';
 import { presentTool } from './toolPresentation.js';
 import { briefText, catalogPage, catalogPageProperties, decodeCatalogQuery, projectCatalogPage } from './catalogPage.js';
 
@@ -170,11 +170,11 @@ function registerSchedule(registry: ToolRegistry, scheduler?: AutomationSchedule
     },
   });
   registry.register<Record<string, unknown>>({
-    definition: { name: "schedule_task", description: "Manage persistent automations in this conversation. list returns paginated summaries; get with job_id reads configuration for editing. create/update/pause/resume/delete/run/stop change schedules. Read outputs with scheduled_results. A saved prompt runs as a new turn at a time, interval or hook event while CardBush is open. Missed times coalesce; busy conversations wait. Only create or change future work when the user requests it. Runs inherit tool permissions and do not bypass approval. Use ISO timestamps with UTC offsets. Event runs never recursively trigger automations.", inputSchema: { type: "object", additionalProperties: false, required: ['action'], properties: {
-      action: { type: 'string', enum: ['create', 'list', 'get', 'update', 'pause', 'resume', 'delete', 'run', 'stop', 'cancel'] },
+    definition: { name: "schedule_task", description: "Manage existing scheduled jobs in this conversation. List summaries, get configuration by job_id, or update, pause, resume, run, stop or delete an existing job. Read outputs with scheduled_results. Register new work with assistant_event.", inputSchema: { type: "object", additionalProperties: false, required: ['action'], properties: {
+      action: { type: 'string', enum: ['list', 'get', 'update', 'pause', 'resume', 'delete', 'run', 'stop', 'cancel'] },
       ...catalogPageProperties,
       job_id: { type: 'string' }, expected_revision: { type: 'integer', minimum: 1 }, name: { type: 'string' }, prompt: { type: 'string', description: 'Self-contained execution instructions, including required dates, data sources, paths and deliverables. Timed runs do not receive the source chat history; never rely on “as discussed above”.' }, time_zone: { type: 'string' },
-      execution_mode: { type: 'string', enum: ['isolated', 'conversation'], description: 'Timers always use isolated temporary conversations with saved model, workspace and permissions, without source chat history. Results appear in Automations, with a link to the source if it still exists; deleting the source does not cancel timers. This option only selects whether event-triggered plans continue the source conversation (default) or start a separate run.' },
+      execution_mode: { type: 'string', enum: ['isolated', 'conversation'], description: 'Timers always use isolated temporary conversations with saved model, workspace and permissions, without source chat history. Results appear in event management, with a link to the source if it still exists; deleting the source does not cancel timers. This option only selects whether event-triggered plans continue the source conversation (default) or start a separate run.' },
       trigger: { oneOf: [
         { type: 'object', additionalProperties: false, required: ['kind', 'at'], properties: { kind: { const: 'once' }, at: { type: 'string' } } },
         { type: 'object', additionalProperties: false, required: ['kind', 'at', 'seconds'], properties: { kind: { const: 'interval' }, at: { type: 'string' }, seconds: { type: 'integer', minimum: 60 } } },
@@ -186,11 +186,8 @@ function registerSchedule(registry: ToolRegistry, scheduler?: AutomationSchedule
     decodeInput: object,
     execute: async (context) => {
       const action = text(context.input.action);
-      if (action === 'create' && context.sessionId === PERSONAL_ASSISTANT_SESSION) {
+      if (action === 'create') {
         throw new Error('Register a new reminder with assistant_event action=create, or a recurring subscription with action=subscribe.');
-      }
-      if (action === 'create' && context.sessionId === FRIENDS_SESSION) {
-        throw new Error('Use the event tools to register future work and its next check.');
       }
       if (!scheduler) throw new Error('This runtime has no active automation scheduler.');
       if (context.turn?.request.metadata.agentRole === 'child') throw new Error('Child agents cannot schedule future work.');
@@ -209,7 +206,7 @@ function registerSchedule(registry: ToolRegistry, scheduler?: AutomationSchedule
         return { jobs: items, ...page, available: overview.available };
       }
       const result = await scheduler.manage({ action: action === 'cancel' ? 'pause' : action, id: context.input.job_id, expectedRevision: context.input.expected_revision,
-        ...(['create', 'update'].includes(action) ? { definition: { name: context.input.name, prompt: context.input.prompt, trigger: context.input.trigger,
+        ...(action === 'update' ? { definition: { name: context.input.name, prompt: context.input.prompt, trigger: context.input.trigger,
           timeZone: context.input.time_zone, sessionId: context.sessionId, executionMode: context.input.execution_mode } } : {}) }, context.sessionId);
       return result && 'runs' in result ? automationReceipt(result as AutomationJob) : result;
     },

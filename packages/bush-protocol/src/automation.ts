@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { eventRecurrenceSchema } from './friends.js';
 
 export const AUTOMATION_COMMAND = 'runtime.automation' as const;
 export const automationTriggerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('once'), at: z.iso.datetime({ offset: true }) }).strict(),
   z.object({ kind: z.literal('interval'), at: z.iso.datetime({ offset: true }), seconds: z.number().int().min(60).max(31_536_000) }).strict(),
+  z.object({ kind: z.literal('recurrence'), at: z.iso.datetime({ offset: true }), rule: eventRecurrenceSchema }).strict(),
   z.object({ kind: z.literal('event'), event: z.enum(['Stop', 'PostToolUse', 'PostToolUseFailure']), tool: z.string().max(256).default(''), cooldownSeconds: z.number().int().min(60).max(86400).default(60) }).strict(),
 ]);
 export const automationDefinitionSchema = z.object({
@@ -15,7 +17,7 @@ export const automationDefinitionSchema = z.object({
   timeZone: z.string().max(100).default('UTC').refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Invalid time zone'),
 }).strict();
 export const automationCommandSchema = z.object({
-  action: z.enum(['list', 'create', 'update', 'pause', 'resume', 'delete', 'run', 'stop', 'mark_read', 'mark_unread', 'conversation', 'reminder', 'results']),
+  action: z.enum(['list', 'create', 'update', 'pause', 'resume', 'archive', 'restore', 'delete', 'run', 'stop', 'mark_read', 'mark_unread', 'conversation', 'reminder', 'results']),
   id: z.string().min(1).optional(),
   expectedRevision: z.number().int().positive().optional(),
   definition: automationDefinitionSchema.optional(),
@@ -31,6 +33,7 @@ export type AutomationRun = {
   sessionId?: string; readAt?: string; summary?: string; result?: string;
 };
 export type AutomationJob = AutomationDefinition & {
+  registrationKey?: string; archived?: boolean;
   id: string; revision: number; state: 'active' | 'paused' | 'completed'; createdAt: string;
   nextRunAt?: string; lastEventAt?: string; lastEventIds: string[]; runs: AutomationRun[];
   plugin?: { id: string; hookId: string; definitionHash: string };

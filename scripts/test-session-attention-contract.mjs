@@ -127,7 +127,7 @@ assert.match(storage, /maxPersistedAttentionAgeMs/);
 assert.match(hook, /attentionByConversation/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'completed'/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'interaction'/);
-assert.match(hook, /setSessionAttentionCount\?\.\(Object\.values\(attentionByConversation\)\.filter\(sessionAttentionNeedsNotification\)\.length\)/);
+assert.match(hook, /setSessionAttentionCount\?\.\(inbox\.notices\.length\)/, 'native unread count shares the desktop inbox projection');
 assert.match(hook, /clearSessionAttention\(activeConversationIdRef.current, 'completed'\)/);
 
 assert.match(app, /attentionByConversation=\{chat\.attentionByConversation\}/);

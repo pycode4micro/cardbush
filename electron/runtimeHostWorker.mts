@@ -891,7 +891,7 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
     const request = runtimeSessionTurnRequestSchema.parse({ ...context,
       protocol: 'bush.session_turn_request.v1', sessionId, turnId: run.turnId, requestId: `request_${run.id}`,
       model: selected.model, providerBinding: selected.binding,
-      reasoningEffort: selected.reasoningEffort,
+      reasoningEffort: context.reasoningEffort ?? selected.reasoningEffort,
       maxOutputTokens: selected.maxOutputTokens ?? context.maxOutputTokens,
       // Refresh availability/definitions without changing the source conversation's order.
       tools: context.tools.flatMap(tool => { const current = available.get(tool.name); return current ? [current] : []; }),

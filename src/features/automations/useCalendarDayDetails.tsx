@@ -6,7 +6,8 @@ import { calendarDayKey, calendarEntriesForDays, importedEntriesForDays } from '
 import { prefersReducedMotion } from '../../shared/motionPreference';
 import './calendarSurface.css';
 
-export function useCalendarDayDetails({ jobs, calendars, chineseLunar, now, language }: {
+export function useCalendarDayDetails({ jobs, calendars, assistantDates, chineseLunar, now, language }: {
+  assistantDates?: Map<string, Array<{ id: string; title: string; at: number }>>;
   jobs: AutomationJob[]; calendars: CalendarDataset[]; chineseLunar: boolean; now: number; language: string;
 }) {
   const id = useId(), panel = useRef<HTMLDivElement>(null), timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -14,6 +15,7 @@ export function useCalendarDayDetails({ jobs, calendars, chineseLunar, now, lang
   const [active, setActive] = useState<{ date: Date; anchor: HTMLElement; pinned: boolean; closing?: boolean } | null>(null);
   const [limit, setLimit] = useState(30);
   const key = active ? calendarDayKey(active.date) : '';
+  const assistantEntries = assistantDates?.get(key) ?? [];
   const clearTimer = () => { clearTimeout(timer.current); timer.current = undefined; };
   const dismiss = (current: typeof active) => !current || prefersReducedMotion() ? null : { ...current, closing: true };
   const close = () => { clearTimer(); setActive(dismiss); };
@@ -97,7 +99,11 @@ export function useCalendarDayDetails({ jobs, calendars, chineseLunar, now, lang
       </div>)}
       {entries.length > limit && <button className="calendar-details-more" type="button" onClick={() => setLimit(value => value + 50)}>{uiText(language)('useCalendarDayDetails.moreAutomations')}</button>}
     </section>}
-    {!entries.length && !imported?.count && <p className="calendar-day-empty">{uiText(language)('useCalendarDayDetails.nothingScheduled')}</p>}
+    {!!assistantEntries.length && <section><h3>{uiText(language)('desktop.events')}</h3>
+      {assistantEntries.slice(0, limit).map(item => <div className="calendar-day-job" key={item.id}><time>{clock(item.at)}</time><strong>{item.title}</strong></div>)}
+      {assistantEntries.length > limit && <button type="button" className="calendar-details-more" onClick={() => setLimit(value => value + 50)}>{uiText(language)('useCalendarDayDetails.moreShowMore', {value1: assistantEntries.length-limit})}</button>}
+    </section>}
+    {!entries.length && !imported?.count && !assistantEntries.length && <p className="calendar-day-empty">{uiText(language)('useCalendarDayDetails.nothingScheduled')}</p>}
     </div>
   </div>;
   return { dayProps, popover, close };

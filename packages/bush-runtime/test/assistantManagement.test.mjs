@@ -121,7 +121,7 @@ test('new assistant reminders and subscriptions register only as events while a 
   assert.match(blocked.error, /assistant_event/);
   const actions = f.requests[0].tools.find(tool => tool.name === 'schedule_task').inputSchema.properties.action.enum;
   assert.ok(!actions.includes('create'));
-  assert.ok(f.registry.resolve('schedule_task').definition.inputSchema.properties.action.enum.includes('create'), 'ordinary conversation catalog still supports creation');
+  assert.ok(!f.registry.resolve('schedule_task').definition.inputSchema.properties.action.enum.includes('create'), 'all new registrations use events');
 
   const once = await f.invoke('assistant_event', reminder);
   const recurring = { action: 'subscribe', text: 'Remind me to review the report every Friday at 10:00 Asia/Shanghai.', topic: 'Friday report', at: '2099-10-30T10:00:00+08:00' };
@@ -129,8 +129,8 @@ test('new assistant reminders and subscriptions register only as events while a 
   assert.equal((await f.invoke('assistant_event', recurring)).eventId, subscription.eventId);
   const state = await f.readEvents();
   assert.deepEqual(state.events.map(event => [event.id, Boolean(event.subscription), event.status]),
-    [[once.eventId, false, 'watching'], [subscription.eventId, true, 'watching']]);
-  assert.deepEqual(state.detections.map(detection => detection.at), [reminder, recurring].map(input => new Date(input.at).toISOString()));
+    [[once.eventId, false, 'watching'], [subscription.eventId, true, 'watching'], ['session-event:' + old.id, false, 'watching']]);
+  assert.deepEqual(state.detections.map(detection => Date.parse(detection.at)), [reminder.at, recurring.at, old.nextRunAt].map(Date.parse));
   assert.deepEqual((await f.scheduler.list()).jobs.map(job => job.id), [old.id]);
 
   time = Date.parse(old.nextRunAt);

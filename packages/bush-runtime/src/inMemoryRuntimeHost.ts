@@ -900,7 +900,7 @@ export class InMemoryRuntimeHost {
         },
         messages: (session, turn) => this.#sessions.snapshot(session)?.turns.find(item => item.turnId === turn)?.messages.map(item => item.message) ?? [],
         hooks: request => this.#managementToolHooks(request) }),
-      tools: this.#toolRegistry, clock: options.automation?.clock,
+      tools: this.#toolRegistry, clock: options.automation?.clock, conversationScheduler: options.automation,
       botContext: ref => this.#observeBotContext(PERSONAL_ASSISTANT_SESSION, ref),
       publish: notice => {
         this.#assistant.journal.append(PERSONAL_ASSISTANT_SESSION, {

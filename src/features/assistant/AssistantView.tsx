@@ -4,7 +4,7 @@ import { useFloatingAssistant } from './useFloatingAssistant';
 import { AssistantEventsDialog } from './events/AssistantEventsDialog';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { UsersRound } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry, type AssistantReaction } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
@@ -43,11 +43,12 @@ const sessionId = PERSONAL_ASSISTANT_SESSION;
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'sending' | 'accepted' | 'failed' };
 export function AssistantView({ active, language, floating, prepare, ownsConfiguration = true, onManageHosts, composerControls,
-  headerActionsTarget, workSummaryAvailable = true, requestedMessageId, onTurnLocated, inspectorOpen = false, onToggleInspector,
+  headerActionsTarget, workSummaryAvailable = true, requestedMessageId, onTurnLocated, transcriptFooter, inspectorOpen = false, onToggleInspector,
   browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
   active: boolean; language: string; floating?: { returnToWorkspace(): void; retainDraft?(value: boolean): void };
   prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean; onManageHosts?(): void;
   composerControls?: AssistantComposerControls;
+  transcriptFooter?: ReactNode;
   headerActionsTarget?: HTMLElement | null; workSummaryAvailable?: boolean; requestedMessageId?: string; onTurnLocated?(): void;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
@@ -374,6 +375,7 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
         {!timeline.length && <div className="assistant-welcome"><AssistantBulb size={68}/><h2>{uiText(language)('assistantView.letSTalk')}</h2><p>{uiText(language)('assistantView.shareAThoughtOrHandOverA')}</p></div>}
         {renderTimeline(timeline)}
         {typingBubble}
+        {transcriptFooter}
       </div></div>
       <VoiceConversation target={target} language={language} disabled={!ready} active={active}>
         <div className="assistant-composer-dock composer-dock" ref={composerDock}>

@@ -36,7 +36,6 @@ export function FeaturePanel({
   onToggleSkill,
   onReloadSkills,
   onLoadSkillDetail,
-  onCreateAutomation,
   onOpenConversation,
   creationChatOptions,
 }: {
@@ -54,7 +53,6 @@ export function FeaturePanel({
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
-  onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
   creationChatOptions?: CreationChatOptions;
 }) {
@@ -82,7 +80,6 @@ export function FeaturePanel({
           onToggleSkill={onToggleSkill}
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
-          onCreateAutomation={onCreateAutomation}
           onOpenConversation={onOpenConversation}
         />
       </Suspense>

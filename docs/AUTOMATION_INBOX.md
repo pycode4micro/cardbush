@@ -6,21 +6,21 @@ CardBush's existing runtime scheduler owns both plans and execution results. The
 
 ## Results and acknowledgment
 
-Each run has a stable run ID, turn ID and execution session ID. Terminal runs start unread, including failed, interrupted and permission-blocked runs. Opening a result, querying it with `scheduled_results`, or continuing its conversation does not mark it read. The user can mark individual results read or unread, or acknowledge the currently displayed results in a batch.
+Each run has a stable run ID, turn ID and execution session ID. Terminal runs start unread, including failed, interrupted and permission-blocked runs. Opening a result, querying it with `scheduled_results`, or expanding its history entry does not mark it read. The checkmark marks one result read. Runtime commands also support marking results unread or acknowledging a batch.
 
 Read commands identify exact run IDs, validate the whole batch, and update only `readAt`. They do not change plan state, execution state, next execution time or the plan's edit revision. Newly arriving results cannot be swept into an in-flight batch. At most 50 acknowledged historical runs are retained per plan; unacknowledged results are not expired by that cap.
 
-The results page provides Unread, Today and All results views with local date groups, and a separate Plans management view. The sidebar displays the unread count. Existing plan controls and conversational creation remain available.
+When an isolated event finishes, the desktop app shows a notification and an unread result at the bottom of its source conversation. The card shows the reminder directly. Use its checkmark to mark it read. Unread results remain available when you reopen the conversation. Home → Events also lists the execution history.
+
+The list button at the top right shows a blue dot when there are unread notifications. Open it from any workspace page to see the Inbox: background conversation completions, failures, requests for input, and unread conversation event results. Select an event notification to jump to that reminder in its source conversation; earlier unread reminders expand as needed. The checkmark acknowledges just that event and also clears its card from the source conversation.
 
 ## Execution conversations
 
 Time-based plans execute in separate temporary conversations. Creating or explicitly saving a plan snapshots its model, tool allowlist, generation options, workspace and permissions in the scheduler's private `jobContexts`. Ordinary source turns do not change that configuration. No source chat history or response-chain state is copied, so the saved prompt must contain the complete task requirements. Deleting the source leaves the timer and its settings intact; it can still be edited, run, paused or resumed. Source navigation is available only while that session exists, as checked against the runtime session store.
 
-Each temporary execution persists its ordinary conversation journal for results and follow-ups, with `hidden: true` keeping it out of Recent. It is not erased on completion. Opening the result inspector keeps it hidden; explicitly opening the full execution conversation promotes the same session to Recent. The inspector and plan details keep a separate link back to the source. Deleting a conversation requires user confirmation and explains the effect on scheduled tasks.
+Each execution persists its journal for the runtime and stays hidden from Recents. Home → Events lets you expand a history entry to read its saved output in place, even if the source is gone.
 
 Existing clock plans migrate future runs and snapshot their last saved source configuration once. Completed/running run identities, unread status and manually paused plans stay unchanged. An interrupted run is still paused rather than replayed. Missing legacy settings are reported as an explicit failure, never reconstructed from chat semantics. Old prompts are not rewritten; prompts that rely on prior discussion need their requirements filled in. Event-triggered plans and trusted plugin wakeups remain tied to source events, so source deletion pauses them and cancels queued wakeups. Event plans can still choose a separate execution conversation.
-
-The inspector renders the actual execution session with the shared message renderer. Follow-up messages use the normal runtime turn path with the saved model, workspace, permissions and tool restrictions. Closing or hiding the inspector does not cancel a follow-up. Reopening observes the same turn; stopping requires the explicit stop button. A missing execution session cannot be silently recreated by the inspector.
 
 ## Context reminders
 
@@ -38,4 +38,4 @@ Cache diagnostics compare message prefixes independently of changed parameters. 
 
 ## Verification
 
-`npm run test:automations` covers scheduling, migration, persistence, acknowledgment races, unread retention, real Electron worker execution and follow-ups, results UI, and inspector close/reconnect behavior. It also compares full provider inputs across ordinary/automatic/repeated turns, unread changes, guidance and recovery with a nonempty tool catalog and explicit generation options. UI fixtures use isolated temporary profiles and a fixture model; they do not execute the user's real scheduled tasks.
+`npm run test:automations` covers scheduling, migration, persistence, acknowledgment races, unread retention, real Electron worker execution and follow-ups, source navigation, inline results, and receipts. It also compares full provider inputs across ordinary/automatic/repeated turns, unread changes, guidance and recovery with a nonempty tool catalog and explicit generation options. UI fixtures use isolated temporary profiles and a fixture model; they do not execute the user's real scheduled tasks.

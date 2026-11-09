@@ -4,7 +4,7 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../src/features/automations/automationCalendarModel.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } });
-const { calendarDayKey: key, calendarMonthDays: monthDays, calendarEntriesForDays: project, shiftCalendarMonth: month, compactAutomationText: compact, calendarYearDays, importedEntriesForDays, matchingCalendarDates } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+const { calendarDayKey: key, calendarMonthDays: monthDays, calendarEntriesForDays: project, shiftCalendarMonth: month, calendarYearDays, importedEntriesForDays, matchingCalendarDates } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
 process.env.TZ = 'Asia/Shanghai';
 const day = text => new Date(`${text}T00:00:00`);
 const stamp = text => new Date(text).toISOString();
@@ -68,9 +68,6 @@ const unsorted = [makeJob({ id: 'later', nextRunAt: stamp('2026-09-17T14:00:00+0
 assert.deepEqual(entries(unsorted).map(entry => entry.job.id), ['job', 'later']);
 const original = JSON.stringify(unsorted); entries(unsorted); assert.equal(JSON.stringify(unsorted), original, 'projection never mutates the scheduler snapshot');
 
-assert.equal(compact('一二三四五六七八九十一二三四五六'), '一二三四五六七八九十一二三四…');
-assert.equal(compact('  一\n 二  '), '一 二');
-assert.equal(compact('👨‍👩‍👧‍👦'.repeat(15)), '👨‍👩‍👧‍👦'.repeat(14) + '…', 'do not split a composed emoji');
 
 // Intervals use elapsed seconds, while local calendar days may have 23 or 25 hours.
 process.env.TZ = 'America/New_York';
@@ -87,4 +84,4 @@ const monthResult = project(many, monthDays(day('2026-09-17')), now);
 assert.equal(monthResult.get('2026-09-18').length, 500, 'one item per job per day, even for minute intervals');
 assert.equal(monthResult.get('2026-09-18').reduce((total, entry) => total + entry.scheduledCount, 0), 720000);
 assert.equal(monthResult.get('2026-09-16')[0].runs.length, 50);
-console.log(`Automation calendar passed: calendar boundaries, schedule facts, overdue coalescing, history, Unicode, DST; 500 plans / 25,000 retained runs projected in ${Math.round(performance.now() - started)} ms.`);
+console.log(`Automation calendar passed: calendar boundaries, schedule facts, overdue coalescing, history, DST; 500 plans / 25,000 retained runs projected in ${Math.round(performance.now() - started)} ms.`);

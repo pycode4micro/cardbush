@@ -7,7 +7,7 @@ import { ChatSidebar } from '../../src/features/sidebar/ChatSidebar';
 import { WindowFrame } from '../../src/components/WindowFrame';
 import { TopBar } from '../../src/components/TopBar';
 import { SettingsView } from '../../src/features/SettingsView';
-import { AutomationPanel } from '../../src/features/automations/AutomationPanel';
+import { AutomationCalendar } from '../../src/features/automations/AutomationCalendar';
 import { AppCenterProvider } from '../../src/features/appCenter/AppCenter';
 import { requestAppCenter } from '../../src/features/appCenter/appCenterStore';
 import { applicationMenus } from '../../src/features/windowMenu/applicationMenus';
@@ -150,8 +150,8 @@ function Screen() {
           <ChatSidebar {...sidebar} />
           <section className="main-stage">
             {scene === 'automations' ? <div className="feature-panel">
-              <TopBar title={t('定时与自动化', 'Automations')} language={language} inspectorOpen={false} onToggleInspector={noop} />
-              <AutomationPanel language={language} onOpenConversation={noop} onCreateAutomation={noop} />
+              <TopBar title={t('事件', 'Events')} language={language} inspectorOpen={false} onToggleInspector={noop} />
+              <AutomationCalendar language={language} />
             </div> : <ChatPanel {...chatProps} />}
           </section>
         </main>}

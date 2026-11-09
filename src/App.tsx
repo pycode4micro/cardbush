@@ -128,9 +128,9 @@ import { ComposerPortalContext } from './features/composer/ComposerPortalContext
 import { HtmlComponentContext } from './features/components/HtmlComponentContext';
 import { dispatchComponentMessage } from './features/components/dispatchComponentMessage';
 import './features/inspector/inspectorWorkspace.css';
-import { automationSetupPrompt } from './features/automations/automationPrompts';
-import { AutomationRunPanel } from './features/automations/AutomationRunPanel';
-import { OPEN_AUTOMATION_RUN_EVENT, type AutomationRunOpenDetail } from './features/automations/automationEvents';
+import { ConversationEventInbox, ConversationEventToast } from './features/automations/ConversationEventInbox';
+import type { ConversationEventResult } from './features/automations/conversationEventResults';
+import type { WorkspaceNotice } from './features/desktop/workspaceNotifications';
 import { WorkSummaryInspector } from './features/chat/WorkSummaryInspector';
 import {
   changeRootForConversation,
@@ -472,7 +472,7 @@ function CardbushApp() {
     defaultModelId: backendDefaultModelId,
     modelsReady: modelConfigSyncReady,
     runtimeReady: runtimeStartup.phase === 'ready',
-    viewActive: section === 'chat',
+    viewActive: section === 'chat' && !settingsOpen,
     deferSkillDiscovery: section === 'home' && !settingsOpen,
     language,
     disabledSkillNames,
@@ -772,16 +772,6 @@ function CardbushApp() {
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [language, navigateStartPage, openInspectorTab, setInspectorOpen]);
-  useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent<AutomationRunOpenDetail>).detail;
-      if (!detail?.jobId || !detail.runId) return;
-      openInspectorTab({ id: `automation:${detail.runId}`, kind: 'automation', ...detail });
-      setInspectorOpen(true); setInspectorTabsMenuOpen(false); setInspectorTabContextMenu(null);
-    };
-    window.addEventListener(OPEN_AUTOMATION_RUN_EVENT, open);
-    return () => window.removeEventListener(OPEN_AUTOMATION_RUN_EVENT, open);
-  }, [openInspectorTab, setInspectorOpen]);
   const changeReportsByConversation = useMemo(
     () =>
       Object.fromEntries(
@@ -1378,8 +1368,8 @@ function CardbushApp() {
     ],
   );
 
-  const openConversationPrompt = useCallback((prompt: string, scope: 'current' | 'independent' = 'current') => {
-    const target = createConversation(scope === 'current' ? activeConversationProjectDir : undefined);
+  const openPluginPrompt = useCallback((prompt: string) => {
+    const target = createConversation(activeConversationProjectDir);
     setDraftsByConversation(current => {
       const existing = current[target.id] || '';
       return { ...current, [target.id]: existing.trim() && existing !== prompt ? `${existing.trimEnd()}\n\n${prompt}` : prompt };
@@ -1388,10 +1378,7 @@ function CardbushApp() {
     setConversationPromptFocus(value => value + 1);
   }, [activeConversationProjectDir, createConversation]);
 
-  const openPluginPrompt = useCallback((prompt: string) => openConversationPrompt(prompt), [openConversationPrompt]);
-  const createAutomationConversation = useCallback(() => {
-    openConversationPrompt(automationSetupPrompt(language), 'independent');
-  }, [language, openConversationPrompt]);
+
 
   useEffect(() => {
     if (!conversationPromptFocus || settingsOpen || section !== 'chat') return;
@@ -1425,11 +1412,31 @@ function CardbushApp() {
     return true;
   }, [chat.conversations, chat.openConversation]);
 
-  const openAutomationConversation = useCallback((conversationId: string) => {
-    if (!openConversation(conversationId)) {
-      void chat.openStoredConversation(conversationId).then(opened => { if (opened) setSection('chat'); });
+  const arrivingEvent = chat.unreadEventResults.find(result => result.runId === chat.latestEventArrival);
+  const openAutomationConversation = useCallback(async (conversationId: string, allowPromotion = true) => {
+    if (conversationId === PERSONAL_ASSISTANT_SESSION) {
+      setSettingsOpen(false); setSection('assistant'); return true;
     }
+    if (openConversation(conversationId)) return true;
+    if (!await chat.openStoredConversation(conversationId, { allowPromotion })) return false;
+    setSettingsOpen(false); setSection('chat'); return true;
   }, [openConversation, chat.openStoredConversation]);
+  const [requestedEvent, setRequestedEvent] = useState<ConversationEventResult | null>(null);
+  const clearRequestedEvent = useCallback(() => setRequestedEvent(null), []);
+  const openNoticeSource = useCallback((sessionId: string) => {
+    revealConversation();
+    if (drawerLayout) collapseSidebar();
+    return openAutomationConversation(sessionId, false);
+  }, [openAutomationConversation, revealConversation, drawerLayout, collapseSidebar]);
+  const openEventResult = useCallback(async (item: ConversationEventResult) => {
+    if (await openNoticeSource(item.sourceId)) setRequestedEvent(item);
+  }, [openNoticeSource]);
+  useEffect(() => {
+    if (!requestedEvent) return;
+    const source = section === 'chat' ? chat.activeConversationId : section === 'assistant' ? PERSONAL_ASSISTANT_SESSION : null;
+    if (settingsOpen || source !== requestedEvent.sourceId ||
+      !chat.unreadEventResults.some(item => item.runId === requestedEvent.runId)) clearRequestedEvent();
+  }, [requestedEvent, section, chat.activeConversationId, settingsOpen, chat.unreadEventResults, clearRequestedEvent]);
 
   const changeWelcomeProject = useCallback(async (
     projectDir: string | null,
@@ -1965,6 +1972,9 @@ function CardbushApp() {
   const assistantVisible = section === 'assistant' && !settingsOpen;
   const assistantProfile = useAssistantProfile();
   const workSummaryAvailable = !inspectorControlsVisible && !(compactLayout && inspectorOpen);
+  const eventInbox = (sessionId: string) => <ConversationEventInbox key={sessionId} sessionId={sessionId} items={chat.unreadEventResults}
+    language={language} requestedRunId={!settingsVisible && requestedEvent?.sourceId === sessionId ? requestedEvent.runId : undefined}
+    onLocated={clearRequestedEvent}/>;
   const chatActionsSlot = section !== 'home' && section !== 'explore' && !settingsOpen
     ? <span className="window-chat-actions no-drag" ref={setChatActionsTarget}/> : null;
   const [projectsHost, setProjectsHost] = useState<HTMLDivElement | null>(null);
@@ -1982,6 +1992,13 @@ function CardbushApp() {
     if (drawerLayout) collapseSidebar();
     setRequestedTurn(message ? { sessionId: id, messageId: message.id, turnId: message.turnId } : null);
   }, [openConversation, revealConversation, drawerLayout, collapseSidebar]);
+  const openWorkspaceNotice = async (notice: WorkspaceNotice) => {
+    if (notice.type === 'event') return openEventResult(notice.item);
+    const { sessionId, kind, turnId } = notice.item;
+    if (!await openNoticeSource(sessionId)) return;
+    if (kind === 'error') chat.clearSessionAttention(sessionId, 'error');
+    if (turnId && kind !== 'interaction') setRequestedTurn({ sessionId, messageId: '', turnId });
+  };
   useEffect(() => {
     const visibleId = section === 'assistant' ? PERSONAL_ASSISTANT_SESSION : section === 'chat' ? chat.activeConversationId : undefined;
     if (requestedTurn && (settingsOpen || visibleId !== requestedTurn.sessionId)) clearRequestedTurn();
@@ -2035,7 +2052,7 @@ function CardbushApp() {
     openAppCenter: requestAppCenter,
     manageApps: () => requestAppCenter('manage'),
     openPlugins: () => { setSettingsOpen(false); setSection('plugins'); },
-    openAutomations: () => { setSettingsOpen(false); setSection('automations'); },
+    openAutomations: () => { setSettingsOpen(false); setSection('home'); setHomePage({ kind: 'events' }); },
     newConversation: () => { handleSearchCreateConversation(); setConversationPromptFocus(value => value + 1); },
     openProject: window.cardbushDesktop?.pickProjectDirectory ? handleSearchAddProject : undefined,
     openFiles: window.cardbushDesktop?.pickAttachments ? handleSearchOpenFiles : undefined,
@@ -2102,7 +2119,7 @@ function CardbushApp() {
         if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins'); return; }
         setSettingsOpen(false);
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
-        else setSection(application.target === 'automations' ? 'automations' : application.target === 'components' ? 'components' : application.target === 'team' ? 'team' : application.target === 'md-presentation' ? 'md-presentation' : 'plugins');
+        else setSection(application.target === 'components' ? 'components' : application.target === 'team' ? 'team' : application.target === 'md-presentation' ? 'md-presentation' : 'plugins');
         if (drawerLayout) collapseSidebar();
       }}>
       <GlobalTooltip/>
@@ -2129,7 +2146,7 @@ function CardbushApp() {
           language={language} conversations={chat.conversations}
           conversation={assistantVisible ? { id: PERSONAL_ASSISTANT_SESSION, title: assistantProfile.name } : recentConversation}
           assistantMessages={assistantVisible && hostRegionConversation?.scope === inspectorWorkspaceId ? hostRegionConversation.messages : undefined}
-          transcripts={chat.messagesByConversation} onRecentList={setRecentList}
+          transcripts={chat.messagesByConversation} onRecentList={setRecentList} notices={chat.workspaceNotices} openNotice={openWorkspaceNotice}
           pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
           earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>
       </WindowFrame>
@@ -2254,6 +2271,7 @@ function CardbushApp() {
           )}
           <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || (inspectorControlsVisible || drawerLayout && !sidebarCollapsed || compactLayout && inspectorOpen) ? true : undefined}>
             <AssistantView active={section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
+              transcriptFooter={section === 'assistant' ? eventInbox(PERSONAL_ASSISTANT_SESSION) : undefined}
               headerActionsTarget={assistantVisible ? chatActionsTarget : null}
               workSummaryAvailable={workSummaryAvailable}
               requestedMessageId={requestedTurn?.sessionId === PERSONAL_ASSISTANT_SESSION ? requestedTurn.messageId : undefined} onTurnLocated={clearRequestedTurn}
@@ -2300,6 +2318,7 @@ function CardbushApp() {
                 availableProjects={projectItems.filter((project) => !project.archived && !project.missing)}
                 onWelcomeProjectChange={changeWelcomeProject}
                 messages={chat.activeMessages}
+                transcriptFooter={eventInbox(chat.activeConversationId)}
                 activeGoal={chat.activeGoal}
                 teamAvailable={backendCapabilities.teamMode}
                 goalAvailable={chat.goalAvailable}
@@ -2396,7 +2415,6 @@ function CardbushApp() {
                 language={language}
                 backendCapabilities={backendCapabilities}
                 onOpenPluginPrompt={openPluginPrompt}
-                onCreateAutomation={createAutomationConversation}
                 inspectorOpen={inspectorOpen}
                 onToggleInspector={toggleInspector}
                 section={section}
@@ -2450,7 +2468,7 @@ function CardbushApp() {
                             ? (isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType) && navigation?.url) || tab.detail.target
                             : tab.kind === 'review'
                               ? `${label} · ${tab.conversationId}`
-                              : tab.kind === 'conversation' ? label : tab.kind === 'automation' ? `${label} · ${tab.runId}` : tab.kind === 'shadow'
+                              : tab.kind === 'conversation' ? label : tab.kind === 'shadow'
                                 ? tab.context.title
                                 : `${label} · ${tab.detail.sessionId}`;
                           return (
@@ -2477,7 +2495,7 @@ function CardbushApp() {
                                     : <FileText size={13} aria-hidden="true" />
                                   : tab.kind === 'review' || tab.kind === 'conversation'
                                     ? <Clipboard size={13} aria-hidden="true" />
-                                    : tab.kind === 'history' || tab.kind === 'automation'
+                                    : tab.kind === 'history'
                                       ? <Clock3 size={13} aria-hidden="true" />
                                       : tab.kind === 'agent-definition'
                                         ? tab.detail.entity === 'employee' ? <EmployeeIcon size={13} /> : <UsersRound size={13} />
@@ -2551,7 +2569,7 @@ function CardbushApp() {
                                         : <FileText size={14} aria-hidden="true" />
                                       : tab.kind === 'review' || tab.kind === 'conversation'
                                         ? <Clipboard size={14} aria-hidden="true" />
-                                        : tab.kind === 'history' || tab.kind === 'automation'
+                                        : tab.kind === 'history'
                                           ? <Clock3 size={14} aria-hidden="true" />
                                           : tab.kind === 'agent-definition'
                                             ? tab.detail.entity === 'employee' ? <EmployeeIcon size={14} /> : <UsersRound size={14} />
@@ -2784,8 +2802,6 @@ function CardbushApp() {
                             <ConversationInspectorOutlet id={tab.id} register={registerConversationInspectorOutlet} />
                           ) : tab.kind === 'shadow' ? (
                             <ShadowWindow embedded context={tab.context} />
-                          ) : tab.kind === 'automation' ? (
-                            <AutomationRunPanel jobId={tab.jobId} runId={tab.runId} language={language} active={active && inspectorPresence.visible} onOpenConversation={openAutomationConversation}/>
                           ) : tab.kind === 'history' || tab.kind === 'subagent' || tab.kind === 'agent-definition' ? (
                             <WorkSummaryInspector
                               detail={tab.detail}
@@ -2894,6 +2910,8 @@ function CardbushApp() {
         />
       )}
       <CopyToastHost language={language} />
+      {arrivingEvent && <ConversationEventToast key={arrivingEvent.runId} item={arrivingEvent} language={language}
+        onOpen={() => void openEventResult(arrivingEvent)}/>}
       <McpUserRequests language={language} />
       </AppCenterProvider>
       </ProfileCenter>

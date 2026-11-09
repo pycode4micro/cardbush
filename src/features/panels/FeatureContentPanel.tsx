@@ -24,7 +24,6 @@ import type {
   SkillSummary,
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
-import { AutomationPanel } from '../automations/AutomationPanel';
 import { PluginWorkspace } from '../plugins/PluginWorkspace';
 import { ComponentsApp } from '../components/ComponentsApp';
 
@@ -42,7 +41,6 @@ export function FeatureContentPanel({
   onToggleSkill,
   onReloadSkills,
   onLoadSkillDetail,
-  onCreateAutomation,
   onOpenConversation,
   creationChatOptions,
 }: {
@@ -57,7 +55,6 @@ export function FeatureContentPanel({
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
-  onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
   creationChatOptions?: CreationChatOptions;
 }) {
@@ -66,7 +63,6 @@ export function FeatureContentPanel({
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
     onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />;
-  if (section === 'automations') return <AutomationPanel language={language} onOpenConversation={onOpenConversation} onCreateAutomation={onCreateAutomation} />;
   if (section === 'skills') {
     return (
       <SkillsPanel

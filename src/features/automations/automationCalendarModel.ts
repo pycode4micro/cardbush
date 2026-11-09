@@ -63,7 +63,7 @@ export function calendarEntriesForDays(jobs: AutomationJob[], dates: Date[], now
           entry.firstAt = Math.min(entry.firstAt, first); entry.lastAt = Math.max(entry.lastAt, last);
           entry.overdue ||= first < now;
         };
-        if (job.trigger.kind === 'once') {
+        if (job.trigger.kind !== 'interval') {
           if (next >= start && next < end) addSchedule(next, next, 1);
         } else {
           const step = job.trigger.seconds * 1000;
@@ -138,15 +138,4 @@ export function matchingCalendarDates(jobs: AutomationJob[], calendars: Calendar
   for (const calendar of calendars) for (const entry of calendar.entries) dates.add(entry.date);
   for (const [key, entries] of importedEntriesForDays(calendars, yearDays, '', 0)) if (entries.count) dates.add(key);
   return [...dates].sort();
-}
-
-const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-export function compactAutomationText(value: string, limit = 14) {
-  const text = value.replace(/\s+/gu, ' ').trim();
-  let preview = '', count = 0;
-  for (const { segment } of segmenter.segment(text)) {
-    if (count++ === limit) return `${preview}…`;
-    preview += segment;
-  }
-  return preview;
 }

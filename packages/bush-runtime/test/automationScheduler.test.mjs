@@ -258,7 +258,7 @@ test('unread results keep recorded conversations while older timers migrate futu
   const queued = (await reloaded.list()).jobs[0]; assert.equal(queued.runs.length, 66); assert.notEqual(queued.runs.at(-1).sessionId, 'session');
   const results = await reloaded.manage({ action: 'results', offset: 20 }); assert.equal(results.results.length, 20); assert.equal(results.total, 66);
 });
-test('real runtime turns and schedule_task share context, events and permission scope without self-trigger loops', async t => {
+test('real runtime turns and event registration share context, events and permission scope without self-trigger loops', async t => {
   let host; const seen = [];
   const registry = new ToolRegistry();
   const f = await fixture(t, { canRun: () => !host?.hasActiveSession('session'), run: async (job, run, ctx, signal) => {
@@ -271,8 +271,15 @@ test('real runtime turns and schedule_task share context, events and permission 
       yield { protocol: 'bush.model_event.v1', kind: 'response_completed', requestId: request.requestId, sequence: 2, createdAt: new Date().toISOString(), finishReason: 'stop' }; } } });
   const schedule = registry.resolve('schedule_task'); assert.equal(schedule.visibleToChild, false);
   await host.runSessionTurn(context());
-  const job = await schedule.execute({ sessionId: 'session', turn: { request: { metadata: {} } }, input: { action: 'create', name: 'Follow up', prompt: 'Review the last result', trigger: { kind: 'event', event: 'Stop' } } });
-  assert.equal((await f.scheduler.list()).jobs[0].id, job.id);
+  const tool = registry.resolve('assistant_event');
+  const input = tool.decodeInput({ action: 'subscribe', topic: 'Follow up', text: 'Review the last result', session_hook: { event: 'Stop' } });
+  const receipt = await tool.execute({ sessionId: 'session', toolCall: {id:'register'}, turn: { request: { turnId:'human-turn',metadata: {} } }, input });
+  const job = (await f.scheduler.list()).jobs[0];
+  assert.equal(receipt.eventId, 'session-event:' + job.id);
+  assert.equal(job.sessionId, 'session');
+  const events = await host.sendCommand({kind:'runtime.friends',payload:{action:'read'}});
+  assert.equal(events.events.find(e => e.id === receipt.eventId).conversationExecution.sessionId, 'session');
+  await assert.rejects(schedule.execute({sessionId:'session',input:{action:'create'}}), /assistant_event/);
   await host.runSessionTurn({ ...context(), turnId: 'human-turn-2', requestId: 'request-2', inputMessages: [{ messageId: 'human-input-2', message: { role: 'user', content: 'Next task' } }] });
   await f.scheduler.tick(); await until(async () => (await f.scheduler.list()).jobs[0].runs.at(-1)?.status === 'completed');
   assert.equal(seen.length, 3); assert.equal(seen[2].permissionMode, 'task_free');
@@ -280,6 +287,60 @@ test('real runtime turns and schedule_task share context, events and permission 
   const session = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: 'session' } });
   assert.equal(session.turns.length, 3);
   assert.ok(session.turns.at(-1).messages.some(row => row.message.content === 'Review the last result'));
+});
+test('a conversation registers a calendar event through a real model turn, retains its permissions after restart and cancels it from Events', async t => {
+  const f = await fixture(t), registry = new ToolRegistry();
+  const recurrence = { unit:'day', interval:1, startLocal:'2099-03-07T09:00', timeZone:'America/New_York' };
+  const registration = { action:'subscribe', topic:'Daily project review', text:'Review current project changes', recurrence };
+  let calls = 0;
+  const host = new InMemoryRuntimeHost({ automation:f.scheduler, toolRegistry:registry, registerDefaultWorkspaceTools:false, dataRoot:f.root,
+    provider: { async *stream(request) {
+      const event = (kind, fields) => ({ protocol:'bush.model_event.v1', kind, requestId:request.requestId, sequence:kind === 'response_completed' ? 2 : 1, createdAt:new Date().toISOString(), ...fields });
+      if (!calls++) {
+        assert.ok(request.tools.some(tool => tool.name === 'assistant_event'));
+        yield event('tool_call_delta', { index:0, toolCallId:'registration', nameDelta:'assistant_event', argumentsDelta:JSON.stringify(registration) });
+        yield event('response_completed', {finishReason:'tool_calls'}); return;
+      }
+      yield event('text_delta', {delta:' Registered.'}); yield event('response_completed', {finishReason:'stop'});
+    } } });
+  const source = context();
+  source.metadata.projectDir = f.root;
+  source.tools = registry.definitions().filter(tool => tool.name === 'assistant_event');
+  assert.equal((await host.runSessionTurn(source)).payload.status, 'completed');
+  assert.equal((await f.scheduler.list()).jobs.length, 1, 'the provider tool call persisted the registration');
+  const tool = registry.resolve('assistant_event');
+  const invoke = (input, sessionId = 'session') => tool.execute({input:tool.decodeInput(input), sessionId, toolCall:{id:'retry'}, turn:{request:{turnId:'turn',metadata:{}}}});
+  const [again, duplicate] = await Promise.all([invoke(registration), invoke(registration)]);
+  const jobs = (await f.scheduler.list()).jobs;
+  assert.equal(jobs.length, 1); assert.equal(again.eventId, duplicate.eventId);
+  assert.equal(jobs[0].nextRunAt, '2099-03-07T14:00:00.000Z');
+  assert.deepEqual(await invoke({action:'list'}, 'unrelated'), []);
+  await assert.rejects(invoke({action:'read',eventId:again.eventId},'unrelated'), /not found/);
+  await host.sendCommand({kind:'runtime.shutdown',payload:{}});
+  await f.scheduler.close();
+  const now = Date.parse(jobs[0].nextRunAt);
+  let executed;
+  const restored = new AutomationScheduler({...f.options, now:()=>now, canRun:()=>true, run:async (job, run, ctx) => {
+    executed = { job, run, ctx }; return {status:'completed',reason:'stop',result:'Project review delivered'};
+  }});
+  t.after(()=>restored.close());
+  const restarted = new InMemoryRuntimeHost({automation:restored, dataRoot:f.root, registerDefaultWorkspaceTools:false});
+  await restored.tick();
+  await until(async ()=>(await restored.list()).jobs[0].runs.at(-1)?.status === 'completed');
+  assert.equal(executed.job.sessionId,source.sessionId); assert.notEqual(executed.run.sessionId,source.sessionId);
+  assert.equal(executed.ctx.metadata.projectDir,f.root); assert.equal(executed.ctx.permissionMode,source.permissionMode);
+  assert.deepEqual(executed.ctx.tools.map(t=>t.name),['assistant_event']);
+  const command = payload => restarted.sendCommand({kind:'runtime.friends',payload});
+  const entry = (await command({action:'read'})).events.find(item=>item.id===again.eventId);
+  assert.equal(entry.conversationExecution.runs[0].summary,'Project review delivered');
+  await command({action:'delete',eventId:entry.id});
+  assert.equal((await restored.list()).jobs.length,0);
+  await restarted.sendCommand({kind:'runtime.shutdown',payload:{}});
+  await restored.close();
+  const afterDelete = new AutomationScheduler({...f.options, now:()=>now + 2*86400000, canRun:()=>true,
+    run:async ()=>{ throw Error('Deleted event woke again'); }});
+  try { await afterDelete.tick(); assert.deepEqual((await afterDelete.list()).jobs, []); }
+  finally { await afterDelete.close(); }
 });
 test('only executed trusted hooks can request a queued agent activation through structured output', async () => {
   const activations = [], calls = [];

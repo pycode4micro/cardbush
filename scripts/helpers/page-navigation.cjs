@@ -21,10 +21,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const menus=views.applicationMenus('zh',{newConversation:navNoop,openSettings:navNoop,showShortcuts:navNoop,openDiagnostics:navNoop,toggleSidebar:navNoop,toggleInspector:navNoop,search:navNoop,openBrowser:navNoop,forward},{sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
       return h(views.PageNavigationContext.Provider,{value:history},h(views.PageNavigationScope.Provider,{value:'main:'+page.section},
         h(views.WindowFrame,{language:'zh',sidebarCollapsed:false,onBack:back,onForward:forward,menus,onError:error=>failures.push(String(error))}),
-        h('nav',{id:'test-nav'},['chat','plugins','settings','automations','agents'].map(section=>h('button',{key:section,onClick:()=>setPage({section,id:section==='chat'?'a':section==='agents'?'cloud-a':undefined})},section))),
+        h('nav',{id:'test-nav'},['chat','plugins','settings','events','agents'].map(section=>h('button',{key:section,onClick:()=>setPage({section,id:section==='chat'?'a':section==='agents'?'cloud-a':undefined})},section))),
         h('output',{id:'current-route'},JSON.stringify(page)),h('span',{hidden:true},revision),
         page.section==='plugins'?h(views.SettingsHostContext.Provider,{value:navHost},h('div',{style:{height:680,overflow:'auto'}},h(views.PluginWorkspace,{capabilities:{},language:'zh',skills:[],disabledSkillNames:new Set(),onReloadSkills:navReload,onLoadSkillDetail:navReload,onToggleSkill:navNoop})))
-        :page.section==='automations'?h(views.AutomationPanel,{language:'zh',onCreateAutomation:navNoop,onOpenConversation:navNoop})
+        :page.section==='events'?h('div',null,h('button',{onClick:()=>setPage({section:'events',id:'fixture'})},'event details'),page.id && h(views.FriendsEventDetails,{event:{id:'fixture',title:'Event',status:'completed',inputs:[]},language:'zh'}))
         :page.section==='settings'?h('div',null,['appearance','runtime'].map(tab=>h('button',{key:tab,onClick:()=>setPage({section:'settings',tab})},tab)))
         :h('p',null,page.id)));
     };
@@ -49,21 +49,20 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("navClick('appearance')"); await route('appearance');
   await run("navClick('runtime')"); await route('runtime');
   await back(); await route('appearance'); await forward(); await route('runtime');
-  await run("navClick('automations')"); await until("document.querySelector('.automation-tabs [aria-pressed=true]')?.textContent==='计划管理'", 'plan management page');
-  await run("navClick('全部结果')"); await until("document.querySelector('.automation-tabs [aria-pressed=true]')?.textContent==='全部结果'", 'results view');
-  await back(); await until("document.querySelector('.automation-tabs [aria-pressed=true]')?.textContent==='计划管理'", 'automation view Back');
-  await forward(); await until("document.querySelector('.automation-tabs [aria-pressed=true]')?.textContent==='全部结果'", 'automation view Forward');
+  await run("navClick('events')"); await route('events');
+  await run("navClick('event details')"); await route('fixture');
+  await back(); await route('events'); await forward(); await route('fixture');
   await run("navClick('agents')"); await route('cloud-a');
   await run("navSetPage({section:'agents',id:'cloud-b'})"); await route('cloud-b');
   await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'[',ctrlKey:true,bubbles:true,cancelable:true}))"); await route('cloud-a');
   await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:']',ctrlKey:true,bubbles:true,cancelable:true}))"); await route('cloud-b');
   await run("navDeleted.add('cloud-a');navRefresh()"); await pause(30);
-  await back(); await route('automations');
-  await until("document.querySelector('.automation-tabs [aria-pressed=true]')?.textContent==='全部结果'", 'remount preserves automation route');
+  await back(); await route('events');
+  await route('fixture');
   await run("navRefresh();navRefresh();window.dispatchEvent(new Event('focus'))"); await pause(150);
   await forward(); await route('cloud-b');
   assert.equal(await run("!navHistory.canGoForward"), true, 'refresh adds no spurious entries');
-  await back(); await route('automations');
+  await back(); await route('events');
   await run("navClick('chat')"); await route('chat');
   assert.equal(await run("!navHistory.canGoForward"), true, 'new visit replaces forward history');
   // Return to the older plugin details after the whole plugin surface was unmounted.
@@ -161,5 +160,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('[data-plugin-page=plugin]')?.checkVisibility()", 'earlier management detail');
   await back();
   await until("document.querySelector('[data-plugin-page=manage]')?.checkVisibility()", 'returns to management');
-  console.log('Page navigation UI passed: real plugin details, scoped returns, shared Back/Forward, automation tabs, local/remote routes, shortcuts, StrictMode, remounts and refresh isolation.');
+  console.log('Page navigation UI passed: real plugin details, scoped returns, shared Back/Forward, event detail navigation, local/remote routes, shortcuts, StrictMode, remounts and refresh isolation.');
 };

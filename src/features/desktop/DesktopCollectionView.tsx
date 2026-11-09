@@ -6,6 +6,7 @@ import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types'
 import { ApplicationIcon } from '../appCenter/AppCenter';
 import type { ApplicationEntry } from '../appCenter/appCenterModel';
 import { FriendsEventDetails, FriendsExecutionRequests } from '../assistant/events/EventDetails';
+import { AutomationCalendar } from '../automations/AutomationCalendar';
 import { ComponentsApp } from '../components/ComponentsApp';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
 import { HtmlComponentContext } from '../components/HtmlComponentContext';
@@ -77,6 +78,7 @@ type HomeProps = {
   onAssistant(): void; onExplore(): void; onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void;
 };
 export function DesktopHomeView(p: HomeProps) {
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const {language, page, events, projects, conversations, onPage} = p;
   const t = uiText(language), home = t('desktop.home'), recent = t('chatSidebar.recent'), projectLabel = t('archivedItemsPanel.projects'), eventLabel = t('desktop.events');
   const selected = page.kind === 'event' ? events.find(item => item.id === page.id) : undefined;
@@ -128,7 +130,8 @@ export function DesktopHomeView(p: HomeProps) {
     </nav>}
     {page.kind === 'event' && selected && !subpage ? <header className="desktop-detail-heading">
       <div aria-hidden="true" className="desktop-detail-art" data-cover={selected.presentation?.cover ?? 'tide'}/>
-      <div><small>{t(`yourFriends.status.${selected.status}`)}</small><h1>{heading}</h1><p>{selected.presentation?.summary ?? selected.intent}</p></div>
+      <div><small>{t(`yourFriends.status.${selected.status}`)}</small><h1>{heading}</h1>
+        {!selected.conversationExecution && <p>{selected.presentation?.summary ?? selected.intent}</p>}</div>
     </header> : <h1>{heading}</h1>}
     {page.kind === 'overview' && <>
       <FeaturedShelf language={language} busy={waitingForEvents}>
@@ -143,7 +146,10 @@ export function DesktopHomeView(p: HomeProps) {
     </>}
     {page.kind === 'events' && <div className="desktop-list">{eventRows(events)}{!events.length && <p role="status">{t(p.error ? 'desktop.eventsUnavailable' : !p.snapshot ? 'desktop.loadingEvents' : 'yourFriends.noEvents')}</p>}
       {p.error && <Row title={t('desktop.retryEvents')} icon={<Waves/>} open={p.retry}/>}
-      <Row title={p.assistantName} detail={t('desktop.openAssistant')} icon={<Waves/>} open={p.onAssistant}/></div>}
+      <Row title={p.assistantName} detail={t('desktop.openAssistant')} icon={<Waves/>} open={p.onAssistant}/>
+      <details open={calendarOpen} onToggle={event => setCalendarOpen(event.currentTarget.open)}><summary>{t('automationPanel.calendarView')}</summary>
+        {calendarOpen && <AutomationCalendar language={language} snapshot={p.snapshot}/>}
+      </details></div>}
     {page.kind === 'projects' && <div className="desktop-list" ref={p.projectsRef}/>}
     {page.kind === 'recent' && <div className="desktop-list">{recentRows(conversations)}{newChat}</div>}
     {project && <><p className="desktop-path">{project.rootPath}</p><Shelf title={recent}><div className="desktop-list">

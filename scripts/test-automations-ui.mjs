@@ -11,18 +11,16 @@ const directory = await mkdtemp(join(parent, 'automations-ui-'));
 const local = file => resolve(file).replaceAll('\\', '/');
 const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
-import {AutomationPanel} from '${local('src/features/automations/AutomationPanel.tsx')}';
 import {AutomationCalendar} from '${local('src/features/automations/AutomationCalendar.tsx')}';
 import {themeClassNames} from '${local('src/features/appearance/themeRuntime.ts')}';
 import chinaCalendar from '${local('assets/calendars/china.json')}';
 import usCalendar from '${local('assets/calendars/us.json')}';
 import {importedThemeStyleVariables} from '${local('src/features/appearance/importedThemeStyle.ts')}';
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}'; import '${local('src/styles/appearance.css')}';
-window.listeners=new Set(); window.calls=[]; window.opened=[]; window.openedRuns=[]; window.setupRequests=0; window.failSave=false;
+window.listeners=new Set(); window.calls=[];
 window.runtimeStatus={phase:'ready',attempt:1,startedAt:''};window.runtimeListeners=new Set();window.emitRuntime=phase=>{runtimeStatus={...runtimeStatus,phase};for(const listener of runtimeListeners)listener(runtimeStatus)};
 window.failList=false;window.failCalendars=false;
 window.pickerThemeTokens=[];window.pickerTheme=theme=>{const app=document.querySelector('.app');for(const token of pickerThemeTokens)app.style.removeProperty(token);app.className='app '+themeClassNames(theme==='custom'?'dark':theme);pickerThemeTokens=[];if(theme==='custom'){const tokens=importedThemeStyleVariables({protocol:'cardbush.appearance_style.v1',name:'测试导入配色',base:'dark',colors:{surface:'#201b2c',surfaceRaised:'#31273f',border:'#675679',text:'#f3eafc',textMuted:'#cec1db',accent:'#d2a9f4'}});for(const [token,value]of Object.entries(tokens))app.style.setProperty(token,value);pickerThemeTokens=Object.keys(tokens)}};
-window.addEventListener('cardbush:open-automation-run',event=>openedRuns.push(event.detail));
 window.state={available:true,jobs:[],sessions:[{id:'session',title:'构建与导出检查',model:'Fixture'}]};
 window.notify=()=>{for(const listener of listeners)listener()};
 window.calendarState={datasets:[chinaCalendar,usCalendar].map(calendar=>({calendar,enabled:false,builtin:true})),chineseLunar:false};window.calendarCalls=[];window.calendarListeners=new Set();window.importCalendar=undefined;
@@ -36,20 +34,11 @@ window.cardbushDesktop={runtimeStartupStatus:async()=>runtimeStatus,onRuntimeSta
  return {state:structuredClone(calendarState),...(command.action==='import'&&importCalendar?{imported:importCalendar.name}:{})};
 },onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},automationCommand:async command=>{
  calls.push(command); if(command.action==='list'){if(failList)throw Error('Fixture Runtime unavailable');return structuredClone(state);}
- if(failSave)throw Error('Automation changed. Refresh before saving.');
- if(command.action==='mark_read'||command.action==='mark_unread'){for(const job of state.jobs)for(const run of job.runs)if(command.runIds.includes(run.id)){if(command.action==='mark_read')run.readAt=new Date().toISOString();else delete run.readAt;}notify();return{};}
- let job=state.jobs.find(job=>job.id===command.id);
- if(command.action==='create'){job={...command.definition,id:'job-'+state.jobs.length,revision:1,state:'active',createdAt:new Date().toISOString(),runs:[]};state.jobs.push(job);}
- else if(command.action==='update')Object.assign(job,command.definition,{revision:job.revision+1});
- else if(command.action==='pause')job.state='paused'; else if(command.action==='resume')job.state='active';
- else if(command.action==='run')job.runs.push({id:'run',turnId:'turn',queuedAt:new Date().toISOString(),status:'running',reason:'manual'});
- else if(command.action==='stop'){job.state='paused';job.runs.at(-1).status='stopped';}
- else if(command.action==='delete')state.jobs=state.jobs.filter(job=>job.id!==command.id);
- notify();return structuredClone(job);
+ throw Error('Unexpected scheduler mutation from the event calendar');
 }};
 const root=createRoot(document.getElementById('root'));
 window.renderCalendarWidgets=(language='zh',count=1)=>root.render(<div className="app theme-dark" style={{display:'flex',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}>{Array.from({length:count},(_,i)=><div className="widget-fixture" key={i} style={{width:300,height:310,overflow:'hidden',margin:20,flex:'none'}}><AutomationCalendar language={language}/></div>)}</div>);
-root.render(<div className="app theme-dark" style={{display:'flex',flexDirection:'column',minWidth:0,width:'100%',height:'100vh',overflow:'hidden'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
+window.renderCalendarWidgets("zh", 0);
 `;
 try {
   const result = await build({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{

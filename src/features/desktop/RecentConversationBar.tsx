@@ -6,7 +6,8 @@ import { useConversationArchives } from '../sidebar/conversationArchives';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { normalizeChatMessagesForDisplay } from '../chatMessages/transcript/messageProjection';
 import { isContextGuidance } from '../chat/quickContextIndex';
-import { RecentConversationBarView, TurnListView, type RecentTab } from './RecentConversationBarView';
+import { RecentConversationBarView, NotificationListView, TurnListView, type RecentTab } from './RecentConversationBarView';
+import type { WorkspaceNotice } from './workspaceNotifications';
 import './recentConversationBar.css';
 
 const lastVisitKey = 'cardbush_last_opened_conversation';
@@ -28,7 +29,7 @@ export function useRecentConversation(conversations: ConversationSummary[], visi
 }
 
 export type RecentListOutlet = {
-  element: HTMLElement; tab: RecentTab; selectedId: string; limit: number; select(id: string): void; enter(id: string): void; more(): void;
+  element: HTMLElement; tab: Exclude<RecentTab, 'notifications'>; selectedId: string; limit: number; select(id: string): void; enter(id: string): void; more(): void;
 };
 type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
@@ -36,11 +37,12 @@ type Props = HistoryActions & {
   navigation?: ReactNode; actions?: ReactNode;
   language: AppLanguage; conversation?: Pick<ConversationSummary, 'id' | 'title'>; conversations: ConversationSummary[];
   assistantMessages?: ChatMessage[];
+  notices: WorkspaceNotice[]; openNotice(notice: WorkspaceNotice): void;
   transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
   open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ navigation, actions, language, conversation, conversations, assistantMessages, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
+export function RecentConversationBar({ navigation, actions, language, conversation, conversations, assistantMessages, transcripts, pageFor, read, earlier, open, onRecentList, notices, openNotice }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
@@ -95,7 +97,7 @@ export function RecentConversationBar({ navigation, actions, language, conversat
   const togglePanel = (open: boolean) => {
     const version = ++toggleVersion.current;
     setExpanded(open);
-    if (open) { setPresent(true); return; }
+    if (open) { setTab(notices.length ? 'notifications' : 'pinned'); setSelectedId(''); setPresent(true); return; }
     // Keep the current list visible until the native popover has slid out of the top layer.
     const finish = () => {
       if (version !== toggleVersion.current || !panel.current || panel.current.matches(':popover-open')) return;
@@ -106,9 +108,10 @@ export function RecentConversationBar({ navigation, actions, language, conversat
     else finish();
   };
   return <RecentConversationBarView navigation={navigation} actions={actions} language={language} title={displayTitle(conversation, true)} selectedTitle={displayTitle(selected)} panelId={id}
-    panelRef={panel} expanded={expanded} tab={tab} onTab={next => { setSelectedId(''); setTab(next); }}
+    panelRef={panel} expanded={expanded} unread={notices.length} tab={tab} onTab={next => { setSelectedId(''); setTab(next); }}
     onOpen={conversation ? () => enter(conversation.id) : undefined} onToggle={togglePanel}>
-    {present && (selected && tab === 'sessions'
+    {present && (tab === 'notifications' ? <NotificationListView notices={notices} language={language}
+      open={notice => { panel.current?.hidePopover(); openNotice(notice); }}/> : selected && tab === 'sessions'
       ? <TurnList key={selected.id} language={language} sessionId={selected.id} messages={assistantTurns ? assistantMessages : transcripts[selected.id]}
           history={assistantTurns ? undefined : { page: pageFor(selected.id), read, earlier }} select={message => enter(selected.id, message)}/>
       : <RecentSessions key={tab} tab={tab} selectedId={conversation?.id ?? ''} register={onRecentList} select={tab === 'pinned' ? enter : browse} enter={enter}>
@@ -119,7 +122,7 @@ export function RecentConversationBar({ navigation, actions, language, conversat
 }
 
 /** The same conversation rows own actions in the drawer, projects and pinned list. */
-function RecentSessions({ register, tab, children, selectedId, select, enter }: { tab: RecentTab; children: ReactNode; register: Props['onRecentList']; selectedId: string; select(id: string): void; enter(id: string): void }) {
+function RecentSessions({ register, tab, children, selectedId, select, enter }: { tab: RecentListOutlet['tab']; children: ReactNode; register: Props['onRecentList']; selectedId: string; select(id: string): void; enter(id: string): void }) {
   const host = useRef<HTMLDivElement>(null);
   const [limit, setLimit] = useState(pageSize);
   useLayoutEffect(() => {

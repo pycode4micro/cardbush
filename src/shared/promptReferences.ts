@@ -33,6 +33,7 @@ export function parsePromptReference(href: string): PromptReference | null {
     }
     if (url.hostname === 'application' && valid(value('id')) && value('id').length <= 400 && title.length <= 200) {
       const applicationKind = value('applicationKind'), target = value('target'), id = value('id');
+      // Old messages can still contain the retired automation app reference.
       if (applicationKind === 'builtin' && ['plugins', 'automations', 'settings', 'components', 'team', 'md-presentation'].includes(target) && id === `builtin:${target}`)
         return { kind: 'application', id, title, applicationKind, target };
       if (applicationKind === 'plugin' && valid(target) && valid(value('componentId')) && id === `plugin:${encodeURIComponent(target)}:${encodeURIComponent(value('componentId'))}`)

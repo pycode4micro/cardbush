@@ -187,6 +187,9 @@ test('actual chat callbacks require interaction identities, clear background bad
   assert.equal(attention.current.visible.interactionId, 'prompt');
   exports.mark('background', 'error', 'failed', 'next');
   assert.equal(sounds[3].kind, 'error');
+  exports.mark('background', 'completed', 'Scheduled result', 'scheduled-turn', undefined, 'event');
+  assert.equal(toasts.at(-1).turnId, 'scheduled-turn', 'an event still reaches the native notification surface');
+  assert.equal(attention.current.background.turnId, 'next', 'the scheduler receipt cannot replace an unrelated unread chat result');
   const soundCount = sounds.length, toastCount = toasts.length;
   for (const kind of ['background', 'dependency', 'unspecified']) {
     exports.mark('passive', 'waiting', 'Task pending', 'wait-turn', undefined, kind);
@@ -299,8 +302,8 @@ function turnFixture({ status, transport, latestTurn, goal = null, goalReadFails
   context.streamTurnEvents = request => stream(context.goalTurnControllersRef.current.chat.controller, request);
   return { context, attention, run: async route => {
     if (route === 'send') await context.sendMessage('test message');
-    else if (route === 'host') {
-      context.subscribeGoalTurn('chat', 'turn');
+    else if (route === 'host' || route === 'isolated-event') {
+      context.subscribeGoalTurn('chat', 'turn', route === 'isolated-event');
       for (let attempt = 0; attempt < 20 && context.goalTurnControllersRef.current.chat; attempt++) {
         await new Promise(resolve => setImmediate(resolve));
       }
@@ -311,6 +314,11 @@ function turnFixture({ status, transport, latestTurn, goal = null, goalReadFails
     return attention.map(args => args[1]);
   } };
 }
+
+test('a scheduled execution with source delivery does not notify again under its hidden session', async () => {
+  const f = turnFixture({ status: 'completed', finalText: 'Reminder' });
+  assert.deepEqual(await f.run('isolated-event'), []);
+});
 
 for (const route of ['send', 'edit']) {
   test(`${route}: completion delivery does not wait for decorative animation or history refresh`, async () => {
