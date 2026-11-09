@@ -68,7 +68,7 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
     flex:0 1 min(100%, calc(var(--header-rail-width) - 10px));
   }
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar {
-    grid-template-columns: 98px; justify-content: end; min-width: 98px;
+    grid-template-columns: var(--nav-min-width); justify-content: end; min-width: var(--nav-min-width);
   }
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar > :is(.recent-bar-chat, .recent-bar-actions) { display: none; }
 }

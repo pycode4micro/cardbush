@@ -217,13 +217,17 @@ async function run() {
     const projects = bounds('.window-frame [data-nav-section=projects]');
     const newChat = bounds('.window-frame [data-nav-section=chat]');
     const assistant = bounds('.window-frame [data-nav-section=assistant]');
-    const navigation = bounds('.workspace-chat-navigation');
     const shortcuts = [...document.querySelectorAll('.workspace-chat-navigation button')];
     if (shortcuts.length !== 3 || shortcuts.some(button =>
       button.textContent.trim() || !button.getAttribute('aria-label') || !button.querySelector('svg,img'))) return false;
     if (!newChat || !assistant || newChat.width < 24 || assistant.width < 24 || newChat.left < bar.left - 1 ||
         newChat.right > projects.left + 1 || projects.right > assistant.left + 1 || assistant.right > title.left + 1 || title.right > summary.left + 1) return false;
-    if (Math.abs((newChat.left - navigation.left) - (navigation.right - assistant.right)) > 1) return false;
+    const actions = [...document.querySelectorAll('.recent-bar-actions button')]
+      .map(button => button.getBoundingClientRect()).filter(rect => rect.width > 0);
+    if (!actions.length || Math.abs((title.left - assistant.right) - (actions[0].left - title.right)) > 1) return false;
+    const buttonGaps = [projects.left - newChat.right, assistant.left - projects.right,
+      ...actions.slice(1).map((rect, i) => rect.left - actions[i].right)];
+    if (Math.min(...buttonGaps) <= 0 || Math.max(...buttonGaps) - Math.min(...buttonGaps) > 1) return false;
     const centerY = rect => rect.top + rect.height / 2;
     return summary.right <= inspector.left + 1 && inspector.right <= list.left + 1 &&
       Math.abs(centerY(inspector) - centerY(list)) < 2 && list.right <= innerWidth;
@@ -238,11 +242,11 @@ async function run() {
   await click(inspector);
   win.maximize();
   await wait(() => win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window maximized');
-  await wait(toolbarFits, 'three named icon buttons centered between the sidebar and title when maximized');
+  await wait(toolbarFits, 'matching gaps on both sides of the title and between icons when maximized');
   win.unmaximize();
   await wait(() => !win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window restored');
-  await wait(toolbarFits, 'icon buttons centered after restoring the window');
-  for (const width of [900, 640, 480]) {
+  await wait(toolbarFits, 'matching title and icon spacing after restoring the window');
+  for (const width of [1180, 900, 640, 480]) {
     win.setContentSize(width, 720);
     await wait(() => read('innerWidth === ' + width), 'chat window resized to ' + width);
     await wait(toolbarFits, 'chat controls fit at ' + width + ' pixels');
