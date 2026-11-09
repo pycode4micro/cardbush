@@ -149,6 +149,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         pasteDrafts[pasteSession] = cumulativePrefix + '字'.repeat(7900 - cumulativePrefix.length); pasteMount();
       `);
       await until(`!!document.querySelector('${rich ? '.composer-prompt-editor' : 'textarea[data-composer-input]'}')`, label + ' cumulative input');
+      if (!rich) await until('document.querySelector("textarea[data-composer-input]").value === pasteDrafts[pasteSession]', label + ' cumulative draft mounted');
       await run(`{
         const input = document.querySelector('[data-composer-input]'); input.focus();
         if (input instanceof HTMLTextAreaElement) input.setSelectionRange(input.value.length, input.value.length);
@@ -182,6 +183,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       assert.equal(await run('document.querySelector("[data-pasted-text]")'), null);
       if (rich) assert.ok(await run('document.querySelector(".composer-skill-token")'), 'replacement preserves the Skill token');
     }
+    await require('./composer-table-paste.cjs')({run, until, window, root});
     console.log('Pasted text UI passed: native/rich paste, cumulative limits, selected replacements, exact files, preview/removal, pending send, conversation switching, failures, remote retry and both themes.');
   } catch (error) {
     console.error('Paste fixture diagnostics:', events, await run('JSON.stringify({ errors: errorDialogs, randomUUID: typeof crypto.randomUUID })'));

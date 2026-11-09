@@ -1,0 +1,37 @@
+.composer-markdown-preview, .composer-table-tools { grid-column: 1 / -1; min-width: 0; }
+.composer-table-tools { display: flex; justify-content: flex-end; }
+.composer-table-tools button {
+  padding: 3px 8px;
+  color: var(--text-mid);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.composer-table-tools button:hover, .composer-table-tools button:focus-visible { background: var(--hover); color: var(--text); }
+.composer-markdown-preview {
+  max-height: min(220px, 32vh);
+  overflow: auto;
+  scrollbar-width: thin;
+  user-select: text;
+  cursor: auto;
+}
+.composer-markdown-preview .markdown-table-scroll { margin: 2px 0 6px; overflow: visible; }
+.composer-markdown-preview .markdown-table-scroll :is(th, td) { min-width: 7ch; }
+.composer-markdown-preview .markdown-table-scroll th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-strong);
+}
+.composer-markdown-preview a { color: var(--accent); }
+/* Keep the native editor, selection and undo stack while its draft is previewed. */
+.composer-surface[data-table-preview] > [data-composer-input] {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.composer-surface[data-table-preview] > .composer-code-highlights { display: none; }

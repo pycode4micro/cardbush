@@ -82,6 +82,7 @@ import { UserMessageDisclosure } from './UserMessageDisclosure';
 import { MessageContentImage, MessageImageGalleryFrame, useImageGalleryFallback } from './MessageImageGalleryFrame';
 import { remarkImageGroups } from './remarkImageGroups';
 import { remarkStreamingTables } from './streamingTables';
+import { remarkTableBreaks } from './remarkTableBreaks';
 import { captureMarkdownTableDiagnostic } from '../chat/windowScrollDiagnostics';
 import { modelFailurePresentation } from './modelFailurePresentation';
 import { McpAppReferencesContext } from '../tools/McpAppReferenceLink';
@@ -559,7 +560,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     const remarkPlugins = useMemo(() => {
       const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkCjkFriendly];
       if (streaming) plugins.push(remarkStreamingTables);
-      plugins.push(remarkAutolinkBoundaries);
+      plugins.push(remarkAutolinkBoundaries, remarkTableBreaks);
       // URL boundary repair can reparse the document. Enrich references only
       // after it finishes so generated Skill tokens survive that replacement.
       if (markdown.invocation) plugins.push([remarkSkillCommands, { invocation: markdown.invocation }]);

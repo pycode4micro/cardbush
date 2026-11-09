@@ -34,8 +34,11 @@ import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerP
 import { useComposerMultiline } from './useComposerMultiline';
 import { useNextStepPrediction } from './useNextStepPrediction';
 import { pastedTextSummary } from './pastedText';
+import { clipboardTableSource, draftTables, pastingIntoCode, separatePastedTable } from './clipboardTable';
+import './composerMarkdownPreview.css';
 import { useFileDropZone } from './useFileDropZone';
 import { showUiError } from '../../shared/showUiError';
+import { recoverableLazy, DeferredModuleNotice } from '../../shared/recoverableLazy';
 import { normalizePermissionMode, permissionModeOptions } from '../../shared/permissionModes';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { ComposerRuntimeRail } from './ComposerRuntimeRail';
@@ -83,6 +86,7 @@ import {
   useCallback,
   useContext,
   Fragment,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useId,
@@ -117,6 +121,9 @@ import type { QuickLoadPayload } from './quickLoad';
 import { useTeamChoices, selectTeam } from '../team/teamWorkspaceStore';
 import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
 import { useRuntimeStartupStatus } from '../../shared/useRuntimeStartupStatus';
+
+const ComposerMarkdownPreview = recoverableLazy('composer-markdown-preview', () => import('./ComposerMarkdownPreview'),
+  ({language}, retry) => <DeferredModuleNotice language={language} retry={retry}/>);
 
 type ComposerImageAttachment = {
   id: string;
@@ -544,6 +551,9 @@ export function Composer({
 
   const goalDraft = composerGoalDraftPresentation(draft);
   const composerInputValue = goalDraft?.content ?? draft;
+  const hasTable = useMemo(() => draftTables(composerInputValue).length > 0, [composerInputValue]);
+  const [showTableSource, setShowTableSource] = useState(false);
+  const previewTable = hasTable && !showTableSource && !voiceComposer.visible;
   const multilineInput = useComposerMultiline(composerSurfaceRef, composerInputValue,
     voiceComposer.visible ? null : inputOnly ? 'input-only' : simple ? 'simple' : null);
   const hasContent =
@@ -914,14 +924,34 @@ export function Composer({
 
   function capturePastedText(event: React.ClipboardEvent<HTMLDivElement>) {
     if (inputReadOnly || (submissionPending && !optimisticSubmission)) { event.preventDefault(); event.stopPropagation(); return; }
-    if (event.clipboardData.files.length) return;
-    const text = event.clipboardData.getData('text/plain');
+    const target = event.target;
+    const candidate = target instanceof Element && target.closest('[data-composer-input], .composer-markdown-preview')
+      ? clipboardTableSource(event.clipboardData) : undefined;
     const selection = textareaRef.current?.getSelectionRange() ?? { start: composerInputValue.length, end: composerInputValue.length };
-    const summary = pastedTextSummary(text, { value: composerInputValue, ...selection });
-    if (!summary.attach) return;
+    const table = candidate && !pastingIntoCode(composerInputValue, selection.start, selection.end) ? candidate : undefined;
+    const files = [...event.clipboardData.files];
+    if (files.length && (!table || files.some(file => !file.type.startsWith('image/')))) return;
+    const text = table ?? event.clipboardData.getData('text/plain');
+    const insertion = table ? separatePastedTable(table, composerInputValue, selection.start, selection.end) : text;
+    const summary = pastedTextSummary(insertion, { value: composerInputValue, ...selection });
+    if (!summary.attach) {
+      if (table !== undefined) {
+        event.preventDefault(); event.stopPropagation();
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(selection.start, selection.end);
+        // Native insertion replaces the selection and participates in editor undo.
+        if (!document.execCommand('insertText', false, insertion)) {
+          const next = composerInputValue.slice(0, selection.start) + insertion + composerInputValue.slice(selection.end);
+          onDraftChange(goalDraft ? `/goal ${next}` : next);
+          focusComposer(selection.start + insertion.length);
+        }
+        setShowTableSource(false);
+      }
+      return;
+    }
     // Capture before either textarea or rich-editor paste handling inserts text.
     event.preventDefault(); event.stopPropagation();
-    void attachPastedText(text, summary).catch(error => showUiError(
+    void attachPastedText(text, insertion === text ? summary : pastedTextSummary(text)).catch(error => showUiError(
       uiText(language)('composer.couldNotSavePastedTextItRemains'), String(error)));
   }
 
@@ -1521,13 +1551,15 @@ export function Composer({
         onReorderQueuedMessage={onReorderQueuedMessage} />
       <div
         ref={composerSurfaceRef}
+        data-table-preview={previewTable || undefined}
         className={`composer-surface${multilineInput ? ' is-multiline' : ''}${prediction ? ' has-next-step' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
+        onCompositionStartCapture={() => { if (previewTable) setShowTableSource(true); }}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           const target = event.target;
           if (
             target instanceof Element &&
-            target.closest('button, input, select, textarea, a, [contenteditable], [role="textbox"], [role="button"]')
+            target.closest('button, input, select, textarea, a, [contenteditable], [role="textbox"], [role="button"], .composer-markdown-preview')
           ) {
             return;
           }
@@ -1562,6 +1594,15 @@ export function Composer({
             </button>
           </div>
         )}
+        {hasTable && !voiceComposer.visible && <div className="composer-table-tools">
+          <button type="button" onClick={() => {
+            setShowTableSource(!showTableSource);
+            textareaRef.current?.focus();
+          }}>{uiText(language)(previewTable ? 'canvasStage.editMarkdown' : 'inlineHtmlPreview.preview')}</button>
+        </div>}
+        {previewTable && <Suspense fallback={<div className="composer-markdown-preview">{composerInputValue}</div>}>
+          <ComposerMarkdownPreview source={composerInputValue} language={language}/>
+        </Suspense>}
         <ComposerPromptInput
           readOnly={inputReadOnly || (submissionPending && !optimisticSubmission)}
           richReferences={host ? 'applications' : true}
@@ -1573,6 +1614,7 @@ export function Composer({
           autoFocus={autoFocus}
           value={composerInputValue}
           onChange={(next, caret) => {
+            setShowTableSource(true);
             if (goalDraft) {
               onDraftChange(`/goal${next ? ` ${next}` : ' '}`);
               setCommandState(null);
@@ -1588,6 +1630,9 @@ export function Composer({
           }}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (previewTable && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+              setShowTableSource(true);
+            }
             if (prediction && (event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
               event.preventDefault();
               event.stopPropagation();
