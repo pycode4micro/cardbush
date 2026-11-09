@@ -54,7 +54,7 @@ export function useInspectorWorkspace({
   const { mainStageRef, conversationCovered, splitWidthRef } = useInspectorRecovery({ workspaceId, open: inspectorOpen, covered: inspectorCover, width: inspectorWidth });
   const inspectorControlsVisible = inspectorOpen && (inspectorCover || conversationCovered);
   const multiPageRestore = useInspectorSessionRef<{ width: number; sidebar: boolean } | null>(workspaceId, null);
-  const coverRestore = useInspectorSessionRef<{ section: AppSection; sidebar: boolean; width: number } | null>(workspaceId, null);
+  const coverRestore = useInspectorSessionRef<{ section: AppSection; sidebar: boolean; width: number; open: boolean } | null>(workspaceId, null);
   const windowResize = useRef<{ startWidth: number; inspectorWidth: number; preferredWidth: number } | null>(null);
   const resizeContext = useRef({ inspectorOpen, inspectorCover, compactLayout, sidebarCollapsed, sidebarWidth, conversationCoverRequested });
   resizeContext.current = { inspectorOpen, inspectorCover, compactLayout, sidebarCollapsed, sidebarWidth, conversationCoverRequested };
@@ -137,7 +137,7 @@ export function useInspectorWorkspace({
     const shell = mainStageRef.current?.parentElement;
     const available = (shell?.clientWidth ?? window.innerWidth) - sidebarSpace(shell, collapsed, sidebarWidth);
     const maximum = available - minimumConversationWidth;
-    if (compactLayout || maximum < minimumInspectorWidth) {
+    if (previous?.open === false || compactLayout || maximum < minimumInspectorWidth) {
       setInspectorOpen(false);
     } else {
       setInspectorWidth(Math.min(previous?.width ?? splitWidthRef.current ?? 620, maximum), true);
@@ -161,9 +161,9 @@ export function useInspectorWorkspace({
   }, [inspectorControlsVisible, leaveInspectorCover, inspectorOpen, mainStageRef,
     compactLayout, setInspectorOpen, setSidebarCollapsed, section, setSection]);
   const enterInspectorCover = useCallback(() => {
-    coverRestore.current ??= { section, sidebar: sidebarCollapsed, width: conversationCovered ? splitWidthRef.current ?? 620 : inspectorWidthRef.current };
+    coverRestore.current ??= { section, open: inspectorOpen, sidebar: sidebarCollapsed, width: conversationCovered ? splitWidthRef.current ?? 620 : inspectorWidthRef.current };
     setInspectorCover(true); setSidebarCollapsed(true); setInspectorOpen(true);
-  }, [section, sidebarCollapsed, setSidebarCollapsed, setInspectorOpen, conversationCovered, splitWidthRef, coverRestore, setInspectorCover]);
+  }, [section, inspectorOpen, sidebarCollapsed, setSidebarCollapsed, setInspectorOpen, conversationCovered, splitWidthRef, coverRestore, setInspectorCover]);
   const leaveMultiPage = useCallback(() => {
     setInspectorLayout(null);
     const previous = multiPageRestore.current; multiPageRestore.current = null;

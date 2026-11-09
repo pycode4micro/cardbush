@@ -13,6 +13,7 @@ import { DesktopHomeView, ExploreView } from './DesktopCollectionView';
 import './desktopCollection.css';
 
 type Props = {
+  projectsRef: (element: HTMLDivElement | null) => void;
   language: AppLanguage; page: HomePage; ready: boolean; unavailable: boolean; visible: boolean; conversationsLoading: boolean;
   projects: ProjectItem[]; conversations: ConversationSummary[]; onPage(page: HomePage): void;
   onProject(project: ProjectItem): void; onConversation(id: string): void; onAssistant(): void;

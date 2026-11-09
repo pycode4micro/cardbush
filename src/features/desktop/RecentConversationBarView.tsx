@@ -1,11 +1,11 @@
 import { useId, useState, type ReactNode, type Ref } from 'react';
-import { List } from 'lucide-react';
+import { ChevronLeft, List } from 'lucide-react';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
 import { uiText } from '../../i18n';
 import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { fileUrl } from '../../shared/localPaths';
 
-export type RecentTab = 'turns' | 'sessions';
+export type RecentTab = 'pinned' | 'sessions';
 
 export function RecentConversationBarView({ navigation, actions, language, title, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
   language: AppLanguage; title: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
@@ -13,7 +13,7 @@ export function RecentConversationBarView({ navigation, actions, language, title
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen?: () => void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
-  const tabs = [{ id: 'turns', label: t('recentBar.turns') }, { id: 'sessions', label: t('recentBar.sessions') }] as const;
+  const tabs = [{ id: 'pinned', label: t('chatSidebar.pinned') }, { id: 'sessions', label: t('recentBar.sessions') }] as const;
   return <div className="recent-bar window-drag">
     {navigation}
     <button className="recent-bar-chat no-drag" type="button" disabled={!onOpen} onClick={onOpen} aria-label={onOpen ? t('recentBar.open', { title }) : t('recentBar.sessions')} title={onOpen ? t('recentBar.open', { title }) : undefined}>
@@ -21,7 +21,7 @@ export function RecentConversationBarView({ navigation, actions, language, title
     </button>
     <div className="recent-bar-actions">
       {actions}
-      <button className="recent-bar-list no-drag" type="button" disabled={!onOpen} popoverTarget={panelId}
+      <button className="recent-bar-list no-drag" type="button" popoverTarget={panelId}
         aria-controls={panelId} aria-expanded={expanded} aria-label={t('recentBar.navigator')} title={t('recentBar.navigator')}><List/></button>
     </div>
     <aside className="recent-turn-drawer no-drag" ref={panelRef} id={panelId} popover="auto"
@@ -29,7 +29,7 @@ export function RecentConversationBarView({ navigation, actions, language, title
       <div className="recent-tabs" role="tablist" aria-label={t('recentBar.navigator')} onKeyDown={event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
-        const next = event.key === 'Home' ? 'turns' : event.key === 'End' ? 'sessions' : tab === 'turns' ? 'sessions' : 'turns';
+        const next = event.key === 'Home' ? 'pinned' : event.key === 'End' ? 'sessions' : tab === 'pinned' ? 'sessions' : 'pinned';
         onTab(next); event.currentTarget.querySelector<HTMLButtonElement>('[data-recent-tab="'+next+'"]')?.focus();
       }}>
         {tabs.map(item => <button key={item.id} id={tabId + item.id} type="button" role="tab" data-recent-tab={item.id}
@@ -37,7 +37,8 @@ export function RecentConversationBarView({ navigation, actions, language, title
           onClick={() => onTab(item.id)}>{item.label}</button>)}
       </div>
       <section role="tabpanel" id={panelId + '-content'} aria-labelledby={tabId + tab}>
-        {tab === 'turns' && <h2>{selectedTitle}</h2>}
+        {tab === 'sessions' && selectedTitle && <h2><button className="recent-list-back" type="button" title={t('recentBar.sessions')}
+          onClick={() => onTab('sessions')}><ChevronLeft aria-hidden="true"/><span>{selectedTitle}</span></button></h2>}
         {children}
       </section>
     </aside>

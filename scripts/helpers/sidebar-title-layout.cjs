@@ -34,7 +34,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     };
     window.showSidebarFixture = patch => {
       Object.assign(sidebarFixtureProps, patch);
-      renderView(h(views.ChatSidebar, sidebarFixtureProps));
+      renderView(h(WorkspaceListFixture, sidebarFixtureProps));
     };
     showSidebarFixture({});
     window.sidebarRow = index => [...document.querySelectorAll('.conversation-row')]

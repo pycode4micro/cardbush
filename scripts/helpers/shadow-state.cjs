@@ -1,6 +1,9 @@
 const assert = require('node:assert/strict');
 
 module.exports = async ({ run, until, pause, window, root }) => {
+  window.setContentSize(1162,760);
+  await window.webContents.insertCSS('#root > .app { width: 100% !important; }');
+  await window.webContents.insertCSS(require('node:fs').readFileSync(require('node:path').join(root,'src/features/desktop/desktopCollection.css'),'utf8'));
   await run(`
     window.crypto.randomUUID ??= () => require('node:crypto').randomUUID();
     window.shadowFixture = {
@@ -18,7 +21,17 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.shadowContext = { sessionId: 'source', sourceTurnId: 'source-turn', title: 'Shadow rendering check',
       initialMode: 'readonly', theme: 'dark', language: 'zh', modelConfig: { id: 'fixture', modelName: 'Fixture model' },
       projectDir: 'D:/fixture', accentColor: '#7f9f8a' };
-    renderView(h(views.ShadowWindow, { context: shadowContext, embedded: true }));
+    window.renderDockedShadow = context => renderView(h('div', {className:'app theme-dark','data-desktop-workspace':''},
+      h('div',{className:'desktop-shell'},h('main',{className:'main-stage'}),
+        h('aside',{className:'right-inspector'},h('div',{className:'right-inspector-viewport'},h('div',{className:'right-inspector-content'},
+          h('header',{className:'right-inspector-toolbar'}),h('section',{className:'right-inspector-body'},
+            h(views.ShadowWindow,{context,embedded:true}))))))));
+    renderDockedShadow(shadowContext);
+    window.shadowFits = () => {
+      const pane = document.querySelector('.right-inspector'), send = pane.querySelector('.shadow-window-send');
+      const r = send.getBoundingClientRect(), footer = send.closest('footer').getBoundingClientRect();
+      return r.width > 0 && footer.bottom <= innerHeight && send.contains(document.elementFromPoint(r.x + r.width/2, r.y + r.height/2));
+    };
     window.typeShadowDraft = text => {
       const field = document.querySelector('.shadow-window-composer textarea');
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, text);
@@ -30,6 +43,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   // The remaining scenarios also exercise compatibility with older records.
   await run("shadowFixture.createShadowConversation = async input => ({id:input.clientConversationId,mode:input.mode,sourceTurnId:'source-turn',workspaceDir:'D:/fixture'}); shadowFixture.fetchSessionMessages=async()=>({messages:[]}); void 0");
   await until('document.querySelector(".shadow-window-composer textarea")?.disabled === false', 'Shadow history initialized');
+  await until('shadowFits()', 'entire read-only composer is visible and hit-testable').catch(async error => {
+    const geometry=await run("Array.from(document.querySelectorAll('.app,.desktop-shell,.right-inspector,.right-inspector-content,.right-inspector-body,.shadow-window-composer,.shadow-window-send'), n=>[n.className,n.getBoundingClientRect().toJSON()])");
+    throw Error(JSON.stringify(geometry),{cause:error});
+  });
   const send = '.shadow-window-send';
   const animation = () => run(`getComputedStyle(document.querySelector('${send} svg')).animationName`);
   assert.equal(await run(`document.querySelector('${send}').disabled`), true, 'empty input disables Send');
@@ -56,6 +73,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('finishShadowMode()');
   await until('document.querySelector(".shadow-mode-fork") !== null && !document.querySelector(".shadow-window-mode-switch button").disabled', 'Fork ready');
   assert.equal(await animation(), 'none');
+  await run("document.querySelector('.desktop-shell').classList.add('inspector-covered')");
+  await until('shadowFits()', 'entire Fork composer is visible and hit-testable in the full tab workspace');
   await run(`window.closedShadows=[]; window.heldShadowReplies=[];
     shadowFixture.closeShadowConversation=async id=>closedShadows.push(id);
     shadowFixture.streamShadowConversationMessage=request=>new Promise(resolve=>heldShadowReplies.push({request,resolve}));
@@ -63,7 +82,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('heldShadowReplies.length===1', 'old Shadow turn remains in flight');
   await run(`shadowFixture.createShadowConversation=async input=>({id:input.clientConversationId,mode:input.mode,
     sourceTurnId:'next-source-turn',workspaceDir:'D:/fixture',sourceMessages:[{id:'next-source-user',role:'user',content:'Next frozen source'}]});
-    renderView(h(views.ShadowWindow,{context:{...shadowContext,sessionId:'next-source',sourceTurnId:'next-source-turn'},embedded:true}));`);
+    renderDockedShadow({...shadowContext,sessionId:'next-source',sourceTurnId:'next-source-turn'});`);
   await until("document.body.textContent.includes('Next frozen source') && !document.querySelector('.shadow-window-composer textarea').disabled", 'replacement context initialized');
   assert.equal(await run('closedShadows.length'), 1, 'replaced Shadow session is closed');
   assert.equal(await run("document.body.textContent.includes('Old in-flight question') || document.body.textContent.includes('Shadow fixture completed')"), false, 'replacement clears both prior histories');
@@ -124,6 +143,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.ok(hold.filter(frame=>frame.time<180).every(frame=>!frame.hidden), 'Shadow also holds for 200ms after arrival');
   assert.equal(hold.at(-1).hidden,true,'Shadow button eventually dismisses');
   const fs=require('node:fs'),path=require('node:path'),{webContents}=require('electron');
+  // Inline HTML guests are suspended when their native window is hidden.
+  if (!window.isVisible()) { window.setOpacity(0); window.showInactive(); }
   const directory=fs.mkdtempSync(path.join(root,'tmp','shadow-html-'));
   const file=path.join(directory,'preview.html').replaceAll('\\','/');
   fs.writeFileSync(file,'<!doctype html><title>Shadow HTML</title><p id="live">Loading</p><script>document.getElementById("live").textContent="Shadow HTML rendered"</script>');
@@ -131,7 +152,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     shadowFixture.fetchSessionMessages=async()=>({messages:[{id:'shadow-html',role:'assistant',turnId:'html-turn',status:'completed',metadata:{transcript_kind:'assistant_final'},content:${JSON.stringify('![Preview](<'+file+'>)')}}]});
     renderView(h(views.ShadowWindow,{key:'html-shadow',context:{...shadowContext,sessionId:'html-shadow',projectDir:${JSON.stringify(directory)}},embedded:true}));void 0;
   `);
-  await until("!!document.querySelector('.inline-html-viewport.is-ready')",'Shadow HTML guest renders');
+  await until("!!document.querySelector('.inline-html-viewport.is-ready')",'Shadow HTML guest renders').catch(async error => {
+    throw Error(await run("JSON.stringify({visibility:document.visibilityState,preview:document.querySelector('.inline-html-preview')?.outerHTML.slice(-2200)})"),{cause:error});
+  });
   const page=webContents.fromId(await run("document.querySelector('.inline-html-webview').getWebContentsId()"));
   assert.equal(await page.executeJavaScript("document.getElementById('live').textContent"),'Shadow HTML rendered');
   assert.deepEqual(await page.executeJavaScript('[typeof require,typeof window.cardbushDesktop]'),['undefined','undefined'],'HTML guest retains its sandbox');

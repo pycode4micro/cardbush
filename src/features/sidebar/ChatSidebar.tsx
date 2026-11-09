@@ -10,15 +10,15 @@ import { showUiError } from '../../shared/showUiError';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
 import { useContext } from 'react';
 import { ConversationHostContext } from '../conversationHost';
-import { WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION, WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import {
   Archive,
   Compass,
+  PanelsTopLeft,
   House,
   CircleAlert,
   CircleCheck,
   TriangleAlert,
-  ChevronDown,
   Copy,
   Code2,
   Edit3,
@@ -43,7 +43,6 @@ import {
 import type * as React from 'react';
 import {
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
   memo,
   useCallback,
   useEffect,
@@ -54,7 +53,6 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 
 import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { basename, samePath } from '../../shared/localPaths';
@@ -201,7 +199,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenSettings,
   onOpenArchives,
   onOpenSearch,
-  railCollapsed = false, onExpandRail,
+  projectsHost, onOpenProject, onOpenTabWorkspace, tabWorkspaceActive,
   softVisible = true, showRail = true, recentList,
 }: {
   language: AppLanguage;
@@ -226,8 +224,10 @@ export const ChatSidebar = memo(function ChatSidebar({
   recentList?: RecentListOutlet | null;
   onOpenArchives?: () => void;
   onOpenSearch: () => void;
-  railCollapsed?: boolean;
-  onExpandRail?: () => void;
+  projectsHost?: HTMLElement | null;
+  onOpenProject: (project: ProjectItem) => void;
+  onOpenTabWorkspace: () => void;
+  tabWorkspaceActive?: boolean;
   softVisible?: boolean;
 }) {
   const sidebarRenderStartedAt = performance.now();
@@ -242,9 +242,6 @@ export const ChatSidebar = memo(function ChatSidebar({
   const { menu, openContextMenu, closeMenus } = useSidebarContextMenu();
   const extraction = useContext(ConversationExtractionContext);
   const shortcuts = useKeyboardShortcuts();
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(['pinned', 'projects']),
-  );
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -269,7 +266,6 @@ export const ChatSidebar = memo(function ChatSidebar({
     try {
       await onConversationWorkspaceChange(conversationId, project);
       if (project) setExpandedProjectIds(current => new Set([...current, project.id]));
-      if (project) setExpandedSections(current => new Set([...current, project.pinned ? 'pinned' : 'projects']));
     } catch (error) {
       void showUiError(uiText(language)('app.workspaceSwitchFailed'), String(error));
     } finally {
@@ -308,7 +304,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   const visibleConversations = useMemo(
     () =>
       conversationItems.filter(
-        (conversation) => !archivedConversationIds.has(conversation.id),
+        (conversation) => !conversation.metadata?.hidden && !archivedConversationIds.has(conversation.id),
       ),
     [archivedConversationIds, conversationItems],
   );
@@ -316,15 +312,11 @@ export const ChatSidebar = memo(function ChatSidebar({
     () => visibleProjects.filter((project) => project.pinned),
     [visibleProjects],
   );
-  const regularProjects = useMemo(
-    () => visibleProjects.filter((project) => !project.pinned),
-    [visibleProjects],
-  );
   const pinnedConversations = useMemo(
     () => visibleConversations.filter((conversation) => pinnedConversationIds.has(conversation.id)),
     [pinnedConversationIds, visibleConversations],
   );
-  const recentConversations = useMemo(() => recentList
+  const recentConversations = useMemo(() => recentList && recentList.tab !== 'pinned'
     ? [...visibleConversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, recentList.limit) : [],
     [visibleConversations, recentList]);
   const unreadConversationIds = useMemo(() => {
@@ -423,10 +415,6 @@ export const ChatSidebar = memo(function ChatSidebar({
     if (!activeProjectDir) return;
     const project = visibleProjects.find((item) => samePath(item.rootPath, activeProjectDir));
     if (!project) return;
-    const targetSection = project.pinned ? 'pinned' : 'projects';
-    setExpandedSections((current) =>
-      current.has(targetSection) ? current : new Set(current).add(targetSection),
-    );
     setExpandedProjectIds((current) =>
       current.has(project.id) ? current : new Set(current).add(project.id),
     );
@@ -457,23 +445,6 @@ export const ChatSidebar = memo(function ChatSidebar({
     }
   }
 
-  function toggleSection(sectionId: string) {
-    if (railCollapsed) {
-      setExpandedSections(current => new Set(current).add(sectionId));
-      onExpandRail?.();
-      return;
-    }
-    setExpandedSections((current) => {
-      const next = new Set(current);
-      if (next.has(sectionId)) {
-        next.delete(sectionId);
-      } else {
-        next.add(sectionId);
-      }
-      return next;
-    });
-  }
-
   function toggleProject(projectId: string) {
     setExpandedProjectIds((current) => {
       const next = new Set(current);
@@ -488,6 +459,7 @@ export const ChatSidebar = memo(function ChatSidebar({
 
   function projectMenuItems(project: ProjectItem): SidebarContextMenuItem[] {
     return [
+      { key: 'details', icon: <Folder/>, label: uiText(language)('desktop.projectDetails'), onClick: () => onOpenProject(project) },
       {
         key: 'pin',
         icon: project.pinned ? <PinOff/> : <Pin/>,
@@ -634,7 +606,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     return items;
   }
 
-  function renderProjectBlock(project: ProjectItem) {
+  function renderProjectBlock(project: ProjectItem, inDrawer = false) {
     const projectConversations = visibleConversations.filter(item => conversationMatchesScope(item, {
       mode: 'project', projectId: project.id, projectDir: project.rootPath,
     }));
@@ -645,7 +617,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       <ProjectBlock
         key={project.id}
         project={project}
-        conversations={projectConversations.filter(item => !pinnedConversationIds.has(item.id))}
+        conversations={inDrawer ? projectConversations.filter(item => !pinnedConversationIds.has(item.id)) : projectConversations}
         previewConversations={projectConversations}
         activeConversationId={activeConversationId}
         runningConversationIds={runningConversationIds}
@@ -662,7 +634,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           onProjectAction(action, project);
         }}
         onRenameProject={title => onRenameProject(project, title)}
-        onConversationChange={onConversationChange}
+        onConversationChange={inDrawer && recentList ? recentList.enter : onConversationChange}
         onConversationArchive={toggleConversationArchive}
         onDeleteConversation={onDeleteConversation}
         onRenameConversation={onRenameConversation}
@@ -685,7 +657,8 @@ export const ChatSidebar = memo(function ChatSidebar({
     );
   }
 
-  function renderStandaloneConversation(conversation: ConversationSummary, drawer = false) {
+  function renderDrawerConversation(conversation: ConversationSummary) {
+    if (!recentList) return null;
     const project = projectItems.find(item => conversationMatchesScope(conversation, {
       mode: 'project', projectId: item.id, projectDir: item.rootPath,
     }));
@@ -693,8 +666,8 @@ export const ChatSidebar = memo(function ChatSidebar({
       <ConversationRow
         key={conversation.id}
         conversation={conversation}
-        drawer={drawer}
-        active={drawer ? conversation.id === recentList?.selectedId : conversation.id === activeConversationId}
+        drawer
+        active={conversation.id === recentList.selectedId}
         running={runningConversationIds?.has(conversation.id) ?? false}
         attention={attentionByConversation?.[conversation.id]}
         unread={unreadConversationIds.has(conversation.id)}
@@ -714,25 +687,23 @@ export const ChatSidebar = memo(function ChatSidebar({
           openContextMenu(
             event,
             `conversation:${conversation.id}`,
-            conversationMenuItems(conversation, options, drawer ? recentList?.enter : onConversationChange),
+            conversationMenuItems(conversation, options, recentList.enter),
           )
         }
         onClick={() => {
-          if (drawer && recentList) { recentList.select(conversation.id); return; }
-          setConversationUnread(conversation.id, false);
-          onConversationChange(conversation.id);
+          recentList.select(conversation.id);
         }}
       />
     );
   }
 
+  const trackDrag = (event: React.DragEvent) => setDraggedConversationId(event.dataTransfer.getData(CONVERSATION_DRAG_TYPE));
+  const endDrag = () => { setDraggedConversationId(''); setWorkspaceDropTarget(null); };
   return <>
     {showRail && <aside
       className={`sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       aria-hidden={!softVisible}
       inert={softVisible ? undefined : true}
-      onDragStart={event => setDraggedConversationId(event.dataTransfer.getData(CONVERSATION_DRAG_TYPE))}
-      onDragEnd={() => { setDraggedConversationId(''); setWorkspaceDropTarget(null); }}
       aria-busy={movingConversations.size > 0}
     >
       <div className="sidebar-panel-content">
@@ -742,80 +713,34 @@ export const ChatSidebar = memo(function ChatSidebar({
         </button>
         <NavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
         <NavRow navSection="explore" shortcut="openAppCenter" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
+        <NavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={tabWorkspaceActive} onClick={onOpenTabWorkspace}/>
         <SidebarApplications language={language}/>
       </nav>
-
-      <div className="sidebar-scroll" hidden={railCollapsed && !onExpandRail}>
-        <div className="sidebar-sections">
-              <SectionHeader
-                title={uiText(language)('chatSidebar.pinned')}
-                leading={<Pin/>}
-                action={<Pin size={14} />}
-                actionLabel={uiText(language)('chatSidebar.pinnedItems')}
-                expanded={!railCollapsed && expandedSections.has('pinned')}
-                onToggle={() => toggleSection('pinned')}
-              />
-              {!railCollapsed && <SectionBody expanded={expandedSections.has('pinned')}>
-                {pinnedProjects.length > 0 || pinnedConversations.length > 0
-                  ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(conversation => renderStandaloneConversation(conversation))}</>
-                  : (
-                    <div className="sidebar-pinned-empty">
-                      {uiText(language)('chatSidebar.rightClickAProjectOrChatTo')}
-                    </div>
-                  )
-                }
-              </SectionBody>}
-
-              <SectionHeader
-                title={uiText(language)('archivedItemsPanel.projects')}
-                leading={<Folder/>}
-                action={<FolderOpen size={14} />}
-                actionLabel={uiText(language)('agentDataSettings.addProject')}
-                actionShortcut="openProject"
-                expanded={!railCollapsed && expandedSections.has('projects')}
-                onToggle={() => toggleSection('projects')}
-                onAction={onAddProject}
-                onContextMenu={(event) =>
-                  openContextMenu(event, 'section:projects', [
-                    {
-                      key: 'toggle',
-                      icon: <ChevronDown size={15} />,
-                      label: expandedSections.has('projects')
-                        ? uiText(language)('chatSidebar.collapseProjects')
-                        : uiText(language)('chatSidebar.expandProjects'),
-                      onClick: () => toggleSection('projects'),
-                    },
-                    {
-                      key: 'add-project',
-                      icon: <FolderOpen size={15} />,
-                      label: uiText(language)('agentDataSettings.addProject'),
-                      onClick: onAddProject,
-                    },
-                    {
-                      key: 'restore-conversations',
-                      icon: <Archive size={15} />,
-                      label: uiText(language)('chatSidebar.manageArchives'),
-                      onClick: onOpenArchives ?? onOpenSettings,
-                    },
-                  ])
-                }
-              />
-              {!railCollapsed && <SectionBody expanded={expandedSections.has('projects')}>
-                {regularProjects.map(renderProjectBlock)}
-              </SectionBody>}
-        </div>
-      </div>
 
       <div className="sidebar-footer">
         <ProfileMenu language={language}/>
       </div>
       </div>
     </aside>}
-    {recentList && createPortal(<div className={workspaceDropTarget === 'recent' ? 'recent-session-rows workspace-drop-active' : 'recent-session-rows'} data-workspace-drop="recent"
-      onDragStart={event => setDraggedConversationId(event.dataTransfer.getData(CONVERSATION_DRAG_TYPE))}
-      onDragEnd={() => { setDraggedConversationId(''); setWorkspaceDropTarget(null); }} {...workspaceDropHandlers(null)}>
-      {recentConversations.map(conversation => renderStandaloneConversation(conversation, true))}
-      {visibleConversations.length > recentList.limit && <button className="recent-turn-more" type="button" onClick={recentList.more}>{uiText(language)('recentBar.moreChats')}</button>}
+    {projectsHost && createPortal(<div className="workspace-project-list" onDragStart={trackDrag} onDragEnd={endDrag}>
+      {visibleProjects.map(project => renderProjectBlock(project))}
+      <div className="project-list-actions">
+        <button type="button" data-shortcut="openProject" onClick={onAddProject}><FolderOpen/>{uiText(language)('agentDataSettings.addProject')}</button>
+        <button type="button" onClick={onOpenArchives ?? onOpenSettings}><Archive/>{uiText(language)('chatSidebar.manageArchives')}</button>
+      </div>
+    </div>, projectsHost)}
+    {recentList && createPortal(<div className={workspaceDropTarget === 'recent' ? 'recent-session-rows workspace-drop-active' : 'recent-session-rows'}
+      data-workspace-drop={recentList.tab === 'pinned' ? undefined : 'recent'}
+      onDragStart={trackDrag} onDragEnd={endDrag} {...(recentList.tab === 'pinned' ? {} : workspaceDropHandlers(null))}>
+      {recentList.tab === 'pinned' ? <>
+        {pinnedProjects.map(project => renderProjectBlock(project, true))}
+        {pinnedConversations.map(renderDrawerConversation)}
+        {!pinnedProjects.length && !pinnedConversations.length && <p>{uiText(language)('chatSidebar.rightClickAProjectOrChatTo')}</p>}
+      </> : <>
+        {recentConversations.map(renderDrawerConversation)}
+        {!recentConversations.length && recentList.selectedId !== PERSONAL_ASSISTANT_SESSION && <p>{uiText(language)('conversationSearchDialog.noChatsYet')}</p>}
+        {visibleConversations.length > recentList.limit && <button className="recent-turn-more" type="button" onClick={recentList.more}>{uiText(language)('recentBar.moreChats')}</button>}
+      </>}
     </div>, recentList.element)}
       {menu}
   </>;
@@ -834,7 +759,7 @@ function NavRow({
   label: string;
   onClick: () => void;
   shortcut?: ShortcutId;
-  navSection?: AppSection;
+  navSection?: AppSection | 'tabs';
 }) {
   return (
     <button
@@ -852,91 +777,6 @@ function NavRow({
       </span>
       <span>{label}</span>
     </button>
-  );
-}
-
-function SectionBody({ expanded, children }: { expanded: boolean; children: ReactNode }) {
-  const { mounted, visible } = useSoftPanelPresence(expanded, 200);
-  return (
-    <div
-      className="sidebar-section-body"
-      data-expanded={visible}
-      aria-hidden={!expanded}
-      inert={expanded ? undefined : true}
-    >
-      <div className="sidebar-section-body-inner">
-        {mounted ? children : null}
-      </div>
-    </div>
-  );
-}
-
-function SectionHeader({
-  title,
-  leading,
-  action,
-  actionLabel,
-  expanded = true,
-  onToggle,
-  onAction,
-  onContextMenu,
-  actionShortcut,
-}: {
-  title: string;
-  leading?: React.ReactNode;
-  action: React.ReactNode;
-  actionLabel: string;
-  expanded?: boolean;
-  onToggle?: () => void;
-  onAction?: () => void;
-  onContextMenu?: (event: ReactMouseEvent) => void;
-  actionShortcut?: ShortcutId;
-}) {
-  const interactive = Boolean(onToggle);
-  const shortcuts = useKeyboardShortcuts();
-  return (
-    <div
-      className={`section-header ${interactive ? 'interactive' : ''}`}
-      role={interactive ? 'button' : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      aria-expanded={interactive ? expanded : undefined}
-      aria-label={title} title={title}
-      onClick={onToggle}
-      onKeyDown={(event) => {
-        if (!interactive || (event.key !== 'Enter' && event.key !== ' ')) {
-          return;
-        }
-        event.preventDefault();
-        onToggle?.();
-      }}
-      onContextMenu={onContextMenu}
-    >
-      <span
-        className="section-title"
-      >
-        {leading && <span className="section-heading-icon" aria-hidden="true">{leading}</span>}
-        <span className="section-heading-label">{title}</span>
-        <ChevronDown className={`section-chevron${expanded ? '' : ' collapsed'}`} size={14} aria-hidden="true" />
-      </span>
-      <button
-        className="section-action"
-        data-shortcut={actionShortcut}
-        aria-keyshortcuts={actionShortcut ? shortcuts.aria(actionShortcut) : undefined}
-        data-sidebar-menu-trigger="true"
-        type="button"
-        aria-label={actionLabel}
-        title={actionLabel}
-        onClick={(event) => {
-          event.stopPropagation();
-          onAction?.();
-          event.currentTarget.blur();
-        }}
-        onKeyDown={(event) => event.stopPropagation()}
-        disabled={!onAction}
-      >
-        {action}
-      </button>
-    </div>
   );
 }
 

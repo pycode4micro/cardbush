@@ -69,6 +69,7 @@ function ComponentPage({item, page}: {item: HtmlComponent; page?: EventPresentat
   return <div className="desktop-component">{page ? <HtmlComponentContext.Provider value={null}>{surface}</HtmlComponentContext.Provider> : surface}</div>;
 }
 type HomeProps = {
+  projectsRef: (element: HTMLDivElement | null) => void;
   language: AppLanguage; page: HomePage; conversationsLoading: boolean; projects: ProjectItem[]; conversations: ConversationSummary[]; assistantName: string;
   events: FriendsWorkEvent[]; snapshot?: FriendsSnapshot; components: HtmlComponent[]; error: boolean; retry(): Promise<void>;
   onPage(page: HomePage): void; onProject(project: ProjectItem): void; onConversation(id: string): void;
@@ -142,7 +143,7 @@ export function DesktopHomeView(p: HomeProps) {
     {page.kind === 'events' && <div className="desktop-list">{eventRows(events)}{!events.length && <p role="status">{t(p.error ? 'desktop.eventsUnavailable' : !p.snapshot ? 'desktop.loadingEvents' : 'yourFriends.noEvents')}</p>}
       {p.error && <Row title={t('desktop.retryEvents')} icon={<Waves/>} open={p.retry}/>}
       <Row title={p.assistantName} detail={t('desktop.openAssistant')} icon={<Waves/>} open={p.onAssistant}/></div>}
-    {page.kind === 'projects' && <div className="desktop-list">{projectRows(projects)}{addProject}</div>}
+    {page.kind === 'projects' && <div className="desktop-list" ref={p.projectsRef}/>}
     {page.kind === 'recent' && <div className="desktop-list">{recentRows(conversations)}{newChat}</div>}
     {project && <><p className="desktop-path">{project.rootPath}</p><Shelf title={recent}><div className="desktop-list">
       {recentRows(conversations.filter(item => conversationMatchesScope(item,{mode:'project',projectId:project.id,projectDir:project.rootPath})))}

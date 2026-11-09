@@ -68,14 +68,17 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
     flex:0 1 min(100%, calc(var(--header-rail-width) - 10px));
   }
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar {
-    grid-template-columns: 64px; justify-content: end; min-width: 64px;
+    grid-template-columns: 98px; justify-content: end; min-width: 98px;
   }
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar > :is(.recent-bar-chat, .recent-bar-actions) { display: none; }
 }
 .app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
 .app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }
 .app[data-desktop-workspace] .desktop-shell > .main-stage { margin-top:var(--workspace-bar-height); border-radius:0; box-shadow:none; }
-.app[data-desktop-workspace] .desktop-shell > :is(.right-inspector,.right-inspector-resizer) { margin-top:var(--workspace-bar-height); }
+/* The inspector lives below the title bar, including when it covers the chat. */
+.app[data-desktop-workspace] .desktop-shell > .right-inspector {
+  margin-top:var(--workspace-bar-height); height:calc(100% - var(--workspace-bar-height));
+}
 .app[data-desktop-workspace] .desktop-shell > .sidebar { box-sizing:border-box; padding-top:var(--window-frame-height); border-inline-end:1px solid var(--rail-divider); border-radius:0; }
 html[data-window-material="mica"] .app[data-desktop-workspace] > .desktop-shell { background:transparent; }
 /* Give the overlay an opaque backdrop across the rail so Chromium blurs the page only once. */
@@ -88,9 +91,6 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .app[data-desktop-workspace] .nav-row.active { background:var(--chrome-control-hover); color:var(--text); }
 .app[data-desktop-workspace] .nav-row.active::before { content:""; position:absolute; inset-block:10px; inset-inline-start:0; width:3px; border-radius:3px; background:var(--accent); }
 .app[data-desktop-workspace] .nav-row-icon svg,.desktop-search svg { width:17px; height:17px; }
-.app[data-desktop-workspace] .sidebar-section-body { padding-inline-start:5px; }
-.section-heading-icon { display:inline-flex; margin-inline-end:8px; }
-.section-heading-icon svg { width:15px; height:15px; }
 .desktop-search,.desktop-filter { display:flex; align-items:center; gap:9px; color:var(--text-mid); background:color-mix(in srgb,var(--surface) 65%,transparent); border:1px solid var(--rail-divider,var(--border)); border-bottom-color:var(--text-soft); border-radius:5px; }
 .desktop-search {
   padding:7px 10px; width:100%; margin:0 0 12px; font:inherit; text-align:start;
@@ -199,3 +199,11 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 
 
 .app[data-desktop-workspace] .settings-page-header h2 { font-size:clamp(25px,2.4vw,36px); letter-spacing:-.04em; }
+
+.app[data-desktop-workspace] .sidebar-panel-content > .sidebar-footer { margin-top:auto; }
+.workspace-project-list { width:100%; min-width:0; }
+.workspace-project-list .project-row { min-height:40px; }
+.project-list-actions { display:flex; flex-wrap:wrap; gap:8px; padding-block:12px; }
+.project-list-actions button { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:6px; background:var(--surface-alt,var(--surface)); border:1px solid var(--border); color:var(--text); }
+.project-list-actions button:hover { background:var(--menu-hover); }
+.project-list-actions svg { width:15px; height:15px; }

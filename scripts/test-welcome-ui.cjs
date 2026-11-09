@@ -156,6 +156,7 @@ app.whenReady().then(async () => {
         const [running, setRunning] = React.useState(new Set()); window.setRunning = setRunning;
         const draftKey = activeId || '__new__', draft = drafts[draftKey] || '', setDraft = text => setDrafts(current => ({ ...current, [draftKey]:text }));
         const routing = useNavigationFixture({ activeId, setActiveId, conversations, setConversations, projectItems:projects, setProjectItems, setDraftsByConversation:setDrafts, setSection });
+        const [projectsHost,setProjectsHost] = React.useState(null);
         const [recentHost, setRecentHost] = React.useState(null);
         window.routing = routing; window.clearActive = () => setActiveId('');
         React.useLayoutEffect(() => { navigationRenders.push({ id:activeId, projectDir:routing.projectDir }); });
@@ -163,12 +164,12 @@ app.whenReady().then(async () => {
         return h('div', { className: 'app theme-' + theme },
           h('header', { className: 'window-frame' }, h(WorkspaceChatNavigation, {language:'zh',assistantActive:false,onNewChat:routing.newChat,onAssistant:()=>setSection('assistant')})),
           h('main', { className: 'desktop-shell' },
-            h(ChatSidebar, { recentList: recentHost && {element:recentHost, selectedId:activeId, limit:40, select:routing.openConversation, more:noop}, language:'zh', section, activeConversationId:activeId, projects, conversations, changeReportsByConversation:{},
+            h(ChatSidebar, { projectsHost, recentList: recentHost && {element:recentHost, selectedId:activeId, limit:40, select:routing.openConversation, more:noop}, language:'zh', section, activeConversationId:activeId, projects, conversations, changeReportsByConversation:{},
               runningConversationIds:running, onConversationWorkspaceChange:(id, project)=>routing.chat.setConversationProject(id, project?.rootPath??null, project?.id??null),
               onSectionChange:setSection, onConversationChange:routing.openConversation, onCreateConversation:routing.newChat,
               onAddProject:noop, onProjectAction:routing.handleProjectAction,
               onDeleteConversation:noop, onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:noop }),
-            h('aside', {className:'recent-turn-drawer', ref:setRecentHost}),
+            h('div',{ref:setProjectsHost}), h('aside', {className:'recent-turn-drawer', ref:setRecentHost}),
             h('section', { className: 'main-stage' }, h('div', { className: 'chat-panel' },
               h(TopBar, { title:'新会话', language:'zh', inspectorOpen:true, onToggleInspector:noop,
                 workspaceControl:!shown && h(WelcomeProjectSwitcher, {key:activeId, placement:'toolbar', language:'zh', projects:projects.filter(p=>!p.missing),

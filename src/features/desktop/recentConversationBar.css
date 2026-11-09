@@ -23,7 +23,7 @@
 .workspace-chat-navigation .assistant-bulb { flex: none; display: grid; place-items: center; }
 .workspace-chat-navigation .workspace-chat-label { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .workspace-chat-navigation .workspace-chat-status { width: 12px; height: 12px; color: var(--text-soft); }
-@container chat-navigation (max-width: 184px) {
+@container chat-navigation (max-width: 232px) {
   .workspace-chat-navigation button { width: 30px; padding: 0; }
   .workspace-chat-label, .workspace-chat-navigation .workspace-chat-status { display: none; }
 }
@@ -46,7 +46,7 @@
 .recent-bar-list[aria-expanded="true"] { background:var(--accent); color:var(--surface); }
 .recent-bar :focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 @media (max-width:760px) {
-  .recent-bar { grid-template-columns:64px minmax(0,1fr) auto; gap:4px; margin-inline-end:4px; }
+  .recent-bar { grid-template-columns:98px minmax(0,1fr) auto; gap:4px; margin-inline-end:4px; }
   .recent-bar-actions { margin-inline-end:0; gap:0; }
 }
 .recent-turn-drawer {
@@ -97,3 +97,10 @@
 @media (prefers-reduced-motion: reduce) {
   .recent-turn-drawer, .app[data-desktop-workspace] > .desktop-shell { transition: none; }
 }
+
+.recent-list-back { display:flex; align-items:center; gap:6px; max-width:100%; padding:0; background:transparent; border:0; }
+.recent-list-back svg { width:16px; height:16px; flex:none; }
+
+.recent-list-back span, .recent-assistant-session { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.recent-assistant-session { width:100%; height:40px; padding-inline:12px; text-align:start; border:0; border-radius:5px; background:transparent; }
+.recent-assistant-session:hover { background:var(--surface-hover); }

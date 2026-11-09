@@ -40,7 +40,7 @@ module.exports = async function testProjectHoverPreview({ run, until, pause, win
           showProjectFixture(); return null;
         },
       };
-      window.showProjectFixture = patch => { Object.assign(projectProps, patch); renderView(h(views.ChatSidebar, projectProps)); };
+      window.showProjectFixture = patch => { Object.assign(projectProps, patch); renderView(h(WorkspaceListFixture, projectProps)); };
       window.projectRow = id => document.querySelector('[data-workspace-drop="' + id + '"] .project-row');
       window.projectInput = value => {
         const input = document.querySelector('.project-hover-name-form input');

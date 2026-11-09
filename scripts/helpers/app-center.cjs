@@ -49,7 +49,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!!document.querySelector('.desktop-menu-toggle')", 'application menu mounted');
   await pause(150);
   const messages = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/locales/zh.json'), 'utf8')).messages;
-  assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), [messages['desktop.home'], messages['appCenter.appCenter'], messages['sidebar.moreApps']], 'sidebar navigation exposes Home, Explore and more apps');
+  assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), [messages['desktop.home'], messages['appCenter.appCenter'], messages['desktop.tabWorkspace'], messages['sidebar.moreApps']], 'sidebar navigation exposes Home, Explore and more apps');
   assert.equal(await run("!!document.querySelector('.sidebar-footer .settings-dock,.sidebar-footer .sidebar-search-button')"), false);
   assert.equal(await run("getComputedStyle(document.querySelector('[data-shortcut=searchConversations]')).opacity"), '1');
   await run("document.querySelector('[data-shortcut=searchConversations]').click()");

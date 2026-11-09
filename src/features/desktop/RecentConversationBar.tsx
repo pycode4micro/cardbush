@@ -28,7 +28,7 @@ export function useRecentConversation(conversations: ConversationSummary[], visi
 }
 
 export type RecentListOutlet = {
-  element: HTMLElement; selectedId: string; limit: number; select(id: string): void; enter(id: string): void; more(): void;
+  element: HTMLElement; tab: RecentTab; selectedId: string; limit: number; select(id: string): void; enter(id: string): void; more(): void;
 };
 type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
@@ -44,7 +44,7 @@ export function RecentConversationBar({ navigation, actions, language, conversat
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
-  const [tab, setTab] = useState<RecentTab>('turns');
+  const [tab, setTab] = useState<RecentTab>('pinned');
   const [selectedId, setSelectedId] = useState('');
   const panel = useRef<HTMLElement>(null);
   const id = useId(), archived = useConversationArchives();
@@ -75,11 +75,8 @@ export function RecentConversationBar({ navigation, actions, language, conversat
       window.removeEventListener('keydown', dismissDocked);
     };
   }, []);
-  useLayoutEffect(() => {
-    panel.current?.hidePopover();
-    setSelectedId('');
-  }, [conversation?.id]);
-  const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? conversation;
+  const selected = selectedId === conversation?.id ? conversation :
+    conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden);
   function displayTitle(item?: Props['conversation'], compact = false) {
     if (!item) return '';
     if (item.id === PERSONAL_ASSISTANT_SESSION) return item.title;
@@ -92,8 +89,8 @@ export function RecentConversationBar({ navigation, actions, language, conversat
     open(id, message);
   }, [open]);
   const browse = useCallback((id: string) => {
-    setSelectedId(id); setTab('turns');
-    panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="turns"]')?.focus({ preventScroll: true });
+    setSelectedId(id); setTab('sessions');
+    panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="sessions"]')?.focus({ preventScroll: true });
   }, []);
   const togglePanel = (open: boolean) => {
     const version = ++toggleVersion.current;
@@ -102,31 +99,34 @@ export function RecentConversationBar({ navigation, actions, language, conversat
     // Keep the current list visible until the native popover has slid out of the top layer.
     const finish = () => {
       if (version !== toggleVersion.current || !panel.current || panel.current.matches(':popover-open')) return;
-      setPresent(false); setTab('turns'); setSelectedId('');
+      setPresent(false); setTab('pinned'); setSelectedId('');
     };
     const animations = panel.current?.getAnimations();
     if (animations?.length) void Promise.allSettled(animations.map(animation => animation.finished)).then(finish);
     else finish();
   };
   return <RecentConversationBarView navigation={navigation} actions={actions} language={language} title={displayTitle(conversation, true)} selectedTitle={displayTitle(selected)} panelId={id}
-    panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={conversation ? () => enter(conversation.id) : undefined}
-    onToggle={togglePanel}>
-    {present && selected && (tab === 'sessions'
-      ? <RecentSessions selectedId={selected.id} register={onRecentList} select={browse} enter={enter}/>
-      : <TurnList key={selected.id} language={language} sessionId={selected.id} messages={assistantTurns ? assistantMessages : transcripts[selected.id]}
-          history={assistantTurns ? undefined : { page: pageFor(selected.id), read, earlier }} select={message => enter(selected.id, message)}/>)}
+    panelRef={panel} expanded={expanded} tab={tab} onTab={next => { setSelectedId(''); setTab(next); }}
+    onOpen={conversation ? () => enter(conversation.id) : undefined} onToggle={togglePanel}>
+    {present && (selected && tab === 'sessions'
+      ? <TurnList key={selected.id} language={language} sessionId={selected.id} messages={assistantTurns ? assistantMessages : transcripts[selected.id]}
+          history={assistantTurns ? undefined : { page: pageFor(selected.id), read, earlier }} select={message => enter(selected.id, message)}/>
+      : <RecentSessions key={tab} tab={tab} selectedId={conversation?.id ?? ''} register={onRecentList} select={tab === 'pinned' ? enter : browse} enter={enter}>
+          {tab === 'sessions' && conversation?.id === PERSONAL_ASSISTANT_SESSION && <button type="button" className="recent-assistant-session"
+            data-recent-session={conversation.id} onClick={() => browse(conversation.id)}>{conversation.title}</button>}
+        </RecentSessions>)}
   </RecentConversationBarView>;
 }
 
 /** The same conversation rows own actions in the drawer, projects and pinned list. */
-function RecentSessions({ register, selectedId, select, enter }: { register: Props['onRecentList']; selectedId: string; select(id: string): void; enter(id: string): void }) {
+function RecentSessions({ register, tab, children, selectedId, select, enter }: { tab: RecentTab; children: ReactNode; register: Props['onRecentList']; selectedId: string; select(id: string): void; enter(id: string): void }) {
   const host = useRef<HTMLDivElement>(null);
   const [limit, setLimit] = useState(pageSize);
   useLayoutEffect(() => {
-    register({ element: host.current!, selectedId, select, enter, limit, more: () => setLimit(value => value + pageSize) });
+    register({ element: host.current!, tab, selectedId, select, enter, limit, more: () => setLimit(value => value + pageSize) });
     return () => register(null);
-  }, [register, selectedId, select, enter, limit]);
-  return <div className="recent-turn-scroll" ref={host}/>;
+  }, [register, tab, selectedId, select, enter, limit]);
+  return <div className="recent-turn-scroll">{children}<div ref={host}/></div>;
 }
 
 function TurnList({ language, sessionId, messages, history, select }: {

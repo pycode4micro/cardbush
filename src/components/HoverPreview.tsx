@@ -188,5 +188,5 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
     onFocus={preview.keepOpen}
     onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) preview.leave(); }}>
     {children}
-  </div>, anchor.closest('.app') ?? document.body);
+  </div>, anchor.closest(':popover-open') ?? anchor.closest('.app') ?? document.body);
 }

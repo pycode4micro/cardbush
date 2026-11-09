@@ -20,6 +20,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const [draft, setDraft] = useState('保留输入草稿'), [history, setHistory] = useState(false);
       const [inspector, setInspector] = useState(false), [settings, setSettings] = useState(false);
       const [theme, setTheme] = useState('dark');
+      const [pinnedHost, setPinnedHost] = useState(null);
       window.compactState = { ...layout, draft, inspector, settings };
       window.compactActions = {setDraft, setHistory, setInspector, setSettings, setTheme};
       const close = () => layout.setSidebarCollapsed(true);
@@ -32,7 +33,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
         h('main',{className:'desktop-shell'+(layout.sidebarCollapsed?' sidebar-is-collapsed':'') ,'data-settings-visible':settings || undefined,'data-sidebar-layout':layout.drawerLayout?'drawer':'docked'},
           h(views.WindowSidebarToggle,{language:'zh',collapsed:layout.sidebarCollapsed,onToggle:toggle}),
           h(views.CompactSidebarBackdrop,{visible:layout.compactLayout&&!layout.sidebarCollapsed,language:'zh',onClose:close}),
-          h(views.ChatSidebar,{language:'zh',section:'chat',activeConversationId:'draft',projects:[],
+          h('div',{ref:setPinnedHost, popover:'manual', id:'compact-pins'}), h(views.ChatSidebar,{recentList:pinnedHost && {tab:'pinned', element:pinnedHost, selectedId:'draft', limit:40, select:()=>{setHistory(true);close();}, enter:()=>{},more:noop},language:'zh',section:'chat',activeConversationId:'draft',projects:[],
             conversations:[{id:'draft',title:'今天有更新邮件么',preview:'',updatedAt:''}],changeReportsByConversation:{},railCollapsed:layout.sidebarCollapsed,onExpandRail:()=>layout.setSidebarCollapsed(false),
             onSectionChange:close,onConversationChange:()=>{setHistory(true);if(layout.compactLayout)close();},onCreateConversation:()=>{setHistory(false);if(layout.compactLayout)close();},
             onAddProject:noop,onProjectAction:noop,onDeleteConversation:noop,onRenameConversation:async()=>true,onOpenConversationChanges:noop,onOpenSettings:()=>{close();setSettings(true);},onOpenPlugins:noop,onOpenSearch:noop}),
@@ -84,7 +85,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("document.querySelector('.compact-sidebar-backdrop')?.inert === true", 'closing backdrop releases interaction');
   await run("document.querySelector('.window-sidebar-toggle').click()"); await pause(260);
   assert.equal(await run("document.querySelector('.compact-sidebar-backdrop')?.inert"), false, 'reopening during fade keeps the backdrop interactive');
-  await run("document.querySelector('.conversation-row:not(.agent-sidebar-empty)').click()");
+  await run("const pins=document.querySelector('#compact-pins');pins.showPopover();pins.querySelector('.conversation-row').click();pins.hidePopover()");
   await until("!!document.querySelector('.message-list') && compactState.sidebarCollapsed", 'history selection closes drawer');
   await fits('.composer-surface');
   assert.equal(await run('compactState.draft'), '保留输入草稿');

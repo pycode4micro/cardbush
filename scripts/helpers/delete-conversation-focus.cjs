@@ -28,7 +28,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       Object.assign(chatProps,{language:'zh',activeConversationId:deleteState.active,loading:false,historyLoading:false,
         messages:deleteState.messages[deleteState.active] || [],draft:deleteState.drafts[deleteState.active] || '',error:deleteState.error,
         onDraftChange:text=>{deleteState.drafts[deleteState.active]=text;drawDelete();}});
-      renderView(h('div',{className:'delete-focus-layout'},h(views.ChatSidebar,{
+      renderView(h('div',{className:'delete-focus-layout'},h(WorkspaceListFixture,{pinned:true,
         language:'zh',section:'chat',activeConversationId:deleteState.active,conversations:deleteState.conversations,
         projects:[],changeReportsByConversation:{},onSectionChange:()=>{},onCreateConversation:()=>{throw Error('No new conversation needed');},
         onConversationChange:id=>{deleteState.active=id;drawDelete();},onDeleteConversation:id=>{void deleteUnderTest(id);},

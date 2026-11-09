@@ -1172,7 +1172,6 @@ function CardbushApp() {
     window.localStorage.setItem('cardbush.sidebar_width', String(next));
   }, []);
 
-  const expandSidebar = useCallback(() => setSidebarCollapsed(false), [setSidebarCollapsed]);
   const collapseSidebar = useCallback(() => setSidebarCollapsed(true), [setSidebarCollapsed]);
   useEffect(() => {
     if (drawerLayout) collapseSidebar();
@@ -1968,6 +1967,7 @@ function CardbushApp() {
   const workSummaryAvailable = !inspectorControlsVisible && !(compactLayout && inspectorOpen);
   const chatActionsSlot = (section === 'chat' || section === 'assistant') && !settingsOpen
     ? <span className="window-chat-actions no-drag" ref={setChatActionsTarget}/> : null;
+  const [projectsHost, setProjectsHost] = useState<HTMLDivElement | null>(null);
   const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
   const hasWorkspaceSidebar = settingsOpen || (section !== 'team' && section !== 'md-presentation');
   const showChatRail = sidebarCollapsed || hasWorkspaceSidebar;
@@ -2008,6 +2008,13 @@ function CardbushApp() {
     if (page.section === 'chat') return !page.conversationId || [...chat.conversations, ...chat.preparedConversations].some(item => item.id === page.conversationId);
     return true;
   });
+  const showProjectPage = (project?: ProjectItem) => {
+    revealConversation();
+    setSettingsOpen(false);
+    setSection('home');
+    setHomePage(project ? {kind:'project', id:project.id} : {kind:'projects'});
+    if (drawerLayout) collapseSidebar();
+  };
   const handleSearchCreateConversation = useCallback(() => {
     setSettingsOpen(false);
     createConversation();
@@ -2114,8 +2121,10 @@ function CardbushApp() {
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       >
         <RecentConversationBar
-          key={currentPage.section} actions={chatActionsSlot}
+          key={JSON.stringify([currentPage, inspectorOpen && inspectorCover])} actions={chatActionsSlot}
           navigation={<WorkspaceChatNavigation language={language} assistantActive={assistantVisible}
+            projectsActive={!settingsOpen && section === 'home' && homePage.kind === 'projects'}
+            onProjects={() => showProjectPage()}
             onNewChat={handleSidebarCreateConversation} onAssistant={() => handleSidebarSectionChange('assistant')}/>}
           language={language} conversations={chat.conversations}
           conversation={assistantVisible ? { id: PERSONAL_ASSISTANT_SESSION, title: assistantProfile.name } : recentConversation}
@@ -2145,7 +2154,7 @@ function CardbushApp() {
       >
           <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={toggleSidebar}/>
           <CompactSidebarBackdrop visible={(drawerLayout || (!settingsOpen && inspectorCover)) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
-          {(showChatRail || recentList) && <ChatSidebar showRail={showChatRail} recentList={recentList}
+          {(showChatRail || recentList || projectsHost) && <ChatSidebar showRail={showChatRail} recentList={recentList}
             language={language}
             section={settingsOpen ? 'settings' : section}
             activeConversationId={!settingsOpen && section === 'chat' ? chat.activeConversationId : ''}
@@ -2166,7 +2175,13 @@ function CardbushApp() {
             onOpenSettings={handleSidebarOpenSettings}
             onOpenArchives={() => openSettings('cache')}
             onOpenSearch={conversationSearch.show}
-            railCollapsed={sidebarCollapsed} onExpandRail={hasWorkspaceSidebar ? expandSidebar : undefined}
+            projectsHost={projectsHost} onOpenProject={showProjectPage} tabWorkspaceActive={inspectorCover && inspectorOpen && !settingsOpen}
+            onOpenTabWorkspace={() => {
+              setSettingsOpen(false);
+              if (inspectorCover && inspectorOpen) { leaveInspectorCover(); return; }
+              if (!activeInspectorTab) openNewBrowserInspectorTab();
+              enterInspectorCover();
+            }}
           />}
           {!sidebarCollapsed && (
             <>
@@ -2260,7 +2275,7 @@ function CardbushApp() {
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
                   onError: error => { void showUiError(uiText(language)('app.componentMessageFailed'), error instanceof Error ? error.message : String(error)); } }),
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
-            {section === 'home' ? <DesktopHome language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
+            {section === 'home' ? <DesktopHome projectsRef={setProjectsHost} language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
               page={homePage} onPage={setHomePage} projects={projectItems} conversations={chat.conversations}
               conversationsLoading={runtimeStartup.phase === 'initializing' || chat.loading}
               onProject={project => handleSidebarProjectAction('newChat', project)} onAddProject={handleSidebarAddProject}

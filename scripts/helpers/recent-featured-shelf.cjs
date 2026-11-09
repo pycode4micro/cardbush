@@ -21,7 +21,7 @@ module.exports = async ({win, read, wait, visible, project}) => {
     document.querySelector('.recent-bar-list').click();
     const drawer=document.querySelector('.recent-turn-drawer');
     const slide=drawer.getAnimations().find(a=>a.transitionProperty==='translate');
-    return {sliding:!!slide, contents:!!drawer.querySelector('.recent-turn-text')};
+    return {sliding:!!slide, contents:!!drawer.querySelector('.recent-session-rows')};
   })()`);
   win.webContents.debugger.attach('1.3');
   const preference = value => win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
@@ -31,7 +31,7 @@ module.exports = async ({win, read, wait, visible, project}) => {
     await wait(async () => (await shelf()).count===4,'four cards fill the closed shelf');
     await preference('no-preference');
     assert.ok((await motion()).sliding,'opening the drawer starts a slide');
-    await visible('.recent-turn-text');
+    await visible('.recent-session-rows');
     await wait(async () => {
       const g=await shelf(); return g.count===3 && g.rows===1 && Math.abs(g.left)<2 && Math.abs(g.right)<2 &&
         await read("!document.querySelector('.desktop-shell').getAnimations().length");
@@ -60,18 +60,18 @@ module.exports = async ({win, read, wait, visible, project}) => {
       slide.pause(); slide.currentTime=slide.effect.getTiming().duration/2;
     })()`);
     await wait(() => read("document.querySelector('.recent-bar-list').getAttribute('aria-expanded')==='false'"),'closing is announced');
-    assert.ok(await read("!!document.querySelector('.recent-turn-text')"),'the list remains mounted during exit');
+    assert.ok(await read("!!document.querySelector('.recent-session-rows')"),'the list remains mounted during exit');
     await motion();
     await wait(() => read("document.querySelector('.recent-bar-list').getAttribute('aria-expanded')==='true' && !document.querySelector('.recent-turn-drawer').getAnimations().length"),'rapid reopen completes');
-    await visible('.recent-turn-text');
+    await visible('.recent-session-rows');
     const closing=await motion();
     assert.ok(closing.sliding && closing.contents,'closing slides the visible list out');
-    await wait(async () => (await shelf()).count===4 && await read("!document.querySelector('.recent-turn-text')"),'closed list releases content and restores four cards');
+    await wait(async () => (await shelf()).count===4 && await read("!document.querySelector('.recent-session-rows')"),'closed list releases content and restores four cards');
     await preference('reduce');
     assert.equal((await motion()).sliding,false,'reduced motion opens immediately');
-    await visible('.recent-turn-text');
+    await visible('.recent-session-rows');
     assert.equal((await motion()).sliding,false,'reduced motion closes immediately');
-    await wait(() => read("!document.querySelector('.recent-turn-text')"),'instant dismissal releases the contents');
+    await wait(() => read("!document.querySelector('.recent-session-rows')"),'instant dismissal releases the contents');
     await motion();
     win.setContentSize(590, 700);
     await wait(async () => (await shelf()).count===2 &&

@@ -344,6 +344,14 @@ app.whenReady().then(async () => {
       const h = React.createElement;
       const reactRoot = createRoot(document.getElementById('root'));
       window.renderView = child => reactRoot.render(h(React.StrictMode, null, h('div', { className: 'app ' + (window.viewTheme || 'theme-dark'), style: { height: '100vh', width: '900px' } }, child)));
+      // Exercise the same project-page and pinned-drawer outlets as the desktop shell.
+      window.WorkspaceListFixture = function WorkspaceListFixture({pinned, ...props}) {
+        const [host, setHost] = React.useState(null);
+        return h('section', {className: 'sidebar'}, h('div', {ref:setHost}),
+          h(views.ChatSidebar, {...props, showRail:false, projectsHost:pinned ? null : host,
+            recentList:pinned && host ? {element:host, tab:'pinned', selectedId:props.activeConversationId,
+              limit:40, select:props.onConversationChange, enter:props.onConversationChange, more:()=>{}} : null}));
+      };
       window.views = views;
       window.h = h;
       window.inspectorRef = React.createRef();

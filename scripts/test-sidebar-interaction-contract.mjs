@@ -32,30 +32,15 @@ const rightInspectorResizerSource = readSourceFile(
 
 assert.match(
   sidebarSource,
-  /className="section-action"[\s\S]*?event\.currentTarget\.blur\(\)/,
-  'Mouse activation must not leave section actions visibly focused',
-);
-assert.match(
-  sidebarSource,
   /className="conversation-archive"[\s\S]*?event\.currentTarget\.blur\(\)/,
   'Mouse activation must not leave conversation actions visibly focused',
-);
-assert.doesNotMatch(
-  stylesSource,
-  /\.section-header:focus-within \.section-action/,
-  'Pointer focus must not pin the section action after hover ends',
-);
-assert.match(
-  stylesSource,
-  /\.section-header:has\(\.section-action:focus-visible\)/,
-  'Keyboard focus must continue to reveal the section action',
 );
 assert.match(
   stylesSource,
   /\.nav-row:focus-visible,[\s\S]*?outline:\s*2px solid color-mix\(in srgb, var\(--accent\) 34%, transparent\)/,
   'Primary navigation must use the shared theme focus ring instead of the browser default outline',
 );
-assert.match(sidebarSource, /aria-label=\{actionLabel\}/);
+assert.match(sidebarSource, /data-shortcut="openProject" onClick=\{onAddProject\}/);
 assert.match(
   stylesSource,
   /\.row-new-chat,\s*\.row-archive,\s*\.conversation-pin,\s*\.conversation-archive\s*\{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?margin-block:\s*auto;/,
@@ -152,10 +137,9 @@ assert.doesNotMatch(
   /onSectionChange\('(os|skills|tools|team)'\)/,
   'OS, Team, tools, and skills must not remain duplicated in primary sidebar navigation',
 );
-assert.match(sidebarSource, /title=\{uiText\(language\)\('chatSidebar\.pinned'\)\}/);
 assert.match(sidebarSource, /cardbush_pinned_conversation_ids/);
-assert.match(sidebarSource, /pinnedProjects\.map\(renderProjectBlock\)/);
-assert.match(sidebarSource, /pinnedConversations\.map\(conversation => renderStandaloneConversation\(conversation\)\)/);
+assert.match(sidebarSource, /pinnedProjects\.map\(project => renderProjectBlock\(project, true\)\)/);
+assert.match(sidebarSource, /pinnedConversations\.map\(renderDrawerConversation\)/);
 assert.match(sidebarSource, /options\.pinned\s*\? uiText\(language\)\('chatSidebar\.unpinChat'\)\s*:\s*uiText\(language\)\('chatSidebar\.pinChat'\)/);
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
 const windowFrameBlock = appSource.match(/function WindowFrame\([\s\S]*?function WindowFrameMenu\(/)?.[0] ?? '';
@@ -164,9 +148,8 @@ assert.doesNotMatch(windowFrameBlock, /onOpenPluginSettings|onOpenSkills|label=\
 assert.doesNotMatch(windowFrameBlock, /only-talk-toggle|onOnlyTalkModeChange/);
 assert.doesNotMatch(sidebarSource, /onlyTalkMode|onOnlyTalkModeChange|only-talk-toggle/);
 assert.doesNotMatch(stylesSource, /\.only-talk-toggle|new-chat-mode-row|sidebar-mode-enter/);
-const railSections = sidebarSource.slice(sidebarSource.indexOf('className="sidebar-sections"'), sidebarSource.indexOf('className="sidebar-footer"'));
-assert.match(railSections, /pinnedProjects\.map\(renderProjectBlock\)[\s\S]*?regularProjects\.map\(renderProjectBlock\)/);
-assert.doesNotMatch(railSections, /recentConversations|data-workspace-drop="recent"/, 'recent history lives in the right drawer');
+assert.match(sidebarSource, /projectsHost && createPortal[\s\S]*?visibleProjects.map[\s\S]*?projectsHost\)/);
+assert.doesNotMatch(sidebarSource.slice(sidebarSource.indexOf('<aside'),sidebarSource.indexOf('</aside>')), /pinnedProjects|renderProjectBlock|recentConversations/);
 assert.match(sidebarSource, /recentList && createPortal[\s\S]*?recentConversations\.map[\s\S]*?recentList\.element/);
 assert.match(sidebarSource, /cardbush_conversation_read_state_v1/);
 assert.match(sidebarSource, /conversationReadReceipt\(/);
@@ -221,7 +204,7 @@ assert.match(
   /metadataMode === 'task'/,
   'Task metadata must override a stale project-dir index when grouping conversations',
 );
-assert.match(stylesSource, /\.sidebar-sections\s*\{/);
+assert.match(stylesSource, /\.workspace-project-list,\s*\.recent-session-rows\s*\{/);
 const sidebarIconRule = stylesSource.match(
   /\.nav-row-icon,\s*\.project-row-icon\s*\{([^}]*)\}/,
 )?.[1] ?? '';

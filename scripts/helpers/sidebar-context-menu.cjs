@@ -11,7 +11,7 @@ module.exports = async function testSidebarMenu({ run, until, pause, window, roo
     window.menuNoop = () => {};
     window.showMenuFixture = (theme = 'dark', running = false) => {
       window.viewTheme = 'theme-' + theme;
-      renderView(h('div', { className: 'desktop-shell' }, h(views.ChatSidebar, {
+      renderView(h('div', { className: 'desktop-shell' }, h(WorkspaceListFixture, { pinned:true,
         language: 'zh', section: 'chat', activeConversationId: 'menu-chat',
         projects: [{ id: 'alpha', title: 'Alpha', rootPath: 'C:/fixture/alpha' }],
         conversations: [{ id: 'menu-chat', title: '菜单样式', preview: '', updatedAt: '2026-09-21T00:00:00Z' }],

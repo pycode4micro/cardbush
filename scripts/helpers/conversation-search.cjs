@@ -66,7 +66,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const query = async value => { await run(`setSearchQuery(${JSON.stringify(value)})`); await pause(45); };
   const selected = () => run("document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchConversation || document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchAction");
 
-  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav [data-nav-section]')].map(node => node.dataset.navSection)"), ['home','explore']);
+  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav [data-nav-section]')].map(node => node.dataset.navSection)"), ['home','explore','tabs']);
   const labels = JSON.parse(fs.readFileSync(path.join(root,'src/i18n/locales/zh.json'),'utf8')).messages;
   assert.equal(await run("document.querySelector('.sidebar-more-apps').getAttribute('aria-label')"), labels['sidebar.moreApps']);
   assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').textContent"), labels['desktop.search']);
