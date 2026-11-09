@@ -18,6 +18,10 @@ type LayoutDrag = { pointerId: number; start: LayoutPoint; client: LayoutPoint; 
   { kind: 'toolbar'; before: LayoutPoint | null; origin: LayoutPoint }
 );
 
+function inputSpace(page: HTMLElement) {
+  return { ...layoutSpace(page), width: page.parentElement!.clientWidth, readingWidth: page.clientWidth };
+}
+
 export function WelcomeLayoutEditor({ collection, language, onClose }: { collection: ComponentCollection; language: AppLanguage; onClose: () => void }) {
 
   const [initial] = useState(() => structuredClone(collection));
@@ -52,9 +56,11 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
     const input = element.querySelector<HTMLElement>('.welcome-slot-input');
     if (input) {
       const bounds = input.getBoundingClientRect(), point = layoutPoint(space, bounds.left, bounds.top);
-      const paneWidth = element.offsetWidth;
+      // Editing another widget must not turn the default input width into a
+      // percentage of today's window, or overwrite a saved narrower choice.
+      const width = layout?.items.find(item => item.componentId === 'system-input')?.width ?? 100;
       next.items = next.items.map(item => item.componentId !== 'system-input' ? item : { ...item,
-        x: point.x / paneWidth * 100, width: bounds.width / space.scaleX / paneWidth * 100,
+        x: (100 - width) / 2, width,
         y: point.y, height: bounds.height / space.scaleY,
         composerFlow: welcomeComposerFlow({ ...initial, welcomeLayout: layout }),
         composerDock: input.dataset.composerDocked === 'true' ? 'bottom' : undefined,
@@ -127,8 +133,9 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
   function moveDrag(clientX: number, clientY: number, alt: boolean) {
     const state = drag.current; if (!state) return;
     state.client = { x: clientX, y: clientY }; state.alt = alt;
-    const space = layoutSpace(state.kind === 'toolbar' ? root.current! : canvas.current!);
-    if (state.kind !== 'toolbar' && state.id === 'system-input') space.width = canvas.current!.offsetWidth;
+    const page = canvas.current!;
+    const space = state.kind !== 'toolbar' && state.id === 'system-input'
+      ? inputSpace(page) : layoutSpace(state.kind === 'toolbar' ? root.current! : page);
     const point = layoutPoint(space, clientX, clientY), delta = { x: point.x - state.start.x, y: point.y - state.start.y };
     if (!state.moved && Math.hypot(delta.x * space.scaleX, delta.y * space.scaleY) < 2) return;
     state.moved = true;
@@ -151,7 +158,7 @@ export function WelcomeLayoutEditor({ collection, language, onClose }: { collect
   }
   function keyboardInput(item: ComponentItem, key: string, kind: 'move' | 'resize') {
     const next = snapshot(), current = next.items.find(placement => placement.componentId === item.id)!;
-    const space = { ...layoutSpace(canvas.current!), width: canvas.current!.offsetWidth };
+    const space = inputSpace(canvas.current!);
     const vertical = composerVerticalBounds(space.height, current.height, current.y, current.composerFlow?.afterSend ?? 'bottom');
     const up = current.composerDock === 'bottom' && current.composerFlow?.afterSend === 'bottom' ? vertical.minimumTravel : 10;
     const delta = { x: kind === 'resize' ? (key === 'ArrowLeft' ? -1 : key === 'ArrowRight' ? 1 : 0) * space.width / 200 : 0,

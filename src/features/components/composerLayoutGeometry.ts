@@ -4,15 +4,12 @@ export const composerEdge = 12;
 export const composerBottomGap = 20;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-// Both the editor and the conversation use the pane width, not the transcript's
-// scrollbar width. Custom widths remain proportional when the pane is resized.
-export function composerHorizontalBounds(viewportWidth: number, percent?: number, defaultWidth = 704) {
-  const available = Math.max(0, viewportWidth - composerEdge * 2);
-  const requested = percent === undefined ? defaultWidth : viewportWidth * percent / 100;
-  // A default reading track can be narrower than the editor's minimum in a
-  // split pane. Explicit/custom widths still retain the editor's 280px minimum.
-  const minimum = percent === undefined ? Math.min(280, Math.max(0, defaultWidth)) : 280;
-  const width = clamp(requested, Math.min(minimum, available), available);
+// Saved widths are percentages of the pane. Keep their original scale up to
+// the reading column, including when the pane is narrower than the input minimum.
+export function composerHorizontalBounds(viewportWidth: number, percent: number | undefined, readingWidth: number) {
+  const available = Math.max(0, Math.min(viewportWidth - composerEdge * 2, readingWidth));
+  const requested = percent === undefined ? available : viewportWidth * percent / 100;
+  const width = clamp(requested, Math.min(280, available), available);
   return { left: Math.max(0, (viewportWidth - width) / 2), width };
 }
 
@@ -27,12 +24,18 @@ export function composerVerticalBounds(viewportHeight: number, inputHeight: numb
 }
 
 export function moveComposerPlacement(item: WelcomePlacement, kind: 'move' | 'resize', delta: { x: number; y: number },
-  space: { width: number; height: number }) {
+  space: { width: number; height: number; readingWidth?: number }) {
   // The right resize handle expands both sides equally. Height follows the live
   // input; it is not a blank resizable container around the actual control.
-  const horizontal = composerHorizontalBounds(space.width, item.width + (kind === 'resize' ? delta.x * 200 / space.width : 0));
+  const limit = space.readingWidth ?? space.width;
+  let width = item.width;
+  if (kind === 'resize' && delta.x !== 0) {
+    const current = composerHorizontalBounds(space.width, width, limit);
+    const next = composerHorizontalBounds(space.width, (current.width + delta.x * 2) / space.width * 100, limit);
+    width = next.width >= limit ? 100 : next.width / space.width * 100;
+  }
   const vertical = composerVerticalBounds(space.height, item.height, item.y + (kind === 'move' ? delta.y : 0),
     item.composerFlow?.afterSend ?? 'bottom', (kind === 'resize' || delta.y === 0) && item.composerDock === 'bottom');
-  return { ...item, x: horizontal.left / space.width * 100, width: horizontal.width / space.width * 100,
+  return { ...item, x: (100 - width) / 2, width,
     y: vertical.top, composerDock: vertical.docked ? 'bottom' as const : undefined };
 }

@@ -1,20 +1,25 @@
-.welcome-layout-surface { container: welcome-layout / inline-size; }
+.welcome-viewport { position: absolute; inset: 0 var(--work-summary-content-inset, 0px) 0 0; container: welcome-viewport / inline-size; }
+.welcome-viewport > .welcome-layout-surface {
+  --welcome-reading-gutter: var(--chat-inline-gutter, 16px);
+  inset-inline: 0; margin-inline: auto;
+  width: min(calc(100% - 2 * var(--welcome-reading-gutter)), var(--chat-track-width, 704px));
+  container: welcome-layout / inline-size;
+}
+/* Reserve the reading margin used by the conversation's turn rail. */
+@container welcome-viewport (min-width: 640px) {
+  .welcome-viewport > .welcome-layout-surface { --welcome-reading-gutter: max(56px, var(--chat-inline-gutter, 16px)); }
+}
 .welcome-layout-slot { position: relative; min-width: 0; flex: none; }
 .welcome-slot-content { width: 100%; height: 100%; min-width: 0; }
 .default-layout .welcome-slot-brand { width: min(480px, 100%); height: clamp(90px, 13vw, 150px); }
 .welcome-layout-slot .welcome-star-wordmark { width: 100%; height: 100%; }
 .default-layout .welcome-slot-greeting { width: 100%; }
 .default-layout .welcome-slot-suggestions { width: min(100%, 720px); margin-top: 14px; }
-.welcome-layout-surface .welcome-slot-input { position: absolute; left: 50%; width: min(calc(100% - 24px), var(--chat-track-width)); top: auto; bottom: 20px; height: auto; }
+.welcome-layout-surface .welcome-slot-input { position: absolute; left: 0; width: 100%; top: auto; bottom: 20px; height: auto; }
 .welcome-layout-surface.default-layout { padding-inline: 0; }
 .default-layout .welcome-hero {
-  --welcome-reading-gutter: var(--chat-inline-gutter, 16px);
-  width: min(calc(100% - 2 * var(--welcome-reading-gutter)), var(--chat-track-width, 704px));
+  width: 100%;
   margin-bottom: var(--welcome-composer-height, 100px);
-}
-/* Reserve the same margin the turn rail will use once the transcript opens. */
-@container welcome-layout (min-width: 640px) {
-  .default-layout .welcome-hero { --welcome-reading-gutter: max(56px, var(--chat-inline-gutter, 16px)); }
 }
 .welcome-layout-slot .welcome-suggestions { width: 100%; margin: 0; }
 .welcome-layout-slot .welcome-input-stack { width: 100%; max-width: none; height: auto; min-height: 0; padding: 0; overflow: visible; justify-content: flex-start; gap: 0; }
@@ -22,7 +27,7 @@
 .welcome-layout-slot .welcome-input-stack.simple { box-shadow: none; }
 .welcome-layout-slot .welcome-input-stack.standard { padding-bottom: 0; }
 .welcome-layout-slot .builtin-workspace-control { flex: none; }
-.welcome-layout-surface.custom-layout { display: block; padding: 0; overflow: auto; }
+.welcome-layout-surface.custom-layout { display: block; padding: 0; overflow: hidden auto; }
 .welcome-layout-canvas { position: relative; width: 100%; height: 100%; }
 .welcome-layout-widgets { display: contents; }
 .custom-layout .welcome-layout-slot { position: absolute; }
@@ -33,7 +38,7 @@
    their original geometry, and widening the pane restores it immediately. */
 .welcome-layout-surface[data-compact-widgets=true] .welcome-layout-canvas { min-height: 100% !important; }
 .welcome-layout-surface[data-compact-widgets=true] .welcome-layout-widgets {
-  position: absolute; inset: var(--welcome-widgets-top) 20px var(--welcome-widgets-bottom);
+  position: absolute; inset: var(--welcome-widgets-top) 0 var(--welcome-widgets-bottom);
   display: flex; flex-direction: column; align-items: center; justify-content: safe center;
   gap: 18px; overflow: auto; scrollbar-width: thin; overscroll-behavior: contain;
 }
@@ -72,7 +77,7 @@
 .welcome-layout-toolbar.menus-above .welcome-layout-menu { top: auto; bottom: calc(100% + 8px); }
 .welcome-layout-pill.welcome-toolbar-drag { flex: none; width: 28px; padding: 0; cursor: grab; touch-action: none; }
 .welcome-toolbar-drag:active, .welcome-layout-drag:active { cursor: grabbing; }
-.welcome-layout-surface.is-editing { overflow: auto; overflow-anchor: none; }
+.welcome-layout-surface.is-editing { overflow: hidden auto; overflow-anchor: none; }
 .is-editing .welcome-layout-slot { cursor: grab; touch-action: none; }
 .component-layout-editing .welcome-layout-editor { user-select: none; }
 .welcome-alignment-guides { position: absolute; inset: 0; z-index: 20; pointer-events: none; }

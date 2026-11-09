@@ -33,16 +33,19 @@ export function useWelcomeEditorOverlays({ root, canvas, toolbar, preferred, dra
           y: bounds.y - (handles?.offsetHeight ?? 24) - 8,
           height: bounds.height + 2 * ((handles?.offsetHeight ?? 24) + 8),
         })).filter(item => overlap(item, frame) > 0);
-        const start = { x: clamp(barRect.x, frame.x, frame.x + frame.width - barRect.width),
+        // The floating toolbar belongs to the editor, even when the reading
+        // column inside it is narrower than the toolbar itself.
+        const minX = 8, maxX = editor.clientWidth - barRect.width - minX;
+        const start = { x: clamp(barRect.x, minX, maxX),
           y: clamp(barRect.y, frame.y, frame.y + frame.height - barRect.height) };
-        const xs = [start.x, frame.x, frame.x + frame.width - barRect.width];
+        const xs = [start.x, minX, maxX];
         const ys = [start.y, frame.y, frame.y + frame.height - barRect.height];
         for (const item of obstacles) {
           xs.push(item.x - barRect.width - 8, item.x + item.width + 8);
           ys.push(item.y - barRect.height - 8, item.y + item.height + 8);
         }
         const candidates = ys.flatMap(y => xs.map(x => ({
-          x: clamp(x, frame.x, frame.x + frame.width - barRect.width),
+          x: clamp(x, minX, maxX),
           y: clamp(y, frame.y, frame.y + frame.height - barRect.height),
         }))).map(point => ({ point, area: obstacles.reduce((sum, item) => sum + overlap({ ...barRect, ...point }, item), 0),
           distance: Math.hypot(point.x - start.x, point.y - start.y) }));

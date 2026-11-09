@@ -94,6 +94,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await click('保存'); await until('!!document.querySelector(".components-app")','save returns to library');
   const saved=await run('JSON.parse(localStorage.getItem("cardbush.html_components.v1")).welcomeLayout');
   assert.equal(saved.items.length,4);
+  assert.equal(saved.items.find(item => item.componentId === 'system-input').width, 100, 'editing a widget keeps the default input following the reading column');
   await run('showWelcomePage();');
   await until('!!document.querySelector(".custom-layout:not(.is-editing)")','actual new conversation uses saved layout');
   assert.deepEqual(await ids(),original);

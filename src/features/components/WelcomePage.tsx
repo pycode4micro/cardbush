@@ -55,7 +55,7 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
         <span className="composer-stays">{uiText(language)('welcomePage.dockedStaysHereAfterSending')}</span>
       </span>
     </div> : null;
-  return <HtmlComponentContext.Provider value={host}><div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={pageRef}>
+  return <HtmlComponentContext.Provider value={host}><div className="welcome-viewport"><div className={`welcome-composer welcome-layout-surface ${layout ? 'custom-layout' : 'default-layout'}${editing ? ' is-editing' : ''}`} ref={pageRef}>
     {layout ? <div className="welcome-layout-canvas" style={{ minHeight: `max(${minHeight}px, calc(${Math.max(0, ...layout.items.filter(item => item.componentId !== 'system-input').map(item => item.y + item.height))}px * var(--welcome-height-scale, 1) + 20px))` }}>
       <div className="welcome-layout-widgets">{layout.items.filter(item => item.componentId !== 'system-input').map(item => view(item.componentId, item))}</div>
       {layout.items.filter(item => item.componentId === 'system-input').map(item => view(item.componentId, item))}
@@ -66,5 +66,5 @@ export function WelcomePage({ language, collection, layout, slots = {}, editing 
       {view('system-input')}
       {landing}
     </>}
-  </div></HtmlComponentContext.Provider>;
+  </div></div></HtmlComponentContext.Provider>;
 }

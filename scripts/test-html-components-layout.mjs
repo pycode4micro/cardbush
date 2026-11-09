@@ -62,9 +62,10 @@ test('bottom placements snap or leave meaningful travel, including tall inputs a
   assert.equal(kept.top, 560, 'keep allows a small gap without silently moving');
   const pinned = composer.composerVerticalBounds(900, 52, 560, 'bottom', true);
   assert.equal(pinned.top, 828, 'saved bottom pin follows viewport height');
-  assert.equal(composer.composerHorizontalBounds(1000, 60).left, 200);
+  assert.equal(composer.composerHorizontalBounds(1000, 60, 704).left, 200);
+  assert.deepEqual(composer.composerHorizontalBounds(1800, 80, 704), { left: 548, width: 704 }, 'saved widths fit the reading column when maximized');
   assert.deepEqual(composer.composerHorizontalBounds(320, undefined, 218), { left: 51, width: 218 }, 'default composer fits the narrow transcript track');
-  assert.deepEqual(composer.composerHorizontalBounds(700, 90), { left: 35, width: 630 }, 'a custom width follows the available pane after docking a summary');
+  assert.deepEqual(composer.composerHorizontalBounds(700, 90, 648), { left: 35, width: 630 }, 'a custom width follows the available pane after docking a summary');
 });
 
 test('composer flow defaults, validates choices and lets a placement override the catalog', () => {

@@ -21,16 +21,16 @@ export function WorkspaceChatNavigation({ language, assistantActive, projectsAct
         onContextMenu={event => openContextMenu(event, 'nav:new-chat', [
           { key: 'new-chat', icon: <Edit3/>, label: t('chatSidebar.newChat'), onClick: onNewChat },
         ])}>
-        <Edit3 aria-hidden="true"/><span className="workspace-chat-label">{newChat}</span>
+        <Edit3 aria-hidden="true"/>
       </button>
       <button type="button" className="no-drag" data-nav-section="projects" aria-label={t('archivedItemsPanel.projects')}
         aria-current={projectsActive ? 'page' : undefined} title={t('archivedItemsPanel.projects')} onClick={onProjects}>
-        <Folder aria-hidden="true"/><span className="workspace-chat-label">{t('archivedItemsPanel.projects')}</span>
+        <Folder aria-hidden="true"/>
       </button>
       <button type="button" className="no-drag" data-nav-section="assistant" aria-label={assistant.profile.name}
         aria-current={assistantActive ? 'page' : undefined} title={assistant.profile.name} onClick={onAssistant}
         onContextMenu={event => openContextMenu(event, 'nav:assistant', assistant.items)}>
-        <AssistantBulb/><span className="workspace-chat-label">{assistant.profile.name}</span>
+        <AssistantBulb/>
         {assistant.resetting && <LoaderCircle className="workspace-chat-status spin" aria-hidden="true"/>}
         {assistant.profile.microphoneMuted && <MicOff className="workspace-chat-status" aria-label={t('chatSidebar.microphoneMuted')}/>}
         {assistant.profile.outputMuted && <VolumeX className="workspace-chat-status" aria-label={t('chatSidebar.speechMuted')}/>}

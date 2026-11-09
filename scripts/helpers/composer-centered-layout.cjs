@@ -51,6 +51,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const defaultInput = await run('layoutRect(".welcome-composer .composer-stack")');
     await run('document.querySelector(".send-button").click()'); await until('!!document.querySelector(".composer-dock")','default send'); await pause();
     const defaultSent = await run('layoutRect(".composer-dock .composer-stack")');
+    const row = await run('layoutRect(".message-row.user")');
+    close(defaultSent.left,row.left,'input and user row share the same left edge');
+    close(defaultSent.width,row.width,'default input matches the actual transcript width');
     close(defaultSent.left,defaultInput.left,'default center remains'); close(defaultSent.width,defaultInput.width,'default width remains');
     close(defaultSent.top,defaultInput.top,'default bottom remains');
   }

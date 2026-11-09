@@ -18,7 +18,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     ]}},state.revision);
     window.welcomeMetrics=()=>{
       const pane=document.querySelector('.welcome-layout-surface'), box=pane.getBoundingClientRect();
-      return {height:pane.clientHeight, width:pane.clientWidth, items:[...pane.querySelectorAll('[data-welcome-component]')].map(item=>{
+      return {height:pane.clientHeight, width:pane.clientWidth, viewportWidth:pane.parentElement.clientWidth, items:[...pane.querySelectorAll('[data-welcome-component]')].map(item=>{
         const r=item.getBoundingClientRect();return {id:item.dataset.welcomeComponent,x:(r.left-box.left)/box.width,y:(r.top-box.top)/box.height,
           width:r.width/box.width,height:r.height/box.height,top:r.top-box.top};})};
     };
@@ -30,11 +30,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const stored = await run('localStorage.getItem(views.componentStorageKey)');
   const verify = async (label, expected = baseline) => {
     const current = await run('welcomeMetrics()');
+    assert.ok(current.width <= 704, `${label}: widgets fit the conversation reading column`);
     for (let index = 0; index < expected.items.length; index++) {
-      for (const key of ['x', 'y', 'width', ...(index < 2 ? ['height'] : [])]) {
+      for (const key of index < 2 ? ['x', 'y', 'width', 'height'] : ['y']) {
         close(current.items[index][key], expected.items[index][key], `${label} ${expected.items[index].id} ${key}`, .003);
       }
     }
+    const composer = current.items[2];
+    close(composer.width * current.width, Math.min(current.width, .8 * current.viewportWidth), `${label} saved input width fits the reading column`);
+    close(composer.x + composer.width / 2, .5, `${label} input centered`, .003);
     const input = await run(`(()=>{const r=document.querySelector('.welcome-slot-input .composer-stack').getBoundingClientRect(),
       slot=document.querySelector('.welcome-slot-input').getBoundingClientRect();return {left:r.left,width:r.width,slotLeft:slot.left,slotWidth:slot.width};})()`);
     close(input.left,input.slotLeft,`${label} actual input left`);
@@ -70,7 +74,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
         visibleControls:[...calendar.querySelectorAll('.calendar-month-heading button')].every(b=>{const r=b.getBoundingClientRect();return r.left>=box.left&&r.right<=box.right;}),
         scrollWidth:widgets.scrollWidth-widgets.clientWidth};
     })()`);
-    assert.ok(compact.width >= 240, 'calendar retains a readable width');
+    const track = await run('document.querySelector(".welcome-layout-surface").clientWidth');
+    assert.ok(compact.width >= Math.min(240, track) && compact.width <= track, 'calendar uses the available reading width');
     assert.ok(compact.horizontal <= 1 && compact.vertical <= 1 && compact.scrollWidth <= 1, JSON.stringify(compact));
     assert.ok(compact.clockAbove && compact.avoidsInput && compact.visibleControls, JSON.stringify(compact));
     assert.equal(compact.dayPadding, '0px', 'date buttons do not inherit component-toolbar padding');

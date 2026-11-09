@@ -11,21 +11,19 @@
 }
 .recent-bar button { font:inherit; color:inherit; cursor:pointer; }
 .workspace-chat-navigation {
-  grid-column: 1; display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0;
+  grid-column: 1; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0;
   container: chat-navigation / inline-size;
 }
 .workspace-chat-navigation button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 30px; max-width: 50%;
-  height: 30px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 30px;
+  height: 30px; padding: 0 5px; border: 0; border-radius: 5px; background: transparent;
 }
 .workspace-chat-navigation button:is(:hover, [aria-current="page"]) { background: var(--chrome-control-hover, var(--menu-hover)); }
 .workspace-chat-navigation svg { width: 16px; height: 16px; flex: none; }
 .workspace-chat-navigation .assistant-bulb { flex: none; display: grid; place-items: center; }
-.workspace-chat-navigation .workspace-chat-label { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .workspace-chat-navigation .workspace-chat-status { width: 12px; height: 12px; color: var(--text-soft); }
-@container chat-navigation (max-width: 232px) {
-  .workspace-chat-navigation button { width: 30px; padding: 0; }
-  .workspace-chat-label, .workspace-chat-navigation .workspace-chat-status { display: none; }
+@container chat-navigation (max-width: 148px) {
+  .workspace-chat-navigation .workspace-chat-status { display: none; }
 }
 .recent-bar-chat {
   grid-column:2; width:100%; min-width:0; height:clamp(24px, calc(100% - 16px), 54px); padding:0;

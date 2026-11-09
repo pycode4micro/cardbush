@@ -12,7 +12,7 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
     const canvas = ref.current, slot = canvas?.querySelector<HTMLElement>('.welcome-slot-input');
     const input = slot?.querySelector<HTMLElement>('.welcome-input-stack');
     if (!canvas) return;
-    const readingTrack = canvas.querySelector<HTMLElement>('.welcome-hero');
+    const viewport = canvas.parentElement!;
     const placement = layout?.items.find(item => item.componentId === 'system-input');
     let referenceHeight = layout?.viewportHeight;
     const measure = () => {
@@ -23,7 +23,7 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       // Derive this from saved placements, not the reflowed element widths;
       // otherwise entering compact mode could immediately switch it off again.
       const compactWidgets = !editing && Boolean(layout?.items.some(item => {
-        const minimum = item.componentId === 'system-calendar' ? 264
+        const minimum = item.componentId === 'system-calendar' ? 232
           : ['system-clock', 'system-digital-clock'].includes(item.componentId) ? 152 : 0;
         return minimum > 0 && canvas.clientWidth * item.width / 100 < minimum;
       }));
@@ -34,12 +34,12 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       canvas.dataset.layoutViewportHeight = String(referenceHeight);
       if (!editing && layout === collection.welcomeLayout) adoptWelcomeViewport(collection, referenceHeight);
       if (!slot || !input) return;
-      const viewportWidth = canvas.offsetWidth;
-      const horizontal = composerHorizontalBounds(viewportWidth, placement?.width, readingTrack?.offsetWidth);
+      const { width } = composerHorizontalBounds(viewport.clientWidth, placement?.width, canvas.clientWidth);
+      const left = (canvas.clientWidth - width) / 2;
       // Set width before measuring height: wrapped text and the standard toolbar
       // can change height when a narrow pane is resized.
-      slot.style.left = `${horizontal.left}px`;
-      slot.style.width = `${horizontal.width}px`;
+      slot.style.left = `${left}px`;
+      slot.style.width = `${width}px`;
       const height = input.getBoundingClientRect().height / (canvas.getBoundingClientRect().height / canvas.offsetHeight || 1);
       const vertical = composerVerticalBounds(canvas.clientHeight, height, placement ? placement.y * scale : undefined, flow.afterSend, placement?.composerDock === 'bottom');
       // Let a docked input grow upward in the same layout as native typing or
@@ -61,7 +61,7 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
       }
       const landing = canvas.querySelector<HTMLElement>('.welcome-composer-landing');
       if (landing) {
-        Object.assign(landing.style, { left: `${horizontal.left}px`, top: `${vertical.bottom}px`, width: `${horizontal.width}px`, height: `${height}px` });
+        Object.assign(landing.style, { left: `${left}px`, top: `${vertical.bottom}px`, width: `${width}px`, height: `${height}px` });
         landing.dataset.docked = String(vertical.docked);
         landing.style.setProperty('--composer-travel', `${Math.round(vertical.bottom - vertical.top)}px`);
         const distance = landing.querySelector<HTMLElement>('[data-composer-travel]');
@@ -76,7 +76,7 @@ export function useWelcomeLayout(ref: RefObject<HTMLDivElement | null>, layout: 
     const observer = new ResizeObserver(() => {
       if (frame === null) frame = requestAnimationFrame(() => { frame = null; measure(); });
     });
-    observer.observe(canvas); if (input) observer.observe(input);
+    observer.observe(viewport); observer.observe(canvas); if (input) observer.observe(input);
     return () => { observer.disconnect(); if (frame !== null) cancelAnimationFrame(frame); };
   }, [ref, layout, flow.afterSend, collection, editing]);
 }

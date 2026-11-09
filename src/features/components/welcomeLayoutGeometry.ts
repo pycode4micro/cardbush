@@ -26,9 +26,10 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 // canvas, keep the new component visible and available to drag instead.
 export function placeInViewport(item: ComponentItem, peers: WelcomePlacement[], space: LayoutSpace): WelcomePlacement {
   const canvasWidth = Math.max(1, space.width), gap = 16;
-  const width = item.width / 12 * 90, w = canvasWidth * width / 100;
+  const isInput = item.id === 'system-input';
+  const width = isInput ? 100 : item.width / 12 * 90, w = canvasWidth * width / 100;
   const top = space.scrollTop + 40, height = Math.min(item.height, Math.max(40, space.height - 56));
-  const left = canvasWidth * .05, right = canvasWidth * .95 - w;
+  const left = isInput ? 0 : canvasWidth * .05, right = canvasWidth - left - w;
   const bottom = Math.max(top, space.scrollTop + space.height - gap - height);
   const center = { x: (canvasWidth - w) / 2, y: (top + bottom) / 2 };
   const visible = peers.filter(peer => peer.y + peer.height + gap > top && peer.y - gap < bottom + height)
@@ -55,10 +56,10 @@ function correction(anchors: number[], targets: number[], tolerance: number, min
 }
 
 export function alignPlacement(item: WelcomePlacement, peers: WelcomePlacement[], kind: 'move' | 'resize', delta: LayoutPoint,
-  space: Pick<LayoutSpace, 'width' | 'height' | 'scaleX' | 'scaleY'>, snap = true): { placement: WelcomePlacement; guides: AlignmentGuide[] } {
+  space: Pick<LayoutSpace, 'width' | 'height' | 'scaleX' | 'scaleY'> & { readingWidth?: number }, snap = true): { placement: WelcomePlacement; guides: AlignmentGuide[] } {
   if (item.componentId === 'system-input') {
     const placement = moveComposerPlacement(item, kind, delta, space);
-    return { placement, guides: [{ axis: 'x', position: space.width / 2 },
+    return { placement, guides: [{ axis: 'x', position: (space.readingWidth ?? space.width) / 2 },
       ...(placement.composerDock ? [{ axis: 'y' as const, position: placement.y + placement.height }] : [])] };
   }
   const width = Math.max(1, space.width), px = width / 100;
