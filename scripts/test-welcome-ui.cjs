@@ -66,6 +66,7 @@ async function bundle() {
     export function useNavigationFixture({ activeId, setActiveId, conversations, setConversations, projectItems, setProjectItems, setDraftsByConversation, setSection }: any) {
       const chat = useDraftFixture({ activeId, setActiveId, conversations, setConversations });
       const activeConversationProjectDir = conversationProjectDir(chat.activeConversation), language = 'zh';
+      const drawerLayout = false, collapseSidebar = () => {};
       const [, setSettingsOpen] = useState(false), [, setFriendsOpen] = useState(false), [, setConversationPromptFocus] = useState(0);
       ${navigationCallbacks.join('\n')}
       return { chat, createConversation, openConversation, changeWelcomeProject, handleProjectAction, createAutomationConversation, openPluginPrompt, newChat: handleSidebarCreateConversation,
@@ -76,6 +77,7 @@ async function bundle() {
     resolveId: id => id.endsWith('__welcome__.ts') ? '\0welcome-entry.ts' : id.endsWith('/backend/welcomeHistory') ? '\0welcome-history' : undefined,
     load: id => id === '\0welcome-entry.ts' ? `export * from ${JSON.stringify(path.join(root, 'src/features/chat/WelcomeComposer.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/components/TopBar.tsx'))};
+      export * from ${JSON.stringify(path.join(root, 'src/features/desktop/WorkspaceChatNavigation.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/features/sidebar/ChatSidebar.tsx'))};\n${navigationFixture}`
       : id === '\0welcome-history' ? `export async function fetchWelcomeHistory(signal) { window.historyRequests++; const rows = await window.historyGate; return rows; }` : undefined,
   }], build: { write: false, minify: false, lib: { entry: path.join(root, '__welcome__.ts'), formats: ['cjs'] },
@@ -139,7 +141,7 @@ app.whenReady().then(async () => {
       const { createRoot } = require(${JSON.stringify(require.resolve('react-dom/client'))});
       const module = { exports: {} };
       new Function('require','module','exports', ${JSON.stringify(code)})(require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))}), module, module.exports);
-      const { WelcomeComposer, WelcomeProjectSwitcher, TopBar, ChatSidebar, useNavigationFixture } = module.exports, h = React.createElement, noop = () => {};
+      const { WelcomeComposer, WelcomeProjectSwitcher, TopBar, ChatSidebar, WorkspaceChatNavigation, useNavigationFixture } = module.exports, h = React.createElement, noop = () => {};
       localStorage.setItem('cardbush_only_talk_mode', 'false');
       localStorage.setItem('cardbush_recent_project_dir', 'D:/fixture');
       window.navigationRenders = [];
@@ -159,7 +161,7 @@ app.whenReady().then(async () => {
         React.useLayoutEffect(() => { navigationRenders.push({ id:activeId, projectDir:routing.projectDir }); });
         window.changeDraft = setDraft; window.changeTheme = setTheme; window.showWelcome = setShown; window.draftValue = draft;
         return h('div', { className: 'app theme-' + theme },
-          h('header', { className: 'window-frame' }, 'cardbush'),
+          h('header', { className: 'window-frame' }, h(WorkspaceChatNavigation, {language:'zh',assistantActive:false,onNewChat:routing.newChat,onAssistant:()=>setSection('assistant')})),
           h('main', { className: 'desktop-shell' },
             h(ChatSidebar, { recentList: recentHost && {element:recentHost, selectedId:activeId, limit:40, select:routing.openConversation, more:noop}, language:'zh', section, activeConversationId:activeId, projects, conversations, changeReportsByConversation:{},
               runningConversationIds:running, onConversationWorkspaceChange:(id, project)=>routing.chat.setConversationProject(id, project?.rootPath??null, project?.id??null),

@@ -107,6 +107,7 @@ import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
 import { WindowSidebarToggle } from './components/WindowSidebarToggle';
 import { WindowFrame } from './components/WindowFrame';
+import { WorkspaceChatNavigation } from './features/desktop/WorkspaceChatNavigation';
 import { RecentConversationBar, useRecentConversation, type RecentListOutlet } from './features/desktop/RecentConversationBar';
 import { applicationMenus } from './features/windowMenu/applicationMenus';
 import { InspectorActions } from './features/inspector/InspectorActions';
@@ -1921,7 +1922,8 @@ function CardbushApp() {
   }, [handleSidebarSectionChange]);
   const handleSidebarCreateConversation = useCallback(() => {
     createConversation();
-  }, [createConversation]);
+    if (drawerLayout) collapseSidebar();
+  }, [createConversation, drawerLayout, collapseSidebar]);
   const handleSidebarAddProject = useCallback(() => {
     void addProject();
   }, [addProject]);
@@ -2113,6 +2115,8 @@ function CardbushApp() {
       >
         <RecentConversationBar
           key={currentPage.section} actions={chatActionsSlot}
+          navigation={<WorkspaceChatNavigation language={language} assistantActive={assistantVisible}
+            onNewChat={handleSidebarCreateConversation} onAssistant={() => handleSidebarSectionChange('assistant')}/>}
           language={language} conversations={chat.conversations}
           conversation={assistantVisible ? { id: PERSONAL_ASSISTANT_SESSION, title: assistantProfile.name } : recentConversation}
           assistantMessages={assistantVisible && hostRegionConversation?.scope === inspectorWorkspaceId ? hostRegionConversation.messages : undefined}
@@ -2153,7 +2157,6 @@ function CardbushApp() {
             changeReportsByConversation={sidebarChangeReportsByConversation}
             onSectionChange={handleSidebarSectionChange}
             onConversationChange={handleSidebarConversationChange}
-            onCreateConversation={handleSidebarCreateConversation}
             onAddProject={handleSidebarAddProject}
             onProjectAction={handleSidebarProjectAction}
             onRenameProject={(project, title) => renameProject(project, title, false)}

@@ -67,7 +67,10 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .window-navigation {
     flex:0 1 min(100%, calc(var(--header-rail-width) - 10px));
   }
-  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar { display:none; }
+  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar {
+    grid-template-columns: 64px; justify-content: end; min-width: 64px;
+  }
+  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar > :is(.recent-bar-chat, .recent-bar-actions) { display: none; }
 }
 .app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
 .app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }

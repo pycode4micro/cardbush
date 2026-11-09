@@ -33,14 +33,14 @@ export type RecentListOutlet = {
 type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
 type Props = HistoryActions & {
-  actions?: ReactNode;
+  navigation?: ReactNode; actions?: ReactNode;
   language: AppLanguage; conversation?: Pick<ConversationSummary, 'id' | 'title'>; conversations: ConversationSummary[];
   assistantMessages?: ChatMessage[];
   transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
   open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ actions, language, conversation, conversations, assistantMessages, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
+export function RecentConversationBar({ navigation, actions, language, conversation, conversations, assistantMessages, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
@@ -108,7 +108,7 @@ export function RecentConversationBar({ actions, language, conversation, convers
     if (animations?.length) void Promise.allSettled(animations.map(animation => animation.finished)).then(finish);
     else finish();
   };
-  return <RecentConversationBarView actions={actions} language={language} title={displayTitle(conversation, true)} selectedTitle={displayTitle(selected)} panelId={id}
+  return <RecentConversationBarView navigation={navigation} actions={actions} language={language} title={displayTitle(conversation, true)} selectedTitle={displayTitle(selected)} panelId={id}
     panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={conversation ? () => enter(conversation.id) : undefined}
     onToggle={togglePanel}>
     {present && selected && (tab === 'sessions'

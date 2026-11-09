@@ -7,14 +7,15 @@ import { fileUrl } from '../../shared/localPaths';
 
 export type RecentTab = 'turns' | 'sessions';
 
-export function RecentConversationBarView({ actions, language, title, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
+export function RecentConversationBarView({ navigation, actions, language, title, selectedTitle, panelId, panelRef, expanded, tab, onTab, onToggle, onOpen, children }: {
   language: AppLanguage; title: string; selectedTitle: string; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
-  actions?: ReactNode;
+  navigation?: ReactNode; actions?: ReactNode;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; onOpen?: () => void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
   const tabs = [{ id: 'turns', label: t('recentBar.turns') }, { id: 'sessions', label: t('recentBar.sessions') }] as const;
   return <div className="recent-bar window-drag">
+    {navigation}
     <button className="recent-bar-chat no-drag" type="button" disabled={!onOpen} onClick={onOpen} aria-label={onOpen ? t('recentBar.open', { title }) : t('recentBar.sessions')} title={onOpen ? t('recentBar.open', { title }) : undefined}>
       <span className="recent-chat-copy"><strong>{title}</strong></span>
     </button>

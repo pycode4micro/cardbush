@@ -66,10 +66,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const query = async value => { await run(`setSearchQuery(${JSON.stringify(value)})`); await pause(45); };
   const selected = () => run("document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchConversation || document.querySelector('[data-conversation-search] [aria-selected=true]')?.dataset.searchAction");
 
-  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav .nav-row')].map(node => node.dataset.navSection)"), ['home','explore','chat','assistant']);
-  assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').textContent"), '');
+  assert.deepEqual(await run("[...document.querySelectorAll('.sidebar-nav [data-nav-section]')].map(node => node.dataset.navSection)"), ['home','explore']);
+  const labels = JSON.parse(fs.readFileSync(path.join(root,'src/i18n/locales/zh.json'),'utf8')).messages;
+  assert.equal(await run("document.querySelector('.sidebar-more-apps').getAttribute('aria-label')"), labels['sidebar.moreApps']);
+  assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').textContent"), labels['desktop.search']);
   assert.equal(await run("document.querySelector('[data-shortcut=searchConversations]').getAttribute('aria-keyshortcuts')"), 'Control+F');
-  assert.match(await run("document.querySelector('[data-shortcut=searchConversations]').closest('.section-header').textContent"), /最近/);
+  assert.ok(await run("document.querySelector('.sidebar-nav').firstElementChild.matches('[data-shortcut=searchConversations]')"), 'search leads the sidebar navigation');
   assert.equal(await run("getComputedStyle(document.querySelector('[data-shortcut=searchConversations]')).opacity"), '1');
   await run(`window.searchDraftNode = document.querySelector('#search-fixture-draft');
     searchDraftNode.focus(); searchDraftNode.setSelectionRange(2, 5);

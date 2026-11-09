@@ -55,8 +55,8 @@ async function buildFixture(directory) {
         import {AssistantView} from ${file('src/features/assistant/AssistantView.tsx')};
         import {uiText} from ${file('src/i18n/index.ts')};
         import {saveComponents,useComponents} from ${file('src/features/components/componentStore.ts')};
-        import {AssistantBulb} from ${file('src/features/assistant/AssistantBulb.tsx')};
         import {ChatSidebar} from ${file('src/features/sidebar/ChatSidebar.tsx')};
+        import {WorkspaceChatNavigation} from ${file('src/features/desktop/WorkspaceChatNavigation.tsx')};
         import {ApplicationVoiceHost,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
         import {realtimeConversationContext} from ${file('src/features/voice/realtimeAgentBridge.ts')};
         import {useAssistantProfile} from ${file('src/features/assistant/assistantProfile.ts')};
@@ -85,8 +85,9 @@ async function buildFixture(directory) {
           fixture.setLayout=(width,flow={afterSend:'bottom',output:'above'})=>saveComponents({...collection,welcomeLayout:width?{viewportHeight:752,items:[{componentId:'system-input',x:(100-width)/2,y:260,width,height:52,inputStyle:'simple',composerFlow:flow}]}:undefined},collection.revision);
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
           return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost language="zh"><ProfileCenter language={language} ready={false} floating={false} prepare={noop} settings={noop} switchWindow={noop}>
+            <header className="window-frame"><WorkspaceChatNavigation language={language} assistantActive onNewChat={noop} onAssistant={noop}/></header>
             <ChatSidebar language="zh" section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
-              onSectionChange={noop} onConversationChange={noop} onCreateConversation={noop} onAddProject={noop} onProjectAction={noop}
+              onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
             <section className="main-stage"><AssistantView active={active} language={language}
               composerControls={controls} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:''};}} onManageHosts={()=>fixture.managed=true} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
@@ -256,7 +257,7 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".assistant-avatar")'); assert.equal(await read('localStorage.cardbush_personal_assistant_avatar_v1'), undefined);
     await openSettings(); await read('fixture.hide();void 0'); assert.ok(await read('!!document.querySelector(".assistant-settings-dialog:modal")')); await click(dialog+' .assistant-settings-close');
     await read('fixture.show();void 0'); await until('!document.querySelector(".assistant-view").hidden');
-    assert.equal(await read('!!document.querySelector(\'.nav-row[title="Lumi"]\')'), true);
+    assert.equal(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label="Lumi"]\')'), true);
     assert.equal(await read('document.querySelector(".assistant-view .topbar [role=combobox]")===null'), true, 'Assistant no longer mixes local conversation with a separate execution-host selector');
     await click('.assistant-view .topbar [data-manage-hosts]');
     assert.equal(await read('fixture.managed'), true, 'employee management remains available');
@@ -300,7 +301,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('getComputedStyle(document.querySelector(".assistant-message-assistant>div")).animationName'), 'none');
     win.webContents.debugger.detach();
     win.setSize(1120,800);await until('innerWidth===1120');await pause(150);
-    const menu=async()=>{await read(`document.querySelector('.nav-row[title="'+document.querySelector('.assistant-view .topbar h1').textContent+'"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:95}));void 0`);await until('document.querySelector(".sidebar-context-menu")');};
+    const menu=async()=>{await read(`document.querySelector('[data-nav-section=assistant][aria-label="'+document.querySelector('.assistant-view .topbar h1').textContent+'"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:95}));void 0`);await until('document.querySelector(".sidebar-context-menu")');};
     const choose=label=>read(`Array.from(document.querySelectorAll('.sidebar-context-menu button')).find(button=>button.textContent.trim()===${JSON.stringify(label)}).click();void 0`);
     await menu();assert.equal(await read('document.querySelectorAll(".sidebar-context-menu button").length'),4);
     await choose('麦克风静音');assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).microphoneMuted'),true);
@@ -311,7 +312,7 @@ app.whenReady().then(async () => {
     await menu();await choose('重命名');await until('document.querySelector(".assistant-rename-dialog[open]")');
     await fill('.assistant-rename-dialog input','Nova');await click('.assistant-rename-dialog button[type=submit]');
     await until('document.querySelector(".assistant-view .topbar h1").textContent==="Nova"');
-    assert.ok(await read('!!document.querySelector(\'.nav-row[title="Nova"]\')'));
+    assert.ok(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label="Nova"]\')'));
     await menu();win.webContents.invalidate();await pause(100);
     fs.writeFileSync(path.join(directory,'assistant-context-menu.png'),(await win.webContents.capturePage()).toPNG());
     await choose('重置上下文');await until('document.querySelector(".confirm-action-dialog[open]")');

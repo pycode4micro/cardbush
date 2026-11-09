@@ -18,7 +18,7 @@ async function bundleViews() {
   const files = [
     'src/features/appearance/windowAppearance.ts', 'src/components/WindowFrame.tsx', 'src/components/WindowSidebarToggle.tsx',
     'src/components/TopBar.tsx', 'src/features/sidebar/ChatSidebar.tsx',
-    'src/features/chat/WelcomeComposer.tsx', 'src/features/desktop/RecentConversationBar.tsx',
+    'src/features/chat/WelcomeComposer.tsx', 'src/features/desktop/RecentConversationBar.tsx', 'src/features/desktop/WorkspaceChatNavigation.tsx',
   ];
   const result = await build({
     configFile: false, logLevel: 'error', plugins: [react(), {
@@ -138,7 +138,7 @@ app.whenReady().then(async () => {
           onBack:settings ? () => setSettings(false) : undefined, onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
             {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
-          ]}] }, h(views.RecentConversationBar, {language:'zh',conversation:{id:'fixture',title:'Conversation',updatedAt:'',preview:''},
+          ]}] }, h(views.RecentConversationBar, {language:'zh', navigation:h(views.WorkspaceChatNavigation,{language:'zh', assistantActive:false, onNewChat:noop, onAssistant:noop}),conversation:{id:'fixture',title:'Conversation',updatedAt:'',preview:''},
             conversations:[],transcripts:{},pageFor:()=>({hasMore:false,loadingOlder:false,historyError:''}),onRecentList:noop,read:async()=>[],earlier:noop,open:noop})),
         h('main', { className:'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-sidebar-layout':'docked','data-settings-visible':settings || undefined },
           h(views.WindowSidebarToggle, {language:'zh',collapsed,onToggle:() => setCollapsed(!collapsed)}),

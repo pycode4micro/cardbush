@@ -129,7 +129,9 @@ async function run() {
   assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
   assert.equal(await read("document.querySelector('.recent-chat-copy').textContent"), '设计评审记录', 'the title bar omits assistant output');
   assert.equal(await read("Boolean(document.querySelector('.recent-turn-scroll'))"), false);
-  assert.equal(await read("document.querySelectorAll('.recent-bar button.no-drag').length"), 2, 'home toolbar offers the title and the list');
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.window-frame [data-nav-section]'), el => el.dataset.navSection)"), ['chat','assistant'], 'new chat and Assistant live in the title bar');
+  assert.equal(await read("!!document.querySelector('.sidebar :is([data-nav-section=chat],[data-nav-section=assistant])')"), false);
+  assert.equal(await read("document.querySelectorAll('.recent-bar button.no-drag').length"), 4, 'home toolbar includes both navigation buttons, the title and the list');
   const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar button.no-drag')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
   assert.ok(await bounds());
   fs.writeFileSync(path.join(project, 'tmp/conversation-glass-bar.png'), (await win.webContents.capturePage()).toPNG());
@@ -210,7 +212,10 @@ async function run() {
     if (!title?.width || !summary?.width || !inspector?.width || !list?.width) return false;
     const topGap = title.top - bar.top, bottomGap = bar.bottom - title.bottom;
     if (Math.min(topGap, bottomGap) < 7.5 || Math.abs(topGap - bottomGap) > 1) return false;
-    if (title.right > summary.left + 1) return false;
+    const newChat = bounds('.window-frame [data-nav-section=chat]');
+    const assistant = bounds('.window-frame [data-nav-section=assistant]');
+    if (!newChat || !assistant || newChat.width < 24 || assistant.width < 24 || newChat.left < bar.left - 1 ||
+        newChat.right > assistant.left + 1 || assistant.right > title.left + 1 || title.right > summary.left + 1) return false;
     const centerY = rect => rect.top + rect.height / 2;
     return summary.right <= inspector.left + 1 && inspector.right <= list.left + 1 &&
       Math.abs(centerY(inspector) - centerY(list)) < 2 && list.right <= innerWidth;
@@ -260,6 +265,7 @@ async function run() {
   win.setContentSize(1400, 800);
   await click('[data-nav-section=assistant]');
   await visible('.assistant-view:not([hidden]) [data-message-id=assistant-question]');
+  assert.equal(await read("document.querySelector('.window-frame [data-nav-section=assistant]').getAttribute('aria-current')"), 'page');
   const titleText = () => read("document.querySelector('.recent-chat-copy strong').textContent");
   assert.equal(await titleText(), 'assistant');
   assert.equal(await read("!!document.querySelector('.assistant-view > .topbar')"), false, 'Assistant has a single desktop title bar');
@@ -337,7 +343,10 @@ async function run() {
   assert.ok(await read("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"),'Explore has a title followed directly by search');
   assert.equal(await read("!!document.querySelector('.desktop-explore button[aria-haspopup=dialog]')"),false,'no app management button on Explore');
   assert.equal(await read("!!document.querySelector('.desktop-menu-toggle')"),false);
-  assert.ok(await read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return Math.abs((r.left+r.right)/2-innerWidth/2)<9})()"),'compact-rail summary is centered in the window');
+  await wait(() => read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return Math.abs((r.left+r.right)/2-innerWidth/2)<9})()"),'compact-rail summary is centered in the window').catch(async error => {
+    const rects = await read("Object.fromEntries(['.window-navigation','.recent-bar','.workspace-chat-navigation','.recent-bar-chat','.recent-bar-actions'].map(selector=>[selector,document.querySelector(selector).getBoundingClientRect().toJSON()]))");
+    throw Error('Title alignment: '+JSON.stringify(rects),{cause:error});
+  });
   await click('.window-sidebar-toggle'); await visible('.desktop-menu-toggle');
   await pause(300);
   assert.ok(await read("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.sidebar').getBoundingClientRect().right+1"),'menu remains within the expanded sidebar');
@@ -385,6 +394,14 @@ async function run() {
   await visible('.recent-bar-chat:enabled');
   assert.equal(await titleText(), customName, 'Assistant keeps its saved name after reload even with no ordinary chats');
   await click('.recent-bar-list'); await visible('[data-turn-message=assistant-question]');
+  await click('.recent-bar-list');
+  win.setContentSize(480, 700);
+  await wait(() => read('innerWidth === 480'), 'narrow workspace');
+  await click('.window-sidebar-toggle');
+  await visible('.desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)');
+  await wait(() => read("['chat','assistant'].every(section => { const b = document.querySelector('.window-frame [data-nav-section='+section+']'); const r = b.getBoundingClientRect(); return r.width>=24 && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })"), 'both title bar buttons remain reachable above the open sidebar');
+  await click('.window-frame [data-nav-section=chat]');
+  await visible('.desktop-shell.sidebar-is-collapsed .welcome-slot-input .composer-surface');
   console.log('Workspace navigation passed: compact rail and caption alignment, Explore without a management button, section/category entrance and reduced motion.');
   console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
   app.quit();

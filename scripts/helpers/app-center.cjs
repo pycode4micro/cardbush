@@ -49,14 +49,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!!document.querySelector('.desktop-menu-toggle')", 'application menu mounted');
   await pause(150);
   const messages = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/locales/zh.json'), 'utf8')).messages;
-  assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), [messages['desktop.home'], messages['appCenter.appCenter'], messages['conversationSearchDialog.newChat'], 'assistant'], 'primary navigation exposes Home, Explore, new chat and the personal assistant');
+  assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), [messages['desktop.home'], messages['appCenter.appCenter'], messages['sidebar.moreApps']], 'sidebar navigation exposes Home, Explore and more apps');
   assert.equal(await run("!!document.querySelector('.sidebar-footer .settings-dock,.sidebar-footer .sidebar-search-button')"), false);
   assert.equal(await run("getComputedStyle(document.querySelector('[data-shortcut=searchConversations]')).opacity"), '1');
   await run("document.querySelector('[data-shortcut=searchConversations]').click()");
   assert.deepEqual(await run('centerEvents'), [['search']]);
   await openManager();
   await until("document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-drawer')?.dataset.visible==='true'", 'drawer opened');
-  assert.equal(await run("document.querySelectorAll('.app-center-tile').length"), 7);
+  assert.deepEqual(await run("Array.from(document.querySelectorAll('.app-center-tile'), el => el.dataset.applicationId).sort()"),
+    ['builtin:automations','builtin:components','builtin:md-presentation','builtin:plugins','builtin:team','plugin:demo:canvas']);
   assert.equal(await run("document.querySelectorAll('[data-application-id=\"builtin:components\"]').length"), 1, 'components are available in the app center without a new default dock shortcut');
   assert.equal(await run("document.activeElement.getAttribute('aria-label')"), '搜索应用');
   assert.equal(await run('centerEvents.length'), 1, 'opening the center cannot execute an app');
