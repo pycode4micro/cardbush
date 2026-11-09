@@ -43,10 +43,12 @@ const sessionId = PERSONAL_ASSISTANT_SESSION;
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'sending' | 'accepted' | 'failed' };
 export function AssistantView({ active, language, floating, prepare, ownsConfiguration = true, onManageHosts, composerControls,
-  inspectorOpen = false, onToggleInspector, browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
+  headerActionsTarget, workSummaryAvailable = true, requestedMessageId, onTurnLocated, inspectorOpen = false, onToggleInspector,
+  browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
   active: boolean; language: string; floating?: { returnToWorkspace(): void; retainDraft?(value: boolean): void };
   prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean; onManageHosts?(): void;
   composerControls?: AssistantComposerControls;
+  headerActionsTarget?: HTMLElement | null; workSummaryAvailable?: boolean; requestedMessageId?: string; onTurnLocated?(): void;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
 }) {
@@ -231,13 +233,18 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
     }
   };
   const focusComposer = () => (composerPortalTarget ?? composerDock.current)?.querySelector<HTMLElement>('.composer-surface textarea,.composer-prompt-editor[contenteditable=true]')?.focus();
-  const jumpToMessage = (id: string) => {
+  const { scrollToMessage } = viewport;
+  const jumpToMessage = useCallback((id: string) => {
     const root = composerPortalTarget?.querySelector('.quick-input-transcript') ?? scroller.current;
     const row = [...(root?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(node => node.dataset.messageId === id)
       ?? [...(scroller.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(node => node.dataset.messageId === id);
-    if (!row) return;
-    row.scrollIntoView({ block: 'center' }); row.querySelector<HTMLElement>('article')?.focus({ preventScroll: true }); setHighlighted(id);
-  };
+    if (!row) return false;
+    scrollToMessage(row); row.querySelector<HTMLElement>('article')?.focus({ preventScroll: true }); setHighlighted(id);
+    return true;
+  }, [composerPortalTarget, scrollToMessage]);
+  useEffect(() => {
+    if (active && requestedMessageId && jumpToMessage(requestedMessageId)) onTurnLocated?.();
+  }, [active, requestedMessageId, jumpToMessage, pageMessages, onTurnLocated]);
   const reactToMessage = async (id: string, reaction: AssistantReaction | null) => {
     if (reactionPending.current) return;
     const version = assistantBackend.contextVersion(), contextGeneration = generation.current;
@@ -268,11 +275,9 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
   target.refresh = () => ({ ...target, contextGeneration: generation.current, messages: speechMessages(entriesRef.current),
     historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
   const [eventsOpen, setEventsOpen] = useState(false);
-  const headerControls = <div className="assistant-actions">
-    <div className="assistant-composer-tools">
-      <button type="button" title={uiText(language)('teamSidebar.manageAgents')} onClick={onManageHosts}><UsersRound size={17}/></button>
-    </div>
-  </div>;
+  const manageHostsLabel = uiText(language)('teamSidebar.manageAgents');
+  const headerControls = onManageHosts && <button className="topbar-inspector-action icon-only" type="button" data-manage-hosts
+    title={manageHostsLabel} aria-label={manageHostsLabel} onClick={onManageHosts}><UsersRound size={17}/></button>;
   const renderTimelineItem = (item: typeof timeline[number]) => {
     if ('task' in item) return <AssistantTaskBubble key={item.key} task={item.task} language={language}/>;
     const { entry } = item;
@@ -338,9 +343,9 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
   return <section className={`assistant-view chat-panel composer-layout-managed${viewport.anchored ? ' composer-anchored' : ''}${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     data-composer-after-send={viewport.flow.afterSend} data-conversation-output={viewport.flow.output} hidden={!active} aria-label={profile.name}>
     {floatingView}
-    <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
+    <TopBar title={profile.name} actionsTarget={headerActionsTarget} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
       titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}
-      workspaceControl={headerControls} conversationContentAvailable={timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
+      workspaceControl={headerControls} conversationContentAvailable={workSummaryAvailable && timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {eventsOpen && active && <AssistantEventsDialog language={language} close={() => setEventsOpen(false)}/>}
     {messageMenu && active && <AssistantMessageMenu key={messageMenu.entry.id} target={messageMenu} language={language} reaction={reactions[messageMenu.entry.id]} pending={reacting}

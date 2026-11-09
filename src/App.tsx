@@ -6,6 +6,8 @@ import { UiLanguageProvider } from './i18n/react';
 import { uiText } from './i18n';
 import { ApplicationVoiceHost } from './features/voice/VoiceConversation';
 import { AssistantView } from './features/assistant/AssistantView';
+import { useAssistantProfile } from './features/assistant/assistantProfile';
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { useAssistantModel } from './features/assistant/useAssistantModel';
 import {
   APPEARANCE_STORAGE_KEY,
@@ -1959,7 +1961,10 @@ function CardbushApp() {
     onOpenConversation: handlePreviousConversation,
   });
   const [chatActionsTarget, setChatActionsTarget] = useState<HTMLSpanElement | null>(null);
-  const chatActionsSlot = section === 'chat' && !settingsOpen
+  const assistantVisible = section === 'assistant' && !settingsOpen;
+  const assistantProfile = useAssistantProfile();
+  const workSummaryAvailable = !inspectorControlsVisible && !(compactLayout && inspectorOpen);
+  const chatActionsSlot = (section === 'chat' || section === 'assistant') && !settingsOpen
     ? <span className="window-chat-actions no-drag" ref={setChatActionsTarget}/> : null;
   const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
   const hasWorkspaceSidebar = settingsOpen || (section !== 'team' && section !== 'md-presentation');
@@ -1969,13 +1974,15 @@ function CardbushApp() {
   const clearRequestedTurn = useCallback(() => setRequestedTurn(null), []);
   const openRecentConversation = useCallback((id: string, message?: ChatMessage) => {
     revealConversation();
-    if (!openConversation(id)) return;
+    if (id === PERSONAL_ASSISTANT_SESSION) setSection('assistant');
+    else if (!openConversation(id)) return;
     setSettingsOpen(false);
     if (drawerLayout) collapseSidebar();
     setRequestedTurn(message ? { sessionId: id, messageId: message.id, turnId: message.turnId } : null);
   }, [openConversation, revealConversation, drawerLayout, collapseSidebar]);
   useEffect(() => {
-    if (requestedTurn && (settingsOpen || section !== 'chat' || chat.activeConversationId !== requestedTurn.sessionId)) clearRequestedTurn();
+    const visibleId = section === 'assistant' ? PERSONAL_ASSISTANT_SESSION : section === 'chat' ? chat.activeConversationId : undefined;
+    if (requestedTurn && (settingsOpen || visibleId !== requestedTurn.sessionId)) clearRequestedTurn();
   }, [section, settingsOpen, chat.activeConversationId, requestedTurn, clearRequestedTurn]);
   const currentPage: AppPage = settingsOpen
     ? { section: 'settings', agentId: '', settingsSection: settingsInitialSection, pluginTab: settingsPluginTab }
@@ -2106,7 +2113,9 @@ function CardbushApp() {
       >
         <RecentConversationBar
           key={currentPage.section} actions={chatActionsSlot}
-          language={language} conversation={recentConversation} conversations={chat.conversations}
+          language={language} conversations={chat.conversations}
+          conversation={assistantVisible ? { id: PERSONAL_ASSISTANT_SESSION, title: assistantProfile.name } : recentConversation}
+          assistantMessages={assistantVisible && hostRegionConversation?.scope === inspectorWorkspaceId ? hostRegionConversation.messages : undefined}
           transcripts={chat.messagesByConversation} onRecentList={setRecentList}
           pageFor={chat.historyPages.forSession} read={chat.loadSessionHistory}
           earlier={chat.historyPages.loadOlderFor} open={openRecentConversation}/>
@@ -2227,6 +2236,9 @@ function CardbushApp() {
           )}
           <section ref={mainStageRef} className="main-stage" aria-hidden={settingsVisible || undefined} inert={settingsVisible || (inspectorControlsVisible || drawerLayout && !sidebarCollapsed || compactLayout && inspectorOpen) ? true : undefined}>
             <AssistantView active={section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
+              headerActionsTarget={assistantVisible ? chatActionsTarget : null}
+              workSummaryAvailable={workSummaryAvailable}
+              requestedMessageId={requestedTurn?.sessionId === PERSONAL_ASSISTANT_SESSION ? requestedTurn.messageId : undefined} onTurnLocated={clearRequestedTurn}
               inspectorOpen={inspectorOpen} onToggleInspector={toggleInspector} browserTabs={composerBrowserTabs} windowMaximized={windowMaximized}
               composerPortalTarget={section === 'assistant' && quickInputOpen ? quickInputTarget : null}
               subagentObservabilityAvailable={backendCapabilities.subagentObservability && backendCapabilities.subagentObservabilityProtocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL}
@@ -2256,7 +2268,7 @@ function CardbushApp() {
               <ComposerPortalContext.Provider value={quickInputOpen ? quickInputTarget : null}>
               <ChatPanel
                 headerActionsTarget={chatActionsSlot ? chatActionsTarget : null}
-                workSummaryAvailable={!inspectorControlsVisible && !(compactLayout && inspectorOpen)}
+                workSummaryAvailable={workSummaryAvailable}
                 browserTabs={composerBrowserTabs}
                 language={language}
                 theme={theme}

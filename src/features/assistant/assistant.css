@@ -10,14 +10,6 @@
 .assistant-rename-dialog button { padding:8px 14px; border-radius:10px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; }
 .assistant-rename-dialog button[type=submit] { background:var(--text); color:var(--bg); }
 .assistant-rename-dialog [role=alert] { color:var(--danger,#d65c5c); font-size:13px; }
-.assistant-actions { display:flex; align-items:center; gap:4px; min-width:0; flex-shrink:0; }
-.assistant-composer-tools button { border:1px solid var(--border, #8883); border-radius:8px; background:transparent; color:inherit; min-height:30px; padding:8px; cursor:pointer; }
-.assistant-actions .settings-dropdown { width:auto; max-width:150px; min-width:0; }
-.assistant-actions .settings-dropdown-trigger { border:0; background:transparent; border-radius:8px; box-shadow:none; min-height:30px; padding:4px 7px; color:var(--text-soft); }
-.assistant-actions .settings-dropdown-trigger>span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.assistant-composer-tools { display:flex; gap:4px; flex-shrink:0; }
-.assistant-composer-tools button { border:0; min-height:30px; padding:6px; color:var(--text-soft); }
-.assistant-composer-tools button:hover { background:var(--surface-hover,#8882); }
 .assistant-body,.assistant-chat { display:flex; flex:1; min-height:0; min-width:0; }
 .assistant-chat { display:block; }
 .assistant-composer-dock { --composer-backdrop-fade:12px; }
@@ -104,7 +96,6 @@
 @media (max-width:900px) { .assistant-body:has(.assistant-desktop) { flex-direction:column; } .assistant-desktop { min-height:250px; } }
 .assistant-view { container:assistant-pane / inline-size; }
 @container assistant-pane (max-width:520px) {
-  .assistant-actions .settings-dropdown { max-width:95px; }
   .assistant-view .topbar { gap:4px; }
 }
 .assistant-message-user.assistant-message-arriving>:is(.assistant-text-bubble,.user-message-attachments) { animation:assistant-bubble-send .36s cubic-bezier(.22,1,.36,1) both; }
@@ -113,7 +104,6 @@
 @keyframes assistant-bubble-receive { from { opacity:0; transform:translate3d(0,9px,0) scale(.985); } to { opacity:1; transform:none; } }
 @media (prefers-reduced-motion:reduce) { .assistant-bulb,.assistant-message-arriving>:is(div,section),.assistant-settings-dialog[open] { animation:none!important; transition:none; } }
 
-.assistant-composer-tools [data-assistant-events] svg { width: 18px; height: 18px; }
 .assistant-event-preferences { margin-block: 12px; }
 .assistant-event-preferences summary { cursor: pointer; }
 .assistant-event-preferences label { display: grid; gap: 6px; margin-block: 10px; }

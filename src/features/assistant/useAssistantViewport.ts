@@ -74,6 +74,17 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     scroller.focus({ preventScroll: true });
     motion.move(scroller, () => scroller.scrollHeight - scroller.clientHeight, 'jump');
   }, [motion, scrollerRef]);
+  const scrollToMessage = useCallback((row: HTMLElement) => {
+    const scroller = scrollerRef.current;
+    if (scroller?.contains(row)) {
+      motion.cancel();
+      releaseAnchoring();
+      row.scrollIntoView({ block: 'center', behavior: 'instant' });
+      following.current = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 2;
+    } else {
+      row.scrollIntoView({ block: 'center' });
+    }
+  }, [motion, releaseAnchoring, scrollerRef]);
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (!active || !scroller) return;
@@ -163,6 +174,6 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     trace('revision', { action: following.current && !layout.anchored ? 'reveal' : 'preserve' });
     reveal();
   }, [active, revision, layout.anchored, scrollerRef, trace, reveal]);
-  return { ...layout, scrollBottomVisible, scrollToBottom,
+  return { ...layout, scrollBottomVisible, scrollToBottom, scrollToMessage,
     prepareSend: () => { layout.capture(true); following.current = true; followTail.current = false; } };
 }

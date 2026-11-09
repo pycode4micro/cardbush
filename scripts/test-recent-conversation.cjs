@@ -29,6 +29,17 @@ async function run() {
   if (materialTest) require('./helpers/sidebar-material.cjs').seedWallpaper(root);
   const journal = new FileSessionEventPersistence({ root: path.join(root, 'runtime-state', 'sessions') });
   const store = new SessionStore({ persistence: journal });
+  const { ConversationJournal } = await import('../packages/bush-runtime/dist/conversationJournal.js');
+  const { PERSONAL_ASSISTANT_SESSION } = await import('@cardbush/bush-protocol');
+  const assistantJournal = new ConversationJournal(path.join(root, 'runtime-state', 'conversation-journal'));
+  for (const [id, role, source, visibility] of [
+    ['assistant-question', 'user', 'page', 'conversation'],
+    ['assistant-answer', 'assistant', 'text', 'conversation'],
+    ['assistant-private', 'user', 'text', 'internal'],
+    ['assistant-call', 'user', 'voice', 'conversation'],
+  ]) assistantJournal.append(PERSONAL_ASSISTANT_SESSION, {
+    id, content: role === 'assistant' ? Array(90).fill(id).join('\n\n') : id, role, source, visibility, createdAt: new Date().toISOString(),
+  });
   const sessionId = 'local-navigation-test';
   store.ensureSession('local-empty', { title: 'Empty conversation' });
   store.ensureSession('local-earlier', { title: 'Earlier conversation' });
@@ -247,8 +258,35 @@ async function run() {
   await pause(400);
   fs.writeFileSync(path.join(project, 'tmp/chat-titlebar-actions.png'), (await win.webContents.capturePage()).toPNG());
   win.setContentSize(1400, 800);
+  await click('[data-nav-section=assistant]');
+  await visible('.assistant-view:not([hidden]) [data-message-id=assistant-question]');
+  const titleText = () => read("document.querySelector('.recent-chat-copy strong').textContent");
+  assert.equal(await titleText(), 'assistant');
+  assert.equal(await read("!!document.querySelector('.assistant-view > .topbar')"), false, 'Assistant has a single desktop title bar');
+  await visible('.window-chat-actions [data-manage-hosts]');
+  await click(summary); await visible('.assistant-view .conversation-work-summary'); await click(summary);
+  await click(inspector); await visible('.right-inspector'); await click(inspector);
+  await read("document.querySelector('[data-nav-section=assistant]').dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:72, clientY:120}));void 0");
+  await click('[data-sidebar-menu-item=assistant-rename]');
+  await visible('.assistant-rename-dialog:modal');
+  const customName = 'Nova · Atlas '.repeat(4).trim();
+  await win.webContents.insertText(customName);
+  await click('.assistant-rename-dialog button[type=submit]');
+  await wait(async () => await titleText() === customName, 'rename updates the window title immediately and preserves the full name');
+  win.setContentSize(480, 720);
+  await wait(toolbarFits, 'Assistant actions fit beside a long name in a narrow window');
+  assert.ok(await read("document.querySelector('.recent-bar-chat').getBoundingClientRect().right <= document.querySelector('.window-chat-actions [data-manage-hosts]').getBoundingClientRect().left"));
+  await click('.recent-bar-chat'); await visible('.assistant-view:not([hidden])');
+  await click('.recent-bar-list'); await visible('[data-turn-message=assistant-question]');
+  assert.equal(await read("document.querySelector('.recent-turn-drawer h2').textContent"), customName);
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('[data-turn-message]'), row => row.dataset.turnMessage)"), ['assistant-question']);
+  await click('[data-turn-message=assistant-question]');
+  await visible('.assistant-view [data-message-id=assistant-question] [data-quote-highlight=true]');
+  win.setContentSize(1400, 800);
+  await wait(() => read("innerWidth === 1400 && document.activeElement.closest('[data-message-id]')?.dataset.messageId === 'assistant-question' && document.querySelector('.assistant-messages').scrollTop < 8"), 'selected Assistant turn keeps its reading position after resize');
   await click('[data-nav-section=explore]');
   assert.equal(await read("!!document.querySelector('.window-chat-actions')"), false, 'chat-only controls leave with the conversation');
+  assert.equal(await titleText(), '设计评审记录', 'visiting Assistant preserves the last ordinary conversation');
   await click('.recent-bar-list');
   await visible('[data-desktop-page=explore]');
   await visible('.recent-turn-text');
@@ -343,6 +381,10 @@ async function run() {
   await click('.window-sidebar-toggle');
   await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width > 240"), 'welcome drawer opens');
   await checkChatMargins('Welcome input centers beside the expanded drawer', '.welcome-slot-input .composer-surface');
+  await click('[data-nav-section=assistant]');
+  await visible('.recent-bar-chat:enabled');
+  assert.equal(await titleText(), customName, 'Assistant keeps its saved name after reload even with no ordinary chats');
+  await click('.recent-bar-list'); await visible('[data-turn-message=assistant-question]');
   console.log('Workspace navigation passed: compact rail and caption alignment, Explore without a management button, section/category entrance and reduced motion.');
   console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
   app.quit();

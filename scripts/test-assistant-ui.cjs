@@ -164,7 +164,7 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".assistant-view .conversation-connection-notice")');
     await until('!document.querySelector(".assistant-typing-bubble")');
     assert.equal(await read('!!document.querySelector(".assistant-composer-dock .composer-stack.simple")'), true);
-    assert.equal(await read('!!document.querySelector(".assistant-composer-dock .assistant-actions")'), false);
+    assert.equal(await read('!!document.querySelector(".assistant-composer-dock [data-manage-hosts]")'), false);
     assert.equal(await read('fixture.permissionChanged'), undefined);
     assert.equal(await read('document.querySelector(".assistant-view .topbar").getBoundingClientRect().height'),48,'shared header height');
     assert.ok(await read('Math.abs(document.querySelector(".composer-surface").getBoundingClientRect().width-704)<1'),'shared default input width');
@@ -257,8 +257,8 @@ app.whenReady().then(async () => {
     await openSettings(); await read('fixture.hide();void 0'); assert.ok(await read('!!document.querySelector(".assistant-settings-dialog:modal")')); await click(dialog+' .assistant-settings-close');
     await read('fixture.show();void 0'); await until('!document.querySelector(".assistant-view").hidden');
     assert.equal(await read('!!document.querySelector(\'.nav-row[title="Lumi"]\')'), true);
-    assert.equal(await read('document.querySelector(".assistant-actions [role=combobox]")===null'), true, 'Assistant no longer mixes local conversation with a separate execution-host selector');
-    await click('.assistant-actions .assistant-composer-tools button:first-child');
+    assert.equal(await read('document.querySelector(".assistant-view .topbar [role=combobox]")===null'), true, 'Assistant no longer mixes local conversation with a separate execution-host selector');
+    await click('.assistant-view .topbar [data-manage-hosts]');
     assert.equal(await read('fixture.managed'), true, 'employee management remains available');
     await read('fixture.hide();void 0'); await until('document.querySelector(".assistant-view").hidden');
     await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-bulb[data-state=working]")');
@@ -354,10 +354,15 @@ app.whenReady().then(async () => {
     await click('.scroll-bottom');await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
     assert.ok(await read('document.querySelector(".assistant-message-row:last-child").getBoundingClientRect().bottom<document.querySelector(".composer-surface").getBoundingClientRect().top'),'last bubble clears the input');
     await require('./helpers/assistant-scroll.cjs')({ read, until, fill, click, pause, win, directory });
-    await read('fixture.setLayout(65);void 0');await pause(150);
-    for(const width of [1440,800,1120]){
-      win.setSize(width,800);await until('innerWidth==='+width);await pause(200);
-      assert.ok(await read('(()=>{const row=document.querySelector(".assistant-message-row").getBoundingClientRect(),input=document.querySelector(".composer-surface").getBoundingClientRect();return Math.abs(input.width-row.width)<2 && Math.abs((input.left+input.width/2)-(row.left+row.width/2))<2;})()'),'docked input follows the conversation reading width on resize');
+    for (const customWidth of [null, 65]) {
+      await read('fixture.setLayout(' + customWidth + ');void 0');
+      for (const width of [1440, 800, 1120]) {
+        win.setSize(width,800); await until('innerWidth===' + width); await pause(200);
+        const [row, input, pane] = await read('[".assistant-message-row",".composer-surface",".assistant-chat"].map(selector=>{const {left,width}=document.querySelector(selector).getBoundingClientRect();return {left,width}})');
+        const expectedWidth = customWidth ? pane.width * customWidth / 100 : row.width;
+        assert.ok(Math.abs(input.width - expectedWidth) < 2 && Math.abs(input.left + input.width/2 - row.left - row.width/2) < 2,
+          'docked input stays centered and respects its saved width at ' + width + ': ' + JSON.stringify({ customWidth, row, input, pane }));
+      }
     }
     await read('fixture.setLayout(65,{afterSend:"keep",output:"below"});void 0');await until('document.querySelector(".assistant-view.composer-anchored")');
     await read('document.querySelector(".assistant-messages").scrollTop=0;void 0');await pause(100);

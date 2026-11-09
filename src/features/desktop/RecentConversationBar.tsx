@@ -1,4 +1,4 @@
-import { compactConversationTitle } from '@cardbush/bush-protocol';
+import { compactConversationTitle, PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { uiText } from '../../i18n';
 import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
@@ -34,12 +34,13 @@ type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
 type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
 type Props = HistoryActions & {
   actions?: ReactNode;
-  language: AppLanguage; conversation?: ConversationSummary; conversations: ConversationSummary[];
+  language: AppLanguage; conversation?: Pick<ConversationSummary, 'id' | 'title'>; conversations: ConversationSummary[];
+  assistantMessages?: ChatMessage[];
   transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
   open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ actions, language, conversation, conversations, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
+export function RecentConversationBar({ actions, language, conversation, conversations, assistantMessages, transcripts, pageFor, read, earlier, open, onRecentList }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
@@ -79,7 +80,13 @@ export function RecentConversationBar({ actions, language, conversation, convers
     setSelectedId('');
   }, [conversation?.id]);
   const selected = conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden) ?? conversation;
-  const name = (item: ConversationSummary) => conversationDisplayTitle(item.title) || uiText(language)('composer.newConversation');
+  function displayTitle(item?: Props['conversation'], compact = false) {
+    if (!item) return '';
+    if (item.id === PERSONAL_ASSISTANT_SESSION) return item.title;
+    const title = conversationDisplayTitle(item.title) || uiText(language)('composer.newConversation');
+    return compact ? compactConversationTitle(title) : title;
+  }
+  const assistantTurns = selected?.id === PERSONAL_ASSISTANT_SESSION;
   const enter = useCallback((id: string, message?: ChatMessage) => {
     panel.current?.hidePopover();
     open(id, message);
@@ -101,13 +108,13 @@ export function RecentConversationBar({ actions, language, conversation, convers
     if (animations?.length) void Promise.allSettled(animations.map(animation => animation.finished)).then(finish);
     else finish();
   };
-  return <RecentConversationBarView actions={actions} language={language} title={conversation ? compactConversationTitle(name(conversation)) : ''} selectedTitle={selected ? name(selected) : ''} panelId={id}
+  return <RecentConversationBarView actions={actions} language={language} title={displayTitle(conversation, true)} selectedTitle={displayTitle(selected)} panelId={id}
     panelRef={panel} expanded={expanded} tab={tab} onTab={setTab} onOpen={conversation ? () => enter(conversation.id) : undefined}
     onToggle={togglePanel}>
     {present && selected && (tab === 'sessions'
       ? <RecentSessions selectedId={selected.id} register={onRecentList} select={browse} enter={enter}/>
-      : <TurnList key={selected.id} language={language} sessionId={selected.id} messages={transcripts[selected.id]}
-          page={pageFor(selected.id)} read={read} earlier={earlier} select={message => enter(selected.id, message)}/>)}
+      : <TurnList key={selected.id} language={language} sessionId={selected.id} messages={assistantTurns ? assistantMessages : transcripts[selected.id]}
+          history={assistantTurns ? undefined : { page: pageFor(selected.id), read, earlier }} select={message => enter(selected.id, message)}/>)}
   </RecentConversationBarView>;
 }
 
@@ -122,15 +129,16 @@ function RecentSessions({ register, selectedId, select, enter }: { register: Pro
   return <div className="recent-turn-scroll" ref={host}/>;
 }
 
-function TurnList({ language, sessionId, read, messages, page, earlier, select }: HistoryActions & {
-  language: AppLanguage; sessionId: string; messages?: ChatMessage[]; page: Page; select(message: ChatMessage): void;
+function TurnList({ language, sessionId, messages, history, select }: {
+  language: AppLanguage; sessionId: string; messages?: ChatMessage[]; history?: HistoryActions & { page: Page }; select(message: ChatMessage): void;
 }) {
   const [limit, setLimit] = useState(pageSize);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const loaded = messages !== undefined;
+  const read = history?.read, page = history?.page;
   useEffect(() => {
-    if (loaded) return;
+    if (loaded || !read) return;
     let active = true;
     setFailed(false);
     void read(sessionId).catch(() => { if (active) setFailed(true); });
@@ -148,10 +156,10 @@ function TurnList({ language, sessionId, read, messages, page, earlier, select }
   }, [messages]);
   const more = async () => {
     if (failed) { setRetry(value => value + 1); return; }
-    if (turns.length <= limit && page.hasMore) await earlier(sessionId);
+    if (turns.length <= limit && history?.page.hasMore) await history.earlier(sessionId);
     setLimit(value => value + pageSize);
   };
   return <TurnListView language={language} turns={turns.slice(0, limit)} select={select}
-    loading={!loaded && !failed} failed={failed || Boolean(page.historyError)} loadingOlder={page.loadingOlder}
-    hasMore={turns.length > limit || page.hasMore} more={more}/>;
+    loading={!loaded && !failed} failed={failed || Boolean(page?.historyError)} loadingOlder={Boolean(page?.loadingOlder)}
+    hasMore={turns.length > limit || Boolean(page?.hasMore)} more={more}/>;
 }
