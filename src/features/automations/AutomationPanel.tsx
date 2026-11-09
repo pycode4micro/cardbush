@@ -122,6 +122,7 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   };
   return <div className="feature-content automation-panel">
     <header className="automation-heading">
+      <h1 className="feature-page-title">{uiText(language)('appCenterModel.automations')}</h1>
       <nav className="automation-tabs" aria-label={uiText(language)('automationPanel.automationViews')}>
         {(['plans', 'calendar', 'unread', 'today', 'all'] as const).map(tab => <button type="button" key={tab} aria-pressed={view === tab} onClick={() => { setView(tab); setForm(undefined); }}>
           {{ calendar: uiText(language)('automationPanel.calendarView'), unread: uiText(language)('automationPanel.unread'), today: uiText(language)('automationPanel.today'), all: uiText(language)('automationPanel.allResults'), plans: uiText(language)('automationPanel.plans') }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}

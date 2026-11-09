@@ -30,6 +30,7 @@ export function FeaturePanel({
   workflowValidationAvailable,
   inspectorOpen,
   onToggleInspector,
+  headerActionsTarget,
   skills,
   disabledSkillNames,
   onToggleSkill,
@@ -47,6 +48,7 @@ export function FeaturePanel({
   workflowValidationAvailable: boolean;
   inspectorOpen: boolean;
   onToggleInspector: () => void;
+  headerActionsTarget: HTMLElement | null;
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
@@ -58,13 +60,14 @@ export function FeaturePanel({
 }) {
   const label = uiText(language)(sectionLabels[section]);
   return (
-    <div className="feature-panel">
-      {section !== 'md-presentation' && <TopBar
+    <section className="feature-panel" aria-label={label}>
+      <TopBar
         title={label}
+        actionsTarget={headerActionsTarget}
         language={language}
         inspectorOpen={inspectorOpen}
         onToggleInspector={onToggleInspector}
-      />}
+      />
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
         <LazyFeatureContentPanel
           creationChatOptions={creationChatOptions}
@@ -72,8 +75,6 @@ export function FeaturePanel({
           backendCapabilities={backendCapabilities}
           onOpenPluginPrompt={onOpenPluginPrompt}
           section={section}
-          inspectorOpen={inspectorOpen}
-          onToggleInspector={onToggleInspector}
           activeProjectDir={activeProjectDir}
           workflowValidationAvailable={workflowValidationAvailable}
           skills={skills}
@@ -85,6 +86,6 @@ export function FeaturePanel({
           onOpenConversation={onOpenConversation}
         />
       </Suspense>
-    </div>
+    </section>
   );
 }

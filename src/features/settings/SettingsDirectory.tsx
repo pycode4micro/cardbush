@@ -6,6 +6,7 @@ import type { AppLanguage } from '../../types';
 import { settingsDescriptions, settingsDestination, settingsLabels, settingsNavigationGroups, settingsSectionLabel, settingsSectionMatchesQuery,
   type SettingsCategory, type SettingsCategoryId, type SettingsPage, type VisibleSettingsSection } from './settingsNavigation';
 import './settingsDirectory.css';
+import { SettingsSectionTitle } from './settingsHeading';
 
 const icons = { preferences: Settings, personal: SlidersHorizontal, connections: Network, tools: MonitorCog, data: Database };
 type Props = {
@@ -106,13 +107,14 @@ function Disclosure({ id, open, toggle, language, active, renderSection }: {
 }) {
   const [visited, setVisited] = useState(open);
   const panelId = useId(), t = uiText(language);
+  const title = t(settingsSectionLabel(id));
   return <section className="settings-category-section">
     <h2><button type="button" id={panelId + '-label'} data-settings-section={id} aria-expanded={open} aria-controls={panelId}
       onClick={() => { toggle(); setVisited(true); }}>
-      <span><strong>{t(settingsSectionLabel(id))}</strong><small>{t(settingsDescriptions[id])}</small></span><ChevronDown aria-hidden="true"/>
+      <span><strong>{title}</strong><small>{t(settingsDescriptions[id])}</small></span><ChevronDown aria-hidden="true"/>
     </button></h2>
     <div className="category-settings-body" id={panelId} role="region" aria-labelledby={panelId + '-label'} hidden={!open}>
-      {visited && renderSection(id, active && open)}
+      {visited && <SettingsSectionTitle.Provider value={title}>{renderSection(id, active && open)}</SettingsSectionTitle.Provider>}
     </div>
   </section>;
 }

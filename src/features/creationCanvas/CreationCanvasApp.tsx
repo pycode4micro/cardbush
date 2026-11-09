@@ -2,7 +2,6 @@ import { uiText } from '../../i18n';
 import { developmentDesktop, emptyCanvas, replaceCanvasContent, type CanvasItem, type CanvasSnapshot, type CreationCanvas, type UserPromptInput } from '@cardbush/bush-protocol';
 import { Copy, FilePlus2, FolderDown, LayoutTemplate, MoreHorizontal, Play, Plus, RefreshCw, Scan, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { TopBar } from '../../components/TopBar';
 import type { CreationChatOptions, CreationInspectorContext } from '../mdPresentation/CreationConversation';
 import { takeBushItDocumentRequest, watchBushItDocument } from '../mdPresentation/bushItDocuments';
 import { acceptCreationFile, markdownFile, parentDirectory, saveCreationFile } from '../mdPresentation/creationFiles';
@@ -29,7 +28,7 @@ import './creationCanvas.css';
 
 const CreationConversation = lazy(() => import('../mdPresentation/CreationConversation').then(module => ({ default: module.CreationConversation })));
 const ignoreNavigation = () => {};
-type Props = CreationChatOptions & { language: string; inspectorOpen?: boolean; onToggleInspector?: () => void };
+type Props = CreationChatOptions & { language: string };
 export function CreationCanvasApp(props: Props) {
   const library = useCanvases(), entry = library.canvases.find(item => item.id === library.selectedId && !item.archived);
   useEffect(() => {
@@ -37,10 +36,10 @@ export function CreationCanvasApp(props: Props) {
     receive(); return watchBushItDocument(receive);
   }, []);
   useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); event.stopImmediatePropagation(); if (!document.querySelector('.canvas-presentation[open]')) createCanvas(); } }; window.addEventListener('keydown', listener, true); return () => window.removeEventListener('keydown', listener, true); }, []);
-  if (!entry) return <div className="creation-canvas-app"><TopBar title={uiText(props.language)('appCenterModel.create')} language={props.language} inspectorOpen={!!props.inspectorOpen} onToggleInspector={props.onToggleInspector}/><div className="canvas-empty"><button onClick={() => createCanvas()}>{uiText(props.language)('creationCanvasApp.newCanvas')}</button></div></div>;
+  if (!entry) return <div className="creation-canvas-app"><div className="canvas-empty"><button onClick={() => createCanvas()}>{uiText(props.language)('creationCanvasApp.newCanvas')}</button></div></div>;
   return <CanvasSpace key={entry.id} {...props} entry={entry}/>;
 }
-function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, composerPortalTarget, externalComposerControls = false, onOpenComposer, onInspectorContext, ...chatOptions }: Props & { entry: ReturnType<typeof useCanvases>['canvases'][number] }) {
+function CanvasSpace({ entry, language, composerPortalTarget, externalComposerControls = false, onOpenComposer, onInspectorContext, ...chatOptions }: Props & { entry: ReturnType<typeof useCanvases>['canvases'][number] }) {
   const [snapshot, setSnapshot] = useState<CanvasSnapshot>(), current = useRef(snapshot); current.current = snapshot;
   const [error, setError] = useState(''), [readError, setReadError] = useState(''), [notice, setNotice] = useState('');
   const [chatOpen, setChatOpen] = useState(false), [inputTarget, setInputTarget] = useState<HTMLDivElement | null>(null);
@@ -178,7 +177,6 @@ function CanvasSpace({ entry, language, inspectorOpen, onToggleInspector, compos
   return <div className="creation-canvas-app" onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => {
     if (!event.dataTransfer.files.length) return; event.preventDefault(); const paths = Array.from(event.dataTransfer.files).map(file => window.cardbushDesktop?.getPathForFile(file) || '').filter(Boolean); void addPaths(paths);
   }}>
-    <TopBar title={uiText(language)('appCenterModel.create')} language={language} inspectorOpen={!!inspectorOpen} onToggleInspector={onToggleInspector}/>
     <div className="canvas-toolbar"><input aria-label={uiText(language)('creationCanvasApp.canvasName')} key={snapshot?.document.title} defaultValue={snapshot?.document.title || ''} placeholder={uiText(language)('canvasSidebar.untitledCanvas')} maxLength={200} onBlur={event => { const value = event.target.value.trim(); const snapshot = current.current; if (snapshot && value !== snapshot.document.title) void commit({ ...snapshot.document, title: value }).catch(() => {}); }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}/>
       {snapshot?.document.desktop && <button disabled={busy || !chat || chat.busy} onClick={() => {
         setChatRegion(undefined); setSelectedId(undefined); startChat();

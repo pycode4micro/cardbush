@@ -37,8 +37,6 @@ export function FeatureContentPanel({
   backendCapabilities,
   onOpenPluginPrompt,
   section,
-  inspectorOpen,
-  onToggleInspector,
   skills,
   disabledSkillNames,
   onToggleSkill,
@@ -52,8 +50,6 @@ export function FeatureContentPanel({
   backendCapabilities: BackendCapabilities;
   onOpenPluginPrompt: (prompt: string) => void;
   section: AppSection;
-  inspectorOpen?: boolean;
-  onToggleInspector?: () => void;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
   skills: SkillSummary[];
@@ -66,7 +62,7 @@ export function FeatureContentPanel({
   creationChatOptions?: CreationChatOptions;
 }) {
   if (section === 'components') return <ComponentsApp language={language} onCreate={onOpenPluginPrompt}/>;
-  if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><CreationCanvasApp {...creationChatOptions} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}/></Suspense>;
+  if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><CreationCanvasApp {...creationChatOptions} language={language}/></Suspense>;
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
     onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />;
@@ -193,6 +189,7 @@ function SkillsPanel({
 
   return (
     <div className="feature-content">
+      <h1 className="feature-page-title">{uiText(language)('composer.skills')}</h1>
       <div className="feature-toolbar">
         <div className="search-box">
           <Search size={18} />

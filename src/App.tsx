@@ -1965,7 +1965,7 @@ function CardbushApp() {
   const assistantVisible = section === 'assistant' && !settingsOpen;
   const assistantProfile = useAssistantProfile();
   const workSummaryAvailable = !inspectorControlsVisible && !(compactLayout && inspectorOpen);
-  const chatActionsSlot = (section === 'chat' || section === 'assistant') && !settingsOpen
+  const chatActionsSlot = section !== 'home' && section !== 'explore' && !settingsOpen
     ? <span className="window-chat-actions no-drag" ref={setChatActionsTarget}/> : null;
   const [projectsHost, setProjectsHost] = useState<HTMLDivElement | null>(null);
   const [recentList, setRecentList] = useState<RecentListOutlet | null>(null);
@@ -2387,6 +2387,7 @@ function CardbushApp() {
               </ComposerPortalContext.Provider>
             ) : (
               <FeaturePanel
+                headerActionsTarget={chatActionsSlot ? chatActionsTarget : null}
                 creationChatOptions={{ theme, disabledSkillNames, onToggleSkill: toggleSkillEnabled, onConfigureModels: () => openSettings('models'), browserTabs: composerBrowserTabs,
                   onConversationChanged: () => { void chat.reloadConversations().catch(() => undefined); },
                   composerPortalTarget: (section === 'md-presentation' || section === 'team') && quickInputOpen ? quickInputTarget : null,

@@ -50,6 +50,7 @@ import { PluginMarketplacePanel } from './PluginMarketplacePanel';
 import { usePluginNavigation, type PluginPage as Page, type ManageTab } from './usePluginNavigation';
 import './plugin-management.css';
 import { SettingsCard } from '../settings/SettingsControls';
+import { usePanelHeading } from '../settings/settingsHeading';
 
 export function PluginManagementPanel({
   language,
@@ -645,13 +646,14 @@ function PluginCatalog({ language, configuration, plugins, connections, mcpLoadi
   onInstall: (plugin: CardbushAppPlugin) => void;
 }) {
   const [scope, setScope] = usePageState<'public' | 'personal'>('plugin-catalog-scope', 'public');
+  const heading = usePanelHeading(uiText(language)('appCenterModel.plugins'));
   const scopedPlugins = plugins.filter((plugin) =>
     scope === 'public' ? plugin.source === 'bundled' : plugin.source === 'user');
   const installed = plugins.filter((plugin) => plugin.installed);
   const standalone = connections.filter(item => !item.plugin);
   return (
     <div className="plugin-catalog-page">
-      <header className="plugin-catalog-heading"><h2>{uiText(language)('appCenterModel.plugins')}</h2><p>{uiText(language)('pluginManagementPanel.useCardbushWithTheToolsYouRely')}</p></header>
+      <header className="plugin-catalog-heading">{heading && <h2>{heading}</h2>}<p>{uiText(language)('pluginManagementPanel.useCardbushWithTheToolsYouRely')}</p></header>
       <SearchField language={language} value={query} onChange={onQuery} kind="integrations" />
       <section className="plugin-installed-section">
         <div className="plugin-section-title"><h3>{uiText(language)('pluginManagementPanel.added')}</h3><span>{installed.length + standalone.length}</span></div>

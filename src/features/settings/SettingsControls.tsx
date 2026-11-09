@@ -1,6 +1,7 @@
 import type * as React from 'react';
 import { Children, isValidElement } from 'react';
 import { SettingsDropdown } from './SettingsDropdown';
+import { usePanelHeading } from './settingsHeading';
 
 export function SettingsSelect({ name, title, subtitle, value, onChange, children, icons, disabled }: {
   name: string; title: string; subtitle?: string; value: string;
@@ -31,15 +32,16 @@ export function SettingsCard({
   bodyHidden?: boolean;
   children: React.ReactNode;
 }) {
+  const heading = usePanelHeading(title);
   return (
     <section className={`settings-card${className ? ` ${className}` : ''}`}>
-      <div className={`settings-card-header${headerAction ? ' has-action' : ''}`}>
+      {(heading || subtitle || headerAction) && <div className={`settings-card-header${headerAction ? ' has-action' : ''}`}>
         <div className="settings-card-heading">
-          <h3>{title}</h3>
+          {heading && <h3>{heading}</h3>}
           {subtitle && <p>{subtitle}</p>}
         </div>
         {headerAction && <div className="settings-card-header-action">{headerAction}</div>}
-      </div>
+      </div>}
       {!bodyHidden && <div className="settings-card-body">{children}</div>}
     </section>
   );

@@ -31,6 +31,11 @@
   min-height: 0;
 }
 
+.feature-page-title {
+  margin: 0;
+  font-size: calc(20px * var(--ui-font-scale, 1));
+}
+
 .topbar {
   min-height: 48px;
   display: flex;

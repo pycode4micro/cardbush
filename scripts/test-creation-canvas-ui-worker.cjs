@@ -89,6 +89,17 @@ app.whenReady().then(async () => {
       return;
     }
     assert.match(await run('document.querySelector(".canvas-markdown").textContent'), /Preserve my writing/);
+    const launchSize = win.getContentSize();
+    win.setContentSize(1112, 760);
+    await until(`(() => {
+      const stage = document.querySelector('.canvas-stage').getBoundingClientRect();
+      const page = document.querySelector('[data-canvas-item=document]').getBoundingClientRect();
+      return innerWidth === 1112 && page.left >= stage.left && page.right <= stage.right
+        && page.top >= stage.top && page.bottom <= stage.bottom - 44
+        && document.querySelector('[aria-label=适应窗口]').getAttribute('aria-pressed') === 'true';
+    })()`);
+    win.setContentSize(...launchSize);
+    await until(`innerWidth === ${launchSize[0]}`);
     await require('./helpers/sidebar-profile.cjs')({read:run,frame:()=>run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'),win,sidebar:'.canvas-sidebar'});
     assert.equal(await run(`canvasFileTarget('图 #1%25.png','C:/root #1/space.canvas.json')`), 'C:/root #1/图 #1%25.png');
     await clickText('新建画板'); await until('!!document.querySelector(".canvas-empty") && !!canvasStore.getCanvases().canvases.find(c=>c.id===canvasStore.getCanvases().selectedId)?.path');
@@ -128,7 +139,7 @@ app.whenReady().then(async () => {
     await writeFile(resolve('tmp/creation-canvas-empty.png'), (await win.webContents.capturePage()).toPNG());
     await clickText('素材'); await until('document.querySelectorAll("[data-canvas-item]").length===2');
     await until('document.querySelector(".canvas-stage").textContent.includes("A real Markdown file")');
-    assert.equal(await run('document.querySelector(".canvas-zoom-value").textContent'), '100%', 'adding files keeps the default scale');
+    assert.equal(await run('document.querySelector(".canvas-zoom-value").textContent'), '100%', 'adding files preserves the manually selected scale');
     await run('document.querySelector("[aria-label=适应窗口]").click()');
     await until('document.querySelector("[aria-label=适应窗口]").getAttribute("aria-pressed")==="true"');
     assert.equal(await run('!!document.querySelector(".canvas-board-label")'), false, 'no extra canvas dimension label');
@@ -139,8 +150,18 @@ app.whenReady().then(async () => {
     for (const [width, height] of [[1440, 1020], [1000, 780], [680, 860], initialSize]) {
       win.setContentSize(width, height); await until(`window.innerWidth===${width} && window.innerHeight===${height}`);
       await delay(150); await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-      const edges = await run(`(()=>{const rect=selector=>document.querySelector(selector).getBoundingClientRect(),stage=rect('.canvas-stage'),items=[...document.querySelectorAll('[data-canvas-item]')].map(item=>item.getBoundingClientRect());return{title:rect('.topbar h1').left,name:rect('[aria-label=画板名称]').left,zoom:rect('.canvas-zoom').left,left:Math.min(...items.map(r=>r.left)),right:Math.max(...items.map(r=>r.right)),top:Math.min(...items.map(r=>r.top)),bottom:Math.max(...items.map(r=>r.bottom)),stageLeft:stage.left,stageRight:stage.right,stageTop:stage.top,stageBottom:stage.bottom}})()`);
-      for (const name of ['name','zoom']) assert.ok(Math.abs(edges.title - edges[name]) < .6, `${width}px viewport: ${name} shares the creation title edge: ${JSON.stringify(edges)}`);
+      const edges = await run(`(() => {
+        const rect = selector => document.querySelector(selector).getBoundingClientRect();
+        const stage = rect('.canvas-stage');
+        const items = [...document.querySelectorAll('[data-canvas-item]')].map(item => item.getBoundingClientRect());
+        return { inset: parseFloat(getComputedStyle(document.querySelector('.canvas-stage')).getPropertyValue('--canvas-inset')),
+          name: rect('[aria-label=画板名称]').left, zoom: rect('.canvas-zoom').left,
+          left: Math.min(...items.map(r => r.left)), right: Math.max(...items.map(r => r.right)),
+          top: Math.min(...items.map(r => r.top)), bottom: Math.max(...items.map(r => r.bottom)),
+          stageLeft: stage.left, stageRight: stage.right, stageTop: stage.top, stageBottom: stage.bottom };
+      })()`);
+      for (const control of ['name','zoom']) assert.ok(Math.abs(edges[control] - edges.stageLeft - edges.inset) < .6,
+        `${width}px viewport: ${control} aligns with the canvas inset`);
       assert.ok(edges.left >= edges.stageLeft && edges.right <= edges.stageRight && edges.top >= edges.stageTop && edges.bottom <= edges.stageBottom - 44, 'all content fits with room for controls');
       assert.ok(Math.abs((edges.left + edges.right) / 2 - (edges.stageLeft + edges.stageRight) / 2) < 1, 'content is centred even on wide screens');
     }
@@ -317,11 +338,12 @@ app.whenReady().then(async () => {
     }
     const reloaded = new Promise(resolve => win.webContents.once('did-finish-load', resolve)); win.reload(); await reloaded; await until('!!document.querySelector("[data-canvas-item=office]")');
     assert.equal((await selected()).path, entry.path);
-    await run(`canvasStore.createCanvas(${JSON.stringify({ format: 'cardbush-canvas', version: 1, title: 'Welcome layout', width: 1440, height: 960, background: '#181818', items: [html] })})`);
-    await until('document.querySelector("[data-canvas-item=interactive]") && document.querySelector("[aria-label=画板名称]").value==="Welcome layout"');
-    await run('document.querySelector("[aria-label=更多操作]").click()'); await clickText('用作新会话布局'); await until('document.body.textContent.includes("已应用到新会话布局")');
-    const layout = await run('JSON.parse(localStorage.getItem("cardbush.html_components.v1")).welcomeLayout');
-    assert.ok(layout.items.some(item=>item.componentId==='system-input'&&item.composerDock==='bottom')); assert.equal(layout.items.length,2);
+    await run(`canvasStore.createCanvas(${JSON.stringify({ format: 'cardbush-canvas', version: 1, title: 'Home component', width: 1440, height: 960, background: '#181818', items: [html] })})`);
+    await until('document.querySelector("[data-canvas-item=interactive]") && document.querySelector("[aria-label=画板名称]").value==="Home component"');
+    await run('document.querySelector("[aria-label=更多操作]").click()'); await clickText('添加到主页'); await until('document.body.textContent.includes("已添加到主页")');
+    const library = await run('JSON.parse(localStorage.getItem("cardbush.html_components.v1"))');
+    assert.equal(library.items.length, components.items.length + 1);
+    assert.deepEqual(library.items.filter(item => item.home).map(item => item.html), [html.html]);
     await require('./helpers/canvas-markdown-workspace.cjs')({ run, until, clickText, selected, win, teams, directory });
     await require('./helpers/canvas-development-desk.cjs')({ run, until, clickText, selected, win, teams, directory, design });
     console.log('PASS: canvas previews and geometry; shared Markdown editing, autosave, line context, document switching, conflicts and Team round trip');

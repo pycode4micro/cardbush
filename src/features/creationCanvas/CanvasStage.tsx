@@ -1,7 +1,7 @@
 import type { MessageKey } from '../../i18n';
 import { uiText } from '../../i18n';
 import { Expand, FilePenLine, GripVertical, Hand, Maximize2, MessageCircle, Pin, PinOff, Plus, Scan, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import type { CanvasItem, CanvasSnapshot, CreationCanvas } from '@cardbush/bush-protocol';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
 import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
@@ -38,14 +38,16 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   const measuredSize = useRef(size);
   const viewGeneration = useRef(0);
   const [inset, setInset] = useState(14);
-  const [zoomOverride, setZoomOverride] = useState<number | undefined>(1), [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoomOverride, setZoomOverride] = useState<number>();
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [manualFit, setManualFit] = useState<ReturnType<typeof fitCanvasViewport>>();
   const [editingFit, setEditingFit] = useState<ReturnType<typeof fitCanvasViewport>>();
   const [draft, setDraft] = useState<ItemDraft>(), [guides, setGuides] = useState<AlignmentGuide[]>([]);
   const [dragging, setDragging] = useState(false), [panMode, setPanMode] = useState(false), [spaceHeld, setSpaceHeld] = useState(false);
   const liveFrame = useRef<ItemDraft | undefined>(undefined), gesture = useRef<Gesture | undefined>(undefined), saving = useRef(false);
   const document = snapshot.document;
-  const fit = manualFit ?? editingFit ?? fitCanvasViewport(size, document, inset, zoomOverride);
+  const fixedZoom = zoomOverride ?? (document.items.length ? undefined : 1);
+  const fit = manualFit ?? editingFit ?? fitCanvasViewport(size, document, inset, fixedZoom);
   const zoom = zoomOverride ?? fit.zoom;
   const lockView = () => setManualFit(fit);
   const rgb = document.background.slice(1).match(/../g)!.map(value => parseInt(value, 16));
@@ -58,10 +60,10 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
   };
   const cancel = () => { releasePointer(); liveFrame.current = undefined; setDraft(undefined); setGuides([]); setDragging(false); setEditingFit(undefined); };
   const cancelRef = useRef(cancel); cancelRef.current = cancel;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = viewport.current;
     if (!root || suspended) return;
-    const observer = new ResizeObserver(() => {
+    const measure = () => {
       if (!root.clientWidth || !root.clientHeight || globalThis.document.fullscreenElement?.closest('.canvas-presentation')) return;
       const next = { width: root.clientWidth, height: root.clientHeight };
       if (next.width !== measuredSize.current.width || next.height !== measuredSize.current.height) {
@@ -69,14 +71,16 @@ export function CanvasStage({ snapshot, language, selectedId, onSelect, onChange
         setManualFit(undefined); setPan({ x: 0, y: 0 }); setSize(next);
       }
       setInset(parseFloat(getComputedStyle(root).getPropertyValue('--canvas-inset')) || 14);
-    });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(root);
     return () => observer.disconnect();
   }, [suspended]);
   useEffect(() => onViewport({ ...size, zoom }), [size, zoom, onViewport]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     viewGeneration.current++;
-    cancelRef.current(); setManualFit(undefined); setZoomOverride(1); setPan({ x: 0, y: 0 }); setPanMode(false); setSpaceHeld(false);
+    cancelRef.current(); setManualFit(undefined); setZoomOverride(undefined); setPan({ x: 0, y: 0 }); setPanMode(false); setSpaceHeld(false);
   }, [snapshot.path]);
   useEffect(() => {
     const reset = () => { cancelRef.current(); setSpaceHeld(false); };

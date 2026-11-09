@@ -484,7 +484,7 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.composer-surface')");
     await run("Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '添加' || button.title === '添加').click()");
     await until("!!document.querySelector('.composer-add-menu')");
-    assert.deepEqual(await run("Array.from(document.querySelectorAll('.composer-add-menu button strong'), node=>node.textContent)"), ['文件和文件夹', 'Source', '任务计划', '个性化记忆']);
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.composer-add-menu button strong'), node=>node.textContent)"), ['文件和文件夹', '简洁输入模式', 'Source', '任务计划', '个性化记忆']);
     assert.doesNotMatch(await run("document.querySelector('.composer-add-menu').textContent"), /Skills|Git|项目上下文|视觉功能/);
     await run("document.querySelector('.composer-add-menu [aria-label=任务计划]').click()");
     await until("composerProps.referencePlanMode === 'off'");

@@ -27,6 +27,11 @@ module.exports = async ({ goTo, run, until, pause, window: win, root }) => {
     const cards = [...content.querySelectorAll('.settings-category-section')].filter(visible);
     return {
       overflow:content.scrollWidth > content.clientWidth + 1,
+      repeatedHeadings: cards.flatMap(card => {
+        const label = card.querySelector('[data-settings-section] strong').textContent.trim();
+        return [...card.querySelectorAll('.category-settings-body :is(h1,h2,h3)')].filter(visible)
+          .map(node => node.textContent.trim()).filter(title => title === label);
+      }),
       cards:cards.map(node=>({ radius:getComputedStyle(node).borderRadius, background:getComputedStyle(node).backgroundColor })),
       overflowControls:[...content.querySelectorAll('input,textarea,select,button')].filter(visible).filter(node=>{
         const card=node.closest('.settings-card,.settings-surface,.plugin-installed-section,.plugin-featured-section');
@@ -53,6 +58,7 @@ module.exports = async ({ goTo, run, until, pause, window: win, root }) => {
       await pause(100);
       await run("document.querySelector('.settings-content').scrollTop=0");
       const state = await run(inspect);
+      assert.deepEqual(state.repeatedHeadings, [], `${page} at ${width}px: the disclosure already supplies the section heading`);
       assert.equal(state.overflow, false, `${page} at ${width}px: no horizontal page overflow`);
       assert.deepEqual(state.overflowControls, [], `${page} at ${width}px: controls stay inside their cards`);
       assert.deepEqual(state.overlappingRows, [], `${page} at ${width}px: labels and controls do not overlap`);

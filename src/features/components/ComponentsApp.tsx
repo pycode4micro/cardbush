@@ -12,6 +12,7 @@ import './components.css';
 type Props = {language: AppLanguage; home?: boolean; onCreate?: (draft: string) => void};
 export function ComponentsApp({language, home = false, onCreate}: Props) {
   const t = uiText(language), saved = useComponents();
+  const Heading = home ? 'h2' : 'h1';
   const [picker, setPicker] = useState(false);
   const [editor, setEditor] = useState<{item?: HtmlComponent; revision: number}>();
   const [error, setError] = useState('');
@@ -25,7 +26,7 @@ export function ComponentsApp({language, home = false, onCreate}: Props) {
   const create = <button type="button" onClick={startChat}><MessageSquare/>{t('homeComponents.createInChat')}</button>;
   const edit = <button type="button" onClick={() => setEditor({revision:saved.revision})}><Plus/>{t('componentsApp.customComponent')}</button>;
   return <section className={home ? 'components-app home-components desktop-shelf' : 'components-app'}>
-    <header><h2>{t('appCenterModel.components')}</h2><div>
+    <header><Heading>{t('appCenterModel.components')}</Heading><div>
       {home ? <button type="button" aria-expanded={picker} aria-label={t('homeComponents.add')} onClick={() => setPicker(!picker)}><Plus/></button> : <>{onCreate && create}{edit}</>}
     </div></header>
     {picker && <div className="home-component-picker">

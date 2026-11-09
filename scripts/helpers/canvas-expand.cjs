@@ -83,7 +83,14 @@ module.exports = async ({ run, until, win, delay, pointer, point, readCanvas, de
       if (rendered) break; await delay(50);
     }
     assert.deepEqual(rendered, resized.items.find(item => item.id === 'interactive').frame, 'expanded layout reopens from disk: ' + await reopened.webContents.executeJavaScript('document.body.innerText.slice(0,500)'));
-    assert.equal(await reopened.webContents.executeJavaScript('document.querySelector(".canvas-zoom-value").textContent'), '100%', 'reopening a saved canvas defaults to actual size');
+    assert.ok(await reopened.webContents.executeJavaScript(`(() => {
+      const viewport = document.querySelector('.canvas-stage').getBoundingClientRect();
+      return document.querySelector('[aria-label=适应窗口]').getAttribute('aria-pressed') === 'true'
+        && [...document.querySelectorAll('[data-canvas-item]')].every(item => {
+          const r = item.getBoundingClientRect();
+          return r.left >= viewport.left && r.top >= viewport.top && r.right <= viewport.right && r.bottom <= viewport.bottom - 44;
+        });
+    })()`), 'reopening fits all saved regions without a manual Fit click');
   } finally { reopened.destroy(); }
 
   const latest = await readCanvas(path);

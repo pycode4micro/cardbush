@@ -123,6 +123,33 @@ async function run() {
     await require('./helpers/home-component-publish.cjs')({root,project,win,read,visible,click,wait});
     app.quit(); return;
   }
+  if (process.argv.includes('--workspace-headings')) {
+    win.setContentSize(1112, 760);
+    await click('[data-nav-section=explore]');
+    const toggle = '.window-frame [data-inspector-toggle]';
+    for (const [key, selector] of [
+      ['components', '.components-app > header h1'], ['plugins', '.plugin-catalog-heading h2'],
+      ['automations', '.automation-heading h1'], ['workflows', '.team-flow-header h1'], ['create', '.canvas-toolbar input'],
+    ]) {
+      await visible('.desktop-explore .desktop-row');
+      const labels = ['zh', 'en'].map(locale => require('../src/i18n/locales/' + locale + '.json').messages['appCenterModel.' + key]);
+      await read(`[...document.querySelectorAll('.desktop-explore .desktop-row')]
+        .find(row => ${JSON.stringify(labels)}.includes(row.querySelector('strong').textContent)).click()`);
+      await visible('.feature-panel ' + selector);
+      assert.equal(await read("document.querySelector('.feature-panel .topbar') !== null"), false, key + ' has one content header');
+      await visible(toggle);
+      if (key === 'components') {
+        await click(toggle);
+        await visible(toggle + '[aria-expanded=true]');
+        await click(toggle);
+        await visible(toggle + '[aria-expanded=false]');
+      }
+      await click('[data-history-action=back]:enabled');
+    }
+    await visible('.desktop-explore');
+    console.log('Workspace headings and title bar inspector passed for all five built-in feature pages.');
+    app.quit(); return;
+  }
   if (materialTest) {
     await click('.recent-bar-chat');
     await visible('.chat-panel[role=region] .message-list');
