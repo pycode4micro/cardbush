@@ -1,6 +1,37 @@
 import { extname } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { pluginChild } from './pluginExtensions';
 import type { PluginMarketPresentation } from './pluginMarketplaceTypes';
 import { safePackagePath } from './pluginPackagePaths';
+
+const rasterTypes: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+export const largeLogoLimit = 4 * 1024 * 1024;
+
+function rasterPath(value: unknown) {
+  if (typeof value !== 'string' || !value) return;
+  const path = safePackagePath(value);
+  return rasterTypes[extname(path).toLowerCase()] ? path : undefined;
+}
+
+/** Artwork is optional. A missing or unsupported image must not hide a usable plugin. */
+export async function localLargeLogo(root: string, value: unknown) {
+  try {
+    const path = rasterPath(value);
+    if (!path) return;
+    const target = await pluginChild(root, path);
+    const info = await stat(target);
+    if (info.isFile() && info.size <= largeLogoLimit) return target;
+  } catch { /* Ignore unavailable package artwork. */ }
+}
+
+export async function previewLargeLogo(value: unknown, read: (path: string) => Promise<Buffer>) {
+  try {
+    const path = rasterPath(value);
+    if (!path) return;
+    const bytes = await read(path);
+    if (bytes.length && bytes.length <= largeLogoLimit) return `data:${rasterTypes[extname(path).toLowerCase()]};base64,${bytes.toString('base64')}`;
+  } catch { /* Preview metadata remains available offline. */ }
+}
 
 /** Read presentation without downloading or executing a plugin package. */
 export async function readPluginPresentation(read: (path: string) => Promise<Buffer>): Promise<PluginMarketPresentation> {

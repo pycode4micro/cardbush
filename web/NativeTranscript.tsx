@@ -26,10 +26,11 @@ function HistoryMessage({ eager, role, children }: { eager: boolean; role: strin
   return <div ref={element} className="history-message" data-visible={visible} data-role={role}>{visible ? children : null}</div>;
 }
 
-export function NativeTranscript({ state, live, selected, modelName, children, submitting, onError, onRetry }: {
+export function NativeTranscript({ state, live, selected, modelName, children, submitting, connectionUnavailable, onError, onRetry }: {
   state: State | null; live: LiveTranscript; selected: string | null; modelName: string; children?: ReactNode;
   onError: (message: string) => void; onRetry: (text: string) => void;
   submitting?: { sessionId: string; id: string; text: string; attachments: unknown[] } | null;
+  connectionUnavailable?: boolean;
 }) {
   const language = useUiLanguage();
 
@@ -128,7 +129,7 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
       {history.map((message, index) => <HistoryMessage key={`${selected}:${message.renderKey ?? message.id}`} eager={index >= history.length - 4} role={message.role}>{renderMessage(message)}</HistoryMessage>)}
       {pending.map(job => {
         const messages = pendingTranscript(selected ?? '', job, live[job.turnId]);
-        const activeId = job.status === 'running' ? [...messages].reverse().find(message => message.role === 'assistant')?.id ?? '' : '';
+        const activeId = !connectionUnavailable && job.status === 'running' ? [...messages].reverse().find(message => message.role === 'assistant')?.id ?? '' : '';
         return <div key={job.id} className="native-turn" data-turn-id={job.turnId}>
           {messages.map(message => renderMessage(message, activeId, job))}
           {job.status === 'queued' && <div className="thinking"><span className="loading-dot"/>{uiText(language)("web.waitingForAReply")}</div>}
@@ -138,7 +139,7 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
       })}
       {submitting?.sessionId === selected && !state?.jobs.some(job => job.id === submitting.id) && <>
         {renderMessage({ id: submitting.id, role: 'user', content: submitting.text, createdAt: new Date().toISOString(), attachments: webAttachments(submitting.attachments) } as ChatMessage)}
-        <div className="thinking"><span className="loading-dot"/>{uiText(language)("web.sending")}</div>
+        <div className="status-line" role="status">{uiText(language)("web.sessionPreparing")}</div>
       </>}
       {children}
     </div>

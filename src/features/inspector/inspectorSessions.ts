@@ -27,7 +27,7 @@ export function adoptInspectorSessionState<T>(values: Record<string, T>, { from,
   return next;
 }
 
-type Workspace = InspectorTabsState & { open: boolean };
+type Workspace = InspectorTabsState & { open: boolean; pageSplits?: Record<string, boolean> };
 export type InspectorSessionsState = { workspaces: Record<string, Workspace>; lockedIds: ReadonlySet<string> };
 export const emptyInspectorSessions: InspectorSessionsState = { workspaces: {}, lockedIds: new Set() };
 export type InspectorSessionsAction =
@@ -36,7 +36,7 @@ export type InspectorSessionsAction =
   | { type: 'tabs'; workspaceId: string; action: InspectorTabsAction }
   | { type: 'navigate-start'; workspaceId: string; tabId: string; pages: (InspectorHistoryTab | InspectorResourceTab)[] }
   | { type: 'start-history'; tabId: string; step: 'back' | 'forward' | 'discard-forward' }
-  | { type: 'open-state'; workspaceId: string; update: boolean | ((open: boolean) => boolean) }
+  | { type: 'open-state'; workspaceId: string; page?: string; update: boolean | ((open: boolean) => boolean) }
   | { type: 'bind-browser'; workspaceId: string; ids: string[] }
   | { type: 'dispose'; ids: ReadonlySet<string> }
   | { type: 'toggle-lock'; id: string };
@@ -51,7 +51,7 @@ export function retainedInspectorTabs(state: InspectorSessionsState) {
 export function inspectorTabOwner(state: InspectorSessionsState, id: string) {
   return Object.keys(state.workspaces).find(key => state.workspaces[key].tabs.some(tab => tab.id === id));
 }
-export function inspectorSession(state: InspectorSessionsState, workspaceId: string) {
+export function inspectorSession(state: InspectorSessionsState, workspaceId: string, page?: string) {
   const own = state.workspaces[workspaceId];
   let tabs = own?.tabs ?? [];
   if (state.lockedIds.size) {
@@ -60,15 +60,15 @@ export function inspectorSession(state: InspectorSessionsState, workspaceId: str
     if (shared.length) tabs = [...tabs, ...shared];
   }
   const activeId = tabs.some(tab => tab.id === own?.activeId) ? own!.activeId : tabs[0]?.id ?? '';
-  return { tabs, activeId, open: own?.open ?? state.lockedIds.size > 0 };
+  return { tabs, activeId, open: page ? own?.pageSplits?.[page] ?? false : own?.open ?? state.lockedIds.size > 0 };
 }
 
 // Every remaining lock is visible in every workspace. Determining whether an
 // empty pane should collapse doesn't require projecting all tabs for each owner.
 function closeWorkspaceTabs(workspace: Workspace, ids: ReadonlySet<string>, hasLocks: boolean): Workspace {
   const next = ids.size ? inspectorTabsReducer(workspace, { type: 'close', ids }) : workspace;
-  const open = workspace.open && (next.tabs.length > 0 || hasLocks);
-  return next === workspace && open === workspace.open ? workspace : { ...next, open };
+  if (!next.tabs.length && !hasLocks && (workspace.open || workspace.pageSplits)) return { ...next, open: false, pageSplits: undefined };
+  return next === workspace ? workspace : { ...workspace, ...next };
 }
 
 /** Resource pages have one owner. A lock shares visibility, never a second guest. */
@@ -170,6 +170,12 @@ export function inspectorSessionsReducer(state: InspectorSessionsState, action: 
     return next;
   }
   if (action.type === 'open-state') {
+    if (action.page) {
+      const prior = own.pageSplits?.[action.page] ?? false;
+      const open = typeof action.update === 'function' ? action.update(prior) : action.update;
+      if (open === prior) return state;
+      return { ...state, workspaces: { ...state.workspaces, [action.workspaceId]: { ...own, pageSplits: { ...own.pageSplits, [action.page]: open } } } };
+    }
     const open = typeof action.update === 'function' ? action.update(visible.open) : action.update;
     if (state.workspaces[action.workspaceId]?.open === open) return state;
     return { ...state, workspaces: { ...state.workspaces, [action.workspaceId]: { ...own, open } } };

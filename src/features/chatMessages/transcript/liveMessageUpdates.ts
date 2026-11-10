@@ -13,6 +13,7 @@ import type {
 } from './assistantStreamBuffer';
 import {
   chatTurnStartedAt,
+  runtimeTurnStartedAt,
   chatMessageTurnId,
   isSupersededLoopAssistant,
   normalizeLoopContent,
@@ -225,7 +226,7 @@ export function applyAssistantSegmentBoundary(
     turnId: update.turnId,
   });
   if (nextIndex < 0) {
-    const turnStartedAt = chatTurnStartedAt(messages, update.turnId);
+    const turnStartedAt = runtimeTurnStartedAt(messages, update.turnId);
     messages.push({
       id:
         nextMessageId ||
@@ -435,7 +436,7 @@ export function ensureBackgroundTurnAssistant(
         ? markLocalMessageTurnStarted(message, timing.startedAt!) : message),
     };
   }
-  const startedAt = timing.startedAt ?? chatTurnStartedAt(messages, turnId);
+  const startedAt = timing.startedAt ?? runtimeTurnStartedAt(messages, turnId);
   return {
     ...current,
     [sessionId]: [
@@ -512,7 +513,7 @@ function createAssistantStreamMessage(
   route?: AssistantStreamRoute,
 ): ChatMessage {
   const messageId = route?.messageId.trim() ?? '';
-  const turnStartedAt = chatTurnStartedAt(messages, route?.turnId);
+  const turnStartedAt = route?.turnId ? runtimeTurnStartedAt(messages, route.turnId) : undefined;
   // Tool records can arrive after the terminal snapshot. A newly discovered
   // tool-only owner must inherit that turn's settled status, not reopen it.
   const terminal = route?.turnId ? findTranscriptAssistant(messages, message =>
@@ -673,10 +674,9 @@ export function assignTurnToLocalMessages(
 ) {
   const ids = new Set(messageIds);
   const messages = current[sessionId] ?? [];
-  const startedAt = route?.createdAt ?? chatTurnStartedAt(
+  const startedAt = route?.createdAt ?? runtimeTurnStartedAt(
     messages.filter((message) => ids.has(message.id)),
-    undefined,
-  ) ?? new Date().toISOString();
+  );
   return {
     ...current,
     [sessionId]: messages.map((message) =>
@@ -697,8 +697,8 @@ export function assignTurnToLocalMessages(
   };
 }
 
-export function markLocalMessageTurnStarted(message: ChatMessage, startedAt: string) {
-  if (message.role !== 'assistant') {
+export function markLocalMessageTurnStarted(message: ChatMessage, startedAt?: string) {
+  if (message.role !== 'assistant' || !startedAt) {
     return message;
   }
   return {

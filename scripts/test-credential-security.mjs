@@ -6,12 +6,13 @@ import { join, dirname, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readProtectedJson, writeProtectedJson } from '@cardbush/platform/credentials';
+import { readProtectedJson, writeProtectedJson, secureConfigDirectory } from '@cardbush/platform/credentials';
 import { ProductModelConfigStore } from '@cardbush/product-host';
 import { modelApiBaseURL, storedModelHeader } from '@cardbush/bush-protocol';
 import { AgentHttpClient } from '../dist-electron/agentHttpClient.mjs';
 import { openHeadlessWorkers } from '../dist-electron/headlessWorkerStore.mjs';
 import { BrowserConnectorWebSocket } from '../dist-electron/browserConnectorWebSocket.js';
+import { watchCapabilityCatalog } from '../dist-electron/capabilityCatalogWatcher.js';
 
 const run = promisify(execFile), cwd = resolve(import.meta.dirname, '..');
 async function fixture(t) {
@@ -22,6 +23,45 @@ async function fixture(t) {
   });
   return root;
 }
+
+test('reading protected config does not trigger a capability refresh loop', { skip: process.platform !== 'win32' }, async t => {
+  const root = await fixture(t), directory = join(root, 'config'), file = join(directory, 'models.json');
+  const store = new ProductModelConfigStore(file);
+  await store.write({ models: [{ id: 'one', provider: 'openai', model: 'fixture', apiKey: 'fixture-api' }] });
+  const before = await fs.readFile(file, 'utf8');
+  let changes = 0;
+  const stop = watchCapabilityCatalog([directory], () => { changes++; });
+  t.after(stop);
+  const settle = () => new Promise(resolve => setTimeout(resolve, 500));
+  await settle(); // Initial catalog discovery is expected.
+  const initial = changes;
+  for (let index = 0; index < 4; index++) await store.read();
+  await settle();
+  assert.equal(await fs.readFile(file, 'utf8'), before);
+  assert.equal(changes, initial, 'read-side ACL checks must not announce configuration changes');
+  await store.updateReasoning('one', 'high');
+  await settle();
+  assert.ok(changes > initial, 'actual configuration edits still refresh the catalog');
+});
+
+test('idempotent directory protection still repairs changed access permissions', { skip: process.platform !== 'win32' }, async t => {
+  const root = await fixture(t), directory = join(root, 'config');
+  secureConfigDirectory(directory);
+  const powershell = join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const acl = async script => (await run(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+    "$ErrorActionPreference='Stop';$target=$env:CARDBUSH_TEST_CREDENTIAL_DIRECTORY;" + script], {
+    env: { ...process.env, CARDBUSH_TEST_CREDENTIAL_DIRECTORY: directory }, windowsHide: true,
+  })).stdout.trim();
+  const readAcl = "[System.IO.Directory]::GetAccessControl($target).GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access)";
+  const expected = await acl(readAcl);
+  await acl("$access=[System.IO.Directory]::GetAccessControl($target);" +
+    "$users=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-545');" +
+    "$rule=[System.Security.AccessControl.FileSystemAccessRule]::new($users,'ReadAndExecute','ContainerInherit,ObjectInherit','None','Allow');" +
+    "$access.AddAccessRule($rule);[System.IO.Directory]::SetAccessControl($target,$access)");
+  assert.notEqual(await acl(readAcl), expected);
+  secureConfigDirectory(directory);
+  assert.equal(await acl(readAcl), expected, 'extra access is removed instead of trusting a cached successful check');
+});
 
 test('sensitive config fields are sealed on disk and decode in a separate process', async t => {
   const root = await fixture(t), file = join(root, 'config', 'models.json');

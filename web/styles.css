@@ -60,3 +60,5 @@
 .remote-fingerprint { overflow-wrap: anywhere; }
 .history-message[data-visible="false"] { min-height: 180px; }
 .history-message[data-visible="false"][data-role="user"] { min-height: 80px; }
+
+.session-connection-status { margin: 8px 0; padding: 10px 14px; border-inline-start: 3px solid currentColor; border-radius: 6px; line-height: 1.6; }

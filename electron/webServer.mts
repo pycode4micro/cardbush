@@ -263,6 +263,12 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       const agent = await agents.get(user.id);
       abort.signal.throwIfAborted();
       const readSnapshot = () => reads.get(`${readKey}snapshot`, 5_000, () => agent.call('sessions.get', { sessionId, messageProjection: 'conversation' }) as Promise<SessionSnapshot | null>);
+      const readPage = (limit: number, before?: string | null, turnId?: string) => reads.get(
+        `${readKey}snapshot:page:${JSON.stringify([limit, before, turnId])}`, 5_000,
+        () => agent.call('sessions.page', { sessionId, limit, ...(before ? { before } : {}), ...(turnId ? { turnId } : {}) }) as Promise<{
+          snapshot: SessionSnapshot | null; history: { nextCursor: string | null }; committedTurnIds: string[];
+        }>,
+      );
       if (action === 'status' && method === 'GET') {
         const turnIds = z.array(z.string().min(1).max(160)).max(100).parse(url.searchParams.getAll('turnId'));
         const taskList = await reads.get(`${readKey}jobs`, 1_000, () => jobs(agent, sessionId));
@@ -275,9 +281,12 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         const paged = url.searchParams.has('limit');
         const limit = z.coerce.number().int().min(1).max(40).parse(url.searchParams.get('limit') ?? 20);
         const before = z.string().min(1).max(160).nullable().parse(url.searchParams.get('before'));
-        const [fullSnapshot, taskList, solutions] = await Promise.all([readSnapshot(), reads.get(`${readKey}jobs`, 1_000, () => jobs(agent, sessionId)), agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } })]);
+        const [result, taskList, solutions] = await Promise.all([
+          agent.historyPaging ? readPage(limit, before) : readSnapshot().then(snapshot => ({ ...historyPage(snapshot, limit, before), committedTurnIds: snapshot?.turns.map(turn => turn.turnId) ?? [] })),
+          reads.get(`${readKey}jobs`, 1_000, () => jobs(agent, sessionId)), agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } }),
+        ]);
         abort.signal.throwIfAborted();
-        const page = paged ? historyPage(fullSnapshot, limit, before) : { snapshot: fullSnapshot };
+        const page = { snapshot: result.snapshot, history: result.history };
         const snapshot = page.snapshot;
         const turns = (snapshot as { turns?: Array<{ turnId: string; messages: Array<{ message: { toolCalls?: unknown[] } }> }> } | null)?.turns ?? [];
         const toolTurns = turns.filter(turn => turn.messages.some(entry => entry.message.toolCalls?.length));
@@ -291,19 +300,19 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
           toolExecutions.push(...groups.flat());
         }
         const included = new Set(turns.map(turn => turn.turnId));
-        const committed = new Set(fullSnapshot?.turns.map(turn => turn.turnId));
+        const committed = new Set(result.committedTurnIds);
         const visibleJobs = paged ? taskList.filter(job => included.has(job.turnId) || !before && !committed.has(job.turnId)) : taskList;
         json(response, 200, { conversation, ...page, jobs: visibleJobs, solutions, toolExecutions }); return;
       }
       if (action === 'artifacts' && method === 'GET') {
         const turnId = z.string().min(1).max(160).parse(url.searchParams.get('turnId'));
-        const snapshot = await readSnapshot();
+        const snapshot = agent.historyPaging ? (await readPage(1, undefined, turnId)).snapshot : await readSnapshot();
         if (!snapshot?.turns?.some(turn => turn.turnId === turnId) && !(await jobs(agent, sessionId)).some(job => job.turnId === turnId)) throw new WebError(404, '执行记录不存在。');
         json(response, 200, await reads.get(`${readKey}artifacts:${turnId}`, 30_000, () => webArtifactManifest(agent, sessionId, turnId, snapshot))); return;
       }
       if (action === 'tools' && method === 'GET') {
         const turnId = z.string().min(1).max(160).parse(url.searchParams.get('turnId'));
-        const snapshot = await readSnapshot();
+        const snapshot = agent.historyPaging ? (await readPage(1, undefined, turnId)).snapshot : await readSnapshot();
         if (!snapshot?.turns?.some(turn => turn.turnId === turnId) && !(await jobs(agent, sessionId)).some(job => job.turnId === turnId)) throw new WebError(404, '执行记录不存在。');
         json(response, 200, await agent.call('runtime.command', { kind: 'runtime.list_turn_tool_executions', payload: { sessionId, turnId } })); return;
       }

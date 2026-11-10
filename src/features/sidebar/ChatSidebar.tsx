@@ -199,11 +199,11 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenSettings,
   onOpenArchives,
   onOpenSearch,
-  projectsHost, onOpenProject, onOpenTabWorkspace, tabWorkspaceActive,
+  projectsHost, onOpenProject, onOpenTabWorkspace,
   softVisible = true, showRail = true, recentList,
 }: {
   language: AppLanguage;
-  section: AppSection | 'settings';
+  section: AppSection | 'settings' | 'tabs';
   activeConversationId: string;
   runningConversationIds?: Set<string>;
   attentionByConversation?: Record<string, SessionAttentionState>;
@@ -227,7 +227,6 @@ export const ChatSidebar = memo(function ChatSidebar({
   projectsHost?: HTMLElement | null;
   onOpenProject: (project: ProjectItem) => void;
   onOpenTabWorkspace: () => void;
-  tabWorkspaceActive?: boolean;
   softVisible?: boolean;
 }) {
   const sidebarRenderStartedAt = performance.now();
@@ -713,7 +712,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         </button>
         <NavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
         <NavRow navSection="explore" shortcut="openAppCenter" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
-        <NavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={tabWorkspaceActive} onClick={onOpenTabWorkspace}/>
+        <NavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={section === 'tabs'} onClick={onOpenTabWorkspace}/>
         <SidebarApplications language={language}/>
       </nav>
 

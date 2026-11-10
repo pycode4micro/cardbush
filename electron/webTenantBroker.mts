@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import { AgentHttpClient } from './agentHttpClient.mjs';
 import { equalSecret, json, readJson, tenantToken, WebError } from './webCommon.mjs';
 
-export type BrokerConfig = { secret: string; image: string; network: string; prefix: string; modelOrigin?: string; maxActive?: number; idleMinutes?: number; memoryMiB?: number; port?: number };
+export type BrokerConfig = { secret: string; image: string; network: string; prefix: string; modelOrigin?: string; maxActive?: number; idleMinutes?: number; memoryMiB?: number; port?: number; draining?: boolean };
 type DockerContainer = { Image?: string; Id: string; Names: string[]; State: string; Labels: Record<string, string> };
 /** Only this private control process has the Docker socket. Neither the website
  * nor any Agent container receives it, host paths, or container-management tools. */
@@ -19,15 +19,18 @@ export class DockerTenantBroker {
         throw new Error('Invalid private model gateway origin.');
     }
   }
-  async docker<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+  async docker<T = unknown>(method: string, path: string, body?: unknown, text = false): Promise<T> {
     return new Promise((resolve, reject) => {
       const data = body === undefined ? undefined : JSON.stringify(body);
       const request = httpRequest({ socketPath: '/var/run/docker.sock', path: `/v1.41${path}`, method,
         headers: data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {} }, response => {
-        let raw = ''; response.setEncoding('utf8'); response.on('data', value => { raw += value; });
+        let raw = ''; response.setEncoding('utf8'); response.on('data', value => {
+          raw += value;
+          if (text && raw.length > 128 * 1024) raw = raw.slice(-128 * 1024);
+        });
         response.on('end', () => {
           if ((response.statusCode ?? 500) >= 400) { reject(new WebError(response.statusCode === 404 ? 404 : 503, '会话运行服务暂不可用。')); return; }
-          try { resolve(raw ? JSON.parse(raw) as T : undefined as T); } catch { reject(new Error('Invalid Docker response.')); }
+          try { resolve(text ? raw as T : raw ? JSON.parse(raw) as T : undefined as T); } catch { reject(new Error('Invalid Docker response.')); }
         });
       });
       request.setTimeout(70_000, () => request.destroy(new Error('Container operation timed out.')));
@@ -36,6 +39,18 @@ export class DockerTenantBroker {
   }
   async containers() {
     return this.docker<DockerContainer[]>('GET', `/containers/json?all=1&filters=${encodeURIComponent(JSON.stringify({ label: [`cardbush.web.owner=${this.config.prefix}`] }))}`);
+  }
+  async status(key: string) {
+    if (!/^[a-f0-9]{64}$/.test(key)) throw new WebError(400, 'Invalid tenant identity.');
+    const container = (await this.containers()).find(item => item.Labels['cardbush.web.tenant'] === key);
+    if (!container) return { state: 'starting' };
+    const details = await this.docker<{ RestartCount: number; State: { Running: boolean; Restarting: boolean; OOMKilled: boolean; ExitCode: number; FinishedAt: string } }>('GET', `/containers/${container.Id}/json`);
+    if (details.State.Running && !details.State.Restarting) return { state: 'running' };
+    if (!details.State.ExitCode && !details.State.OOMKilled) return { state: 'starting' };
+    const logs = await this.docker<string>('GET', `/containers/${container.Id}/logs?stderr=1&tail=40`, undefined, true);
+    const code = /AGENT_DATA_DIRECTORY_BUSY|Another Agent already owns/.test(logs) ? 'SESSION_AGENT_DATA_LOCKED'
+      : details.State.OOMKilled || /heap out of memory/.test(logs) ? 'SESSION_AGENT_MEMORY_LIMIT' : 'SESSION_AGENT_START_FAILED';
+    return { state: 'failed', code, restarts: details.RestartCount, finishedAt: details.State.FinishedAt };
   }
   serial<T>(work: () => Promise<T>) {
     const operation = this.#queue.then(work); this.#queue = operation.then(() => undefined, () => undefined); return operation;
@@ -54,9 +69,15 @@ export class DockerTenantBroker {
   }
   async ensure(key: string) {
     if (!/^[a-f0-9]{64}$/.test(key)) throw new WebError(400, 'Invalid tenant identity.');
+    if (this.config.draining) throw new WebError(503, 'SESSION_SERVICE_MAINTENANCE');
     return this.serial(async () => {
       const containers = await this.containers();
       let existing = containers.find(item => item.Labels['cardbush.web.tenant'] === key);
+      if (existing && existing.State !== 'running') {
+        const state = await this.status(key);
+        if (state.state === 'failed' && (state.restarts ?? 0) >= 3 &&
+          Date.now() - Date.parse(state.finishedAt ?? '') < 5 * 60_000) throw new WebError(503, state.code || 'SESSION_AGENT_START_FAILED');
+      }
       const name = `${this.config.prefix}-${key.slice(0, 24)}`;
       if (existing && (existing.Image !== this.config.image || existing.Labels['cardbush.credential-store'] !== 'v1'
         || existing.Labels['cardbush.model-origin'] !== (this.config.modelOrigin ?? ''))) {
@@ -89,7 +110,7 @@ export class DockerTenantBroker {
               PidsLimit: 128, Memory: (this.config.memoryMiB ?? 768) * 1024 * 1024, NanoCpus: 1_000_000_000,
               Mounts: [{ Type: 'volume', Source: `${name}-data`, Target: '/data' }],
               Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=128m,mode=1777', '/home/cardbush': 'rw,nosuid,nodev,size=16m,uid=1100,gid=1100' },
-              RestartPolicy: { Name: 'unless-stopped' }, LogConfig: { Type: 'json-file', Config: { 'max-size': '5m', 'max-file': '2' } } },
+              RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 3 }, LogConfig: { Type: 'json-file', Config: { 'max-size': '5m', 'max-file': '2' } } },
           });
           existing = { Id: created.Id, Names: [name], State: 'created', Labels: {} };
         }
@@ -112,6 +133,10 @@ export async function serveTenantBroker(config: BrokerConfig) {
   const broker = new DockerTenantBroker(config);
   const server = createServer((request, response) => { void (async () => {
     if (request.headers.origin !== undefined || !equalSecret(request.headers.authorization ?? '', `Bearer ${config.secret}`)) throw new WebError(401, 'Unauthorized.');
+    const url = new URL(request.url ?? '/', 'http://broker.internal');
+    if (url.pathname === '/status' && request.method === 'GET') {
+      json(response, 200, await broker.status(String(url.searchParams.get('key')))); return;
+    }
     if (request.url !== '/ensure' || request.method !== 'POST') throw new WebError(404, 'Not found.');
     const data = await readJson(request, 200); const result = await broker.ensure(String(data.key)); json(response, 200, result);
   })().catch(error => { json(response, error instanceof WebError ? error.status : 503, { error: error instanceof WebError ? error.message : '会话运行服务暂不可用。' }); request.resume(); }); });

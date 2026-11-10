@@ -4413,6 +4413,16 @@
     "yourFriends.status.failed": "Execution incomplete",
     "yourFriends.latestResult": "Latest result",
     "yourFriends.originalInputs": "Your original input",
-    "yourFriends.noPendingRequests": "Nothing needs your response right now."
+    "yourFriends.noPendingRequests": "Nothing needs your response right now.",
+    "web.sessionStartupTimeout": "Session startup timed out. Your input and existing results have been preserved. Please try again shortly.",
+    "web.sessionStartupFailed": "The conversation service could not start. Your input and existing results have been preserved.",
+    "web.sessionDataLocked": "The conversation directory is still locked. Automatic startup has paused; an administrator can check the service.",
+    "web.sessionMemoryLimit": "The conversation service reached its memory limit. Existing progress has been preserved; please try again shortly.",
+    "web.sessionPolicyNotReady": "The conversation service configuration is not ready. Please contact an administrator.",
+    "web.sessionHistoryChanged": "Conversation history changed. Refresh the conversation before loading earlier messages.",
+    "web.sessionPreparing": "Preparing the conversation service. This takes at most about one minute.",
+    "web.sessionReconnecting": "Reconnecting to the conversation service. Submitted tasks will not be sent again.",
+    "web.sessionMaintenance": "The conversation service is being updated. Submitted tasks will continue; please try again shortly.",
+    "web.sessionHistoryTooLarge": "This conversation entry is too large to preview. Original messages and results have been preserved."
   }
 }

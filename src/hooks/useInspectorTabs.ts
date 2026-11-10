@@ -3,12 +3,12 @@ import type { InspectorHistoryTab, InspectorResourceTab, InspectorTab } from '..
 import { emptyInspectorSessions, inspectorSession, inspectorSessionsReducer, inspectorTabOwner, onInspectorDraftAdopted, onInspectorSessionDeleted, retainedInspectorTabs, type InspectorSessionsAction } from '../features/inspector/inspectorSessions';
 import { useInspectorSessionRef } from '../features/inspector/useInspectorSessionState';
 
-export function useInspectorTabs(workspaceId = 'shared') {
+export function useInspectorTabs(workspaceId = 'shared', page?: string) {
   const [state, dispatch] = useReducer(inspectorSessionsReducer, emptyInspectorSessions);
   const workspace = useInspectorSessionRef(workspaceId, null);
   useLayoutEffect(() => onInspectorDraftAdopted(adoption => dispatch({ type: 'adopt-draft', ...adoption })), []);
   useLayoutEffect(() => onInspectorSessionDeleted((workspaceId, draftId) => dispatch({ type: 'delete-workspace', workspaceId, draftId })), []);
-  const visible = useMemo(() => inspectorSession(state, workspaceId), [state, workspaceId]);
+  const visible = useMemo(() => inspectorSession(state, workspaceId, page), [state, workspaceId, page]);
   // Moving an Electron webview in the DOM destroys its native guest, even with
   // a stable React key. Keep retained pages ordered independently of ownership.
   const allTabs = useMemo(() => retainedInspectorTabs(state).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), [state]);
@@ -24,7 +24,9 @@ export function useInspectorTabs(workspaceId = 'shared') {
     dispatch({ type: 'start-history', tabId, step }), []);
   const activateTab = useCallback((id: string, owner = workspace.workspaceId) => dispatchOwned({ type: 'tabs', workspaceId: owner, action: { type: 'activate', id } }), [workspace, dispatchOwned]);
   const closeTabs = useCallback((ids: ReadonlySet<string>, owner = workspace.workspaceId) => dispatchOwned({ type: 'tabs', workspaceId: owner, action: { type: 'close', ids } }), [workspace, dispatchOwned]);
-  const setOpen = useCallback((update: SetStateAction<boolean>, owner = workspace.workspaceId) => dispatchOwned({ type: 'open-state', workspaceId: owner, update }), [workspace, dispatchOwned]);
+  const setOpen = useCallback((update: SetStateAction<boolean>, owner = workspace.workspaceId) => dispatchOwned({
+    type: 'open-state', workspaceId: owner, page: owner === workspace.workspaceId ? page : undefined, update,
+  }), [workspace, dispatchOwned, page]);
   const toggleLock = useCallback((id: string) => dispatch({ type: 'toggle-lock', id }), []);
   const disposeTabs = useCallback((ids: ReadonlySet<string>) => dispatch({ type: 'dispose', ids }), []);
   const ownerOfTab = useCallback((id: string) => inspectorTabOwner(state, id), [state]);

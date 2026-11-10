@@ -4,6 +4,8 @@ import { useUiLanguage } from '../src/i18n/react';
 import { createFrameStreamBuffers, type FrameStreamCheckpoint } from '../src/features/chatMessages/transcript/frameStreamBuffer';
 import { AttachmentDrafts, Solutions, UploadButton, useAttachments, type Attachment } from './AgentWidgets';
 import { NativeTranscript } from './NativeTranscript';
+import { isSessionServiceFailure, recoverSessionSubmission, sessionServiceError } from './sessionService';
+import { SessionConnectionStatus } from './templates/SessionConnectionStatus.template';
 import { applyTranscriptEvent, writeLiveSegment, type LiveTranscript } from './transcript';
 import { observeConversationReflow } from '../src/features/chat/conversationReflow';
 import { ScrollBottomButton } from '../src/features/chat/ScrollBottomButton';
@@ -93,6 +95,7 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
   const controllers = useRef(new Map<string, AbortController>()), olderRequest = useRef<AbortController | null>(null);
   const [menu, setMenu] = useState<string | null>(null), [edit, setEdit] = useState<{ id: string; title: string } | null>(null), [deleting, setDeleting] = useState<string | null>(null);
   const [live, setLive] = useState<LiveTranscript>({}), [reconnecting, setReconnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState('');
   const [submitting, setSubmitting] = useState<{ sessionId: string; id: string; text: string; attachments: Attachment[] } | null>(null);
   const selectedRef = useRef(selected), mounted = useRef(true), editor = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), atBottom = useRef(true);
   const [scrollBottomRequested, setScrollBottomRequested] = useState(false);
@@ -106,7 +109,8 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
   }, []);
   const upload = useAttachments();
   const [compacting, setCompacting] = useState(false);
-  const pending = useRef<{ text: string; modelId: string; requestId: string; attachments: string[] } | null>(null);
+  const pending = useRef<{ text: string; modelId: string; requestId: string; attachments: string[]; sessionId: string | null } | null>(null);
+  const sending = useRef(false), creationRequest = useRef<string | null>(null);
   type StreamView = { live: LiveTranscript; checkpoint?: FrameStreamCheckpoint; cursors: Map<string, number>; scroll?: number };
   const views = useRef(new Map<string, StreamView>());
   const viewFor = useCallback((id: string) => { let view = views.current.get(id); if (!view) { view = { live: {}, cursors: new Map() }; views.current.set(id, view); } return view; }, []);
@@ -123,7 +127,7 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
       const prior = stateRef.current?.conversation.id === id ? stateRef.current : cache.peek<State>(`state:${id}`);
       const next = mergeConversationPage(prior, page);
       cache.put(`state:${id}`, next, 'state');
-      if (selectedRef.current === id) { setState(next); setLoading(false); }
+      if (selectedRef.current === id) { setState(next); setLoading(false); setConnectionError(''); }
     }).catch(failure => {
       if (controller.signal.aborted) return;
       if (failure instanceof ApiError && failure.status === 404) { cache.removeSession(id); if (selectedRef.current === id) { setSelected(null); setState(null); } }
@@ -140,7 +144,7 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
     });
   }, [cache]);
   useEffect(() => {
-    setCompacting(false); setError(''); setReconnecting(false); atBottom.current = true; setScrollBottomRequested(false);
+    setCompacting(false); setError(''); setConnectionError(''); setReconnecting(false); atBottom.current = true; setScrollBottomRequested(false);
     if (!selected) { setState(null); setLive({}); setLoading(false); return; }
     cache.put('selection', selected, 'selection');
     const view = viewFor(selected), stored = cache.peek<State>(`state:${selected}`), cached = stored?.history ? stored : undefined;
@@ -151,7 +155,7 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
     while (views.current.size > 8) views.current.delete(views.current.keys().next().value!);
     let alive = true;
     void cache.get<State>(`state:${selected}`).then(value => { if (alive && value?.history && cache.valid()) { setState(value); setLoading(false); } });
-    void refresh(selected).catch(failure => { if (alive && cache.valid()) { setError(errorText(failure)); setLoading(false); } });
+    void refresh(selected).catch(failure => { if (alive && cache.valid()) { if (isSessionServiceFailure(failure)) setConnectionError(errorText(failure)); else setError(errorText(failure)); setLoading(false); } });
     return () => { alive = false; controllers.current.get(selected)?.abort(); controllers.current.delete(selected); requests.current.delete(selected); olderRequest.current?.abort(); olderRequest.current = null; setOlderLoading(false); };
   }, [cache, selected, refresh, viewFor]);
   const working = state?.conversation.id === selected ? state.jobs.filter(job => isWorking(job.status)) : [];
@@ -168,7 +172,9 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
       if (!alive || selectedRef.current !== selected) return;
       if (frame.event) lastEventAt = Date.now();
       if (frame.type === 'reconnecting') { setReconnecting(true); return; }
-      setReconnecting(false);
+      if (frame.type === 'error') { setReconnecting(true); setConnectionError(sessionServiceError(frame.error, language)); }
+      else if (frame.type === 'ready' || frame.event) setConnectionError('');
+      if (frame.type !== 'error') setReconnecting(false);
       const event = frame.event;
       if (event) view.cursors.set(turnId, event.sequence);
       if (event && ['tool_queued','tool_running','tool_returned','tool_failed','tool_cancelled'].includes(event.kind)) {
@@ -196,7 +202,11 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
           if (alive && selectedRef.current === selected && prior?.conversation.id === selected &&
             workingIds.split('|').some(id => status.jobs.find(job => job.turnId === id)?.status !== prior.jobs.find(job => job.turnId === id)?.status)) await refresh(selected, true);
         }
-      } catch { /* SSE reconnect and the next status check recover transient failures. */ }
+      } catch (failure) {
+        if (alive && !statusAbort.signal.aborted && isSessionServiceFailure(failure)) {
+          setReconnecting(true); setConnectionError(errorText(failure));
+        }
+      }
       finally { if (alive) poll = setTimeout(check, 12_000 + Math.random() * 3_000); }
     };
     poll = setTimeout(check, 12_000 + Math.random() * 3_000);
@@ -254,16 +264,19 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
     } catch (failure) { if (!controller.signal.aborted) setError(errorText(failure)); }
     finally { if (olderRequest.current === controller) { olderRequest.current = null; setOlderLoading(false); } }
   }
-  const newChat = () => { choose(null); setError(''); editor.current?.focus(); };
+  const newChat = () => { choose(null); pending.current = null; creationRequest.current = null; setError(''); editor.current?.focus(); };
   useEffect(() => { const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') { event.preventDefault(); newChat(); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [newChat]);
   async function send(event?: React.FormEvent) {
-    event?.preventDefault(); const text = draft.trim() || (upload.items.length ? uiText(language)("web.pleaseReviewTheseAttachments") : ''); if (!text || busy || upload.busy) return;
+    event?.preventDefault(); const text = draft.trim() || (upload.items.length ? uiText(language)("web.pleaseReviewTheseAttachments") : ''); if (!text || busy || upload.busy || sending.current) return;
+    sending.current = true;
     const attachments = [...upload.items], startedSelection = selectionRevision.current;
-    const submission = pending.current?.text === text && pending.current.modelId === model && JSON.stringify(pending.current.attachments) === JSON.stringify(attachments.map(item => item.id)) ? pending.current : { text, modelId: model, requestId: requestId(), attachments: attachments.map(item => item.id) };
+    let submission = pending.current?.sessionId === selected && pending.current.text === text && pending.current.modelId === model && JSON.stringify(pending.current.attachments) === JSON.stringify(attachments.map(item => item.id)) ? pending.current : { text, modelId: model, requestId: requestId(), attachments: attachments.map(item => item.id), sessionId: selected };
     setBusy(true); setError(''); let id = selected;
     try {
       if (!id) {
-        const conversation = await api<Conversation>('/sessions', 'POST', { requestId: requestId() });
+        creationRequest.current ??= requestId();
+        const conversation = await api<Conversation>('/sessions', 'POST', { requestId: creationRequest.current });
+        creationRequest.current = null;
         if (!mounted.current || !cache.valid()) return;
         cache.allowSession(conversation.id);
         cache.put(`state:${conversation.id}`, { conversation, jobs: [], snapshot: null, history: { nextCursor: null } }, 'state');
@@ -271,19 +284,23 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
         id = conversation.id;
         if (selectionRevision.current === startedSelection) { selectionRevision.current++; selectedRef.current = id; setSelected(id); }
       }
+      submission.sessionId = id;
+      submission = recoverSessionSubmission(await cache.get(`outbox:${id}`), submission);
+      if (!mounted.current || !cache.valid()) return;
       pending.current = submission;
+      cache.put(`outbox:${id}`, submission, 'state'); await cache.settled();
       setSubmitting({ sessionId: id, id: submission.requestId, text, attachments }); atBottom.current = true;
-      const job = await api<Job>(`/sessions/${id}/messages`, 'POST', submission);
+      const job = await api<Job>(`/sessions/${id}/messages`, 'POST', { text: submission.text, modelId: submission.modelId, requestId: submission.requestId, attachments: submission.attachments });
       if (!mounted.current || !cache.valid()) return;
       versions.current.set(id, (versions.current.get(id) ?? 0) + 1);
       const prior = cache.peek<State>(`state:${id}`);
       if (prior) { const next = { ...prior, jobs: [...prior.jobs.filter(item => item.id !== job.id), { ...job, attachments: job.attachments ?? attachments }] }; cache.put(`state:${id}`, next, 'state'); if (selectedRef.current === id) setState(next); }
-      setSubmitting(null);
+      cache.forget(`outbox:${id}`); setSubmitting(null);
       void refresh(id, true).catch(failure => { if (mounted.current && selectedRef.current === id) setError(errorText(failure)); });
       void refreshList(true).catch(() => {});
       if (!mounted.current || selectedRef.current !== id) return;
       pending.current = null; upload.clear(); setDraft(''); atBottom.current = true;
-    } catch (failure) { if (mounted.current) { setSubmitting(null); setError(errorText(failure)); if (failure instanceof ApiError && failure.message === uiText(language)("web.thisModelIsNotEnabled")) window.dispatchEvent(new Event('cardbush:models-changed')); } } finally { if (mounted.current) { setBusy(false); editor.current?.focus(); } }
+    } catch (failure) { if (mounted.current) { setSubmitting(null); setError(sessionServiceError(failure, language)); if (failure instanceof ApiError && failure.message === uiText(language)("web.thisModelIsNotEnabled")) window.dispatchEvent(new Event('cardbush:models-changed')); } } finally { sending.current = false; if (mounted.current) { setBusy(false); editor.current?.focus(); } }
   }
   async function patch(id: string, value: Record<string, unknown>) {
     try { await api(`/sessions/${id}`, 'PATCH', value); setMenu(null); setEdit(null); await refreshList(true); } catch (failure) { setError(errorText(failure)); }
@@ -312,11 +329,13 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
       {admin ? <Admin currentUserId={identity.user.id}/> : <><div className="conversation-transcript"><div className="transcript message-list" ref={transcript} tabIndex={-1} onScroll={updateScrollPosition}>
         {!selected && <div className="welcome"><div className="welcome-mark"><Sparkles size={26}/></div><span className="eyebrow">{uiText(language)("web.hello", { name: identity.user.display_name })}</span><h1>{uiText(language)("web.whatWouldYouLikeToTalkAboutToday")}</h1><p>{uiText(language)("web.aQuestionSomeInspirationOrAnIdeaYouReStillExploring")}</p><div className="suggestions">{[{ icon: <PenLine size={19}/>, title: uiText(language)("web.refineSomeWriting"), text: uiText(language)("web.iHaveSomeWritingIDLikeYouToHelpOrganizeAnd") }, { icon: <Sparkles size={19}/>, title: uiText(language)("web.findInspiration"), text: uiText(language)("web.letSBrainstormUnderstandMyGoalFirstThenHelpMeExplorePossibilities") }, { icon: <MessageSquare size={19}/>, title: uiText(language)("web.thinkThroughAProblem"), text: uiText(language)("web.iDLikeToDiscussAProblemHelpMeOrganizeMyThoughts") }].map(item => <button key={item.title} onClick={() => { setDraft(item.text); editor.current?.focus(); }}>{item.icon}<span>{item.title}</span><span>↗</span></button>)}</div></div>}
         {loading && <div className="status-line"><span className="loading-dot"/>{uiText(language)("web.openingConversation")}</div>}
-        <div className="message-column">{state?.history?.nextCursor && <button className="load-older-messages" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? uiText(language)("common.loading") : uiText(language)("web.loadEarlierMessages")}</button>}<NativeTranscript state={state} live={live} selected={selected} submitting={submitting} modelName={identity.models.find(item => item.id === model)?.name ?? model} onError={setError} onRetry={text => { setDraft(text); editor.current?.focus(); }}>
+        <div className="message-column">{state?.history?.nextCursor && <button className="load-older-messages" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? uiText(language)("common.loading") : uiText(language)("web.loadEarlierMessages")}</button>}<NativeTranscript state={state} live={live} selected={selected} submitting={submitting} connectionUnavailable={reconnecting || Boolean(connectionError)} modelName={identity.models.find(item => item.id === model)?.name ?? model} onError={setError} onRetry={text => { setDraft(text); editor.current?.focus(); }}>
           {compacting && <div className="status-line"><span className="loading-dot"/>{uiText(language)("web.compactingContextTheConversationWillContinue")}</div>}
           <Solutions items={state?.solutions ?? []} refresh={() => selected ? refresh(selected) : Promise.resolve()}/>
         </NativeTranscript></div>
-      </div><ScrollBottomButton language={language} visible={scrollBottomVisible} onClick={jumpToBottom}/></div><div className="composer-area">{error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label={uiText(language)("chatStatusViews.dismissNotification")} onClick={() => setError('')}><X size={15}/></button></div>}{reconnecting && <div className="status-line">{uiText(language)("web.reconnectingSubmittedConversationsWillContinueProcessing")}</div>}
+      </div><ScrollBottomButton language={language} visible={scrollBottomVisible} onClick={jumpToBottom}/></div><div className="composer-area">{error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label={uiText(language)("chatStatusViews.dismissNotification")} onClick={() => setError('')}><X size={15}/></button></div>}{(loading || reconnecting || connectionError) && <SessionConnectionStatus
+          phase={connectionError ? 'failed' : loading ? 'starting' : 'reconnecting'}
+          message={connectionError || uiText(language)(loading ? 'web.sessionPreparing' : 'web.sessionReconnecting')}/> }
         <form className="composer" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void upload.add(Array.from(event.dataTransfer.files)); }} onSubmit={event => void send(event)}><AttachmentDrafts upload={upload}/><textarea ref={editor} onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); void upload.add(Array.from(event.clipboardData.files)); } }} aria-label={uiText(language)("web.message")} placeholder={uiText(language)("web.shareYourThoughts")} rows={3} value={draft} maxLength={100000} disabled={busy} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}/><div className="composer-bottom"><div><UploadButton upload={upload}/><select aria-label={uiText(language)("modelFormDialog.chooseModel")} value={model} onChange={event => setModel(event.target.value)}>{identity.models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><div>{working.length > 0 && <button className="stop-button" type="button" onClick={() => void stop()}><Square size={12} fill="currentColor"/>{uiText(language)("automationPanel.stop")}</button>}<button className="send-button" aria-label={uiText(language)("keyboardShortcuts.sendMessage")} disabled={(!draft.trim() && !upload.items.length) || busy || upload.busy}>{busy ? <span className="loading-dot"/> : <ArrowUp size={20}/>}</button></div></div></form><div className="composer-note"><span>{uiText(language)("web.enterToSendShiftEnterForANewLine")}</span><span>{uiText(language)("web.poweredBy")}</span></div>
       </div></>}
     </main>

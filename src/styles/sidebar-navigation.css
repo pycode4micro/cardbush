@@ -61,6 +61,14 @@
   inset-inline-start: var(--sidebar-rail-width); width: auto;
 }
 .desktop-shell[data-sidebar-layout].inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
+/* Same mounted tab host (including live webviews), in the main page slot.
+   Only the side panel uses absolute positioning, a divider or a saved width. */
+.desktop-shell[data-page="tabs"] > .main-stage { display: none; }
+.desktop-shell[data-page="tabs"] > .right-inspector {
+  position: relative; inset: auto; flex: 1 1 0; width: auto; max-width: none;
+  border-inline-start: 0; box-shadow: none;
+}
+.desktop-shell[data-page="tabs"] > .right-inspector .right-inspector-content { width: 100%; }
 @media (max-width: 760px) {
   .desktop-shell[data-sidebar-layout="drawer"] > .right-inspector { --side-panel-width: calc(100vw - var(--sidebar-rail-width)); }
 }

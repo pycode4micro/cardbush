@@ -13,6 +13,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { McpActivationStatus } from '${resolve('src/features/chatMessages/McpActivationStatus.tsx').replaceAll('\\', '/')}';
 import { MessageBubble } from '${resolve('src/features/chatMessages/MessageBubble.tsx').replaceAll('\\', '/')}';
+import { publishModelActivity } from '${resolve('src/runtime-client/modelActivity.ts').replaceAll('\\', '/')}';
 import '${resolve('src/styles/theme.css').replaceAll('\\', '/')}';
 import '${resolve('src/styles/app.css').replaceAll('\\', '/')}';
 import '${resolve('src/styles/appearance.css').replaceAll('\\', '/')}';
@@ -63,6 +64,32 @@ window.renderPlan = (reason, status = 'completed', theme = 'theme-dark') => {
    metadata:{stop_reason:reason}}}
    language="zh" sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no}/>
  </div>);
+};
+const clockStart = Date.UTC(2026, 10, 9, 8, 10, 21);
+window.clockEvent = (kind, seconds) => {
+ const time = new Date(clockStart + seconds * 1000).toISOString();
+ const payload = kind === 'turn_terminal' ? {completedAt:time} : {startedAt:time};
+ publishModelActivity({kind,turnId:'clock-turn',payload,createdAt:new Date(clockStart + (seconds + 4) * 1000).toISOString()});
+};
+window.renderClock = (phase, seconds) => {
+ const start = clockStart;
+ window.clockSeconds = seconds;
+ Date.now = () => start + window.clockSeconds * 1000;
+ const active = phase !== 'done';
+ const turnId = phase === 'pending' ? undefined : 'clock-turn';
+ const final = phase === 'final' || phase === 'done';
+ const metadata = turnId ? {} : {optimistic_request_id:'clock-user'};
+ if (final) metadata.transcript_kind = 'assistant_final';
+ if (!active) {
+   metadata.cardbush_turn_started_at = new Date(start).toISOString();
+   metadata.cardbush_turn_completed_at = new Date(start + 28000).toISOString();
+ }
+ const prior = {id:'tool-owner',role:'assistant',turnId,content:'Checking files'};
+ const message = {id:'clock-reply',role:'assistant',turnId,createdAt:new Date(start - 38000).toISOString(),
+   content:final?'Reply':'',status:active?'streaming':'completed',metadata,loopHistory:final?[prior]:undefined};
+ failureRoot.render(<MessageBubble message={message} language="zh" sending={active} activeTurnId={active && turnId || ''}
+   activeAssistantMessageId={active?message.id:''}
+   onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no}/>);
 };
 window.renderFixture(true);
 `;

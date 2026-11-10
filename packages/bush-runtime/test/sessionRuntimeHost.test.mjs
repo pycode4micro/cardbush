@@ -175,6 +175,11 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
     payload: { sessionId: "session_1" },
   });
   assert.equal(snapshot.turns.length, 2);
+  for (const turn of snapshot.turns) {
+    const events = host.events("session_1", turn.turnId);
+    assert.equal(events.find(event => event.kind === "turn_accepted").payload.startedAt, turn.createdAt);
+    assert.equal(events.find(event => event.kind === "turn_terminal").payload.completedAt, turn.completedAt);
+  }
   assert.equal(snapshot.turns[0].usage.inputTokens, 10);
   assert.equal(snapshot.turns[0].usage.lastRequestInputTokens, 10);
   assert.equal(snapshot.turns[1].usage.cachedInputTokens, 10);

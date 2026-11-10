@@ -30,8 +30,29 @@ export function historyPage(snapshot: SessionSnapshot | null, limit: number, bef
     history: { nextCursor: start > 0 ? page[0].turnId : null } };
 }
 
-/** Gateway-only cache: never shared across account keys, bounded by bytes and concurrent reads.
- * The deployed runtime still exposes full snapshots; page them here without migrating tenant runtimes. */
+/** Stop estimating once the cache budget is exceeded; never duplicate an entire
+ * conversation into a JSON string just to decide whether it fits. */
+export function webReadBytes(value: unknown, budget: number): number {
+  let bytes = 0, visited = 0;
+  const stack: unknown[] = [value], seen = new Set<object>();
+  while (stack.length) {
+    const item = stack.pop();
+    if (typeof item === 'string') bytes += Buffer.byteLength(item) * 2 + 16;
+    else if (item && typeof item === 'object') {
+      if (seen.has(item)) continue;
+      seen.add(item); bytes += 64;
+      for (const key of Object.keys(item)) {
+        bytes += Buffer.byteLength(key) * 2 + 16;
+        stack.push((item as Record<string, unknown>)[key]);
+        if (bytes > budget || stack.length > 100_000) return Infinity;
+      }
+    } else bytes += 8;
+    if (bytes > budget || ++visited > 100_000) return Infinity;
+  }
+  return bytes;
+}
+
+/** Account-partitioned cache with bounded retained AND in-flight reads. */
 export class WebReadCache {
   private entries = new Map<string, { value?: unknown; pending?: Promise<unknown>; until: number; bytes: number }>();
   private active = 0;
@@ -39,8 +60,8 @@ export class WebReadCache {
   constructor(private now = () => Date.now(), private budget = 24 * 1024 * 1024) {}
   invalidate(prefix: string) { for (const key of this.entries.keys()) if (key.startsWith(prefix)) this.entries.delete(key); }
   private async run<T>(load: () => Promise<T>) {
-    if (this.active >= 4) {
-      if (this.waiting.length >= 128) throw new WebError(429, '正在加载的会话较多，请稍后重试。');
+    if (this.active >= 2) {
+      if (this.waiting.length >= 32) throw new WebError(429, '正在加载的会话较多，请稍后重试。');
       await new Promise<void>(resolve => this.waiting.push(resolve));
     } else this.active++;
     try { return await load(); }
@@ -54,7 +75,9 @@ export class WebReadCache {
     this.entries.set(key, entry);
     const pending = this.run(load).then(value => {
       if (this.entries.get(key) !== entry) return value;
-      entry.value = value; entry.bytes = Buffer.byteLength(JSON.stringify(value) ?? 'null'); entry.until = this.now() + ttl;
+      const bytes = webReadBytes(value, this.budget);
+      if (!Number.isFinite(bytes)) { this.entries.delete(key); return value; }
+      entry.value = value; entry.bytes = bytes; entry.until = this.now() + ttl;
       let total = [...this.entries.values()].reduce((sum, item) => sum + item.bytes, 0);
       for (const [id, item] of this.entries) {
         if (item.pending && id !== key) continue;

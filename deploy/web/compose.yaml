@@ -8,7 +8,9 @@ services:
     user: "1100:1100"
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    mem_limit: 512m
+    mem_limit: 1g
+    environment:
+      NODE_OPTIONS: --max-old-space-size=640
     pids_limit: 128
     ports:
       - "${CARDBUSH_WEB_BIND:-127.0.0.1:5198}:4880"

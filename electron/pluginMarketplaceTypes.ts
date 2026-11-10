@@ -33,6 +33,7 @@ export interface PluginMarketCatalog {
 }
 
 export interface PluginMarketPreview {
+  logoLarge?: string;
   validation?: 'metadata' | 'complete';
   token: string;
   id: string;

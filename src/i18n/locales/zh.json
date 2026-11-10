@@ -4370,6 +4370,16 @@
     "yourFriends.status.failed": "执行未完成",
     "yourFriends.latestResult": "最近一次结果",
     "yourFriends.originalInputs": "你的原话",
-    "yourFriends.noPendingRequests": "暂时没有需要你回应的事项。"
+    "yourFriends.noPendingRequests": "暂时没有需要你回应的事项。",
+    "web.sessionStartupTimeout": "会话服务启动超时，输入和已有结果已保留，请稍后重试。",
+    "web.sessionStartupFailed": "会话服务暂时无法启动，输入和已有结果已保留。",
+    "web.sessionDataLocked": "会话目录仍被占用，已暂停反复启动，请联系管理员检查。",
+    "web.sessionMemoryLimit": "会话服务内存不足，已有进度已保留，请稍后重试。",
+    "web.sessionPolicyNotReady": "会话服务配置尚未就绪，请联系管理员检查。",
+    "web.sessionHistoryChanged": "会话记录已变化，请刷新会话后再加载较早消息。",
+    "web.sessionPreparing": "正在准备会话服务，通常会在一分钟内给出结果。",
+    "web.sessionReconnecting": "正在重新连接会话服务，已提交的任务不会重复发送。",
+    "web.sessionMaintenance": "会话服务正在更新，已提交任务会继续处理，请稍后重试。",
+    "web.sessionHistoryTooLarge": "这条会话记录过大，暂时无法预览，原始内容和生成结果均已保留。"
   }
 }

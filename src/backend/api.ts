@@ -1657,6 +1657,7 @@ export function cardbushAppsConfigurationFromPayload(
       brandColor: String(value.brandColor ?? ''),
       logoPath: String(value.logoPath ?? ''),
       logoDarkPath: String(value.logoDarkPath ?? ''),
+      logoLargePath: optionalString(value.logoLargePath),
       manifestPath: String(value.manifestPath ?? ''),
       source: value.source === 'user' ? 'user' : 'bundled',
       authentication: value.authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE',

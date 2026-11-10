@@ -7,13 +7,14 @@ RUN npm ci --ignore-scripts && npm run build:agent && npm run build:web:ui
 
 FROM node:24-bookworm-slim AS web
 WORKDIR /opt/cardbush
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini git python3 python3-venv \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini git python3 python3-venv util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1100 --shell /bin/bash cardbush \
     && mkdir -p /data && chown cardbush:cardbush /data
 RUN python3 -m venv /opt/cardbush-python && /opt/cardbush-python/bin/pip install --no-cache-dir 'mcp>=1.28,<2' 'httpx==0.28.1' 'pydantic>=2.13,<3' 'Pillow>=10,<13'
 COPY --from=build /opt/cardbush /opt/cardbush
-RUN chmod 755 bin/cardbush.mjs bin/cardbush-agent.mjs \
+RUN chmod -R a+rX package.json dist-electron dist-web packages node_modules \
+    && chmod 755 bin/cardbush.mjs bin/cardbush-agent.mjs \
     && ln -s /opt/cardbush/bin/cardbush.mjs /usr/local/bin/cardbush \
     && ln -s /opt/cardbush/bin/cardbush-agent.mjs /usr/local/bin/cardbush-agent
 ENV NODE_ENV=production HOME=/home/cardbush

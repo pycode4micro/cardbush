@@ -25,7 +25,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     const refresh = () => {
       const current = ++revision;
       void call<Catalog>('conversation.catalog').then(async catalog => [catalog, await call<{ plugins: CardbushAppPlugin[] }>('product.command', { kind: 'apps.get' })] as const)
-        .then(([catalog, config]) => { if (alive && current === revision) { setError(''); setCatalog({ ...catalog, skills: catalog.skills.map(skill => ({ ...skill, logoPath: '', logoDarkPath: '' })) }); setPlugins(config.plugins.map(plugin => ({ ...plugin, logoPath: '', logoDarkPath: '' }))); } })
+        .then(([catalog, config]) => { if (alive && current === revision) { setError(''); setCatalog({ ...catalog, skills: catalog.skills.map(skill => ({ ...skill, logoPath: '', logoDarkPath: '' })) }); setPlugins(config.plugins.map(plugin => ({ ...plugin, logoPath: '', logoDarkPath: '', logoLargePath: undefined }))); } })
         .catch(error => { if (alive && current === revision) setError(String(error.message ?? error)); });
     };
     const restored = (event: Event) => { if ((event as CustomEvent<string>).detail === connectionId) refresh(); };

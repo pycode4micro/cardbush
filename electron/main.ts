@@ -147,7 +147,7 @@ const cancelRuntimeToolCommand = 'runtime.cancel_tool' as const;
 // BrowserWindow#setIcon is most reliable on Windows when it receives a
 // high-resolution PNG. Keep the multi-resolution ICO for Shell metadata and
 // shortcuts, where Windows explicitly requires an .ico file.
-const logoAssetNames = ['cardbush-logo.png', 'cardbush-logo-backup.png', 'cardbush.ico'];
+const logoAssetNames = ['cardbush-app-icon.png', 'cardbush.ico'];
 const ignoredProjectSearchDirs = new Set([
   '.git',
   '.hg',
@@ -1322,13 +1322,8 @@ function loadCardbushIconWithSource(size: number) {
     }
   }
   return {
-    image: nativeImage.createFromDataURL(
-      'data:image/svg+xml;utf8,' +
-        encodeURIComponent(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#637B61"/><path d="M10 21c6 0 10-4 12-11-7 2-11 6-12 11Z" fill="#F1E6CF"/></svg>',
-        ),
-    ),
-    sourcePath: 'generated-fallback',
+    image: nativeImage.createEmpty(),
+    sourcePath: '',
     candidates,
   };
 }
@@ -1429,7 +1424,7 @@ function applyCardbushWindowIcon(
         execPath: process.execPath,
         appPath: app.getAppPath(),
         sourcePath,
-        sourceExists: sourcePath !== 'generated-fallback' && fs.existsSync(sourcePath),
+        sourceExists: fs.existsSync(sourcePath),
         iconPath: iconPath ?? '',
         iconPathExists: Boolean(iconPath),
         iconSize: icon.getSize(),
@@ -3740,8 +3735,7 @@ app.whenReady().then(async () => {
       execPath: process.execPath,
       appPath: app.getAppPath(),
       sourcePath: startupIcon.sourcePath,
-      sourceExists:
-        startupIcon.sourcePath !== 'generated-fallback' && fs.existsSync(startupIcon.sourcePath),
+      sourceExists: fs.existsSync(startupIcon.sourcePath),
       iconSize: startupIcon.image.getSize(),
       shortcutUpdated,
       nativeBackground: backgroundForMainWindowTheme(lastMainWindowTheme),

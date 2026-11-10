@@ -5,7 +5,7 @@ const path = require('node:path');
 app.whenReady().then(() => {
   if (!process.argv[2]) throw new Error('An MSIX asset output directory is required.');
   const output = path.resolve(process.argv[2]);
-  const source = nativeImage.createFromPath(path.join(__dirname, '../assets/cardbush.ico'));
+  const source = nativeImage.createFromPath(path.join(__dirname, '../assets/cardbush-app-icon.png'));
   if (source.isEmpty()) throw new Error('CardBush icon could not be loaded.');
   fs.mkdirSync(output, { recursive: true });
   for (const [name, width, height] of [

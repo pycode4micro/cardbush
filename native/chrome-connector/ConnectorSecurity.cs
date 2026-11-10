@@ -90,6 +90,12 @@ internal static class ConnectorSecurity
             throw new InvalidDataException("Invalid private IPC pipe.");
         string inheritance = directory ? "OICI" : "";
         string sddl = "D:P(A;" + inheritance + ";FA;;;" + sid + ")(A;" + inheritance + ";FA;;;SY)";
+        RawSecurityDescriptor expected = new RawSecurityDescriptor(sddl);
+        // Reapplying an unchanged inheritable DACL emits change notifications for
+        // every child file on Windows. Config reads would then refresh the catalog,
+        // read the config again, and starve queued chat preparation indefinitely.
+        // Inspect the real ACL on every call so permission drift is still repaired.
+        if (directory && SameProtectedDacl(ReadResourceSecurity(target), expected)) return;
         IntPtr descriptor, dacl; uint size; bool present, defaulted;
         if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out descriptor, out size))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
@@ -101,24 +107,35 @@ internal static class ConnectorSecurity
             if (error != 0) throw new System.ComponentModel.Win32Exception((int)error);
         }
         finally { LocalFree(descriptor); }
-        IntPtr owner, group, sacl;
+        if (!SameProtectedDacl(ReadResourceSecurity(target), expected))
+            throw new InvalidDataException("Unexpected connector access control list.");
+    }
+
+    private static RawSecurityDescriptor ReadResourceSecurity(string target)
+    {
+        IntPtr owner, group, dacl, sacl, descriptor;
         uint readError = GetNamedSecurityInfo(target, 1, 4, out owner, out group, out dacl, out sacl, out descriptor);
         if (readError != 0) throw new System.ComponentModel.Win32Exception((int)readError);
         try
         {
             byte[] bytes = new byte[GetSecurityDescriptorLength(descriptor)];
             Marshal.Copy(descriptor, bytes, 0, bytes.Length);
-            RawSecurityDescriptor actual = new RawSecurityDescriptor(bytes, 0);
-            if (actual.DiscretionaryAcl == null || actual.DiscretionaryAcl.Count != 2)
-                throw new InvalidDataException("Unexpected connector access control list.");
-            foreach (GenericAce entry in actual.DiscretionaryAcl)
-            {
-                CommonAce ace = entry as CommonAce;
-                if (ace == null || ace.AceQualifier != AceQualifier.AccessAllowed ||
-                    (ace.SecurityIdentifier.Value != sid && ace.SecurityIdentifier.Value != "S-1-5-18"))
-                    throw new InvalidDataException("Connector resource grants access to another account.");
-            }
+            return new RawSecurityDescriptor(bytes, 0);
         }
         finally { LocalFree(descriptor); }
+    }
+
+    private static bool SameProtectedDacl(RawSecurityDescriptor actual, RawSecurityDescriptor expected)
+    {
+        if ((actual.ControlFlags & ControlFlags.DiscretionaryAclProtected) == 0 ||
+            actual.DiscretionaryAcl == null || expected.DiscretionaryAcl == null ||
+            actual.DiscretionaryAcl.BinaryLength != expected.DiscretionaryAcl.BinaryLength) return false;
+        byte[] actualBytes = new byte[actual.DiscretionaryAcl.BinaryLength];
+        byte[] expectedBytes = new byte[expected.DiscretionaryAcl.BinaryLength];
+        actual.DiscretionaryAcl.GetBinaryForm(actualBytes, 0);
+        expected.DiscretionaryAcl.GetBinaryForm(expectedBytes, 0);
+        for (int index = 0; index < actualBytes.Length; index++)
+            if (actualBytes[index] != expectedBytes[index]) return false;
+        return true;
     }
 }

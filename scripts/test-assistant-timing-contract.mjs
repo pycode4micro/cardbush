@@ -149,21 +149,6 @@ const projectionSource = fs.readFileSync(
 );
 assert.match(
   projectionSource,
-  /cardbush_turn_started_at\s*=\s*startedAt/,
-  'assistant history should project the Runtime-owned Turn start timestamp',
-);
-assert.match(
-  projectionSource,
-  /cardbush_turn_completed_at\s*=\s*completedAt/,
-  'assistant history should project the Runtime-owned Turn completion timestamp',
-);
-assert.match(
-  projectionSource,
-  /cardbush_turn_duration_ms\s*=\s*durationMs/,
-  'assistant history should derive duration only from committed Runtime timestamps',
-);
-assert.match(
-  projectionSource,
   /runtimeMessageAttachments\(message\.metadata\)/,
   'history projection must restore durable attachment metadata for user bubbles',
 );
@@ -252,6 +237,38 @@ assert.equal(
 );
 assert.equal(projectedLoopTurn[2].metadata.cardbush_turn_duration_ms, 123_000);
 assert.equal(projectedLoopTurn[2].metadata.cardbush_segment_duration_ms, 45_000);
+
+// Replay successive snapshots at each tool boundary. Enqueue, model segment
+// and terminal timestamps intentionally differ from the execution start.
+const at = seconds => new Date(Date.UTC(2026, 10, 9, 8, 10, 21) + seconds * 1000).toISOString();
+const turn = { turnId: 'seven-tools', turnSequence: 1, createdAt: at(0), messages: [] };
+function addRecord(role, seconds) {
+  const messageIndex = turn.messages.length;
+  turn.messages.push({ turnId: turn.turnId, turnSequence: 1, messageIndex, messageId: 'record-' + messageIndex,
+    createdAt: at(seconds), message: { role, content: 'record ' + messageIndex } });
+}
+addRecord('user', -38);
+for (const seconds of [7, 9, 12, 14, 18, 21, 26]) {
+  addRecord('assistant', seconds);
+  const rows = projection.projectRuntimeTurnMessages(turn, 'test-session');
+  const display = projection.normalizeActiveTurnTranscriptForDisplay(projection.normalizeChatMessagesForDisplay(rows), turn.turnId);
+  const active = display.at(-1).metadata;
+  assert.equal(active.cardbush_turn_started_at, at(0), 'every live snapshot retains the same Runtime clock');
+  assert.equal(active.cardbush_turn_completed_at, undefined, 'an intermediate segment cannot settle the turn');
+  assert.equal(active.cardbush_turn_duration_ms, undefined);
+  addRecord('tool', seconds);
+}
+addRecord('assistant', 28);
+const committed = projection.projectRuntimeTurnMessages({ ...turn, completedAt: at(28), status: 'completed' }, 'test-session');
+for (const message of committed.filter(item => item.role === 'assistant')) {
+  assert.equal(message.metadata.cardbush_turn_started_at, at(0));
+  assert.equal(message.metadata.cardbush_turn_completed_at, at(28));
+  assert.equal(message.metadata.cardbush_turn_duration_ms, 28_000);
+}
+const reattaching = projection.ensureBackgroundTurnAssistant({ session: [{
+  id: 'submitted', role: 'user', content: '', turnId: turn.turnId, createdAt: at(-38),
+}] }, 'session', 'reconnected', turn.turnId);
+assert.equal(reattaching.session.at(-1).metadata.cardbush_turn_started_at, undefined, 'reconnect cannot promote submission time to a Runtime start');
 
 // Queue waiting and execution have different clocks, without changing message
 // chronology. Exercise the actual live reducers and committed-history merge.

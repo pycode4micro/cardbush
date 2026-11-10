@@ -537,7 +537,7 @@ async function consumeRuntimeEvents(
           ...(userMessages.length ? { userMessages } : {}),
           ...(storedUser ? { userMessageMetadata: { ...promptContextMetadata(readUserPrompt(storedUser.message.content, storedUser.metadata)),
             ...(storedUser.metadata?.automationReminder ? { automationReminder: storedUser.metadata.automationReminder } : {}) } } : {}),
-          createdAt: event.createdAt,
+          createdAt: event.payload.startedAt ?? event.createdAt,
         });
         request.onEventCursor?.({ eventName: event.kind, eventId: event.eventId, sequence: event.sequence });
         break;

@@ -100,7 +100,19 @@ app.whenReady().then(async () => {
     await until('!!document.querySelector(".task-plan-block")');
     assert.deepEqual(await read('[...document.querySelectorAll(".task-plan-block li.waiting small")].map(el => el.textContent)'),
       [' — 等待用户确认：生成设置', ' — 等待后台任务：生成任务', ' — 等待前置步骤：成片文件'], 'archived plans preserve each waiting cause');
-    console.log('Run status UI passed: stable header and narration across tool states, idle-only MCP verification and cleanup.');
+    await read('window.renderClock("pending", 0)');
+    await until('document.querySelector(".assistant-run-label")?.textContent === "处理中"');
+    await read('window.clockEvent("turn_accepted", 0); window.renderClock("executing", 7)');
+    await until('document.querySelector(".assistant-run-label")?.textContent === "处理中 7s"');
+    await read('window.renderClock("final", 26)');
+    await until('document.querySelector(".assistant-completed-summary span")?.textContent === "处理中 26s"');
+    await read('window.clockSeconds = 27');
+    await until('document.querySelector(".assistant-completed-summary span")?.textContent === "处理中 27s"');
+    await read('window.clockEvent("turn_terminal", 28); window.clockSeconds = 90');
+    await until('document.querySelector(".assistant-completed-summary span")?.textContent === "处理中 28s"');
+    await read('window.renderClock("done", 90)');
+    await until('document.querySelector(".assistant-completed-summary span")?.textContent === "已处理 28s"');
+    console.log('Run status UI passed: stable headers, admission and execution timing, streaming final clock, MCP verification and cleanup.');
     clearTimeout(deadline); window.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); window.destroy(); app.exit(1); }
 });

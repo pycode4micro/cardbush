@@ -43,7 +43,7 @@ test('invalidated in-flight reads cannot repopulate the cache; failures can retr
 test('runtime reads have a global concurrency bound and oversized snapshots are not retained', async () => {
   const cache=new WebReadCache(()=>0,100), wait=deferred(); let active=0,peak=0;
   const work=Array.from({length:20},(_,i)=>cache.get(`owner-${i}`,10,async()=>{active++;peak=Math.max(active,peak);await wait.promise;active--;return i;}));
-  assert.equal(peak,4);wait.resolve();await Promise.all(work);assert.equal(peak,4);
+  assert.equal(peak,2);wait.resolve();await Promise.all(work);assert.equal(peak,2);
   let loads=0;const big=async()=>{loads++;return 'x'.repeat(101);};await cache.get('big',10,big);await cache.get('big',10,big);assert.equal(loads,2);
 });
 test('page merging preserves older history and newer live state, while isolating sessions', () => {

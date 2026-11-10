@@ -74,7 +74,9 @@ export function projectRuntimeTurnMessages(
   const lastAssistantIndex = turn.completedAt ? findLastAssistantIndex(turn.messages) : -1;
   // User messages retain their enqueue time. Only the Runtime Turn's clock
   // measures execution, including when a queued message starts much later.
-  const turnStartedAt = turn.createdAt;
+  const startedAt = turn.createdAt;
+  const completedAt = turn.completedAt;
+  const durationMs = timestampDuration(startedAt, completedAt);
   const guidanceAfterAssistant = new Map<number, RuntimeSessionMessage>();
   let precedingAssistantIndex = -1;
   turn.messages.forEach((message, index) => {
@@ -143,12 +145,8 @@ export function projectRuntimeTurnMessages(
         metadata.cardbush_segment_duration_ms = segmentDurationMs;
       }
 
-      const isFinalAssistant = index === lastAssistantIndex;
-      const startedAt = isFinalAssistant ? turnStartedAt : segmentStart;
-      const completedAt = isFinalAssistant ? turn.completedAt : segmentCompletedAt;
-      const durationMs = timestampDuration(startedAt, completedAt);
       metadata.cardbush_turn_started_at = startedAt;
-      metadata.cardbush_turn_completed_at = completedAt;
+      if (completedAt) metadata.cardbush_turn_completed_at = completedAt;
       if (durationMs != null) {
         metadata.cardbush_turn_duration_ms = durationMs;
       }

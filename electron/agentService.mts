@@ -1,4 +1,5 @@
 import { browserConnectionEnvironment } from './browserEnvironment.js';
+import { acquireAgentDataLock } from './agentDataLock.mjs';
 import { uiText, isDefaultConversationTitle } from '@cardbush/platform/i18n';
 import { AgentWebhooks } from './agentWebhooks.mjs';
 import { prepareWebhookParentModels } from './contextWebhookRuntime.mjs';
@@ -260,20 +261,7 @@ export class AgentService {
     const root = await realpath(options.dataRoot);
     // Refuse to adopt a desktop profile or another application's data silently.
     const file = join(root, 'agent.json');
-    const lockPath = join(root, 'agent.lock');
-    const acquire = () => open(lockPath, 'wx', 0o600);
-    let lock;
-    try { lock = await acquire(); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const owner = Number(await readFile(lockPath, 'utf8'));
-      if (!Number.isSafeInteger(owner) || owner <= 0) throw new Error('Agent lock is invalid; check the service before removing agent.lock.');
-      try { process.kill(owner, 0); throw new Error('Another Agent already owns this data directory.'); }
-      catch (failure) { if ((failure as NodeJS.ErrnoException).code !== 'ESRCH') throw failure; }
-      await rm(lockPath); lock = await acquire();
-    }
-    await lock.writeFile(String(process.pid));
-    const release = async () => { await lock.close(); await rm(lockPath, { force: true }); };
+    const release = await acquireAgentDataLock(root);
     let service: AgentService | undefined;
     let desktop: AgentDesktop | undefined;
     try {
@@ -389,7 +377,7 @@ export class AgentService {
   }
   info(): AgentInfo { return { protocol: 'cardbush.agent.v1', apiVersion: 1, eventStreams: ['sse', 'ndjson'], id: this.#state.id, name: this.#state.name, platform: process.platform,
     ...(this.#desktopSetup ? { desktopSetup: this.#desktopSetup } : {}),
-    capabilities: { ...(this.#toolsEnabled && !this.#webRestricted ? { workerInteraction: { profile: 'subagent-remote-proton' as const, version: '0.1' as const, binding: 'cardbush-http' as const, operations: [...SUBAGENT_INTERACTION_OPERATIONS], permissions: this.#remotePermissionAuthority, permissionRouting: true as const } } : {}), webRemoteAgents: this.#webRestricted, webRestricted: this.#webRestricted, desktop: this.#desktop?.status().available === true, computerUse: this.#desktop?.status().available === true, browserUi: this.#desktop?.status().available === true, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: this.#toolsEnabled, tools: this.#toolsEnabled, delegation: this.#toolsEnabled, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: this.#toolsEnabled, sharedConfigurationVersion: 2, sandboxSettings: this.#toolsEnabled, pluginMarketplace: this.#toolsEnabled } }; }
+    capabilities: { ...(this.#toolsEnabled && !this.#webRestricted ? { workerInteraction: { profile: 'subagent-remote-proton' as const, version: '0.1' as const, binding: 'cardbush-http' as const, operations: [...SUBAGENT_INTERACTION_OPERATIONS], permissions: this.#remotePermissionAuthority, permissionRouting: true as const } } : {}), sessionHistoryPaging: true, webRemoteAgents: this.#webRestricted, webRestricted: this.#webRestricted, desktop: this.#desktop?.status().available === true, computerUse: this.#desktop?.status().available === true, browserUi: this.#desktop?.status().available === true, durableQueue: true, eventReplay: true, projects: true, models: true, plugins: this.#toolsEnabled, tools: this.#toolsEnabled, delegation: this.#toolsEnabled, conversationUi: true, conversationManagement: true, sharedConversation: true, sharedSettings: true, sharedConfiguration: this.#toolsEnabled, sharedConfigurationVersion: 2, sandboxSettings: this.#toolsEnabled, pluginMarketplace: this.#toolsEnabled } }; }
   #present<T extends { sessionId: string; metadata?: Record<string, unknown>; firstUserText?: string; turns?: Array<{ messages: Array<{ message: { role: string; content?: string; visibility?: string; name?: string } }> }> }>(session: T): T {
     const presentation = this.#state.sessions?.[session.sessionId];
     const saved = String(presentation?.title ?? session.metadata?.title ?? '').trim();
@@ -479,14 +467,14 @@ export class AgentService {
     // A deployment policy, never a browser-controlled preference. Even an owner
     // API client cannot enable tools without changing the service startup mode.
     if (!this.#toolsEnabled) {
-      const allowed = ['info', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'chat.send', 'chat.jobs', 'chat.stop', 'chat.events'];
+      const allowed = ['info', 'sessions.list', 'sessions.get', 'sessions.page', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.fork', 'sessions.delete', 'chat.send', 'chat.jobs', 'chat.stop', 'chat.events'];
       if (!allowed.includes(operation) && !(operation === 'product.command' && ['models.get', 'models.update'].includes(String(data.kind)))) throw new Error('Tools and host commands are disabled on this service.');
       if (operation === 'chat.send' && (data.goalObjective || data.files || data.images || data.planEnabled || data.supersession ||
         collectTurnAttachments({ messageId: 'validation', attachments: (data.userMessageMetadata as Record<string, unknown> | undefined)?.attachments }).length)) throw new Error('Only text conversations are enabled on this service.');
       if (operation === 'sessions.create' && data.projectId) throw new Error('Project binding is disabled on this service.');
     }
     if (this.#webRestricted) {
-      const allowed = ['info', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.delete', 'chat.send', 'chat.jobs', 'chat.stop', 'chat.events', 'web.configure', 'web.files', 'web.activity'];
+      const allowed = ['info', 'sessions.list', 'sessions.get', 'sessions.page', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.delete', 'chat.send', 'chat.jobs', 'chat.stop', 'chat.events', 'web.configure', 'web.files', 'web.activity'];
       const safeProduct = operation === 'product.command' && ['models.get', 'models.update'].includes(String(data.kind));
       const safeRuntime = operation === 'runtime.command' && ['runtime.list_solution_selections', 'runtime.answer_solution_selection', 'runtime.list_turn_tool_executions'].includes(String(data.kind));
       if (!allowed.includes(operation) && !safeProduct && !safeRuntime) throw new Error('Operation unavailable in restricted web mode.');
@@ -594,6 +582,12 @@ export class AgentService {
         ? sessionSummarySchema.array().parse(await this.#command('runtime.list_session_summaries')).map(session => this.#present(session))
         : (await this.#command('runtime.list_sessions') as SessionSnapshot[]).map(session => this.#present(session));
       case 'sessions.get': { const snapshot = await this.#command('runtime.get_session', runtimeSessionReadRequestSchema.parse(data)); return snapshot ? this.#present(decodeSessionSnapshot(snapshot)) : null; }
+      case 'sessions.page': {
+        const page = z.object({ sessionId: id, limit: z.number().int().min(1).max(40), before: id.optional(), turnId: id.optional() }).strict().parse(data);
+        const result = await this.#command('runtime.get_session', { sessionId: page.sessionId, messageProjection: 'conversation',
+          webHistory: { limit: page.limit, ...(page.before ? { before: page.before } : {}), ...(page.turnId ? { turnId: page.turnId } : {}) } }) as { snapshot: SessionSnapshot | null; history: { nextCursor: string | null }; committedTurnIds: string[] };
+        return { ...result, snapshot: result.snapshot ? this.#present(decodeSessionSnapshot(result.snapshot)) : null };
+      }
       case 'sessions.create': {
         const key = data.sessionId ? sessionId() : `session-${randomUUID()}`;
         if (await this.#command('runtime.get_session', { sessionId: key })) throw new Error('This conversation ID already exists.');

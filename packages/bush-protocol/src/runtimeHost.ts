@@ -218,6 +218,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("turn_accepted"),
     payload: z.object({
       status: z.literal("accepted"),
+      startedAt: z.string().min(1).optional(),
       // References to authored input facts, never the assembled model context.
       input: z.object({
         turnSequence: z.number().int().positive(),
@@ -499,6 +500,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("turn_terminal"),
     payload: z.object({
+      completedAt: z.string().min(1).optional(),
       status: z.enum([
         "completed",
         "failed",

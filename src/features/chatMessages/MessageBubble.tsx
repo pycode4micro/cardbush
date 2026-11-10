@@ -1,6 +1,6 @@
 import { uiText } from '../../i18n';
 import { useConversationFileSource } from '../conversationFileSource';
-import { modelActivityLabel, subscribeModelActivity } from '../../runtime-client/modelActivity';
+import { modelActivityForTurn, modelActivityLabel, subscribeModelActivity } from '../../runtime-client/modelActivity';
 import { AutomationReminderCard } from '../automations/AutomationReminderCard';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { WorkspaceRevertAvailability } from '../tools/workspaceRevertAvailability';
@@ -1930,44 +1930,48 @@ function hasAssistantProgressSource(
   );
 }
 
-const AssistantRunHeader = memo(function AssistantRunHeader({
-  executions,
-  isActive,
-  message,
-  language,
-}: {
+type AssistantProgressProps = {
   executions: ChatToolExecution[];
   isActive: boolean;
   message: ChatMessage;
   language: AppLanguage;
-}) {
-  const [now, setNow] = useState(() => Date.now());
-  const activity = useSyncExternalStore(subscribeModelActivity, () => isActive ? modelActivityLabel(message.turnId, language) : '', () => '');
+};
 
+const AssistantProgressText = memo(function AssistantProgressText({
+  executions,
+  isActive,
+  message,
+  language,
+}: AssistantProgressProps) {
+  const [, tick] = useState(0);
+  const live = useSyncExternalStore(subscribeModelActivity,
+    () => isActive ? modelActivityForTurn(message.turnId) : undefined, () => undefined);
+  const activity = live ? modelActivityLabel(message.turnId, language) : '';
+  const restoredStart = message.turnId && message.metadata?.cardbush_turn_timing_source !== 'derived_from_transcript'
+    ? assistantExecutionStartedAt(message) : undefined;
+  const startedAt = parseTimestamp(live?.startedAt) ?? restoredStart;
+  const completedAt = parseTimestamp(live?.completedAt) ??
+    (restoredStart == null ? undefined : parseTimestamp(message.metadata?.cardbush_turn_completed_at));
+  const ticking = isActive && startedAt != null && completedAt == null;
   useEffect(() => {
-    if (!isActive) {
-      return undefined;
-    }
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    if (!ticking) return;
+    const timer = window.setInterval(() => tick(value => value + 1), 1000);
     return () => window.clearInterval(timer);
-  }, [isActive]);
+  }, [ticking]);
 
-  const label = assistantProgressLabel({
-    executions,
-    isActive,
-    message,
-    now,
-    language,
-    activity,
-  });
+  const liveElapsedMs = startedAt == null ? null : Math.max(0, (completedAt ?? Date.now()) - startedAt);
+  const elapsedMs = isActive ? liveElapsedMs : assistantTurnElapsedMs(message, executions);
+  return assistantProgressLabel(elapsedMs, isActive, language, activity);
+});
+
+function AssistantRunHeader(props: AssistantProgressProps) {
   return (
-    <div className={`assistant-run-header ${isActive ? 'running' : ''}`}>
-      <span className="assistant-run-label">{label}</span>
+    <div className={`assistant-run-header ${props.isActive ? 'running' : ''}`}>
+      <span className="assistant-run-label"><AssistantProgressText {...props} /></span>
       <div className="assistant-run-divider" />
     </div>
   );
-});
+}
 
 function AssistantCompletedDisclosure({
   message,
@@ -1993,15 +1997,6 @@ function AssistantCompletedDisclosure({
   const blockRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLButtonElement>(null);
-  const activity = useSyncExternalStore(subscribeModelActivity, () => active ? modelActivityLabel(message.turnId, language) : '', () => '');
-  const label = assistantProgressLabel({
-    message,
-    executions,
-    isActive: active,
-    now: Date.now(),
-    language,
-    activity,
-  });
 
   useEffect(() => {
     setExpanded(
@@ -2043,7 +2038,7 @@ function AssistantCompletedDisclosure({
         aria-controls={contentId}
         onClick={toggleExpanded}
       >
-        <span>{label}</span>
+        <span><AssistantProgressText message={message} executions={executions} isActive={active} language={language} /></span>
         <i className="assistant-run-divider" />
         <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
       </button>
@@ -2075,22 +2070,7 @@ function browserStorage() {
   }
 }
 
-function assistantProgressLabel({
-  executions,
-  isActive,
-  message,
-  now,
-  language,
-  activity,
-}: {
-  executions: ChatToolExecution[];
-  isActive: boolean;
-  message: ChatMessage;
-  now: number;
-  language: AppLanguage;
-  activity?: string;
-}) {
-  const elapsedMs = assistantTurnElapsedMs(message, executions, isActive, now);
+function assistantProgressLabel(elapsedMs: number | null, isActive: boolean, language: AppLanguage, activity: string) {
   const duration = formatCompactDuration(elapsedMs);
   if (isActive && activity) return duration ? `${activity} ${duration}` : activity;
   if (isActive) {
@@ -2099,15 +2079,9 @@ function assistantProgressLabel({
   return duration ? uiText(language)('messageBubble.processed_value1', { value1: duration }) : uiText(language)('messageBubble.processed');
 }
 
-function assistantTurnElapsedMs(
-  message: ChatMessage,
-  executions: ChatToolExecution[],
-  isActive: boolean,
-  now: number,
-) {
+function assistantExecutionStartedAt(message: ChatMessage) {
   const metadata = message.metadata ?? {};
-  const persistedDurationMs = assistantDurationFromMetadata(metadata);
-  const explicitStartedAt = [
+  return [
     metadata.cardbush_turn_started_at,
     metadata.cardbushTurnStartedAt,
     metadata.turn_started_at,
@@ -2115,13 +2089,15 @@ function assistantTurnElapsedMs(
     metadata.started_at,
     metadata.startedAt,
   ].map(parseTimestamp).find((value) => value != null);
-  const startedAt = explicitStartedAt ?? earliestTimestamp([
+}
+
+function assistantTurnElapsedMs(message: ChatMessage, executions: ChatToolExecution[]) {
+  const metadata = message.metadata ?? {};
+  const persistedDurationMs = assistantDurationFromMetadata(metadata);
+  const startedAt = assistantExecutionStartedAt(message) ?? earliestTimestamp([
     message.createdAt,
     ...executions.map((execution) => execution.createdAt),
   ]);
-  if (isActive) {
-    return startedAt == null ? null : Math.max(0, now - startedAt);
-  }
   if (persistedDurationMs != null) {
     return persistedDurationMs;
   }

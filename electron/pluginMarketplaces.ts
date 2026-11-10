@@ -10,7 +10,7 @@ import { safePackagePath as safeRelative, withinPackage as within } from './plug
 import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPluginArchive, gitPluginArchiveFile, acquireNpmPlugin, type NpmPluginSource, type AcquisitionCommand } from './pluginAcquisition';
 import type { PluginMarketCatalog, PluginMarketEntry, PluginMarketPreview, PluginMarketSource, PluginMarketInstallProgress, PluginMarketInstallResult } from './pluginMarketplaceTypes';
 import { readMarketMetadata } from './pluginMarketMetadata';
-import { readPluginPresentation } from './pluginPresentation';
+import { readPluginPresentation, largeLogoLimit, previewLargeLogo } from './pluginPresentation';
 import { pluginChild } from './pluginExtensions';
 import { missingPluginVariables } from './pluginEnvironment';
 import { PluginMarketDownloads, MarketplaceRateLimitError, type MarketplaceDownloadRoute } from './pluginMarketDownloads';
@@ -21,6 +21,15 @@ type StoredCatalog = { view: PluginMarketCatalog; entries: Json[]; revision: str
 type Prepared = { sourceId: string; root: string; stage: string; preview: PluginMarketPreview; expiresAt: number;
   download?: ({ kind: 'github'; repo: string } | { kind: 'git'; url: string }) & { path: string; entry: Json } };
 type InstallTask = { controller: AbortController; progress: PluginMarketInstallProgress; promise?: Promise<PluginMarketInstallResult> };
+async function gitPresentationAsset(repository: string, revision: string, path: string, run: AcquisitionCommand, limit: number) {
+  const size = Number((await run('git', ['-C', repository, 'cat-file', '-s', revision + ':' + safeRelative(path)], dirname(repository))).trim());
+  if (!Number.isSafeInteger(size) || size <= 0 || size > limit) throw new Error('Invalid plugin artwork size.');
+  const zip = await JSZip.loadAsync(await gitPluginArchive(repository, revision, path, run));
+  const asset = zip.file('plugin/' + path);
+  if (!asset) throw new Error('Plugin artwork is missing.');
+  return asset.async('nodebuffer');
+}
+
 const reserved = new Set(['computer-use', 'chrome', 'browser-use']);
 const idPattern = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
 const maxExpandedBytes = pluginArchiveLimits.expandedBytes;
@@ -165,10 +174,7 @@ export class PluginMarketplaceService {
           (repository, revision, run) => readPluginPresentation(async file => {
             const path = [origin.path, safeRelative(file)].filter(Boolean).join('/');
             if (file.endsWith('.json')) return Buffer.from(await gitCatalogFile(repository, revision, path, run));
-            const zip = await JSZip.loadAsync(await gitPluginArchive(repository, revision, path, run));
-            const asset = Object.values(zip.files).find(item => !item.dir && item.name.endsWith(`/${path}`));
-            if (!asset) throw new Error('Plugin logo is missing.');
-            return asset.async('nodebuffer');
+            return gitPresentationAsset(repository, revision, path, run, 512 * 1024);
           }), this.options.runAcquisition);
         return { displayName: '', description: '', logo: '', logoDark: '' };
       })();
@@ -194,17 +200,19 @@ export class PluginMarketplaceService {
       const { revision, metadata } = origin.kind === 'github'
         ? await (async () => {
           const revision = origin.sameRepository ? catalog.revision : await this.commit(origin.repo, origin.ref);
-          return { revision, metadata: await readMarketMetadata(file => this.catalogFile(origin.repo, revision, metadataPath(file)), entry) };
+          return { revision, metadata: await readMarketMetadata(file => this.catalogFile(origin.repo, revision, metadataPath(file)), entry,
+            file => this.bytes(rawUrl(origin.repo, revision, metadataPath(file)), largeLogoLimit, 5000, true)) };
         })()
         : await withGitSnapshot(origin.url, origin.sameRepository ? catalog.revision : origin.ref, this.options.dataRoot,
-          async (repository, revision, run) => ({ revision, metadata: await readMarketMetadata(file => gitCatalogFile(repository, revision, metadataPath(file), run), entry) }), this.options.runAcquisition);
+          async (repository, revision, run) => ({ revision, metadata: await readMarketMetadata(file => gitCatalogFile(repository, revision, metadataPath(file), run), entry,
+            file => gitPresentationAsset(repository, revision, metadataPath(file), run, largeLogoLimit)) }), this.options.runAcquisition);
       if (reserved.has(name)) metadata.issues.push({ code: 'reserved', detail: name });
       const installed = await lstat(join(this.options.userPluginRoot, name)).catch(error => { if (missing(error)) return null; throw error; });
       if (installed && (await this.receipt(name))?.sourceId !== sourceId) metadata.issues.push({ code: 'collision', detail: name });
       const token = randomUUID();
       const view: PluginMarketPreview = { ...metadata, token, revision, source: origin.kind === 'github' ? `https://github.com/${origin.repo}` : origin.url, updating: Boolean(installed),
         authentication: object(entry.policy).authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE' };
-      this.prepared.set(token, { sourceId, root: '', stage: '', preview: view, expiresAt: Date.now() + 30 * 60_000,
+      this.prepared.set(token, { sourceId, root: '', stage: '', preview: { ...view, logoLarge: undefined }, expiresAt: Date.now() + 30 * 60_000,
         download: { ...origin, entry } });
       return view;
     }
@@ -244,10 +252,11 @@ export class PluginMarketplaceService {
       const token = randomUUID();
       const view: PluginMarketPreview = { token, id: name, name: plugin.name, description: plugin.longDescription,
         version: plugin.version, developerName: plugin.developerName,
+        logoLarge: plugin.logoLargePath ? await previewLargeLogo(object(manifest.interface).logoLarge, () => readFile(plugin.logoLargePath!)) : undefined,
         source: sourceLabel,
         revision, format, components: plugin.components, requirements, issues, warnings, notes, updating: Boolean(installed), authentication: object(entry.policy).authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE' };
       // The user installs this exact staged snapshot, even if a branch moves after preview.
-      this.prepared.set(token, { sourceId, root, stage, preview: view, expiresAt: Date.now() + 30 * 60_000 });
+      this.prepared.set(token, { sourceId, root, stage, preview: { ...view, logoLarge: undefined }, expiresAt: Date.now() + 30 * 60_000 });
       return view;
     } catch (error) { await this.cleanStage(stage); throw error; }
   }

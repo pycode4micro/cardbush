@@ -49,7 +49,8 @@ assert.match(hook, /latestTurn\?\.turnId === turnId/);
 assert.doesNotMatch(hook, /isRunningSessionTurn/);
 
 assert.match(app, /stopping=\{chat\.stopping\}/);
-assert.match(composer, /正在停止/);
+assert.match(composer, /: stopping\s*\? uiText\(language\)\('guidanceActivity\.stopping'\)/);
+assert.equal(JSON.parse(read('src/i18n/locales/zh.json')).messages['guidanceActivity.stopping'], '正在停止');
 assert.match(composer, /cancelReady && !stopping/);
 assert.doesNotMatch(bubble, /reason: reason \|\| 'user_stop'/);
 assert.doesNotMatch(bubble, /工具记录和文件变更仍保留/);
@@ -68,7 +69,7 @@ assert.match(
 );
 assert.match(
   bubble,
-  /isActiveAssistantTurn \|\| freezeTerminalTranscript\s*\? activeAssistantTranscriptMessages/,
+  /showActiveProcess \|\| freezeTerminalTranscript\s*\? activeAssistantTranscriptMessages/,
   'Terminal transcript segments must render inside one assistant bubble with one action row.',
 );
 assert.match(

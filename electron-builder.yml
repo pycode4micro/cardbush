@@ -33,6 +33,7 @@ files:
   - packages/*/package.json
   - packages/cardbush-document-tools/THIRD_PARTY_NOTICES.md
   - assets/**/*
+  - '!assets/brand/**/*'
   - '!assets/plugins/browser/extension/**/*'
   - '!assets/skills/**/*'
   - '!assets/runtime-tools/**/*'
@@ -100,7 +101,7 @@ nsis:
   license: LICENSE
 linux:
   executableName: cardbush
-  icon: public/cardbush-logo.png
+  icon: assets/cardbush-app-icon.png
   category: Development
   artifactName: CardBush-${version}-linux-${arch}.${ext}
   target:

@@ -61,7 +61,7 @@ assert.match(
   'development taskbar grouping should invalidate stale icon caches when the runtime icon changes',
 );
 assert.match(main, /window\.setIcon\(icon\)/);
-assert.match(main, /const logoAssetNames = \['cardbush-logo\.png', 'cardbush-logo-backup\.png', 'cardbush\.ico'\]/);
+assert.match(main, /const logoAssetNames = \['cardbush-app-icon\.png', 'cardbush\.ico'\]/);
 assert.match(main, /const icon = loadCardbushTrayIcon\(32\)/);
 assert.match(main, /function cropTransparentIconPadding\(image: NativeImage\)/);
 assert.match(main, /const cropped = cropTransparentIconPadding\(image\)/);

@@ -6,6 +6,7 @@ import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, sta
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { resolvePluginManifest, pluginRootForManifest, type ResolvedPluginManifest } from './pluginManifest';
 import { safePackagePath } from './pluginPackagePaths';
+import { localLargeLogo } from './pluginPresentation';
 import { pluginRuntimeFingerprint } from './pluginRuntimeFingerprint';
 import { MissingPluginEnvironmentError, pluginDataDirectory } from './pluginEnvironment';
 
@@ -417,6 +418,7 @@ async function decodeManifest(input: {
     brandColor: string(interfaceMetadata.brandColor) || '#5f8f79',
     logoPath,
     logoDarkPath,
+    logoLargePath: await localLargeLogo(pluginRoot, interfaceMetadata.logoLarge),
     manifestPath,
     source,
     installation,

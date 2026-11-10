@@ -1,4 +1,5 @@
 import { authoredPromptContent } from '@cardbush/bush-protocol';
+import { webSessionHistory } from './webSessionHistory.js';
 import { randomUUID } from "node:crypto";
 import { summarizeSession, type SessionSummary, type SessionHistoryRequest } from '@cardbush/bush-protocol';
 import { turnContextSummaryUpdateSchema, type TurnContextSummaryUpdate } from '@cardbush/bush-protocol';
@@ -92,6 +93,10 @@ export class SessionStore {
   snapshot(sessionId: string): SessionSnapshot | undefined {
     const events = this.#load(sessionId);
     return events.length === 0 ? undefined : projectSession(sessionId, events);
+  }
+
+  webHistoryPage(sessionId: string, input: { limit: number; before?: string; turnId?: string }) {
+    return webSessionHistory(sessionId, this.#load(sessionId), input);
   }
 
   modelContract(sessionId: string): SessionModelContract | undefined {

@@ -59,7 +59,10 @@ export class AccountCache {
   private cleanups = new Set<() => void>();
   constructor(readonly owner: string, private disk: CacheDisk, private guard: () => boolean = () => true, private now = () => Date.now()) {}
   valid() { return this.alive && this.guard(); }
-  private permits(key: string) { return this.valid() && (!key.startsWith('state:') || !this.allowedSessions || this.allowedSessions.has(key.slice(6))); }
+  private permits(key: string) {
+    const sessionId = key.match(/^(?:state|outbox):(.+)$/)?.[1];
+    return this.valid() && (!sessionId || !this.allowedSessions || this.allowedSessions.has(sessionId));
+  }
   private remember(entry: CacheEntry) {
     this.entries.delete(entry.key); this.entries.set(entry.key, entry);
     let size = [...this.entries.values()].reduce((sum, value) => sum + value.bytes, 0);
@@ -98,10 +101,13 @@ export class AccountCache {
   }
   reconcileSessions(ids: string[]) {
     this.allowedSessions = new Set(ids);
-    for (const key of new Set([...this.entries.keys(), ...this.versions.keys()])) if (key.startsWith('state:') && !this.allowedSessions.has(key.slice(6))) this.forget(key);
+    for (const key of new Set([...this.entries.keys(), ...this.versions.keys()])) {
+      const sessionId = key.match(/^(?:state|outbox):(.+)$/)?.[1];
+      if (sessionId && !this.allowedSessions.has(sessionId)) this.forget(key);
+    }
   }
   allowSession(id: string) { this.allowedSessions?.add(id); }
-  removeSession(id: string) { this.allowedSessions?.delete(id); this.forget(`state:${id}`); }
+  removeSession(id: string) { this.allowedSessions?.delete(id); this.forget(`state:${id}`); this.forget(`outbox:${id}`); }
   private enqueue(work: () => Promise<void>) { this.writes = this.writes.then(work).catch(() => {}); }
   settled() { return this.writes; }
   onClose(cleanup: () => void) { this.cleanups.add(cleanup); return () => { this.cleanups.delete(cleanup); }; }

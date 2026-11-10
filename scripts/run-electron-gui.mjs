@@ -93,6 +93,7 @@ export function guiBuildState(projectRoot = path.resolve(import.meta.dirname, '.
     'tsconfig.node.json',
     'vite.config.mts',
     'index.html',
+    'public/cardbush-logo.png',
   ]) {
     const configPath = path.join(projectRoot, configName);
     if (fs.existsSync(configPath)) sources.push(configPath);

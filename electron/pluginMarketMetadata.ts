@@ -1,12 +1,13 @@
 import { readPluginManifestHeader } from './pluginManifest';
 import { safePackagePath } from './pluginPackagePaths';
+import { previewLargeLogo } from './pluginPresentation';
 import { missingPluginVariables } from './pluginEnvironment';
 import type { PluginMarketPreview } from './pluginMarketplaceTypes';
 
 type Json = Record<string, unknown>;
 
 /** A declaration preview is deliberately not a claim that all package files were validated. */
-export async function readMarketMetadata(read: (file: string) => Promise<string>, entry: Json) {
+export async function readMarketMetadata(read: (file: string) => Promise<string>, entry: Json, readImage?: (path: string) => Promise<Buffer>) {
   const files = new Map<string, Promise<Json | null>>();
   const json = (file: string) => {
     const path = safePackagePath(file);
@@ -43,6 +44,7 @@ export async function readMarketMetadata(read: (file: string) => Promise<string>
   }
   const variables = missingPluginVariables(servers);
   return {
+    logoLarge: readImage ? await previewLargeLogo(metadata.logoLarge, readImage) : undefined,
     id: String(entry.name), name: text(metadata.displayName) || String(entry.name),
     description: text(metadata.longDescription ?? metadata.shortDescription ?? manifest.description),
     version: text(manifest.version), developerName: text(metadata.developerName ?? author.name) || 'Unknown',

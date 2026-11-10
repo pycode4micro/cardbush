@@ -23,6 +23,18 @@ const resource = id => ({ id, kind: 'resource', detail: { target: 'https://examp
 const open = (state, workspaceId, id) => reduce(reduce(state, { type: 'tabs', workspaceId, action: { type: 'open', tab: resource(id) } }), { type: 'open-state', workspaceId, update: true });
 const act = (state, workspaceId, action) => reduce(state, { type: 'tabs', workspaceId, action });
 
+test('application splits share retained tabs but open independently of each other and the conversation', () => {
+  const workspaceId = local('one');
+  let state = act(emptyInspectorSessions, workspaceId, { type: 'open', tab: resource('example') });
+  state = reduce(state, { type: 'open-state', workspaceId, page: 'explore', update: true });
+  assert.equal(view(state, workspaceId, 'explore').open, true);
+  assert.equal(view(state, workspaceId, 'plugins').open, false);
+  assert.equal(view(state, workspaceId).open, false);
+  assert.equal(view(state, workspaceId, 'explore').tabs, view(state, workspaceId).tabs);
+  state = act(state, workspaceId, { type: 'close', ids: new Set(['example']) });
+  assert.equal(view(state, workspaceId, 'explore').open, false, 'closing the last guest clears its page splits');
+});
+
 test('closing and binding pages preserve unaffected workspaces, including when locks are visible', () => {
   const ids = [local('first'), local('second'), remote('host', 'first')];
   let state = ids.reduce((current, id, index) => open(current, id, 'tab-' + index), emptyInspectorSessions);

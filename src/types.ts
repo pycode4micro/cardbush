@@ -377,6 +377,7 @@ export interface CardbushAppPlugin {
   brandColor: string;
   logoPath: string;
   logoDarkPath: string;
+  logoLargePath?: string;
   manifestPath: string;
   source: 'bundled' | 'user';
   installation: 'AVAILABLE' | 'INSTALLED_BY_DEFAULT';

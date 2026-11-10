@@ -3133,7 +3133,7 @@ export function useCardbushChat(
             streamStarted = true;
             markSessionRunning(sessionId, start.turnId);
             void refreshGoal(sessionId);
-            const startedAt = start.createdAt ?? new Date().toISOString();
+            const startedAt = start.createdAt;
             setMessagesByConversation((current) => ({
               ...current,
               [sessionId]: (current[sessionId] ?? initialMessages).map((item) =>

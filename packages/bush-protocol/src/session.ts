@@ -272,6 +272,7 @@ export const runtimeSessionIdentitySchema = z.object({
  * and private reasoning payloads from this read without mutating that source.
  */
 export const runtimeSessionReadRequestSchema = runtimeSessionIdentitySchema.extend({
+  webHistory: z.object({ limit: z.number().int().min(1).max(40), before: z.string().min(1).max(160).optional(), turnId: z.string().min(1).max(160).optional() }).strict().optional(),
   messageProjection: z.enum(["full", "conversation"]).default("full"),
   includeActiveTurn: z.boolean().default(false),
   throughTurnId: z.string().min(1).optional(),

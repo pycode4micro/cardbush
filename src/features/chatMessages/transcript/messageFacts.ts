@@ -404,28 +404,29 @@ export function findLastIndex<T>(values: T[], predicate: (value: T) => boolean) 
   return -1;
 }
 
-export function chatTurnStartedAt(
-  messages: ChatMessage[],
-  turnId?: string,
-  fallback?: string,
-) {
+export function runtimeTurnStartedAt(messages: ChatMessage[], turnId?: string) {
   const normalizedTurnId = turnId?.trim() ?? '';
   const matching = normalizedTurnId
     ? messages.filter((message) => chatMessageTurnId(message) === normalizedTurnId)
     : messages;
-  const metadataStartedAt = earliestValidTimestamp(
-    matching.flatMap((message) => [
+  return earliestValidTimestamp(
+    matching.flatMap((message) => message.metadata?.cardbush_turn_timing_source === 'derived_from_transcript' ? [] : [
       message.metadata?.cardbush_turn_started_at,
       message.metadata?.cardbushTurnStartedAt,
       message.metadata?.turn_started_at,
       message.metadata?.turnStartedAt,
     ]),
   );
+}
+
+export function chatTurnStartedAt(messages: ChatMessage[], turnId?: string, fallback?: string) {
   // The user timestamp can precede execution by the entire queue wait.
   // Keep it only as a fallback for legacy transcripts without Runtime timing.
-  return metadataStartedAt ?? earliestValidTimestamp(
-    matching
-      .filter((message) => message.role === 'user' && !isTurnGuidanceMessage(message))
+  const normalizedTurnId = turnId?.trim();
+  return runtimeTurnStartedAt(messages, turnId) ?? earliestValidTimestamp(
+    messages
+      .filter((message) => message.role === 'user' && !isTurnGuidanceMessage(message) &&
+        (!normalizedTurnId || chatMessageTurnId(message) === normalizedTurnId))
       .map((message) => message.createdAt),
   ) ?? earliestValidTimestamp([fallback]);
 }

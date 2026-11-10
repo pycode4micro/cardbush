@@ -498,9 +498,7 @@ function preserveLocalAssistantTimingMetadata(
       : {}),
     cardbush_turn_started_at:
       message.metadata?.cardbush_turn_started_at ??
-      source.metadata?.cardbush_turn_started_at ??
-      source.createdAt ??
-      message.createdAt,
+      source.metadata?.cardbush_turn_started_at,
     cardbush_turn_completed_at:
       message.metadata?.cardbush_turn_completed_at ??
       source.metadata?.cardbush_turn_completed_at,

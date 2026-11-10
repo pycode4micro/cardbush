@@ -1,60 +1,34 @@
-const { app, nativeImage } = require('electron');
-const fs = require('node:fs');
+const fs = require('node:fs/promises');
 const path = require('node:path');
+const sharp = require('sharp');
 
 const projectRoot = path.resolve(__dirname, '..');
-const sourcePath = path.join(projectRoot, 'public', 'cardbush-logo.png');
-const outputPath = path.join(projectRoot, 'assets', 'cardbush.ico');
+const assets = path.join(projectRoot, 'assets');
+const brand = path.join(assets, 'brand');
 const iconSizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
-app.whenReady().then(() => {
-  const source = nativeImage.createFromPath(sourcePath);
-  if (source.isEmpty()) {
-    throw new Error(`Unable to load CardBush logo: ${sourcePath}`);
-  }
-  const cropped = cropTransparentPadding(source);
-  const images = iconSizes.map((size) => ({
-    size,
-    data: cropped.resize({ width: size, height: size, quality: 'best' }).toPNG(),
-  }));
-  fs.writeFileSync(outputPath, buildPngIcon(images));
-  console.log(`Generated ${outputPath} with ${images.length} image sizes.`);
-  app.quit();
-}).catch((error) => {
-  console.error(error);
-  app.exit(1);
-});
+async function generate() {
+  const mark = path.join(brand, 'cardbush-black.svg');
+  const tile = path.join(brand, 'system-icon-tile.svg');
+  await sharp(mark).resize(1024).png().toFile(path.join(projectRoot, 'public/cardbush-logo.png'));
 
-function cropTransparentPadding(image) {
-  const { width, height } = image.getSize();
-  const bitmap = image.toBitmap({ scaleFactor: 1 });
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      if ((bitmap[(y * width + x) * 4 + 3] ?? 0) <= 8) continue;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
+  // OS and browser extension icons share one asset across light and dark surfaces.
+  const foreground = await sharp(mark).resize(884).png().toBuffer();
+  const systemIcon = await sharp(tile).resize(1024).composite([{ input: foreground }]).png().toBuffer();
+  await fs.writeFile(path.join(assets, 'cardbush-app-icon.png'), systemIcon);
+
+  const images = await Promise.all(iconSizes.map(async size => ({
+    size,
+    data: await sharp(systemIcon).resize(size).png().toBuffer(),
+  })));
+  await fs.writeFile(path.join(assets, 'cardbush.ico'), buildPngIcon(images));
+
+  const extensionIcons = path.join(assets, 'plugins/browser/extension/icons');
+  for (const { size, data } of images) {
+    if ([16, 32, 48, 128].includes(size)) {
+      await fs.writeFile(path.join(extensionIcons, `cardbush-${size}.png`), data);
     }
   }
-  if (maxX < minX || maxY < minY) return image;
-  const contentWidth = maxX - minX + 1;
-  const contentHeight = maxY - minY + 1;
-  const safePadding = Math.ceil(Math.max(contentWidth, contentHeight) * 0.06);
-  const side = Math.min(
-    width,
-    height,
-    Math.max(contentWidth, contentHeight) + safePadding * 2,
-  );
-  const centerX = (minX + maxX + 1) / 2;
-  const centerY = (minY + maxY + 1) / 2;
-  const x = Math.max(0, Math.min(width - side, Math.round(centerX - side / 2)));
-  const y = Math.max(0, Math.min(height - side, Math.round(centerY - side / 2)));
-  return image.crop({ x, y, width: side, height: side });
 }
 
 function buildPngIcon(images) {
@@ -78,3 +52,8 @@ function buildPngIcon(images) {
   });
   return Buffer.concat([header, ...images.map(({ data }) => data)]);
 }
+
+generate().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

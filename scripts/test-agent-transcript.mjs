@@ -110,9 +110,10 @@ test('queued parent guidance renders before consumption on both local and remote
   }
 });
 
-test('queued submissions and background replays use execution start on local and remote hosts', async () => {
-  const accepted = event(1, 'turn_accepted', { status: 'accepted' });
-  const terminal = event(9, 'turn_terminal', { status: 'completed', reason: 'complete', details: {} });
+for (const timed of [true, false]) test(`queued submissions and replays use ${timed ? 'committed' : 'legacy event'} timing on local and remote hosts`, async () => {
+  const accepted = event(1, 'turn_accepted', { status: 'accepted', ...(timed ? { startedAt: now } : {}) });
+  const completedAt = new Date(Date.parse(now) + 6000).toISOString();
+  const terminal = event(9, 'turn_terminal', { status: 'completed', reason: 'complete', details: {}, ...(timed ? { completedAt } : {}) });
   const queuedAt = new Date(Date.parse(now) - 140_000).toISOString();
   fixture = { events: [accepted, text(3, 'm1', 'Check timings'), terminal] };
   for (const mode of ['local', 'remote-submit', 'remote-background']) {
@@ -128,6 +129,10 @@ test('queued submissions and background replays use execution start on local and
           ? api.ensureBackgroundTurnAssistant(state, sessionId, 'active', turnId, { createdAt: start.createdAt, startedAt: start.createdAt })
           : api.assignTurnToLocalMessages(state, sessionId, turnId, ['u', 'active'],
             { messageId: '', turnId, createdAt: start.createdAt }, start.userMessageId);
+        if (!start.createdAt) {
+          assert.equal(state.s.find(row => row.id === 'active').metadata?.cardbush_turn_started_at, undefined,
+            'a service job acknowledgement binds the bubble without starting the clock');
+        }
       },
       onDelta: (delta, route) => {
         if (mode === 'remote-background') state = api.ensureBackgroundTurnAssistant(state, sessionId, 'active', turnId, { createdAt: route.createdAt });
@@ -148,10 +153,11 @@ test('queued submissions and background replays use execution start on local and
       assert.equal(starts[0].userMessageId, 'message-job', 'submission acknowledgement is still immediate');
       assert.equal(starts[0].createdAt, undefined, 'queued acknowledgement must not claim an execution start');
     }
-    assert.equal(starts.at(-1).createdAt, accepted.createdAt);
+    const expectedStart = timed ? now : accepted.createdAt;
+    assert.equal(starts.at(-1).createdAt, expectedStart);
     const reply = state.s.filter(message => message.role === 'assistant').at(-1);
-    assert.equal(reply.metadata.cardbush_turn_started_at, accepted.createdAt, mode);
-    assert.equal(reply.metadata.cardbush_turn_duration_ms, 8_000, mode);
+    assert.equal(reply.metadata.cardbush_turn_started_at, expectedStart, mode);
+    assert.equal(reply.metadata.cardbush_turn_duration_ms, timed ? 6_000 : 8_000, mode);
     assert.equal(state.s.find(message => message.role === 'user').createdAt, queuedAt);
   }
 });

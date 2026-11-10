@@ -53,6 +53,7 @@ export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
     // Turn. Time between speaking/receiving words is not processing duration.
     if (message.role !== 'assistant' || message.metadata?.conversation_journal === true) return message;
     const metadata = message.metadata ?? {};
+    if (metadata.optimistic_request_id && !message.turnId) return message;
     const cached = cachedTimingForMessage(cache, message);
     const explicitStartedAt = firstTimestampString([
       metadata.cardbush_turn_started_at,
@@ -74,11 +75,15 @@ export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
       metadata.finished_at,
       metadata.finishedAt,
     ]);
+    const explicitDurationMs = timingDurationMs(metadata);
+    // A Runtime start without a terminal fact is an open clock. Neither a
+    // tool's timestamp nor a cached segment duration can close it.
+    if (explicitStartedAt && !explicitCompletedAt && explicitDurationMs == null &&
+        !['completed', 'failed', 'stopped'].includes(message.status ?? '')) return message;
     const derivedStartedAt = derived.get(groupKeys[index])?.startedAt;
     const derivedCompletedAt = derived.get(groupKeys[index])?.completedAt;
     const startedAt = explicitStartedAt ?? cached?.startedAt ?? derivedStartedAt;
     const completedAt = explicitCompletedAt ?? cached?.completedAt ?? derivedCompletedAt;
-    const explicitDurationMs = timingDurationMs(metadata);
     // Runtime timestamps supersede an older presentation cache that may have
     // measured from enqueue time. A changed start invalidates that duration.
     const cachedStartMatches = !explicitStartedAt || !cached?.startedAt ||

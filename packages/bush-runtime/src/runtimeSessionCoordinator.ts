@@ -73,6 +73,10 @@ export class RuntimeSessionCoordinator {
     return this.#store.snapshot(sessionId);
   }
 
+  webHistoryPage(sessionId: string, input: { limit: number; before?: string; turnId?: string }) {
+    return this.#store.webHistoryPage(sessionId, input);
+  }
+
   modelContract(sessionId: string) { return this.#store.modelContract(sessionId); }
   bindModelContract(sessionId: string, contract: SessionModelContract) { return this.#store.bindModelContract(sessionId, contract); }
 
@@ -345,7 +349,7 @@ export class RuntimeSessionCoordinator {
           turnId: request.turnId,
           turnSequence: checkpoint.turnSequence,
           createdAt: checkpoint.createdAt,
-          completedAt: this.#now(),
+          completedAt: payload.completedAt ?? this.#now(),
           status: payload.status,
           reason: payload.reason,
           ...(payload.reason === 'task_plan_waiting' && planWaiting.success ? { planWaiting: planWaiting.data } : {}),

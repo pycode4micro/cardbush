@@ -1453,6 +1453,7 @@ export class InMemoryRuntimeHost {
       }
       case GET_RUNTIME_SESSION_COMMAND: {
         const input = runtimeSessionReadRequestSchema.parse(command.payload);
+        if (input.webHistory) return this.#sessions.webHistoryPage(input.sessionId, input.webHistory);
         const snapshot = this.#sessions.snapshot(input.sessionId);
         // Read history and the live checkpoint synchronously, before yielding to
         // presentation metadata. A concurrent commit must not duplicate a Turn.
@@ -2301,6 +2302,7 @@ export class InMemoryRuntimeHost {
         kind: "turn_accepted",
         payload: {
           status: "accepted",
+          ...(options.sessionCommit ? { startedAt: options.sessionCommit.createdAt } : {}),
           ...(options.sessionCommit ? { input: {
             turnSequence: options.sessionCommit.turnSequence,
             messages: options.sessionCommit.inputMessages.flatMap((item, messageIndex) =>
@@ -2786,6 +2788,7 @@ export class InMemoryRuntimeHost {
       }
       settleActiveContextCompaction(payload);
       const title = titleResult && await titleResult;
+      if (input.sessionCommit) payload = { ...payload, completedAt: this.#sessionNow() };
       input.onFinalized?.(
         payload,
         generatedMessages,
@@ -4668,6 +4671,7 @@ export class InMemoryRuntimeHost {
       const payload: TurnTerminalPayload = {
         status: "stopped",
         reason: "runtime_restart_interrupted",
+        ...(sessionCommit ? { completedAt: this.#sessionNow() } : {}),
         details: { recoveredAtStartup: true },
       };
       try {

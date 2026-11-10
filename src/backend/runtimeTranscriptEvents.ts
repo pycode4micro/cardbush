@@ -69,7 +69,7 @@ export function terminalSnapshot(
     stopReason: event.payload.reason,
     stopScenario: event.payload.reason,
     stopDetails: event.payload.details,
-    completedAt: event.createdAt,
+    completedAt: event.payload.completedAt ?? event.createdAt,
     terminalEventSequence: event.sequence,
     raw: event,
   };
