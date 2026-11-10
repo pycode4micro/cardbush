@@ -243,6 +243,9 @@ async function run() {
   assert.ok(await read("document.querySelectorAll('[data-nav-section=assistant]').length===1 && document.querySelector('.recent-bar-chat').dataset.navSection==='assistant'"), 'the scene is the only Assistant navigation button');
   assert.deepEqual(await read("Array.from(document.querySelectorAll('.sidebar :is([data-nav-section=chat],[data-nav-section=projects],[data-nav-section=assistant])'), b => b.dataset.navSection)"), ['chat','projects']);
   assert.equal(await read("document.querySelectorAll('.recent-bar button.no-drag').length"), 2, 'home toolbar contains only the Assistant scene and list');
+  const stageActionGap = () => read("document.querySelector('.recent-bar-actions').getBoundingClientRect().left - document.querySelector('.recent-bar-chat').getBoundingClientRect().right");
+  const homeGap = await stageActionGap();
+  assert.ok(homeGap >= 4 && homeGap <= 12, 'the list sits beside the scene on Home even when other actions are absent');
   const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar button.no-drag')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
   assert.ok(await bounds());
   const scenes = [];
@@ -363,6 +366,7 @@ async function run() {
   win.maximize();
   await wait(() => win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window maximized');
   await wait(toolbarFits, 'title and action spacing and stacked rail shortcuts when maximized');
+  assert.ok(await stageActionGap() <= 12, 'maximizing the window does not spread the scene and workspace tools apart');
   win.unmaximize();
   await wait(() => !win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window restored');
   await wait(toolbarFits, 'matching title and icon spacing after restoring the window');
