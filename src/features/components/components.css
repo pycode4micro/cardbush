@@ -22,6 +22,7 @@ body.component-layout-editing iframe { pointer-events: none !important; }
 .html-component-error { padding: 16px; color: var(--text-soft); }
 @container (max-width:540px) { .html-component-card { grid-column: span 12; } }
 .components-app.home-components { height:auto; overflow:visible; padding:0; }
+.component-preview { position:fixed; inset:0; background:var(--surface); }
 .components-app > header :is(h1, h2) { margin:0; font-size:18px; }
 .components-app svg { width:16px; height:16px; }
 .home-component-picker { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }

@@ -5,37 +5,44 @@ module.exports = async ({ read, until, fill, click, pause, win }) => {
   const bubbles = text => `Array.from(document.querySelectorAll('.assistant-messages .assistant-message-user p')).filter(node=>node.textContent===${JSON.stringify(text)})`;
   await until(`!document.querySelector('${input}').readOnly`);
   // Use enough history to reach the bottom of a genuinely scrollable transcript.
-  await read(`fixture.entries.push(...Array.from({length:18},(_,i)=>({id:'history-'+i,role:'assistant',source:'page',
+  await read(`fixture.entries.push(...Array.from({length:18},(_,i)=>({id:'history-'+i,role:i===16?'user':'assistant',source:'page',
     content:'Earlier reply '+i,createdAt:new Date(Date.now()+i).toISOString(),visibility:'conversation'})));void 0`);
   await until('document.querySelector("[data-message-id=history-17]")');
   const tailGap = selector => read(`document.querySelector('.assistant-composer-dock .composer-stack').getBoundingClientRect().top -
     document.querySelector(${JSON.stringify('.assistant-messages ' + selector)}).getBoundingClientRect().bottom`);
-  const compactGap = async selector => {
-    const gap = await tailGap(selector);
-    assert.ok(gap >= 8 && gap <= 16, 'visible gap from ' + selector + ' to composer: ' + gap);
+  const checkTailGap = async selector => {
+    const betweenBubbles = await read(`document.querySelector('[data-message-id=history-17] .assistant-text-bubble').getBoundingClientRect().top -
+      document.querySelector('[data-message-id=history-16] .assistant-text-bubble').getBoundingClientRect().bottom`);
+    const beforeComposer = await tailGap(selector);
+    assert.ok(betweenBubbles > 0 && Math.abs(betweenBubbles - beforeComposer) <= 1,
+      `expected the same spacing between bubbles (${betweenBubbles}px) and before the composer (${beforeComposer}px) for ${selector}`);
   };
   await pause(450);
-  await compactGap('[data-message-id=history-17] .assistant-text-bubble');
+  await checkTailGap('[data-message-id=history-17] .assistant-text-bubble');
   await read('fixture.holdPrepare=true;void 0');
   await fill(input, '立即发送到上方');
   await read(`document.querySelector('${input}').focus();void 0`);
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Enter'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Enter'});
   await until('typeof fixture.releasePrepare==="function"');
+  assert.equal(await read("document.querySelector('.assistant-message-delivery')?.textContent.trim()"),'准备消息中…');
   assert.equal(await read(`document.querySelector('${input}').value`), '', 'clear the submitted draft before configuration/admission finishes');
   assert.equal(await read(bubbles('立即发送到上方')+'.length'), 1, 'show the user message before waiting for the backend');
   assert.equal(await read(`document.querySelector('${input}').readOnly`), false, 'the next draft remains editable');
   assert.equal(await read(`document.querySelector('${send}').disabled`), true, 'pending submission cannot repeat');
   await pause(450);
-  await compactGap('.assistant-typing-bubble');
+  await checkTailGap('.assistant-typing-bubble');
   const userY = () => read(`Array.from(document.querySelectorAll('.assistant-messages .assistant-message-user')).at(-1).getBoundingClientRect().top`);
   const pendingY = await userY();
   await read('fixture.busy=true;void 0');
   await fill(input, '下一条仍在编辑');
-  await read('fixture.holdPrepare=false;fixture.holdReceipt=true;fixture.releasePrepare();void 0');
+  await read('fixture.holdPrepare=false;fixture.holdSend=true;fixture.holdReceipt=true;fixture.releasePrepare();void 0');
+  await until("document.querySelector('.assistant-message-delivery')?.textContent.trim()==='发送中…'");
+  await read('fixture.holdSend=false;fixture.releaseSend();fixture.releaseSend=null;void 0');
   await until('typeof fixture.releaseReceipt==="function"');await pause(1100);
   assert.equal(await read(bubbles('立即发送到上方')+'.length'), 1, 'polling reconciles the same optimistic message');
+  assert.equal(await read("!!document.querySelector('.assistant-message-delivery')"), false, 'a stored input is delivered even while the IPC receipt is delayed');
   assert.ok(Math.abs(await userY() - pendingY) < 1, 'journal acknowledgement keeps the submitted bubble in place');
-  await compactGap('.assistant-typing-bubble');
+  await checkTailGap('.assistant-typing-bubble');
   await read('fixture.holdReceipt=false;fixture.releaseReceipt();void 0');
   await until(`!document.querySelector('${send}').disabled`);
   assert.equal(await read(`document.querySelector('${input}').value`), '下一条仍在编辑');
@@ -43,7 +50,7 @@ module.exports = async ({ read, until, fill, click, pause, win }) => {
     createdAt:new Date().toISOString(),visibility:'conversation'});void 0`);
   await until('document.querySelector("[data-message-id=submission-reply]") && !document.querySelector(".assistant-messages .assistant-typing-bubble")');
   await pause(450);
-  await compactGap('[data-message-id=submission-reply] .assistant-text-bubble');
+  await checkTailGap('[data-message-id=submission-reply] .assistant-text-bubble');
   await fill(input, '发送失败可恢复'); await read('fixture.holdSend=true;fixture.failSend=true;void 0');
   await click(send);await until('typeof fixture.releaseSend==="function"');
   assert.equal(await read(`document.querySelector('${input}').value`),'');

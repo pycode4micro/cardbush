@@ -4,8 +4,6 @@ import { assistantProfileSchema, type AssistantProfile } from '@cardbush/bush-pr
 
 const key = 'cardbush_personal_assistant_v1';
 const listeners = new Set<() => void>();
-let working = false;
-export function setAssistantWorking(value: boolean) { if (working === value) return; working = value; listeners.forEach(listener => listener()); }
 function profileStorageChanged(event: StorageEvent) {
   if (event.key && event.key !== key) return;
   profile = undefined;
@@ -19,7 +17,6 @@ function subscribe(listener: () => void) {
     if (!listeners.size) window.removeEventListener('storage', profileStorageChanged);
   };
 }
-export const useAssistantWorking = () => useSyncExternalStore(subscribe, () => working);
 let profile: AssistantProfile | undefined;
 export function readAssistantProfile(): AssistantProfile {
   if (!profile) {

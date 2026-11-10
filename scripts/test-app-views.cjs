@@ -67,7 +67,7 @@ async function buildViews() {
   const { build } = await import('vite');
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
-  const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx', 'src/features/chat/QuickContextRail.tsx',
+  const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx', 'src/features/sidebar/WorkspaceChatNavigation.tsx', 'src/features/chat/QuickContextRail.tsx',
     'src/features/pre_test/QuickContextPreTest.tsx',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'terminal-task' ? ['src/features/tools/TerminalTaskStatus.tsx'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'runtime-readiness' ? [

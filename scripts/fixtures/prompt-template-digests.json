@@ -11,7 +11,7 @@
     "slots": [
       "reportDeliveryInstructions"
     ],
-    "sha256": "a79a679db9d03308aa91c58e0684a78d9538b95d7d70820e032b352ce4553f6b"
+    "sha256": "d79db3d0eacd7f2a97e95e053d5b85ebdcc15b77803e724c5617ddd5ce67fa02"
   },
   {
     "name": "root-agent-system-prompt",
@@ -21,7 +21,7 @@
       "finalResponseSignalInstructions",
       "localDeliverableInstructions"
     ],
-    "sha256": "74bcbe480ae01a797fd1a61e9138acc6bc450a6cd1890d8aab631f8844a8c3ac"
+    "sha256": "4063a6e7027c903cd49dd26ef203c6459f09d79762c24ffcaa44a18582bd99d4"
   },
   {
     "name": "goal-continuation-prompt",
@@ -34,9 +34,16 @@
     "sha256": "5f5caa43f85970dad2083f70ee11bc878d29da4de7e4403c9708e391be193061"
   },
   {
-    "name": "report-delivery-instructions",
+    "name": "report-conversation-policy",
     "slots": [],
-    "sha256": "23e1f5be84a01dbfd022f3e4316ca687d7e647b6862aa43baf8ccb1ab07e6732"
+    "sha256": "8e6060c791fd094493200ccdba8157731f64bb4bd2c4144edd2c02cd513fdd9c"
+  },
+  {
+    "name": "report-delivery-instructions",
+    "slots": [
+      "reportConversationPolicy"
+    ],
+    "sha256": "f22e2e7804ddd1118604887937be842afad2086e5905faf4a254b5a8f889e0e5"
   },
   {
     "name": "task-continuation-instructions",
@@ -76,7 +83,7 @@
       "host",
       "eventPolicy"
     ],
-    "sha256": "ae10c935f89656bca0e8e80d08a02176318768694d6541dad45dfc6b86225d5b"
+    "sha256": "d62f9048d89efb708be71eac6ea0717d4381163c4cb3224d30943577aaa18c5f"
   },
   {
     "name": "assistant-events-enabled",
@@ -96,7 +103,7 @@
   {
     "name": "assistant-report",
     "slots": [],
-    "sha256": "90b302ccc7592c90238f819d01d22737e119075d57d05fbd6dc1d2187bfaad6b"
+    "sha256": "bc21ea51d65ea87af6895cfa322d2e2aad6c05ba14e467dfce80b3929807e15a"
   },
   {
     "name": "assistant-execution",
@@ -185,8 +192,10 @@
   },
   {
     "name": "realtime-execution-instructions",
-    "slots": [],
-    "sha256": "52aef65206dee815c0a88085a55d9e9760d3d0d22455689e3c531d009c2bbd86"
+    "slots": [
+      "reportConversationPolicy"
+    ],
+    "sha256": "9cc474e5834955ba5a9b58f7b8b41c235bce7ef86705e88f7e785f6e34e488d1"
   },
   {
     "name": "subagent-name-description",
@@ -200,8 +209,10 @@
   },
   {
     "name": "friends-system",
-    "slots": [],
-    "sha256": "816f5854a69c613619fc28c2762d84df8b7482399d16e1b99d5ae625108ef107"
+    "slots": [
+      "reportConversationPolicy"
+    ],
+    "sha256": "c20dfff8055d99d8b205394f3e4364fee0ed1467ad1240ac8bfdd795e28094ef"
   },
   {
     "name": "friends-startup",

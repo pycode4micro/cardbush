@@ -12,6 +12,7 @@ export interface AssistantManagementSnapshot {
 
 export const ASSISTANT_CONVERSATION_COMMAND = 'runtime.assistant_conversation' as const;
 export const PERSONAL_ASSISTANT_SESSION = 'personal-assistant' as const;
+export type AssistantWorkActivity = 'idle' | 'thinking' | 'working' | 'waiting' | 'retrying' | 'error';
 export const ASSISTANT_REACTIONS = ['❤️', '👍', '👎', '‼️', '😂', '✅', '🎉', '🙏', '🤔', '👀', '🚀', '😮'] as const;
 export const assistantReactionSchema = z.enum(ASSISTANT_REACTIONS);
 export type AssistantReaction = z.infer<typeof assistantReactionSchema>;
@@ -56,6 +57,7 @@ export const assistantProfileSchema = z.object({
 }).strict();
 export type AssistantProfile = z.infer<typeof assistantProfileSchema>;
 export const assistantConversationRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('activity'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION) }).strict(),
   z.object({ action: z.literal('read'), sessionId: z.string().min(1), after: z.number().int().nonnegative().default(0), language: z.string().max(80).optional() }).strict(),
   z.object({ action: z.literal('reset'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION) }).strict(),
   z.object({ action: z.literal('react'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION), messageId: z.string().min(1).max(220),
@@ -67,8 +69,3 @@ export const assistantConversationRequestSchema = z.discriminatedUnion('action',
   z.object({ action: z.literal('turn'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION),
     entry: conversationEntrySchema, parent: runtimeSessionTurnRequestSchema, profile: assistantProfileSchema, generation: z.number().int().nonnegative().optional() }).strict(),
 ]);
-export const assistantPageTool = {
-  name: 'page_write', description: 'Publish a useful Markdown message to this assistant conversation. Spoken replies are not automatically shown here. Use for requested written answers, links, examples and task results worth keeping. Only writes to the current conversation; returns immediately. Never publish internal reasoning or tool logs.',
-  inputSchema: { type: 'object', additionalProperties: false, required: ['content'], properties: { content: { type: 'string', minLength: 1, maxLength: 64000 } } },
-};
-export const assistantPageInputSchema = z.object({ content: z.string().trim().min(1).max(64000) }).strict();

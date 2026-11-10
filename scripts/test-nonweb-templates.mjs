@@ -28,7 +28,9 @@ test('model policies match reviewed text, slots and CommonJS packaging', async (
 });
 
 test('Friends starts from recognition and learns gradually without making habits or model polling prerequisites', () => {
-  const policy = renderPromptTemplate('friends-system');
+  const reportConversationPolicy = renderPromptTemplate('report-conversation-policy');
+  const policy = renderPromptTemplate('friends-system', { reportConversationPolicy });
+  assert.ok(policy.includes(reportConversationPolicy));
   assert.match(policy, /not a prerequisite for starting/);
   assert.match(policy, /without waiting for the user to type a task/);
   assert.match(policy, /habitRefs may be empty/);

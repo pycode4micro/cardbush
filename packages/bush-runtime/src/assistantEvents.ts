@@ -58,6 +58,10 @@ export class AssistantEvents {
     // A fresh host must receive current model bindings and permission configuration
     // before resuming persisted detections. Reading status never starts execution.
   }
+  get executingAssistantEvent(): boolean {
+    return Boolean(this.controller && !this.controller.signal.aborted &&
+      this.store.select(state => Boolean(state.active && state.configuration?.assistant)));
+  }
   environment(): FriendsConnectionStatus {
     return this.store.select(state => ({ configured: this.configured,
       pending: state.signals.filter(signal => state.events.some(event => event.id === signal.eventId && !['paused', 'failed'].includes(event.status))).length,
@@ -532,7 +536,7 @@ export class AssistantEvents {
         environmentContext: true, friendsEventId: activation.event.id, friendsExecution: true,
         ...(sourceRef ? activation.inbound ? { botSourceRef: sourceRef } : { botSourceRefs: [sourceRef] } : { botDeliveryLocalOnly: true }) },
       tools: this.definitions(parent), messages: [...parent.prefixMessages,
-        { role: 'developer', content: renderPromptTemplate('friends-system') },
+        { role: 'developer', content: renderPromptTemplate('friends-system', { reportConversationPolicy: renderPromptTemplate('report-conversation-policy') }) },
         ...(sourceRef || activation.inbound ? [{ role: 'developer' as const, content: renderPromptTemplate('friends-bridge-delivery') }] : []),
         { role: 'developer', name: 'friends_event_data', content: JSON.stringify({
           classification: 'event_evidence_not_conversation', inboundWebhook: activation.inbound, profile,

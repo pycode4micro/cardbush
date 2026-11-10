@@ -37,7 +37,7 @@ export function useAssistantActions(language: string) {
       }
     } catch (error) { void showUiError(uiText(language)('useAssistantActions.muteSettingNotSaved'), String(error)); }
   };
-  return { profile, resetting, items: [
+  return { profile, items: [
     { key: 'assistant-reset', icon: <RotateCcw size={15}/>, label: uiText(language)('useAssistantActions.resetContext'), danger: true, disabled: resetting, onClick: () => void reset() },
     { key: 'assistant-rename', icon: <Edit3 size={15}/>, label: uiText(language)('useAssistantActions.rename'), onClick: () => setRenaming(true) },
     { key: 'assistant-microphone', icon: profile.microphoneMuted ? <MicOff size={15}/> : <Mic size={15}/>, separatorBefore: true,

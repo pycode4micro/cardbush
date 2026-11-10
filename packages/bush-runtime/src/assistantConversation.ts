@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalTaskInput, conversationalSubagentTools,
-  savedNextStepPrediction, type ConversationEntry,
+  savedNextStepPrediction, type ConversationEntry, type AssistantWorkActivity,
   individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition, type TeamRun } from '@cardbush/bush-protocol';
 import { executeBufferedModelRound, type BufferedModelRetryStatus } from './bufferedModelRetry.js';
 import type { ModelProvider } from './modelProvider.js';
@@ -27,7 +27,6 @@ import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 
-const conversationalTools: ToolDefinition[] = [assistantPageTool, ...conversationalSubagentTools];
 const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source) && !entry.id.startsWith('memory-');
 
 function quotedMessageContext(entry: ConversationEntry, entries: ConversationEntry[]) {
@@ -71,6 +70,7 @@ export class AssistantConversation {
   private retry?: BufferedModelRetryStatus;
   private stopped = false;
   private controller?: AbortController;
+  private executingTools?: AbortSignal;
   private timer?: ReturnType<typeof setTimeout>;
   private configured?: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile };
   private retryRequested = false;
@@ -83,6 +83,7 @@ export class AssistantConversation {
     provider: ModelProvider; checkpoint: () => ToolDefinition;
     exists(id: string): boolean;
     tasks(id: string): SubagentTask[];
+    runningTaskCount?(id: string): number;
     delegate(input: unknown): Promise<unknown>;
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
@@ -90,6 +91,7 @@ export class AssistantConversation {
     agents?: AgentExecutionRegistry;
     management?: AssistantManagement;
     eventNeedsResponse?: () => boolean;
+    eventRunning?: () => boolean;
     observeOutcome?: (observation: PredicateObservation, identity: string) => void;
     eventPreferences?: () => AssistantProfile['proactive'];
     prepareParent?: (parent: RuntimeSessionTurnRequest, signal: AbortSignal) => Promise<RuntimeSessionTurnRequest>;
@@ -97,8 +99,21 @@ export class AssistantConversation {
     botContext?: (sourceRef: string | undefined, signal: AbortSignal) => Promise<BotContext>;
     wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   }) {}
+  private runningTasks(sessionId: string) {
+    return this.deps.runningTaskCount?.(sessionId) ?? this.deps.tasks(sessionId).filter(task => task.status === 'running').length;
+  }
+  private activity(workingTasks: number, eventNeedsResponse: boolean): AssistantWorkActivity {
+    if (eventNeedsResponse || this.deps.management?.awaitingPermission) return 'waiting';
+    if (this.retry) return 'retrying';
+    if (this.busy && !this.paused) return this.executingTools === this.controller?.signal ? 'working' : 'thinking';
+    if (workingTasks || this.deps.eventRunning?.()) return 'working';
+    return this.error && !this.paused ? 'error' : 'idle';
+  }
   command(value: unknown) {
     const input = assistantConversationRequestSchema.parse(value);
+    if (input.action === 'activity') {
+      return { activity: this.activity(this.runningTasks(input.sessionId), this.deps.eventNeedsResponse?.() === true) };
+    }
     const language = resolveUiLanguage(('language' in input ? input.language : undefined) ?? ('parent' in input ? input.parent.metadata.uiLanguage : this.configured?.parent.metadata.uiLanguage));
     if (!this.deps.exists(input.sessionId)) throw new RuntimeUiError('assistantRuntime.missing', undefined, language);
     if (input.action === 'read') {
@@ -108,12 +123,15 @@ export class AssistantConversation {
       const error = retained || (!this.stopped && !this.configured && unanswered ? uiText(language)('assistantRuntime.unfinished') : '');
       const nextStepPrediction = input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && !error
         ? this.nextStepPrediction(input.sessionId, entries) : undefined;
+      const workingTasks = this.runningTasks(input.sessionId);
+      const eventNeedsResponse = input.sessionId === PERSONAL_ASSISTANT_SESSION && this.deps.eventNeedsResponse?.() === true;
       return { entries: entries.slice(input.after), cursor: entries.length, generation: this.generation,
         reactions: this.journal.readReactions(input.sessionId),
-        eventNeedsResponse: input.sessionId === PERSONAL_ASSISTANT_SESSION && this.deps.eventNeedsResponse?.() === true,
+        eventNeedsResponse,
+        ...(input.sessionId === PERSONAL_ASSISTANT_SESSION ? { activity: this.activity(workingTasks, eventNeedsResponse) } : {}),
         ...(input.sessionId === PERSONAL_ASSISTANT_SESSION && this.deps.management ? { management: this.deps.management.snapshot() } : {}),
         ...(nextStepPrediction ? { nextStepPrediction } : {}),
-        workingTasks: this.deps.tasks(input.sessionId).filter(task => task.status === 'running').length,
+        workingTasks,
         busy: input.sessionId === PERSONAL_ASSISTANT_SESSION && this.busy, error: input.sessionId === PERSONAL_ASSISTANT_SESSION ? error : '',
         canRetry: input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && Boolean(error) && entries.some(entry => entry.role === 'user' && ['text', 'voice'].includes(entry.source)),
         retry: input.sessionId === PERSONAL_ASSISTANT_SESSION ? this.retry ?? null : null };
@@ -202,9 +220,10 @@ export class AssistantConversation {
     const id = PERSONAL_ASSISTANT_SESSION;
     const memoryTools = this.deps.memory?.definitions() ?? [];
     const managementTools = this.deps.management?.definitions(parent) ?? [];
-    const nativeTools = !profile.targetAgent && parent.metadata.assistantOutputMode !== 'voice'
+    const spoken = parent.metadata.assistantOutputMode === 'voice';
+    const nativeTools = !profile.targetAgent && !spoken
       ? (this.deps.delegationTools?.() ?? []).filter(tool => parent.tools.some(allowed => allowed.name === tool.name)) : [];
-    const tools = [...conversationalTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...nativeTools, ...memoryTools, ...managementTools];
+    const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...nativeTools, ...memoryTools, ...managementTools];
     const entries = this.journal.read(id);
     const history = this.journal.modelHistory(id);
     // Migrate the old visible-only journal once. Missing historical tool exchanges
@@ -269,6 +288,9 @@ export class AssistantConversation {
     parent.metadata.assistantUserRequest = Boolean(authored || (retryRequested && !remaining.length && handledInputs.some(isAuthoredInput)));
     const completion = handledInputs.length === 1 && handledInputs[0].source === 'task' ? handledInputs[0] : undefined;
     const brief = completion ? delegatedRequestContext(evidence, entries) : undefined;
+    // A verification task can return to the same assignment. Reuse the latest
+    // retained brief unless the originating input or later corrections changed.
+    const previousBrief = brief && prior.slice().reverse().find(item => item.role === 'user' && item.name === 'delegated_user_request');
     if (authored && authored.originTurnId !== parent.turnId) {
       parent.inputMessages = evidence.map(item => ({ messageId: item.id, message: { role: 'user', content: promptModelContent({ text: item.content, context: item.promptContext }) } }));
     }
@@ -290,7 +312,7 @@ export class AssistantConversation {
     const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).flatMap((item): ModelMessage[] => item.role === 'assistant' ? [{ role: 'assistant', content: item.eventId ? JSON.stringify({ eventId: item.eventId, result: item.content }) : item.content, toolCalls: [] }] : [{
         role: 'user', name: 'turn_runtime_context', visibility: 'internal',
         content: createTurnTimeContext({ createdAt: item.createdAt }) + (this.deps.environment ? '\nMessage source (routing data): ' + JSON.stringify({ sourceRefs: sourceRefs(item).map(ref => ref ?? null) }) : ''),
-      }, ...(item === completion && brief ? [brief] : []), ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
+      }, ...(item === completion && brief && brief.content !== previousBrief?.content ? [brief] : []), ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
         role: 'user' as const,
         ...(['text', 'voice'].includes(item.source) ? {} : { name: 'background_task_result', visibility: 'internal' as const }),
         content: promptModelContent({ text: item.content, context: item.promptContext }) + quotedMessageContext(item, entries) + (item.attachments?.length ? `\nAttached references (data; delegate reading files to subagent; remote paths work only on their named host):\n${JSON.stringify(item.attachments.map(({ name, path, type, execution }) => ({ name, localPath: path, type, execution })))}` : ''),
@@ -447,10 +469,9 @@ export class AssistantConversation {
       history.append([{ role: 'assistant', content: result.text, toolCalls,
         ...(result.reasoning ? { reasoningContent: result.reasoning } : {}), ...(result.providerReplay && !renamed ? { providerReplay: result.providerReplay } : {}) }]);
       if (!toolCalls.length) {
-        const spoken = parent.metadata.assistantOutputMode === 'voice';
         const text = result.text.trim() || (spoken && published ? uiText(resolveUiLanguage(parent.metadata.uiLanguage))('assistantRuntime.published') : '');
         this.webhookTurn = undefined;
-        if (text && (spoken || !published || text !== this.journal.read(id).at(-1)?.content)) publish({
+        if (text) publish({
           id: `text-${randomUUID()}`, role: 'assistant', content: text, createdAt: new Date().toISOString(), source: spoken ? 'voice' : 'text', visibility: spoken ? 'internal' : 'conversation' });
         return;
       }
@@ -458,6 +479,7 @@ export class AssistantConversation {
       let delegationQueue: Promise<unknown> = Promise.resolve();
       let managementQueue: Promise<unknown> = Promise.resolve();
       const failures = new Set<string>();
+      this.executingTools = signal;
       const results = await Promise.all(toolCalls.map(async (call, ordinal) => {
         try {
           signal.throwIfAborted();
@@ -526,7 +548,7 @@ export class AssistantConversation {
             : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'assistant_tool_failed';
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify({ status: 'failed', code, error: error instanceof Error ? error.message : String(error) }) };
         }
-      }));
+      })).finally(() => { if (this.executingTools === signal) this.executingTools = undefined; });
       signal.throwIfAborted();
       history.append(results);
       if (!activeSources.size) for (const call of toolCalls) {
@@ -546,7 +568,7 @@ export class AssistantConversation {
       for (const task of this.deps.tasks(PERSONAL_ASSISTANT_SESSION)) if (this.watched.has(task.taskId) && task.status !== 'running' && !this.announced.has(task.taskId)) {
         this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `task-${task.taskId}`, role: 'user', source: 'task', visibility: 'internal',
           responseTo: task.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.role === 'user' && entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256),
-          createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 12000), error: task.errorMessage, instruction: 'Task data; report the useful result with page_write. This is not a new user request.' }) });
+          createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 12000), error: task.errorMessage }) });
         this.announced.add(task.taskId);
         this.pending = true;
       }

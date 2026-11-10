@@ -4,26 +4,26 @@
 
 [中文](PERSONAL_ASSISTANT.en.md) | [Documentation](README.md)
 
-The lightbulb below New conversation opens a persistent conversation, initially named `assistant`. It handles conversation, published material and delegation; background tasks use the existing Agent's model, tools and permissions. This guide describes main-branch behavior, which may be newer than installed desktop packages.
+Click the pixel scene in the center of the title bar to open your personal Assistant, initially named `assistant`. The robot responds to messages, background work, requests for input and voice calls. You can change its name and portrait in Assistant settings. Background tasks use the existing Agent's model, tools and permissions.
 
 ## Getting started
 
 Open **Personal profile → Edit profile** at the bottom of the sidebar to register your preferred name and habits. Assistant conversations and proactive events use the registered name. Habits are saved in local Habit memory and can be retrieved when that memory is enabled. Webhook connections in the profile menu always bind to Assistant.
 
-Select **Open floating Assistant** to open an independent always-on-top capsule alongside the workspace. The Home button in the capsule and **Open Home** in the tray both bring Home forward and retain drafts in both windows. For a background Assistant on the next launch, enable **Start only Assistant next time** in the profile menu, quit from that menu, and reopen CardBush. When CardBush is closed, the `--assistant-only` launch option also selects this mode for one run. Click the tray icon or an Assistant notification to open the always-on-top window. It shares conversations, models, permissions and events with the workspace.
+Select **Open floating Assistant** to open an independent always-on-top capsule for messages, voice and recent replies. Click the tray icon once or choose **Open Home** from its menu to return to Home. Both windows keep their drafts. For a background Assistant on the next launch, enable **Start only Assistant next time** in the profile menu, quit from the tray, and reopen CardBush. When CardBush is closed, the `--assistant-only` launch option also selects this mode for one run. In Assistant-only mode, clicking an Assistant notification opens the capsule to show the reply. It shares conversations, models, permissions and events with the workspace.
 
 The capsule opens in the lower-right corner of the primary display's work area and can be dragged. Recent replies open above it. Clicking another window collapses the editor, replies or call controls while retaining drafts, attachments and the call. Click the active call indicator to reach mute and hang up again.
 
-Background startup creates no workspace window. Runtime starts ahead of the next scheduled event or when needed. Closing an idle floating window releases its renderer. Once started, Runtime continues to handle events and delegated work. Drafts, attachments, voice activity and model editing keep the window available in the background. Choose **Open floating Assistant** in the tray to show the capsule again.
+Background startup creates no workspace window. Runtime starts with the app and loads built-in tools in the background. Closing an idle floating window releases its renderer. Once started, Runtime continues to handle events and delegated work. Drafts, attachments, voice activity and model editing keep the window available in the background. Choose **Open floating Assistant** in the tray to show the capsule again.
 
-Verbatim local reminders can deliver a system notification directly. Bundled document and desktop tools connect when the tool catalog, a tool-enabled run or a collector first needs them. Once the floating window closes and the Assistant stays idle, background cleanup releases the document tools. An active desktop tool service retains its session safety state.
+Verbatim local reminders can deliver a system notification directly. The desktop and local CLI load built-in tools asynchronously at startup. Chat accepts messages during loading. Optional plugins advertise their MCP servers and connect when a search targets the server or the user connects it in settings. Connections stay available for the lifetime of the Runtime and refresh when configuration changes.
 
-1. Configure a text model in Settings → Models, then open the lightbulb. Text conversation needs no realtime voice service.
-2. Assistant settings in the profile menu change name, role, communication style or avatar. PNG/JPG/WebP avatars up to 8 MB stay local; restore the default bulb at any time. Role changes affect subsequent text requests and the next call; an active call retains its initial persona.
+1. Configure a text model in Settings → Models, then click the robot in the title bar. Text conversation needs no realtime voice service.
+2. Assistant settings in the profile menu change name, role, communication style or avatar. PNG/JPG/WebP avatars up to 8 MB stay local; restore the default pixel robot at any time. Role changes affect subsequent text requests and the next call; an active call retains its initial persona.
 3. Execution defaults to Local. Connect a deployed service through Connect SSH / Manage hosts following [Agent services](AGENT_SERVICES.en.md), then select it as execution host. Saving an SSH project alone does not create an independent Agent service.
 4. Model selection, attachments, drag/drop, pasted images and browser references reuse the ordinary composer. See [Realtime voice](REALTIME_VOICE.en.md) and [Local voice](LOCAL_VOICE_MODELS.en.md).
 
-The assistant reuses the conversation title bar, Inspector, work summary and return-to-bottom control. Compact input retains saved width, post-send position and output direction; returning from Inspector input preserves drafts/attachments. The bulb reflects connection, listening, speech, mute, background execution and errors, respecting reduced motion.
+The assistant reuses the conversation title bar, Inspector, work summary and return-to-bottom control. Compact input aligns with the conversation. Returning from Inspector input preserves drafts/attachments. The scene reflects connection, listening, speech, mute, background execution and errors, respecting reduced motion.
 
 Browser `@` references display clickable tab titles in the composer, sent messages and floating conversation, retaining tab identity rather than encoded long URLs. Existing messages use the same presentation. Floating reply bubbles have distinct backgrounds/borders in both themes.
 
@@ -41,7 +41,7 @@ Right-click a text message to reply, quote or copy; select text first to quote o
 | --- | --- |
 | Text messages, dictation after the user sends it | Visible and included in ongoing context. |
 | Final text reply | Visible prose without expanded reasoning, tool arguments or loop internals. |
-| `page_write` | Publish Markdown into this conversation for reference material, examples, links/results; no external website is created. |
+| `page_write` | Save written material during a voice call. Share a verified file link and the key finding when delivering a report. |
 | Call transcripts | Retained internally without per-utterance bubbles, animations or scrolling. Ordinary conversations still display their own call transcripts. |
 | Background-task bubble | Intent and actual status; opens the original child execution, remaining available afterward. |
 
@@ -49,7 +49,7 @@ Delegation returns a task ID immediately so conversation can continue. Acceptanc
 
 Local children inherit the assistant's authorized CardBush tabs/browser selection and can use referenced pages. Adding new references when guiding/continuing a task updates its selection; absent new references, the child's selection remains. Closed/restarted tabs report stale references only when operated on, without blocking unrelated delegation or switching to Chrome/Edge. Remote children do not inherit local tab authorization.
 
-The assistant uses `subagent`, `tasks`, Team and `page_write` to delegate, continue work, read results and publish replies. `subagent({prompt})` creates work; `subagent({task_id,prompt})` guides a running task or continues its original session/host. Realtime voice retains its shared protocol definitions for delegation, immediate status, paged results and page publication. Execution tools remain on the child under its permissions. Voice adds no dispatch confirmation but spoken consent cannot enable disabled tools or override host policy.
+The text assistant uses `subagent`, `tasks` and Team to delegate, continue work and read results. Its final reply appears directly in the conversation. `subagent({prompt})` creates work; `subagent({task_id,prompt})` guides a running task or continues its original session/host. Realtime voice retains its shared protocol definitions for delegation, immediate status, paged results and page publication. Execution tools remain on the child under its permissions. Voice adds no dispatch confirmation but spoken consent cannot enable disabled tools or override host policy.
 
 Text conversations and the transcription–Agent–speech path also provide direct management tools without starting a child:
 

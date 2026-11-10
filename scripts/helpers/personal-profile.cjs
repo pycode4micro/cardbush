@@ -3,7 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 module.exports = async ({win,BrowserWindow,openHome,openAssistant,wait,root,project,holdAudioSettings}) => {
   let current=win;
-  const read=source=>current.webContents.executeJavaScript(source,true);
+  const read=source=>current.webContents.executeJavaScript(source,true).catch(cause=>{
+    throw new Error('Renderer check failed: '+source.slice(0,180),{cause});
+  });
   const visible=selector=>wait(()=>read(`Boolean(document.querySelector(${JSON.stringify(selector)})?.checkVisibility())`),selector);
   const click=async selector=>{await visible(selector); await read(`document.querySelector(${JSON.stringify(selector)}).click();void 0`);};
   const menu=async()=>{await click('.profile-trigger');await visible('.profile-popover:popover-open');};
@@ -51,8 +53,8 @@ module.exports = async ({win,BrowserWindow,openHome,openAssistant,wait,root,proj
   await wait(()=>current.isDestroyed(),'release the live-switched floating renderer when idle');
   openAssistant();
   current=await wait(findCapsule,'reopen capsule from tray');
-  await visible(bell); win.hide(); await click('.floating-capsule [data-action=workspace]');
-  await wait(()=>win.isVisible() && current.isVisible(),'capsule opens Home alongside itself');
+  await visible(bell); win.hide(); openHome();
+  await wait(()=>win.isVisible() && current.isVisible(),'one tray click opens Home alongside the capsule');
   const capsule=current;
   assert.deepEqual(win.getBounds(),workspaceBounds);
   current=win;
@@ -116,9 +118,10 @@ module.exports = async ({win,BrowserWindow,openHome,openAssistant,wait,root,proj
   fs.writeFileSync(path.join(project,'tmp','sidebar-expanded.png'),(await current.webContents.capturePage()).toPNG());
   await click('.compact-sidebar-backdrop');
   await visible('.desktop-shell.sidebar-is-collapsed');
-  await click(rail+' .section-header[aria-label="项目"]');
-  await visible('.window-sidebar-toggle[aria-expanded=true]');
-  await click('.window-sidebar-toggle'); await menu();
+  await click('.sidebar [data-nav-section=projects]');
+  await visible('[data-desktop-page=projects]');
+  await visible('.desktop-shell.sidebar-is-collapsed');
+  await menu();
   await read("document.querySelector('.profile-popover:popover-open').hidePopover();void 0");
   console.log('Sidebar passed: persistent navigation, overlay geometry, profile and project shortcuts.');
   console.log('Settings directory passed: shared rail, five categories, disclosures, chronological Back, preserved draft, breadcrumb and workspace navigation.');

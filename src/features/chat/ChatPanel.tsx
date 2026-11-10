@@ -281,7 +281,7 @@ export function ChatPanel({
   loading: boolean;
   historyLoading: boolean;
   historyPages?: ConversationHistoryControls;
-  requestedTurn?: { sessionId: string; messageId: string; turnId?: string } | null;
+  requestedTurn?: { sessionId: string; turnId: string } | null;
   onTurnLocated?: () => void;
   sending: boolean;
   stopping: boolean;
@@ -2079,8 +2079,7 @@ export function ChatPanel({
     const scroller = listScrollerRef.current;
     if (!scroller) return;
     // A live prompt can acquire its persisted message ID while the chat opens.
-    const message = renderMessages.find(item => item.id === requestedTurn.messageId) ??
-      (requestedTurn.turnId && renderMessages.find(item => item.turnId === requestedTurn.turnId && item.role === 'user' && !isTurnGuidanceMessage(item)));
+    const message = renderMessages.find(item => item.turnId === requestedTurn.turnId && item.role === 'user' && !isTurnGuidanceMessage(item));
     if (!message) return;
     const target = scroller.querySelector<HTMLElement>(`[data-message-id="${cssEscape(message.id)}"]`);
     if (!target) return;

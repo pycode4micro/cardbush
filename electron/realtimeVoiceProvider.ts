@@ -1,6 +1,6 @@
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import type { RealtimeToolResult, RealtimeVoiceEvent, RealtimeVoiceSettings } from './realtimeVoiceTypes';
-import { conversationalSubagentTools } from '@cardbush/bush-protocol/conversational-subagent-tools';
+import { assistantPageTool, conversationalSubagentTools } from '@cardbush/bush-protocol/conversational-subagent-tools';
 
 export type ProviderEvent = RealtimeVoiceEvent extends infer E ? E extends { id: string } ? Omit<E, 'id'> : never : never;
 export type RealtimeWireEvent = Record<string, unknown>;
@@ -41,14 +41,15 @@ const recallConversation = { type: 'function', name: 'recall_conversation', desc
 export const realtimeAgentTools = [...conversationalSubagentTools.map(({ name, description, inputSchema }) => ({
   type: 'function', name, description, parameters: inputSchema,
 })), hangUp, recallConversation];
-export const realtimeExecutionInstructions = renderPromptTemplate('realtime-execution-instructions');
+export const realtimeExecutionInstructions = renderPromptTemplate('realtime-execution-instructions', {
+  reportConversationPolicy: renderPromptTemplate('report-conversation-policy'),
+});
 
 export function realtimeConversationInstructions(settings: Pick<RealtimeVoiceSettings, 'instructions'>): string {
   return settings.instructions.trim() ? settings.instructions : renderPromptTemplate('realtime-default-instructions');
 }
 
-const pageWrite = { type: 'function', name: 'page_write', description: 'Publish useful Markdown, links or verified results to the assistant page. Speech is not shown automatically. Never publish reasoning, logs or tool arguments.',
-  parameters: { type: 'object', additionalProperties: false, required: ['content'], properties: { content: { type: 'string', minLength: 1, maxLength: 64000 } } } };
+const pageWrite = { type: 'function', name: assistantPageTool.name, description: assistantPageTool.description, parameters: assistantPageTool.inputSchema };
 export function realtimeSessionContent(settings: RealtimeVoiceSettings, assistant?: { name: string; persona: string }) {
   const persona = assistant ? renderPromptTemplate('realtime-assistant-persona', { name: assistant.name,
     persona: assistant.persona.trim() ? assistant.persona : renderPromptTemplate('assistant-default-persona') }) : '';

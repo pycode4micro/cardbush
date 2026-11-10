@@ -38,7 +38,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const tabs=views.useInspectorTabs(scope);
       const workspace=views.useInspectorWorkspace({workspaceId:scope,language:'zh',windowMaximized:false,compactLayout:false,
         section,setSection,sidebarCollapsed,sidebarWidth:240,setSidebarCollapsed,inspectorOpen:tabs.open,setInspectorOpen:tabs.setOpen,
-        inspectorTabs:tabs.tabs,activeInspectorTab:tabs.activeTab,openInspectorTab:tabs.openTab,setInspectorTabsMenuOpen:()=>{}});
+        inspectorTabs:tabs.tabs,activeInspectorTab:tabs.activeTab,openInspectorTab:tabs.openTab});
       const presence=views.useSoftPanelPresence(tabs.open,240,{keepMounted:true});
       const [navigation,setNavigation]=React.useState({});
       const update=React.useCallback((id,value)=>setNavigation(current=>({...current,[id]:value})),[]);

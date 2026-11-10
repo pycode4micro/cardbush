@@ -21,7 +21,7 @@ import {
   runtimeProviderBindingConfigSchema,
   runtimeProviderBindingIdentitySchema,
   runtimeIpcOutboundMessageSchema,
-  mcpSnapshotSchema,
+  mcpSnapshotSchema, mcpServerSnapshotSchema,
   pluginProxyEnvironment, type McpServerSnapshot, type NetworkProxySettings,
   type RuntimeIpcOutboundMessage,
   type RuntimeProtocolError,
@@ -66,9 +66,9 @@ import {
   loadEnabledProductPluginMcpServers,
   loadEnabledProductPluginExtensions,
   loadEnabledProductRuntimeExtensions,
-  type PluginRoot,
+  type PluginRoot, type DeferredPluginServer,
 } from './productPlugins.js';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { configureProcessResourceClient, type ProcessResourceGrant } from '@cardbush/bush-runtime/processes';
@@ -137,54 +137,66 @@ let providerRegistry: Promise<ModelProviderRegistry> | undefined;
 let mcp: McpClientManager;
 let mcpUpdate: Promise<unknown> = Promise.resolve();
 let effectiveMcp: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
-let effectiveMcpContent = '';
+type McpNetwork = { default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> };
+let mcpNetwork: McpNetwork | undefined;
 let sourceMcpRevision = 0;
-// These bundled stdio servers expose tools. A timer delivering an exact local
-// reminder does not need their five processes or their stdio supervisors.
 let residentMode = process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1';
 const desktopAssistant = residentMode || (!process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1');
-let deferResidentTools = residentMode;
-let deferredMcpSource: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
-let residentToolStartup: Promise<void> | undefined;
-let residentDesktopToolsUsed = false;
-let residentToolReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+let initialMcpDirectory: Promise<unknown> | undefined;
+const requestedPluginServers = new Set<string>();
+let pluginServerDirectory = new Map<string, DeferredPluginServer>();
 
-function scheduleResidentToolRelease() {
-  if (!residentMode || !residentDesktopToolsUsed || deferResidentTools) return;
-  clearTimeout(residentToolReleaseTimer);
-  residentToolReleaseTimer = setTimeout(() => {
-    void releaseIdleDocumentTools().catch(error => console.warn('[resident-tools]', errorMessage(error)));
-  }, 35_000);
-  residentToolReleaseTimer.unref();
+function withMcpNetwork(server: McpServerSnapshot, network?: McpNetwork): McpServerSnapshot {
+  if (!network) return server;
+  // Desktop-owned loopback MCP must not leave the host through a plugin proxy.
+  const loopback = server.id === 'cardbush_management' ||
+    server.id === 'cardbush_apps' && Boolean(process.env.CARDBUSH_SERVICE_ID) && server.transport.kind === 'streamable_http' ||
+    server.id === 'browser_use' && server.transport.kind === 'streamable_http' && server.transport.url === process.env.CARDBUSH_BROWSER_USE_URL?.trim();
+  return { ...server, networkProxy: loopback ? { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' }
+    : network.plugins[server.pluginId ?? ''] ?? network.servers?.[server.id] ?? network.default };
 }
 
-async function releaseIdleDocumentTools() {
-  const timer = residentToolReleaseTimer;
+function publishedMcpCatalog() {
+  const current = mcp.snapshot();
+  if (!current) return null;
+  const visible = new Set(current.servers.map(server => server.id));
+  for (const id of pluginServerDirectory.keys()) if (!visible.has(id)) {
+    current.servers.push({ id, health: 'idle', restartAttempts: 0, tools: [] });
+  }
+  return { ...current, configurationRevision: sourceMcpRevision };
+}
+
+async function ensureMcpDirectory(signal?: AbortSignal) {
   await mcpUpdate;
-  if (deferResidentTools || !deferredMcpSource || !await mcpHost.request<boolean>('assistant.is-background', {})) return;
-  if (timer !== residentToolReleaseTimer) return;
-  if (host.hasActiveWork() || residentToolStartup) { scheduleResidentToolRelease(); return; }
-  // Document services operate on files. Keep the desktop service and its
-  // per-session safety observations alive once computer use has been enabled.
-  deferResidentTools = true;
-  await executeRuntimeCommand({ kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: deferredMcpSource }, new AbortController().signal);
+  signal?.throwIfAborted();
+  if (!effectiveMcp && hostNetworkAvailable) {
+    initialMcpDirectory ??= mcpHost.request('mcp.ensure-directory', {}).finally(() => { initialMcpDirectory = undefined; });
+    await initialMcpDirectory;
+    signal?.throwIfAborted();
+  }
 }
 
-function prepareResidentTools(): Promise<void> | undefined {
-  if (!residentMode) return;
-  if (!deferResidentTools) { scheduleResidentToolRelease(); return residentToolStartup; }
-  deferResidentTools = false;
-  residentDesktopToolsUsed = true;
-  scheduleResidentToolRelease();
-  const startup = (async () => {
-    await mcpUpdate;
-    if (!deferredMcpSource) return;
-    await executeRuntimeCommand({ kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: deferredMcpSource }, new AbortController().signal);
-    if (effectiveMcp) await mcp.apply(effectiveMcp);
-  })();
-  residentToolStartup = startup.catch(error => { deferResidentTools = true; throw error; })
-    .finally(() => { residentToolStartup = undefined; });
-  return residentToolStartup;
+async function preparePluginSearch(id?: string, signal?: AbortSignal) {
+  await ensureMcpDirectory(signal);
+  if (id && pluginServerDirectory.has(id)) {
+    if (!requestedPluginServers.has(id)) {
+      const start = mcpUpdate.then(async () => {
+        const entry = pluginServerDirectory.get(id);
+        if (!entry || !effectiveMcp || requestedPluginServers.has(id)) return;
+        const server = withMcpNetwork(mcpServerSnapshotSchema.parse(await entry.load()), mcpNetwork);
+        const next = { ...effectiveMcp, revision: effectiveMcp.revision + 1, servers: [...effectiveMcp.servers, server] };
+        mcp.submit(next);
+        effectiveMcp = next;
+        requestedPluginServers.add(id);
+      });
+      mcpUpdate = start.catch(() => undefined);
+      await start;
+    }
+    await mcp.waitForServer(id, signal);
+  } else if (id && effectiveMcp?.servers.some(server => server.id === id)) {
+    await mcp.waitForServer(id, signal);
+  }
+  return Array.from(pluginServerDirectory.values(), ({ id: server, description }) => ({ server, description }));
 }
 
 async function handleMessage(input: unknown) {
@@ -338,19 +350,9 @@ async function executeRuntimeCommand(
 ) {
   if (desktopAssistant && command.kind === 'runtime.sync_assistant_residency') {
     const enabled = await mcpHost.request<boolean>('assistant.is-resident', {});
-    if (!enabled && deferResidentTools) await prepareResidentTools();
     residentMode = enabled;
-    if (enabled && !deferResidentTools) residentDesktopToolsUsed = true;
-    if (!enabled) clearTimeout(residentToolReleaseTimer);
     return { resident: enabled };
   }
-  if (command.kind === 'runtime.assistant_window_closed' && residentMode) {
-    scheduleResidentToolRelease();
-    return { accepted: true };
-  }
-  if ([GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
-    'runtime.mcp_login', 'runtime.mcp_reconnect', 'runtime.prepare_plugin_uninstall', 'runtime.prepare_plugin_update'].includes(command.kind))
-    await prepareResidentTools();
   if (command.kind === 'runtime.assistant_background_start' && residentMode) {
     const { prepareWebhookParentModels } = await import('./contextWebhookRuntime.mjs');
     return host.restoreAssistantEvents(parent => prepareWebhookParentModels(parent,
@@ -370,8 +372,8 @@ async function executeRuntimeCommand(
     } } }, signal);
   }
   if (command.kind === 'runtime.local_activity') return { active: host.hasActiveWork() };
-  if ([GET_RUNTIME_CAPABILITIES_COMMAND, GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
-    ].some(kind => kind === command.kind) || !host.capabilities().supportedCommands.includes(command.kind) || host.isExtensionCommand(command.kind) || command.kind.startsWith('plugin.')) {
+  if ([GET_RUNTIME_CAPABILITIES_COMMAND, GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND].some(kind => kind === command.kind) ||
+    !host.capabilities().supportedCommands.includes(command.kind) || host.isExtensionCommand(command.kind) || command.kind.startsWith('plugin.')) {
     await optionalRuntimePlugins.refresh();
   }
   if (command.kind === AUTOMATION_COMMAND) {
@@ -417,26 +419,21 @@ async function executeRuntimeCommand(
       // A late UI read must not overwrite a newer saved configuration.
       if (source.snapshotId === effectiveMcp?.snapshotId && source.revision < sourceMcpRevision) {
         if (suspendedPluginId) throw new Error('MCP configuration changed. Retry the plugin operation.');
-        const current = mcp.snapshot();
-        return current ? { ...current, configurationRevision: sourceMcpRevision } : null;
+        return publishedMcpCatalog();
       }
+      const directory = new Map<string, DeferredPluginServer>();
       const pluginServers = await loadEnabledProductPluginMcpServers(
         pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '', source.servers,
         join(runtimeStateRoot || process.cwd(), 'plugin-data'),
+        process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_LOCAL_PLUGIN_DISCOVERY !== '1' ? undefined : entry => {
+          if (directory.has(entry.id)) throw new Error('Plugin MCP server IDs collide after namespacing.');
+          directory.set(entry.id, entry);
+          return requestedPluginServers.has(entry.id);
+        },
       );
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
       }));
-      if (desktopAssistant) deferredMcpSource = source;
-      if (deferResidentTools) {
-        const standalone = new Set(source.servers.map(server => server.id));
-        combined.servers = combined.servers.filter(server => {
-          if (server.required || server.transport.kind !== 'stdio' || standalone.has(server.id)) return true;
-          if (server.id === 'cardbush_apps') return residentDesktopToolsUsed;
-          const [entry] = server.transport.args ?? [];
-          return !entry || !bundledDocumentToolEntries.has(resolve(entry));
-        });
-      }
       if (suspendedPluginId && combined.servers.some(server => server.pluginId === suspendedPluginId)) {
         throw new Error('Plugin is still enabled. Refresh before replacing or uninstalling it.');
       }
@@ -446,35 +443,28 @@ async function executeRuntimeCommand(
         await mcp.waitForPluginScopes(suspendedPluginId, signal);
       }
       if (!suspendedPluginId) await host.refreshPluginHooks();
-      if (hostNetworkAvailable) {
-        const network = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
-        combined.servers = combined.servers.map(server => ({
-          // Desktop-owned loopback MCP must not leave the host through a plugin proxy.
-          ...server, networkProxy: server.id === 'cardbush_management' ||
-            server.id === 'cardbush_apps' && Boolean(process.env.CARDBUSH_SERVICE_ID) && server.transport.kind === 'streamable_http' ||
-            server.id === 'browser_use' && server.transport.kind === 'streamable_http' && server.transport.url === process.env.CARDBUSH_BROWSER_USE_URL?.trim()
-            ? { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' }
-            : network.plugins[server.pluginId ?? ''] ?? network.servers?.[server.id] ?? network.default,
-        }));
-      }
-      const content = JSON.stringify({ snapshotId: combined.snapshotId, servers: combined.servers });
-      const revision = effectiveMcp && content === effectiveMcpContent
+      const network = hostNetworkAvailable ? await mcpHost.request<McpNetwork>('network.configuration', {}, signal) : undefined;
+      combined.servers = combined.servers.map(server => withMcpNetwork(server, network));
+      const revision = effectiveMcp && combined.snapshotId === effectiveMcp.snapshotId && JSON.stringify(combined.servers) === JSON.stringify(effectiveMcp.servers)
         ? effectiveMcp.revision : Math.max(combined.revision, (effectiveMcp?.revision ?? 0) + 1);
       effectiveMcp = { ...combined, revision };
-      effectiveMcpContent = content;
+      mcpNetwork = network;
       sourceMcpRevision = source.revision;
       const result = suspendedPluginId ? await mcp.apply(effectiveMcp) : mcp.submit(effectiveMcp);
       if (uninstallPluginId && result.applicationState === 'applied') {
         for (const server of removedServers) if (server.transport.kind !== 'stdio' && server.transport.auth !== 'openai') await mcpOAuth.logout(server);
       }
-      return { ...result, configurationRevision: sourceMcpRevision };
+      if (uninstallPluginId) for (const entry of pluginServerDirectory.values()) {
+        if (entry.pluginId === uninstallPluginId) requestedPluginServers.delete(entry.id);
+      }
+      pluginServerDirectory = directory;
+      return publishedMcpCatalog();
     });
     mcpUpdate = operation.catch(() => undefined);
     return operation;
   }
   if (command.kind === GET_RUNTIME_MCP_SNAPSHOT_COMMAND) {
-    const current = mcp.snapshot();
-    return current ? { ...current, configurationRevision: sourceMcpRevision } : null;
+    return publishedMcpCatalog();
   }
   if (command.kind === 'runtime.openai_account_changed') {
     await mcp.invalidateOpenAiConnections();
@@ -489,6 +479,12 @@ async function executeRuntimeCommand(
   if (['runtime.mcp_login', 'runtime.mcp_logout', 'runtime.mcp_cancel_login', 'runtime.mcp_reconnect'].includes(command.kind)) {
     const id = String((command.payload as { serverId?: unknown })?.serverId ?? '');
     if (command.kind === 'runtime.mcp_cancel_login') { mcpOAuth.cancel(id); return { cancelled: true }; }
+    if (!effectiveMcp?.servers.some(item => item.id === id) && pluginServerDirectory.has(id) &&
+        (command.kind === 'runtime.mcp_reconnect' || command.kind === 'runtime.mcp_login')) {
+      try { await preparePluginSearch(id, signal); }
+      catch (error) { if (command.kind !== 'runtime.mcp_login' || !effectiveMcp?.servers.some(item => item.id === id)) throw error; }
+      if (command.kind === 'runtime.mcp_reconnect') return publishedMcpCatalog();
+    }
     const server = effectiveMcp?.servers.find(item => item.id === id);
     if (!server) throw new Error('This MCP service is not enabled. Enable it before connecting.');
     if (server.transport.kind !== 'stdio' && server.transport.auth === 'openai' && command.kind !== 'runtime.mcp_reconnect') {
@@ -551,6 +547,8 @@ function withBundledAppsServer(input: unknown): unknown {
       defaultToolPolicy: { permission: 'ask', parallelSafe: false, visibleToChild: true },
       toolPolicies: {
         list_mcp_servers: { permission: 'allow', parallelSafe: true, visibleToChild: true },
+        read_home_component: { permission: 'allow', parallelSafe: true, visibleToChild: true },
+        preview_home_component: { permission: 'allow', parallelSafe: false, visibleToChild: true },
         list_plugin_connections: { permission: 'allow', parallelSafe: true, visibleToChild: true },
       },
     });
@@ -858,8 +856,6 @@ if (process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' && !process.env.CARDBUSH_SER
 const loadSearchResultLimit = () => readCardbushSearchResultLimit(process.env.CARDBUSH_APPS_CONFIG_PATH?.trim());
 const skillRoots = skillRootsFromEnvironment();
 const pluginRoots = pluginRootsFromEnvironment();
-const bundledDocumentToolEntries = new Set(pluginRoots.filter(root => root.source === 'bundled')
-  .flatMap(root => ['docx', 'xlsx', 'pptx', 'pdf'].map(id => resolve(root.path, id, 'server.cjs'))));
 const automation = runtimeStateRoot ? new AutomationScheduler({
   path: join(runtimeStateRoot, 'scheduler', 'automations.json'),
   canRun: sessionId => !host.hasActiveSession(sessionId),
@@ -867,7 +863,6 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
   changed: () => { void mcpHost.request('automation.changed', {}).catch(() => {}); },
   onError: error => process.stderr.write(`${JSON.stringify({ code: 'automation_error', message: errorMessage(error) })}\n`),
   run: async (job, run, context, signal) => {
-    await prepareResidentTools();
     signal.throwIfAborted();
     const sessionId = run.sessionId ?? job.sessionId;
     if (sessionId === job.sessionId && !host.hasSession(sessionId)) throw new Error('The target conversation was removed.');
@@ -937,8 +932,14 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
+  preparePluginSearch,
+  prepareToolCatalog: async tool => {
+    await ensureMcpDirectory();
+    const servers = new Set([...pluginServerDirectory.keys(), ...(effectiveMcp?.servers.map(server => server.id) ?? [])]);
+    const matching = [...servers].filter(id => tool.startsWith(`mcp__${id}__`));
+    if (matching.length === 1) await preparePluginSearch(matching[0]);
+  },
   ...(desktopAssistant ? {
-    prepareToolCatalog: prepareResidentTools,
     onAssistantAttention: notice => { void mcpHost.request('assistant.attention', notice).catch(error => console.warn('[assistant-notification]', error)); },
   } : {}),
   // Desktop, server Agent and CLI share this worker and compaction policy.
@@ -946,7 +947,7 @@ host = new InMemoryRuntimeHost({
   preferRecordedToolHandoffs: true,
   environmentSources: {
     hostResources: ({ request, signal }) => mcpHost.request('environment.snapshot', { sessionId: request.sessionId }, signal),
-    mcp: () => ({ servers: (mcp?.snapshot()?.servers ?? []).map(server => ({ id: server.id, health: server.health, updateState: server.updateState })) }),
+    mcp: () => ({ servers: (publishedMcpCatalog()?.servers ?? []).map(server => ({ id: server.id, health: server.health, updateState: server.updateState })) }),
   },
   commandSandbox: commandSandboxConfiguration(process.env),
   loadCommandSandbox: () => loadCommandSandboxConfiguration(process.env, process.env.CARDBUSH_SANDBOX_SETTINGS_PATH),

@@ -36,6 +36,23 @@ test('effective proxy changes reconnect only that service and preserve an unchan
   assert.deepEqual(attempts, { changed: 2, preserved: 1 });
   assert.deepEqual(registry.definitions(), definitions, 'network routes never enter model-visible tool definitions');
 });
+
+test('targeted readiness completes while an unrelated handshake is blocked and supports cancellation', async t => {
+  const slow = deferred(), registry = new ToolRegistry();
+  const manager = new McpClientManager({ registry, createTransport: () => ({ async send() {} }),
+    createClient: config => client(async () => { if (config.id === 'slow') await slow.promise; }) });
+  t.after(async () => { slow.resolve(); await manager.close(); });
+  manager.submit(snapshot([server('slow'), server('fast')]));
+  await manager.waitForServer('fast', AbortSignal.timeout(2000));
+  assert.ok(registry.resolve('mcp__fast__echo'));
+  assert.equal(manager.snapshot().applicationState, 'pending');
+  const abort = new AbortController();
+  const waiting = manager.waitForServer('slow', abort.signal);
+  abort.abort();
+  await assert.rejects(waiting, { name: 'AbortError' });
+  slow.resolve();
+  await manager.waitForServer('slow', AbortSignal.timeout(2000));
+});
 async function until(predicate) {
   for (let i = 0; i < 100; i++) { if (predicate()) return; await delay(2); }
   assert.ok(predicate(), 'expected connection progress');

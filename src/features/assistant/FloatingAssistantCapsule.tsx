@@ -1,5 +1,6 @@
 import { useCapsuleControls, type CapsuleInput } from './useCapsuleControls';
-import { ArrowUp, AudioLines, Bell, Circle, House, Plus, SquarePen, X } from 'lucide-react';
+import { useLayoutEffect, useRef } from 'react';
+import { ArrowUp, AudioLines, Bell, Circle, Plus, SquarePen, X } from 'lucide-react';
 import { uiText } from '../../i18n';
 import { basename } from '../../shared/localPaths';
 import type { ConversationEntry } from '@cardbush/bush-protocol';
@@ -10,13 +11,20 @@ import './floatingAssistantCapsule.css';
 type Props = CapsuleInput & {
   language: string; unread: number; calling: boolean; voiceBlocked: boolean;
   replies: ConversationEntry[]; error: string;
-  compose(): void; open(): void; openVoice(): void; returnToWorkspace(): void;
+  compose(): void; open(): void; openVoice(): void;
 };
 export function FloatingAssistantCapsule(p: Props) {
   const t = uiText(p.language);
   const voice = useVoiceComposer();
   const {input, toolbar, sheet, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach} = useCapsuleControls(p);
   const bell = t('capsule.replies', { count: p.unread });
+  const replyScroll = useRef<HTMLDivElement>(null);
+  const followingLatest = useRef(true);
+  const latestId = p.replies.at(-1)?.id;
+  useLayoutEffect(() => {
+    if (!p.repliesOpen) followingLatest.current = true;
+    else if (followingLatest.current && replyScroll.current) replyScroll.current.scrollTop = 0;
+  }, [p.repliesOpen, latestId]);
   return <div className="floating-assistant-surface" data-replies={p.repliesOpen || undefined}
     onKeyDown={event => { if ((p.repliesOpen || p.voiceOpen) && event.key === 'Escape') { event.preventDefault(); p.collapse(); } }}>
     <div ref={toolbar} className="floating-capsule" role={p.composing || p.voiceOpen ? 'group' : 'toolbar'} onPointerDown={beginDrag} onPointerMove={moveDrag}
@@ -43,17 +51,13 @@ export function FloatingAssistantCapsule(p: Props) {
         {p.calling ? <Circle className="capsule-live"/> : <AudioLines/>}</button>
       <span className="capsule-divider" aria-hidden="true"/>
       <button type="button" data-action="replies" aria-expanded={p.repliesOpen} onClick={p.repliesOpen ? p.collapse : p.open} aria-label={bell} title={bell}><Bell/>{p.unread > 0 && <span className="capsule-badge" aria-hidden="true">{p.unread > 99 ? '99+' : p.unread}</span>}</button>
-      {!p.repliesOpen && <>
-        <span className="capsule-divider" aria-hidden="true"/>
-        <button type="button" data-action="workspace" aria-label={t('resident.openHome')} title={t('resident.openHome')}
-          onClick={p.returnToWorkspace}><House/></button>
-      </>}
     </>}
     </div>
     {p.repliesOpen && <section ref={sheet} className="capsule-replies" aria-label={t('capsule.replyList')}>
-      <header><strong>{t('capsule.replyList')}</strong><button type="button" aria-label={t('resident.closeAssistant')}
-        title={t('resident.closeAssistant')} onClick={() => void window.cardbushDesktop?.closeToTray()}><X/></button></header>
-      <div className="capsule-reply-scroll" tabIndex={0}>
+      <header><strong>{t('capsule.replyList')}</strong><button type="button" aria-label={t('capsule.collapseReplies')}
+        title={t('capsule.collapseReplies')} onClick={p.collapse}><X/></button></header>
+      <div ref={replyScroll} className="capsule-reply-scroll" tabIndex={0}
+        onScroll={event => { followingLatest.current = event.currentTarget.scrollTop <= 1; }}>
         {(p.error || failed) && <p role="alert">{p.error || t('capsule.inspectError')}</p>}
         {!p.replies.length && !p.error && !failed && <p>{t('capsule.empty')}</p>}
         {p.replies.slice(-limit).reverse().map(reply => <article key={reply.id}><time dateTime={reply.createdAt}>{assistantTimeLabel(reply.createdAt,p.language)}</time>

@@ -88,7 +88,7 @@ export interface SubagentExecutionOptions {
 export interface SubagentDispatcher {
   dispatch(context: ToolHandlerContext<SubagentInput>, options?: SubagentExecutionOptions): Promise<unknown>;
   control(context: ToolHandlerContext<unknown>, control: RemoteControl): Promise<unknown>;
-  reconcile(parentSessionId: string): void;
+  reconcile(parentSessionId: string, taskId?: string): void;
   readConversation?(context: ToolHandlerContext<unknown>, taskId: string, cursor?: string): Promise<unknown>;
 }
 
@@ -155,11 +155,10 @@ export function registerSubagentTool(
   const createMessageId = options.createMessageId ?? (() => `subagent_message_${randomUUID()}`);
   const localRuns = new Map<string, { controller: AbortController; request: Parameters<SubagentChildRunner>[0] }>();
   const reconciled = new Set<string>();
-  const reconcile = (parent: string) => {
+  const reconcile = (parent: string, taskId?: string) => {
     if (reconciled.has(parent)) return;
-    // Reconcile persisted local work once, before admitting this host's first interaction.
-    for (const task of tasks.list(parent)) if (!task.remote && task.origin !== 'team' && task.status === 'running' && !tasks.startedHere(parent, task.taskId)) options.reconcileChild?.(task);
-    reconciled.add(parent);
+    for (const task of tasks.restoredLocalRuns(parent, taskId)) options.reconcileChild?.(task);
+    if (!taskId) reconciled.add(parent);
   };
   const localCapabilities: SubagentInteractionCapabilities = { operations: [
     ...(options.localControl ? ['observe', 'respond', 'cancel'] as const : []),

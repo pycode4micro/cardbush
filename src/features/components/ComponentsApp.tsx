@@ -38,7 +38,7 @@ export function ComponentsApp({language, home = false, onCreate}: Props) {
     {error && <p role="alert">{error}</p>}
     <div className="components-grid">{visible.map(item => <article key={item.id} data-component-id={item.id} className="html-component-card"
       style={{'--component-width':item.width,'--component-height':item.height+'px'} as CSSProperties}>
-      <div className="html-component-content" inert={!home}>{home ? <HtmlComponentSurface component={item}/> :
+      <div className="html-component-content" inert={!home}>{home ? <HtmlComponentSurface component={item} homeNetwork/> :
         <HtmlComponentContext.Provider value={null}><HtmlComponentSurface component={item} active={false}/></HtmlComponentContext.Provider>}</div>
       <header><span className="component-card-title">{item.title}</span>
         <button type="button" aria-label={t('homeComponents.edit',{name:item.title})} onClick={() => setEditor({item,revision:saved.revision})}><Pencil/></button>

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 
 export type CapsuleInput = {
   composing: boolean; voiceOpen: boolean; repliesOpen: boolean; ready: boolean; sending: boolean;
@@ -11,6 +11,20 @@ export function useCapsuleControls(p: CapsuleInput) {
   const toolbar = useRef<HTMLDivElement>(null);
   const previous = useRef<'compose' | 'voice' | undefined>(undefined);
   const sheet = useRef<HTMLElement>(null);
+  const { repliesOpen, collapse } = p;
+  useEffect(() => {
+    if (!repliesOpen) return;
+    // A completed click lets the toolbar's drag handler suppress a drag first.
+    const dismissOutside = (event: MouseEvent) => {
+      const path = event.composedPath();
+      if (sheet.current && path.includes(sheet.current)) return;
+      if (toolbar.current && path.includes(toolbar.current) &&
+          path.some(node => node instanceof HTMLButtonElement && !node.disabled)) return;
+      collapse();
+    };
+    document.addEventListener('click', dismissOutside);
+    return () => document.removeEventListener('click', dismissOutside);
+  }, [repliesOpen, collapse]);
   const [limit, setLimit] = useState(30);
   useLayoutEffect(() => {
     const node = sheet.current;

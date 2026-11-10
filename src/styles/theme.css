@@ -1,4 +1,6 @@
 :root {
+  --compose-action-icon-size: 18px;
+  --compose-action-icon-stroke: 1.8;
   --cardbush-window-bg: #1a1a1a;
   color-scheme: light;
   font-family:

@@ -9,6 +9,7 @@ import { McpClientManager } from '@cardbush/bush-mcp-client';
 import { ElectronProductHostController } from '../dist-electron/productHostController.mjs';
 import { startProductMcpManagement, mergeMcpServer } from '../dist-electron/productMcpManagement.mjs';
 import { mcpManagementView } from '../dist-electron/productMcpManagementView.mjs';
+import homeLibrary from '../assets/skills/cardbush-docs/scripts/home-library.cjs';
 
 test('cancelled startup catalog refresh never submits late work and cancels an in-flight command', async () => {
   const parent = resolve('tmp'); await mkdir(parent, { recursive: true });
@@ -94,7 +95,8 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
   let activeSnapshot;
   const manager = new McpClientManager({ registry, canApply: () => idle });
   let host;
-  const endpoint = await startProductMcpManagement(() => host);
+  const home = homeLibrary.openLibrary(root);
+  const endpoint = await startProductMcpManagement(() => host, () => home);
   const managementServer = {
     id: 'cardbush_management',
     transport: { kind: 'streamable_http', url: endpoint.url, headers: { Authorization: `Bearer ${endpoint.token}` } },
@@ -160,11 +162,36 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
     await client.connect(transport);
     await t.test('management is discovered through the ordinary Runtime MCP registry', async () => {
       const tools = await client.listTools();
-      assert.deepEqual(tools.tools.map(t => t.name).sort(), ['configure_mcp_server', 'configure_plugin_connection', 'list_mcp_servers', 'list_plugin_connections', 'reconnect_mcp_server', 'remove_mcp_server', 'request_plugin_credentials']);
+      assert.deepEqual(tools.tools.map(t => t.name).sort(), ['configure_mcp_server', 'configure_plugin_connection', 'edit_home_component', 'list_mcp_servers', 'list_plugin_connections', 'read_home_component', 'reconnect_mcp_server', 'remove_mcp_server', 'request_plugin_credentials']);
       for (const tool of tools.tools) assert.ok(registry.resolve(`mcp__cardbush_management__${tool.name}`));
       const status = await invoke('list_mcp_servers');
       assert.equal(status.runtime.applicationState, 'applied');
       assert.deepEqual(status.configuration.servers, []);
+    });
+    await t.test('installed widget edits are bounded, atomic and cannot grant themselves capabilities', async () => {
+      const origin = 'https://scores.example.org';
+      const start = await invoke('read_home_component');
+      const first = await invoke('edit_home_component', {mode:'create',id:'scores',title:'Scores',html:'one one two',home:true,width:12,height:680,
+        networkDomains:[origin],expectedRevision:start.revision});
+      assert.deepEqual(first.approvedNetworkOrigins,[]);
+      const other = await invoke('edit_home_component',{mode:'create',id:'other',title:'Other',html:'isolated',expectedRevision:first.revision});
+      const read = await invoke('read_home_component',{id:'scores',find:'two',limit:2});
+      assert.equal(read.source,'tw'); assert.equal(read.nextOffset,10);
+      const patch = {mode:'update',id:'scores',expectedRevision:other.revision};
+      const denied = async (args,reason) => {const r = await client.callTool({name:'edit_home_component',arguments:args});
+        assert.equal(r.isError,true); assert.match(r.content[0].text,reason);};
+      await denied({...patch,replacements:[{before:'two',after:'three'},{before:'one',after:'zero'}]},/PATCH_CONTEXT_NOT_UNIQUE/);
+      assert.equal(home.snapshot().items[0].html,'one one two');
+      await denied({...patch,networkDomains:['https://127.0.0.1']},/INVALID_COMPONENT_ORIGIN/);
+      const before=home.snapshot();
+      const approved=home.save([{...before.items[0],approvedNetworkOrigins:[origin],allowActions:true},before.items[1]],before.revision);
+      await denied({...patch,title:'stale'},/REVISION_CONFLICT/);
+      const renamed=await invoke('edit_home_component',{...patch,title:'Live scores',expectedRevision:approved.revision});
+      assert.deepEqual(renamed.approvedNetworkOrigins,[origin]); assert.equal(renamed.allowActions,true);
+      const changed=await invoke('edit_home_component',{...patch,replacements:[{before:'two',after:'three'}],expectedRevision:renamed.revision});
+      assert.deepEqual(changed.approvedNetworkOrigins,[]); assert.equal(changed.allowActions,false);
+      assert.deepEqual([changed.home,changed.width,changed.height,changed.title],[true,12,680,'Live scores']);
+      const final=home.snapshot(); assert.equal(final.items[0].html,'one one three'); assert.deepEqual(final.items[1],before.items[1]);
     });
     const fixture = join(root, 'fixture.mjs');
     await writeFile(fixture, `
@@ -316,6 +343,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
     await client.close();
     await manager.close();
     await endpoint.close();
+    home.close();
     assert.ok(root.startsWith(parent + sep));
     await rm(root, { recursive: true, force: true });
   }

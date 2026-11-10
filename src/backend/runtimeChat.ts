@@ -8,6 +8,7 @@ import { readIndividuation } from '../features/settings/individuation';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
 import { selectedTeamReference, teamReferenceInstructions } from '../shared/promptReferences';
 import type {
+  ConversationEntry,
   RuntimeEvent,
   RuntimeProviderBindingRef,
   RuntimeSessionTurnRequest,
@@ -49,7 +50,6 @@ import type {
   ChatStreamRequest,
   TurnEventStreamRequest,
 } from './api';
-import { synchronizeProductMcpSnapshot } from './productMcp';
 import { configuredMcpServerId } from './mcpConfigurationFact';
 import { prepareRuntimePluginTurn } from '../plugins/runtimeExtensions';
 import { parseGoalCommand } from './goalCommand';
@@ -64,7 +64,7 @@ import { selectRuntimeToolDefinitions } from './runtimeToolCatalog';
 import { realtimeConversationRecord } from '@cardbush/bush-runtime/realtime-conversation';
 
 export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, runtime: ReturnType<typeof createDesktopRuntimeSession>,
-  options: { turnId?: string; signal?: AbortSignal } = {}) {
+  options: { turnId?: string; signal?: AbortSignal; journalEntries?: ConversationEntry[]; stageFinished?: (stage: string) => void } = {}) {
   if (!request.model.trim()) throw new Error(uiText()('runtimeChat.runtime_model_is_required'));
   const signal = options.signal;
   const turnId = options.turnId?.trim() || `turn_${crypto.randomUUID()}`;
@@ -100,19 +100,15 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
     } : { mode: 'inherit' },
     disabledTools: subagentConfig.disabledTools,
   };
-  await synchronizeProductMcpSnapshot(runtime.client).catch(async (error) => {
-    const previous = await runtime.client.getMcpSnapshot();
-    if (!previous?.servers.length) throw error;
-    // A broken newly added server must not block conversations using the
-    // last successfully applied catalog. Settings reports the apply failure.
-    console.warn('MCP update failed; retaining the active catalog', error);
-  });
+  options.stageFinished?.('model-and-host-config');
   const [catalog, activeGoal, existingSession] = await Promise.all([
     runtime.client.getToolCatalogDetails(signal),
     runtime.client.getGoal(request.sessionId, signal),
     runtime.client.getSession(request.sessionId, signal),
   ]);
+  options.stageFinished?.('catalog-and-session');
   await prepareRuntimePluginTurn(request, catalog.map(entry => entry.definition));
+  options.stageFinished?.('renderer-plugins');
   const permissionMode = request.permissionMode ?? 'task_free';
   const interactiveRequests = request.interactiveRequestsEnabled === true;
   const vision = request.standardImageInputEnabled === true;
@@ -190,6 +186,11 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
     attachments: request.attachments,
   });
   if (!existingSession) runtimeRequest.sessionMetadata = { ...runtimeRequest.sessionMetadata, titleGeneration: 'pending' };
+  if (request.allowedTools) {
+    runtimeRequest.metadata.mcpCatalogUpdates = 'restricted';
+    runtimeRequest.metadata.mcpPluginDiscovery = false;
+  }
+  if (request.disabledTools?.length) runtimeRequest.metadata.excludedPluginTools = request.disabledTools;
   if (existingSession?.metadata?.team_workspace === true || existingSession?.metadata?.creation_workspace === true) {
     // Legacy editors could create an empty session on open. Mark real sends so
     // their first in-flight turn is visible before terminal history is committed.
@@ -206,12 +207,17 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
   }
   // Voice/page entries are independent of Turn commits. Include their recent text
   // as historical data so a later typed request or child can refer to the call.
-  if ((await runtime.client.getCapabilities()).supportedCommands.includes(ASSISTANT_CONVERSATION_COMMAND)) {
+  let journalEntries = options.journalEntries;
+  if (!journalEntries && (await runtime.client.getCapabilities()).supportedCommands.includes(ASSISTANT_CONVERSATION_COMMAND)) {
     const journal = await runtime.client.command({ kind: ASSISTANT_CONVERSATION_COMMAND, payload: { action: 'read', sessionId: request.sessionId } },
       value => value as import('./conversationJournal').ConversationJournalSnapshot);
-    const content = realtimeConversationRecord(journal.entries, maxContextTokens);
+    journalEntries = journal.entries;
+  }
+  if (journalEntries) {
+    const content = realtimeConversationRecord(journalEntries, maxContextTokens);
     if (content) runtimeRequest.inputMessages.unshift({ messageId: `voice-context-${turnId}`, message: { role: 'user', name: 'conversation_record', visibility: 'internal', content } });
   }
+  options.stageFinished?.('workspace-and-input');
   return { runtimeRequest, sharedAgentInput, maxContextTokens, goalCommand };
 }
 

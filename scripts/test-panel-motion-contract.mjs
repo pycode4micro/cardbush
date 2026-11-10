@@ -101,14 +101,14 @@ assert.match(
   /@media \(max-width:\s*980px\)[\s\S]*?\.right-inspector\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?max-width:\s*calc\(100% - 48px\)/,
   'Narrow windows must overlay the inspector instead of squeezing the chat stage',
 );
-assert.match(css, /\.scene-body\.inspector-collapsed[\s\S]*42px/);
-assert.doesNotMatch(css, /\.scene-inspector\.collapsed\s*\{\s*display:\s*none/);
+assert.match(css, /\.right-inspector\.soft-panel-hidden\s*\{[^}]*width:\s*0;[^}]*visibility:\s*hidden/);
+assert.doesNotMatch(css, /\.right-inspector\.soft-panel-hidden\s*\{[^}]*display:\s*none/);
 
 assert.match(presence, /exitDurationMs\s*=\s*240/);
 assert.match(presence, /setTimeout\([\s\S]*setMounted\(false\)/);
 assert.match(presence, /prefersReducedMotion\(\)/);
 assert.match(read('src', 'shared', 'motionPreference.ts'), /prefers-reduced-motion/);
-assert.match(app, /sidebarPresence\.mounted/);
+assert.match(app, /\(showChatRail \|\| recentList \|\| projectsHost\) && <ChatSidebar showRail=\{showChatRail\}/);
 assert.match(app, /inspectorPresence\.mounted/);
 assert.match(app, /workSummaryPresence\.mounted/);
 assert.equal(
@@ -128,8 +128,8 @@ assert.match(app, /className="right-inspector-tab-strip"/);
 assert.match(app, /useInspectorTabStrip\(activeInspectorTabIdentity, displayedInspectorTabs\.length\)/);
 // Mount, wheel cancellation and ancestor-scroll behavior are exercised in Electron
 // by test-inspector-tabs.cjs, rather than asserting the old buggy implementation.
-assert.match(app, /className="right-inspector-tab-manager"/);
-assert.match(app, /className="right-inspector-tab-menu" role="menu"/);
+assert.doesNotMatch(app, /className="right-inspector-tab-manager"/);
+assert.doesNotMatch(app, /className="right-inspector-tab-menu" role="menu"/);
 assert.match(app, /openInspectorTabContextMenu\(event, tab\.id\)/);
 assertUiMessage(app, 'app.closeOtherTabs', { zh: '关闭其他标签页', en: 'Close other tabs' });
 assertUiMessage(app, 'app.closeTabsToTheRight', { zh: '关闭右侧标签页', en: 'Close tabs to the right' });
@@ -164,7 +164,7 @@ for (const shortcut of ['openBrowser', 'openFiles', 'openShadow']) {
 assert.match(shadowWindow, /export function ShadowWindow\(\{/);
 assert.match(shadowWindow, /shadow-inspector-shell/);
 assert.doesNotMatch(css, /\.right-inspector-add-menu\s*\{/);
-assert.match(css, /\.right-inspector-tab-menu\s*\{/);
+assert.doesNotMatch(css, /\.right-inspector-tab-menu\s*\{/);
 assert.match(css, /\.right-inspector-tab-context-menu\s*\{/);
 assert.match(css, /\.shadow-window-shell\.shadow-inspector-shell\s*\{/);
 assert.match(css, /\.right-inspector-toolbar\.with-tabs\s*\{/);
@@ -239,10 +239,10 @@ assert.match(
   /\.work-summary-docked\.work-summary-visible \.chat-content-frame\s*\{[\s\S]*?--work-summary-content-inset:\s*calc\(336px \+ var\(--work-summary-anchor-right, 12px\) \+ 12px\)/,
   'A docked summary must reserve its column without narrowing the scroll viewport',
 );
-assert.match(app, /open: inspectorOpen, setOpen: setInspectorOpen[\s\S]*?useInspectorTabs\(inspectorWorkspaceId\)/,
+assert.match(app, /open: splitOpen, setOpen: setSplitOpen[\s\S]*?useInspectorTabs\(inspectorWorkspaceId, splitPage\(section\)\)/,
   'Inspector visibility belongs to its conversation workspace');
 assert.doesNotMatch(app, /sidebarPreviewWidth/);
-assert.match(app, /<SidebarResizer\s+language=\{language\}\s+width=\{sidebarWidth\}/);
+assert.match(app, /<SidebarResizer\b[^>]*language=\{language\}\s+width=\{sidebarWidth\}/);
 assert.match(sidebar, /soft-panel-motion/);
 assert.match(summary, /soft-panel-motion/);
 assert.doesNotMatch(summary, /work-summary-history-turn|historyTurnPageSize/);

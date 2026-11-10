@@ -15,6 +15,7 @@ import { effectiveModels } from '../settings/modelPreferences';
 import { readInitialLanguageMode, readSystemLanguage, resolveAppLanguage, readDisabledSkillNames, readVisualInputEnabled } from '../settings/localPreferences';
 import { useTeamChoices } from '../team/teamWorkspaceStore';
 import { applicationVoiceSession } from '../voice/VoiceConversation';
+import { assistantVoiceActivity } from './assistantActivity';
 import { AssistantWindowView } from './AssistantWindowView';
 import { useAssistantModelSelection } from './useAssistantModel';
 import './assistantWindow.css';
@@ -51,6 +52,8 @@ export function AssistantWindow() {
   const [capabilities, setCapabilities] = useState(defaultBackendCapabilities);
   const [retainDraft, setRetainDraft] = useState(false);
   const voice = applicationVoiceSession();
+  const callPhase = useSyncExternalStore(voice.subscribe, () => assistantVoiceActivity(voice.snapshot()));
+  useEffect(() => { window.cardbushDesktop?.setCapsuleCallPhase?.(callPhase); }, [callPhase]);
   const usingVoice = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode !== 'idle');
   const team = useTeamChoices(capabilities.teamMode);
   const selectedModel = useAssistantModelSelection(models, defaultModel);

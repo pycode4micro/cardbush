@@ -1,6 +1,8 @@
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 /** Shared by product turns and clean/fork child assignments, including continuations. */
-export const REPORT_DELIVERY_INSTRUCTIONS = renderPromptTemplate('report-delivery-instructions');
+export const REPORT_DELIVERY_INSTRUCTIONS = renderPromptTemplate('report-delivery-instructions', {
+  reportConversationPolicy: renderPromptTemplate('report-conversation-policy'),
+});
 
 export const TASK_CONTINUATION_INSTRUCTIONS = renderPromptTemplate('task-continuation-instructions');
 

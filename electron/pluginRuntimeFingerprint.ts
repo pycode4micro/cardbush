@@ -50,10 +50,11 @@ async function fileHash(path: string, previous: CachedFile | undefined): Promise
   if (previous?.stamp === pathStamp) return previous;
   const file = await open(path, 'r');
   try {
-    const before = stamp(await file.stat());
+    const info = await file.stat();
+    const before = stamp(info);
     const hash = createHash('sha256');
     // Bound memory even for native binaries; repeated refreshes reuse unchanged hashes.
-    const buffer = Buffer.allocUnsafe(64 * 1024);
+    const buffer = Buffer.allocUnsafe(Math.max(1, Math.min(info.size, 1024 * 1024)));
     for (;;) {
       const { bytesRead } = await file.read(buffer, 0, buffer.length, null);
       if (!bytesRead) break;
@@ -75,6 +76,7 @@ export async function pluginRuntimeFingerprint(root: string, version: string): P
   const base = resolve(root);
   const previous = roots.get(base);
   const next = new Map<string, CachedFile>();
+  const files: string[] = [];
   async function visit(directory: string) {
     const entries = await readdir(directory, { withFileTypes: true });
     entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
@@ -85,10 +87,18 @@ export async function pluginRuntimeFingerprint(root: string, version: string): P
       if (ignoredCapabilityPath(name) || /(^|\/)(skills|docs|\.codex-plugin|\.claude-plugin)(\/|$)/i.test(name)) continue;
       // Do not scan dependency links or follow junctions outside the plugin package.
       if (entry.isDirectory()) await visit(path);
-      else if (entry.isFile() && pluginRuntimeSource(name)) next.set(name, await fileHash(path, previous?.get(name)));
+      else if (entry.isFile() && pluginRuntimeSource(name)) files.push(name);
     }
   }
   await visit(base);
+  // Bounded batches overlap filesystem waits. Insert results in traversal order
+  // so the implementation identity stays identical across hosts and refreshes.
+  const batchSize = 12;
+  for (let offset = 0; offset < files.length; offset += batchSize) {
+    const names = files.slice(offset, offset + batchSize);
+    const hashes = await Promise.all(names.map(name => fileHash(join(base, name), previous?.get(name))));
+    names.forEach((name, i) => next.set(name, hashes[i]));
+  }
   roots.delete(base); roots.set(base, next);
   // This is only a disposable hash cache; removed packages must not accumulate forever.
   while (roots.size > 64) roots.delete(roots.keys().next().value!);

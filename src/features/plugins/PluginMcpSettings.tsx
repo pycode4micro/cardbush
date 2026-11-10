@@ -232,7 +232,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
         : needsAccount ? (uiText(language)('pluginMcpSettings.signInAboveToConnect')) : ready ? (uiText(language)('browserConnectionSettings.connected'))
           : busy === `${id}:reconnect` || connectionState === 'restarting' ? (uiText(language)('workspace.connecting'))
             : connectionState === 'unavailable' ? (uiText(language)('pluginMcpSettings.connectionFailed')) : connectionState === 'auth_required' ? (uiText(language)('pluginMcpSettings.signInRequired')) : connectionState === 'configuration_required' ? (hosted ? (uiText(language)('pluginMcpSettings.notConnected')) : (uiText(language)('pluginMcpSettings.configurationRequired')))
-              : missingBinding ? (uiText(language)('pluginMcpSettings.boundServiceUnavailable')) : needsConnection ? (uiText(language)('pluginMcpSettings.configurationRequired')) : (uiText(language)('pluginMcpSettings.disconnected'));
+              : connectionState === 'idle' ? uiText(language)('pluginMcpSettings.onDemand') : missingBinding ? (uiText(language)('pluginMcpSettings.boundServiceUnavailable')) : needsConnection ? (uiText(language)('pluginMcpSettings.configurationRequired')) : (uiText(language)('pluginMcpSettings.disconnected'));
       const tools = [...new Set([...(actual?.tools.map(tool => tool.remoteName) ?? []), ...Object.keys(record(settings.tools))])];
       const transport = bound ? binding?.transport : component.mcp?.transport;
       const network = (!bound && component.kind === 'app') || ['http', 'streamable_http', 'sse'].includes(transport ?? '');

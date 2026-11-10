@@ -1,6 +1,6 @@
 import { uiText } from '../../i18n';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
-import type { ShortcutId } from '../shortcuts/keyboardShortcuts';
+import { SidebarNavRow } from './SidebarNavRow';
 import type { RecentListOutlet } from '../desktop/RecentConversationBar';
 import { ConversationRowContent } from '../desktop/RecentConversationBarView';
 import { ProfileMenu } from '../profile/ProfileMenu';
@@ -199,11 +199,12 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenSettings,
   onOpenArchives,
   onOpenSearch,
-  projectsHost, onOpenProject, onOpenTabWorkspace,
+  projectsHost, onOpenProject, onOpenTabWorkspace, workspaceNavigation,
   softVisible = true, showRail = true, recentList,
 }: {
   language: AppLanguage;
-  section: AppSection | 'settings' | 'tabs';
+  section: AppSection | 'settings' | 'tabs' | 'projects';
+  workspaceNavigation?: React.ReactNode;
   activeConversationId: string;
   runningConversationIds?: Set<string>;
   attentionByConversation?: Record<string, SessionAttentionState>;
@@ -689,9 +690,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             conversationMenuItems(conversation, options, recentList.enter),
           )
         }
-        onClick={() => {
-          recentList.select(conversation.id);
-        }}
+        onClick={() => recentList.enter(conversation.id)}
       />
     );
   }
@@ -710,9 +709,10 @@ export const ChatSidebar = memo(function ChatSidebar({
         <button type="button" className="desktop-search" data-shortcut="searchConversations" aria-keyshortcuts={shortcuts.aria('searchConversations')} aria-label={searchLabel} title={searchLabel} onClick={onOpenSearch}>
           <Search aria-hidden="true"/><span>{uiText(language)('desktop.search')}</span>
         </button>
-        <NavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
-        <NavRow navSection="explore" shortcut="openAppCenter" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
-        <NavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={section === 'tabs'} onClick={onOpenTabWorkspace}/>
+        <SidebarNavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
+        <SidebarNavRow navSection="explore" shortcut="openAppCenter" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
+        {workspaceNavigation}
+        <SidebarNavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={section === 'tabs'} onClick={onOpenTabWorkspace}/>
         <SidebarApplications language={language}/>
       </nav>
 
@@ -744,40 +744,6 @@ export const ChatSidebar = memo(function ChatSidebar({
       {menu}
   </>;
 });
-
-function NavRow({
-  active,
-  icon,
-  label,
-  onClick,
-  shortcut,
-  navSection,
-}: {
-  active?: boolean;
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  shortcut?: ShortcutId;
-  navSection?: AppSection | 'tabs';
-}) {
-  return (
-    <button
-      className={`nav-row ${active ? 'active' : ''}`}
-      data-shortcut={shortcut}
-      data-nav-section={navSection}
-      aria-current={active ? 'page' : undefined}
-      aria-label={label}
-      title={label}
-      type="button"
-      onClick={onClick}
-    >
-      <span className="nav-row-icon" aria-hidden="true">
-        {icon}
-      </span>
-      <span>{label}</span>
-    </button>
-  );
-}
 
 function ProjectBlock({
   project,

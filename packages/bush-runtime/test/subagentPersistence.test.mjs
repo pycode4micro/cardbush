@@ -84,6 +84,36 @@ test("replays journals written before Team origin fields existed without changin
   persistence.close();
 });
 
+test('live task lookups stay in sync with durable revisions across a failed write and reload', async () => {
+  const events = [];
+  let fail = false;
+  const persistence = { load: () => events, append(event) {
+    if (fail) throw new Error('write failed');
+    events.push(event);
+  } };
+  const store = new SubagentTaskStore({ persistence, now: () => NOW });
+  const task = store.start(startInput());
+  assert.equal(store.runningCount('parent'), 1);
+  const observer = new SubagentTaskStore({ persistence });
+  assert.equal(observer.get('parent', task.taskId).status, 'running');
+  assert.equal(observer.runningCount('parent'), 0, 'an old task receipt cannot establish live work after restart');
+  const finish = { parentSessionId: task.parentSessionId, taskId: task.taskId, status: 'completed', finalResponse: 'done', errorMessage: '', usage: {} };
+  fail = true;
+  assert.throws(() => store.finish(finish), /write failed/);
+  assert.equal(store.get('parent', task.taskId).status, 'running');
+  assert.equal(store.runningCount('parent'), 1);
+  fail = false;
+  store.finish(finish);
+  assert.equal(store.runningCount('parent'), 0);
+  store.get('parent', task.taskId).status = 'failed';
+  const [completed] = store.list('parent', task.parentTurnId);
+  assert.equal(completed.status, 'completed');
+  assert.equal(completed.revision, 2);
+  const [cache] = await store.cacheEntries();
+  await cache.remove();
+  assert.deepEqual(store.get('parent', task.taskId), completed);
+});
+
 function startInput() {
   return {
     taskId: "task_1",

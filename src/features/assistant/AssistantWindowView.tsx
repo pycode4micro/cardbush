@@ -11,7 +11,7 @@ export function AssistantWindowView({language, theme, appearance, prepare, retai
   return <UiLanguageProvider language={language}><ApplicationVoiceHost language={language}>
     <main className={`app resident-assistant ${theme}`} lang={language} style={appearance}>
       <AssistantView active language={language} prepare={prepare} ownsConfiguration={ownsConfiguration}
-        floating={{retainDraft, returnToWorkspace:() => void window.cardbushDesktop?.assistantMode?.('workspace')}}/>
+        floating={{retainDraft}}/>
       <AssistantEventConnection prepare={prepare} language={language} configuration={prepare} enabled={ownsConfiguration && enabled}/>
     </main>
   </ApplicationVoiceHost></UiLanguageProvider>;

@@ -120,6 +120,7 @@ export class AgentService {
   #assigned = new Map<string, string>();
   #waitingForHost = new Set<string>();
   #closing = false;
+  readonly #mcpStartup = new AbortController();
   #closePromise?: Promise<void>;
   #storageFailure?: string;
   #stateListeners = new Set<() => void>();
@@ -165,7 +166,7 @@ export class AgentService {
       if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key];
     }
     Object.assign(env, explicitEnv, {
-      CARDBUSH_SERVICE_ID: state.id, CARDBUSH_RUNTIME_STATE_ROOT: runtimeRoot,
+      CARDBUSH_LOCAL_PLUGIN_DISCOVERY: options.local ? '1' : '0', CARDBUSH_SERVICE_ID: state.id, CARDBUSH_RUNTIME_STATE_ROOT: runtimeRoot,
       CARDBUSH_SANDBOX_SETTINGS_PATH: join(configurationRoot, 'config', 'sandbox.json'),
       CARDBUSH_SUBAGENT_CONFIG_PATH: join(configurationRoot, 'config', 'subagents.json'),
       CARDBUSH_APPS_CONFIG_PATH: join(configurationRoot, 'config', 'apps.json'),
@@ -195,6 +196,10 @@ export class AgentService {
     this.#desktopEnv = env;
     this.#network = new PluginNetwork(join(configurationRoot, 'config', 'apps.json'), () => createHeadlessProxySession(env));
     this.runtime = new AgentRuntimeHost(env, async (operation, payload, signal, onAccepted) => {
+      if (operation === 'mcp.ensure-directory') {
+        await this.product.refreshMcp(undefined, undefined, signal);
+        return true;
+      }
       const data = payload as Record<string, unknown>;
       if (operation === 'webhook.bot' && this.#webhooks) return this.#webhooks.botRequest(payload, signal);
       if (operation === 'environment.snapshot') return { browser: { integrated: { available: false }, external: browserConnectionEnvironment(this.#browserConnector?.status().connector) },
@@ -324,7 +329,12 @@ export class AgentService {
         }
       });
       if (service.#toolsEnabled) {
-        await service.product.refreshMcp();
+        if (options.local) {
+          const { signal } = service.#mcpStartup;
+          void service.product.refreshMcp(undefined, undefined, signal).catch(error => {
+            if (!signal.aborted) console.warn('[mcp-startup]', error);
+          });
+        } else await service.product.refreshMcp();
         if (!service.#webRestricted && !options.local) await service.runtime.transport.sendCommand({ kind: 'runtime.automation_start', payload: {} });
       }
       if (service.#toolsEnabled && !service.#webRestricted && !options.local) {
@@ -1160,6 +1170,7 @@ export class AgentService {
   close(): Promise<void> {
     if (this.#closePromise) return this.#closePromise;
     this.#closing = true;
+    this.#mcpStartup.abort();
     return this.#closePromise = (async () => {
       const failures: unknown[] = [];
       const attempt = async (name: string, action: () => unknown) => {

@@ -16,16 +16,23 @@ export interface SubagentTaskPersistence {
   append(event: SubagentEvent): void;
 }
 
+type ParentTasks = {
+  latest: Map<string, SubagentTask>;
+  eventIds: Set<string>;
+  cacheRows?: SubagentEvent[];
+};
+
 export class SubagentTaskStore {
   readonly #persistence?: SubagentTaskPersistence;
   readonly #createEventId: () => string;
   readonly #now: () => string;
-  readonly #events = new Map<string, SubagentEvent[]>();
+  readonly #parents = new Map<string, ParentTasks>();
   readonly #listeners = new Set<() => void>();
-  readonly #startedHere = new Set<string>();
+  // Only this host's in-flight dispatches own execution. Journal replay restores history.
+  readonly #liveByParent = new Map<string, Set<string>>();
 
   startedHere(parentSessionId: string, taskId: string): boolean {
-    return this.#startedHere.has(JSON.stringify([parentSessionId, taskId]));
+    return this.#liveByParent.get(parentSessionId)?.has(taskId) ?? false;
   }
 
   waitForCompletion(parentSessionId: string, taskId: string, signal: AbortSignal): Promise<void> {
@@ -57,8 +64,8 @@ export class SubagentTaskStore {
   }
 
   async cacheEntries(): Promise<CacheEntry[]> {
-    return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#events].map(([id, rows]) =>
-      memoryCacheEntry('subagents', id, this.#persistence?.cacheEntries ? [] : rows, () => this.#events.delete(id)))];
+    return [...await this.#persistence?.cacheEntries?.() ?? [], ...[...this.#parents].map(([id, state]) =>
+      memoryCacheEntry('subagents', id, state.cacheRows ?? [], () => this.#parents.delete(id)))];
   }
 
   start(input: {
@@ -104,7 +111,9 @@ export class SubagentTaskStore {
       updatedAt: now,
     });
     this.#append(input.parentSessionId, task);
-    this.#startedHere.add(JSON.stringify([input.parentSessionId, input.taskId]));
+    let live = this.#liveByParent.get(input.parentSessionId);
+    if (!live) this.#liveByParent.set(input.parentSessionId, live = new Set());
+    live.add(input.taskId);
     return structuredClone(task);
   }
 
@@ -158,7 +167,9 @@ export class SubagentTaskStore {
       completedAt: now,
     });
     this.#append(input.parentSessionId, task);
-    this.#startedHere.delete(JSON.stringify([input.parentSessionId, input.taskId]));
+    const live = this.#liveByParent.get(input.parentSessionId);
+    live?.delete(input.taskId);
+    if (!live?.size) this.#liveByParent.delete(input.parentSessionId);
     return structuredClone(task);
   }
 
@@ -173,40 +184,53 @@ export class SubagentTaskStore {
   }
 
   get(parentSessionId: string, taskId: string): SubagentTask | undefined {
-    const task = projectSubagentTasks(parentSessionId, this.#load(parentSessionId)).get(taskId);
+    const task = this.#load(parentSessionId).latest.get(taskId);
     return task ? structuredClone(task) : undefined;
   }
 
   list(parentSessionId: string, parentTurnId?: string): SubagentTask[] {
-    return [...projectSubagentTasks(parentSessionId, this.#load(parentSessionId)).values()]
+    return [...this.#load(parentSessionId).latest.values()]
       .filter((task) => !parentTurnId || task.parentTurnId === parentTurnId)
       .map((task) => structuredClone(task));
   }
 
-  #load(parentSessionId: string): SubagentEvent[] {
-    const cached = this.#events.get(parentSessionId);
+  runningCount(parentSessionId: string): number {
+    return this.#liveByParent.get(parentSessionId)?.size ?? 0;
+  }
+
+  restoredLocalRuns(parentSessionId: string, taskId?: string): SubagentTask[] {
+    const latest = this.#load(parentSessionId).latest;
+    const candidates = taskId ? [latest.get(taskId)] : latest.values();
+    const restored: SubagentTask[] = [];
+    for (const task of candidates) {
+      if (task?.status === 'running' && !task.remote && task.origin !== 'team' &&
+          !this.startedHere(parentSessionId, task.taskId)) restored.push(structuredClone(task));
+    }
+    return restored;
+  }
+
+  #load(parentSessionId: string): ParentTasks {
+    const cached = this.#parents.get(parentSessionId);
     if (cached) return cached;
-    const loaded = (this.#persistence?.load(parentSessionId) ?? []).map((event) =>
-      subagentEventSchema.parse(event),
-    );
-    projectSubagentTasks(parentSessionId, loaded);
-    this.#events.set(parentSessionId, loaded);
+    const loaded = replay(parentSessionId, this.#persistence?.load(parentSessionId) ?? [], !this.#persistence?.cacheEntries);
+    this.#parents.set(parentSessionId, loaded);
     return loaded;
   }
 
   #append(parentSessionId: string, task: SubagentTask): void {
-    const events = this.#load(parentSessionId);
+    const state = this.#load(parentSessionId);
     const event = subagentEventSchema.parse({
       protocol: BUSH_SUBAGENT_EVENT_PROTOCOL,
       eventId: this.#createEventId(),
-      sequence: events.length + 1,
+      sequence: state.eventIds.size + 1,
       parentSessionId,
       taskId: task.taskId,
       createdAt: this.#now(),
       task,
     });
+    validateTransition(parentSessionId, state, event);
     this.#persistence?.append(event);
-    events.push(event);
+    apply(state, event);
     for (const listener of this.#listeners) listener();
   }
 }
@@ -215,52 +239,64 @@ export function projectSubagentTasks(
   parentSessionId: string,
   candidates: SubagentEvent[],
 ): Map<string, SubagentTask> {
-  const tasks = new Map<string, SubagentTask>();
-  const eventIds = new Set<string>();
-  for (const [index, candidate] of candidates.entries()) {
+  return replay(parentSessionId, candidates, false).latest;
+}
+
+function replay(parentSessionId: string, events: SubagentEvent[], keepCacheRows: boolean): ParentTasks {
+  const state: ParentTasks = { latest: new Map(), eventIds: new Set(), cacheRows: keepCacheRows ? [] : undefined };
+  for (const candidate of events) {
     const event = subagentEventSchema.parse(candidate);
-    if (event.parentSessionId !== parentSessionId || event.task.parentSessionId !== parentSessionId) {
-      throw new Error("Subagent parent Session identity mismatch.");
-    }
-    if (event.sequence !== index + 1) throw new Error("Subagent event sequence is not contiguous.");
-    if (eventIds.has(event.eventId)) throw new Error(`Duplicate Subagent event ${event.eventId}.`);
-    eventIds.add(event.eventId);
-    if (event.taskId !== event.task.taskId) throw new Error("Subagent task identity mismatch.");
-    const before = tasks.get(event.taskId);
-    if (!before) {
-      if (event.task.revision !== 1 || event.task.status !== "running") {
-        throw new Error("A Subagent task must begin with running revision 1.");
-      }
-    } else {
-      if (event.task.revision !== before.revision + 1) {
-        throw new Error("Subagent task revision is not contiguous.");
-      }
-      if (JSON.stringify(event.task.remote) !== JSON.stringify(before.remote)) throw new Error('Subagent remote binding changed.');
-      for (const key of [
-        "parentTurnId",
-        "childSessionId",
-        "childTurnId",
-        "prompt",
-        "inheritContext",
-        "inheritedMessageCount",
-        "origin",
-        "teamId",
-        "teamMemberId",
-        "agentProfileId",
-        "agentName",
-        "resumedFromTaskId",
-        "queuedAfterTaskId",
-        "phase",
-        "createdAt",
-      ] as const) {
-        if (event.task[key] !== before[key]) {
-          throw new Error(`Subagent immutable fact ${key} changed.`);
-        }
-      }
-      if (before.status !== "running") throw new Error("Subagent terminal task was updated.");
-      if (before.executionStartedAt && event.task.executionStartedAt !== before.executionStartedAt) throw new Error('Child execution admission changed.');
-    }
-    tasks.set(event.taskId, event.task);
+    validateTransition(parentSessionId, state, event);
+    apply(state, event);
   }
-  return tasks;
+  return state;
+}
+
+function apply(state: ParentTasks, event: SubagentEvent) {
+  state.latest.set(event.taskId, event.task);
+  state.eventIds.add(event.eventId);
+  state.cacheRows?.push(event);
+}
+
+function validateTransition(parentSessionId: string, state: ParentTasks, event: SubagentEvent) {
+  if (event.parentSessionId !== parentSessionId || event.task.parentSessionId !== parentSessionId) {
+    throw new Error("Subagent parent Session identity mismatch.");
+  }
+  if (event.sequence !== state.eventIds.size + 1) throw new Error("Subagent event sequence is not contiguous.");
+  if (state.eventIds.has(event.eventId)) throw new Error(`Duplicate Subagent event ${event.eventId}.`);
+  if (event.taskId !== event.task.taskId) throw new Error("Subagent task identity mismatch.");
+  const before = state.latest.get(event.taskId);
+  if (!before) {
+    if (event.task.revision !== 1 || event.task.status !== "running") {
+      throw new Error("A Subagent task must begin with running revision 1.");
+    }
+  } else {
+    if (event.task.revision !== before.revision + 1) {
+      throw new Error("Subagent task revision is not contiguous.");
+    }
+    if (JSON.stringify(event.task.remote) !== JSON.stringify(before.remote)) throw new Error('Subagent remote binding changed.');
+    for (const key of [
+      "parentTurnId",
+      "childSessionId",
+      "childTurnId",
+      "prompt",
+      "inheritContext",
+      "inheritedMessageCount",
+      "origin",
+      "teamId",
+      "teamMemberId",
+      "agentProfileId",
+      "agentName",
+      "resumedFromTaskId",
+      "queuedAfterTaskId",
+      "phase",
+      "createdAt",
+    ] as const) {
+      if (event.task[key] !== before[key]) {
+        throw new Error(`Subagent immutable fact ${key} changed.`);
+      }
+    }
+    if (before.status !== "running") throw new Error("Subagent terminal task was updated.");
+    if (before.executionStartedAt && event.task.executionStartedAt !== before.executionStartedAt) throw new Error('Child execution admission changed.');
+  }
 }

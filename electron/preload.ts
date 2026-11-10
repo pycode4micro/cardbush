@@ -197,9 +197,20 @@ const desktopApi = {
     ipcRenderer.on('workspace:presence', listener);
     return () => ipcRenderer.removeListener('workspace:presence', listener);
   },
-  assistantMode: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean) =>
+  assistantMode: (action: 'read' | 'float' | 'startup', enabled?: boolean) =>
     ipcRenderer.invoke('assistant:mode', action, enabled) as Promise<{ floating: boolean; nextLaunch: boolean; hasWorkspace: boolean }>,
   measureAssistantReplies: (height: number) => ipcRenderer.send('assistant:reply-height', height),
+  setCapsuleCallPhase: (phase: import('./assistantSurface').AssistantCallPhase | null) => ipcRenderer.send('assistant:set-capsule-call', phase),
+  onCapsuleCallPhase: (listener: (phase: import('./assistantSurface').AssistantCallPhase | null) => void) => {
+    let initial = true;
+    const changed = (_event: Electron.IpcRendererEvent, phase: import('./assistantSurface').AssistantCallPhase | null) => {
+      initial = false;
+      listener(phase);
+    };
+    ipcRenderer.on('assistant:capsule-call-changed', changed);
+    void ipcRenderer.invoke('assistant:read-capsule-call').then(phase => { if (initial) listener(phase); }).catch(() => {});
+    return () => { initial = false; ipcRenderer.removeListener('assistant:capsule-call-changed', changed); };
+  },
   dragAssistantSurface: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => ipcRenderer.send('assistant:drag-surface', action, dx, dy),
   assistantSurface: (surface: 'read' | import('./assistantSurface').AssistantSurface) => ipcRenderer.invoke('assistant:surface', surface),
   onAssistantSurface: (listener: (surface: import('./assistantSurface').AssistantSurface) => void) => {

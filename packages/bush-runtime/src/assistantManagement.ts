@@ -51,7 +51,7 @@ export class AssistantManagement {
     const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [] };
     return this.options.registry.definitions().filter(tool => allowed.has(tool.name) && parent.tools.some(item => item.name === tool.name)
       && this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
-        if (tool.name === 'mcp_search') return { ...tool, description: 'Discover MCP tool names and summaries available on this Runtime for delegation. Start with query keywords or *; optionally narrow by server. Continue with next_cursor as cursor without query/server. Try alternate queries before concluding a capability is unavailable. This query executes no target and grants no permission. Delegate actual execution to a child; schema loading and generic invocation are not available in this assistant scope. Local results do not establish remote worker capabilities.' };
+        if (tool.name === 'mcp_search') return { ...tool, description: 'Discover MCP tool names and summaries available on this Runtime for delegation. Start with query keywords or *; pass an ID from available_servers as server to load that plugin on demand. Continue with next_cursor as cursor without query/server. Try alternate queries before concluding a capability is unavailable. This query executes no target and grants no permission. Delegate actual execution to a child; schema loading and generic invocation are not available in this assistant scope. Local results do not establish remote worker capabilities.' };
         if (tool.name === 'search_skills') return { ...tool, description: 'Discover installed Skills on this Runtime by capability or name; query=* lists visible Skills. Results include descriptions, mainResource and optional plugin invocation IDs. Continue with next_offset as offset and the same query. Use these facts to choose a child for execution; reading instructions and invoking Skills belong to that child. Local results do not establish remote worker capabilities.' };
         return presentExistingScheduleActions(tool);
       });
@@ -59,6 +59,7 @@ export class AssistantManagement {
   snapshot(): AssistantManagementSnapshot {
     return { plan: this.options.coordination().getPlan(PERSONAL_ASSISTANT_SESSION), permissions: [...this.pending.values()] };
   }
+  get awaitingPermission() { return this.pending.size > 0; }
   hasPermission(id: string) { return this.permissions.pendingIds().includes(id); }
   answerPermission(answer: RuntimePermissionAnswer) { return this.permissions.answer(answer); }
   reset() { this.options.coordination().clearPlan(PERSONAL_ASSISTANT_SESSION); }
@@ -75,6 +76,7 @@ export class AssistantManagement {
         signal.throwIfAborted();
       }
     }
+    if (call.name === 'mcp_search') executionRequest.metadata = { ...executionRequest.metadata, mcpToolDiscovery: true };
     const identity = { requestId: request.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: round + 1, ordinal };
     this.identities.set(call.id, identity);
     if (typeof parent.metadata.environmentExecutionId === 'string') this.executions.set(call.id, parent.metadata.environmentExecutionId);
@@ -87,6 +89,10 @@ export class AssistantManagement {
       if (outcome.hookStopTurn) throw Object.assign(Error(outcome.hookStopTurn), { code: 'assistant_management_stopped' });
       if (outcome.rejectToolResult) throw Object.assign(Error(`The tool ran, but its result was withheld by policy. Do not repeat the action. ${outcome.hookFeedback ?? ''}`), { code: 'plugin_hook_result_blocked' });
       if (outcome.kind !== 'returned') throw Object.assign(Error(outcome.error.message), { code: outcome.error.code });
+      if (call.name === 'mcp_search') {
+        const localTools = new Set(parent.tools.filter(tool => !this.options.registry.resolve(tool.name)?.mcpHook).map(tool => tool.name));
+        parent.tools = executionRequest.tools.filter(tool => localTools.has(tool.name) || this.options.registry.resolve(tool.name)?.mcpHook);
+      }
       // Page-aware tools keep continuation cursors instead of dumping catalogues.
       const rendered = this.options.registry.projectModelPage(call.name, outcome.result, 12000, call)
         ?? projectMcpDiscoveryResult(JSON.stringify(outcome.result), 12000);

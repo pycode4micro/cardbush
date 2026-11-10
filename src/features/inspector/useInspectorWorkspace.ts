@@ -27,7 +27,6 @@ type InspectorWorkspaceOptions = {
   inspectorTabs: InspectorTab[];
   activeInspectorTab: InspectorTab | null;
   openInspectorTab: (tab: InspectorTab) => void;
-  setInspectorTabsMenuOpen: (open: boolean) => void;
 };
 
 // Use the rail's target width during motion and when restoring a saved split.
@@ -43,7 +42,6 @@ export function useInspectorWorkspace({
   workspaceId = 'shared', splitPage, language, windowMaximized, compactLayout,
   sidebarCollapsed, sidebarWidth, setSidebarCollapsed, section, setSection,
   inspectorOpen, setInspectorOpen, inspectorTabs, activeInspectorTab, openInspectorTab, exitPage, interactive = true,
-  setInspectorTabsMenuOpen,
 }: InspectorWorkspaceOptions) {
   const [inspectorWidth, setInspectorWidthState] = useState(() => {
     const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
@@ -179,7 +177,6 @@ export function useInspectorWorkspace({
   }, [standalone, setInspectorWidth, setSidebarCollapsed, setInspectorLayout, multiPageRestore, coverRestore]);
   const showPanelLayout = (layout: PanelLayout | null) => {
     setInspectorLayout(layout);
-    setInspectorTabsMenuOpen(false);
     if (standalone) return;
     multiPageRestore.current ??= { width: inspectorWidthRef.current, sidebar: sidebarCollapsed };
     setSidebarCollapsed(true); setInspectorOpen(true);

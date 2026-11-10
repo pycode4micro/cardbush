@@ -1,168 +1,79 @@
-import { compactConversationTitle, PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { uiText } from '../../i18n';
-import type { AppLanguage, ChatMessage, ConversationSummary } from '../../types';
-import { useConversationArchives } from '../sidebar/conversationArchives';
-import { conversationDisplayTitle } from '../../shared/conversationTitle';
-import { normalizeChatMessagesForDisplay } from '../chatMessages/transcript/messageProjection';
-import { isContextGuidance } from '../chat/quickContextIndex';
-import { RecentConversationBarView, NotificationListView, TurnListView, type RecentTab } from './RecentConversationBarView';
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import type { AppLanguage, ThemeMode } from '../../types';
+import { AssistantStageButton } from './AssistantStageButton';
+import { RecentConversationBarView, NotificationListView, type RecentTab } from './RecentConversationBarView';
 import type { WorkspaceNotice } from './workspaceNotifications';
 import './recentConversationBar.css';
 
-const lastVisitKey = 'cardbush_last_opened_conversation';
 const pageSize = 40;
 
-export function useRecentConversation(conversations: ConversationSummary[], visibleChatId: string) {
-  const archived = useConversationArchives();
-  const [lastVisit, setLastVisit] = useState(() => localStorage.getItem(lastVisitKey) ?? '');
-  const available = useMemo(() => conversations.filter(item => !item.metadata?.hidden && !archived.has(item.id)), [conversations, archived]);
-  const visited = useMemo(() => available.find(item => item.id === visibleChatId), [available, visibleChatId]);
-  useEffect(() => {
-    if (!visited || visited.id === lastVisit) return;
-    localStorage.setItem(lastVisitKey, visited.id);
-    setLastVisit(visited.id);
-  }, [visited, lastVisit]);
-  return useMemo(() => visited ?? available.find(item => item.id === lastVisit) ??
-    available.reduce<ConversationSummary | undefined>((latest, item) => !latest || item.updatedAt > latest.updatedAt ? item : latest, undefined),
-    [available, lastVisit, visited]);
-}
-
 export type RecentListOutlet = {
-  element: HTMLElement; tab: Exclude<RecentTab, 'notifications'>; selectedId: string; limit: number; select(id: string): void; enter(id: string): void; more(): void;
+  element: HTMLElement; tab: Exclude<RecentTab, 'notifications'>; selectedId: string; limit: number; enter(id: string): void; more(): void;
 };
-type Page = { hasMore: boolean; loadingOlder: boolean; historyError: string };
-type HistoryActions = { read(id: string): Promise<unknown>; earlier(id: string): Promise<void> };
-type Props = HistoryActions & {
-  navigation?: ReactNode; actions?: ReactNode;
-  language: AppLanguage; conversation?: Pick<ConversationSummary, 'id' | 'title'>; conversations: ConversationSummary[];
-  assistantMessages?: ChatMessage[];
+type Props = {
+  actions?: ReactNode;
+  language: AppLanguage; theme: ThemeMode; assistantName: string; selectedId: string;
   notices: WorkspaceNotice[]; openNotice(notice: WorkspaceNotice): void;
-  transcripts: Record<string, ChatMessage[]>; pageFor(id: string): Page;
-  open(id: string, message?: ChatMessage): void; onRecentList(value: RecentListOutlet | null): void;
+  open(id: string): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ navigation, actions, language, conversation, conversations, assistantMessages, transcripts, pageFor, read, earlier, open, onRecentList, notices, openNotice }: Props) {
+export function RecentConversationBar({ actions, language, theme, assistantName, selectedId, open, onRecentList, notices, openNotice }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
   const [tab, setTab] = useState<RecentTab>('pinned');
-  const [selectedId, setSelectedId] = useState('');
   const panel = useRef<HTMLElement>(null);
-  const id = useId(), archived = useConversationArchives();
-  useLayoutEffect(() => {
-    const node = panel.current!;
-    const docked = window.matchMedia('(min-width: 1050px)');
-    const syncMode = () => {
-      const open = node.matches(':popover-open');
-      node.popover = docked.matches ? 'manual' : 'auto';
-      if (open && !node.matches(':popover-open')) node.showPopover();
-    };
-    // A docked list stays available while browsing the adjacent shelf.
-    // Narrow overlays retain the browser's light-dismiss and Escape handling.
-    const dismissDocked = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || !docked.matches || !node.matches(':popover-open')) return;
-      if (document.querySelector('dialog:modal, [popover]:popover-open:not(.recent-turn-drawer)') ||
-        Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).some(dialog => dialog.checkVisibility())) return;
-      const wasFocused = node.contains(document.activeElement);
-      node.hidePopover();
-      if (wasFocused) node.parentElement?.querySelector<HTMLButtonElement>('.recent-bar-list')?.focus();
-      event.preventDefault();
-    };
-    syncMode();
-    docked.addEventListener('change', syncMode);
-    window.addEventListener('keydown', dismissDocked);
+  const id = useId();
+  useEffect(() => {
+    if (!expanded) return;
+    // The native popover handles clicks in this document. Guest pages and other
+    // windows receive their own input, so also observe those focus changes.
+    const dismiss = () => panel.current?.hidePopover();
+    const offGuest = window.cardbushDesktop?.onInspectorGuestActivated?.(dismiss);
+    window.addEventListener('blur', dismiss);
     return () => {
-      docked.removeEventListener('change', syncMode);
-      window.removeEventListener('keydown', dismissDocked);
+      offGuest?.();
+      window.removeEventListener('blur', dismiss);
     };
-  }, []);
-  const selected = selectedId === conversation?.id ? conversation :
-    conversations.find(item => item.id === selectedId && !archived.has(item.id) && !item.metadata?.hidden);
-  function displayTitle(item?: Props['conversation'], compact = false) {
-    if (!item) return '';
-    if (item.id === PERSONAL_ASSISTANT_SESSION) return item.title;
-    const title = conversationDisplayTitle(item.title) || uiText(language)('composer.newConversation');
-    return compact ? compactConversationTitle(title) : title;
-  }
-  const assistantTurns = selected?.id === PERSONAL_ASSISTANT_SESSION;
-  const enter = useCallback((id: string, message?: ChatMessage) => {
+  }, [expanded]);
+  const enter = useCallback((id: string) => {
     panel.current?.hidePopover();
-    open(id, message);
+    open(id);
   }, [open]);
-  const browse = useCallback((id: string) => {
-    setSelectedId(id); setTab('sessions');
-    panel.current?.querySelector<HTMLButtonElement>('[data-recent-tab="sessions"]')?.focus({ preventScroll: true });
-  }, []);
   const togglePanel = (open: boolean) => {
     const version = ++toggleVersion.current;
     setExpanded(open);
-    if (open) { setTab(notices.length ? 'notifications' : 'pinned'); setSelectedId(''); setPresent(true); return; }
+    if (open) { setTab(notices.length ? 'notifications' : 'pinned'); setPresent(true); return; }
     // Keep the current list visible until the native popover has slid out of the top layer.
     const finish = () => {
       if (version !== toggleVersion.current || !panel.current || panel.current.matches(':popover-open')) return;
-      setPresent(false); setTab('pinned'); setSelectedId('');
+      setPresent(false); setTab('pinned');
     };
     const animations = panel.current?.getAnimations();
     if (animations?.length) void Promise.allSettled(animations.map(animation => animation.finished)).then(finish);
     else finish();
   };
-  return <RecentConversationBarView navigation={navigation} actions={actions} language={language} title={displayTitle(conversation, true)} selectedTitle={displayTitle(selected)} panelId={id}
-    panelRef={panel} expanded={expanded} unread={notices.length} tab={tab} onTab={next => { setSelectedId(''); setTab(next); }}
-    onOpen={conversation ? () => enter(conversation.id) : undefined} onToggle={togglePanel}>
+  return <RecentConversationBarView actions={actions} language={language} panelId={id}
+    panelRef={panel} expanded={expanded} unread={notices.length} tab={tab} onTab={setTab}
+    assistant={<AssistantStageButton language={language} theme={theme} active={selectedId === PERSONAL_ASSISTANT_SESSION}
+      onOpen={() => enter(PERSONAL_ASSISTANT_SESSION)}/>} onToggle={togglePanel}>
     {present && (tab === 'notifications' ? <NotificationListView notices={notices} language={language}
-      open={notice => { panel.current?.hidePopover(); openNotice(notice); }}/> : selected && tab === 'sessions'
-      ? <TurnList key={selected.id} language={language} sessionId={selected.id} messages={assistantTurns ? assistantMessages : transcripts[selected.id]}
-          history={assistantTurns ? undefined : { page: pageFor(selected.id), read, earlier }} select={message => enter(selected.id, message)}/>
-      : <RecentSessions key={tab} tab={tab} selectedId={conversation?.id ?? ''} register={onRecentList} select={tab === 'pinned' ? enter : browse} enter={enter}>
-          {tab === 'sessions' && conversation?.id === PERSONAL_ASSISTANT_SESSION && <button type="button" className="recent-assistant-session"
-            data-recent-session={conversation.id} onClick={() => browse(conversation.id)}>{conversation.title}</button>}
+      open={notice => { panel.current?.hidePopover(); openNotice(notice); }}/>
+      : <RecentSessions key={tab} tab={tab} selectedId={selectedId} register={onRecentList} enter={enter}>
+          {tab === 'sessions' && selectedId === PERSONAL_ASSISTANT_SESSION && <button type="button" className="recent-assistant-session"
+            data-recent-session={PERSONAL_ASSISTANT_SESSION} onClick={() => enter(PERSONAL_ASSISTANT_SESSION)}>{assistantName}</button>}
         </RecentSessions>)}
   </RecentConversationBarView>;
 }
 
 /** The same conversation rows own actions in the drawer, projects and pinned list. */
-function RecentSessions({ register, tab, children, selectedId, select, enter }: { tab: RecentListOutlet['tab']; children: ReactNode; register: Props['onRecentList']; selectedId: string; select(id: string): void; enter(id: string): void }) {
+function RecentSessions({ register, tab, children, selectedId, enter }: { tab: RecentListOutlet['tab']; children: ReactNode; register: Props['onRecentList']; selectedId: string; enter(id: string): void }) {
   const host = useRef<HTMLDivElement>(null);
   const [limit, setLimit] = useState(pageSize);
   useLayoutEffect(() => {
-    register({ element: host.current!, tab, selectedId, select, enter, limit, more: () => setLimit(value => value + pageSize) });
+    register({ element: host.current!, tab, selectedId, enter, limit, more: () => setLimit(value => value + pageSize) });
     return () => register(null);
-  }, [register, tab, selectedId, select, enter, limit]);
+  }, [register, tab, selectedId, enter, limit]);
   return <div className="recent-turn-scroll">{children}<div ref={host}/></div>;
-}
-
-function TurnList({ language, sessionId, messages, history, select }: {
-  language: AppLanguage; sessionId: string; messages?: ChatMessage[]; history?: HistoryActions & { page: Page }; select(message: ChatMessage): void;
-}) {
-  const [limit, setLimit] = useState(pageSize);
-  const [failed, setFailed] = useState(false);
-  const [retry, setRetry] = useState(0);
-  const loaded = messages !== undefined;
-  const read = history?.read, page = history?.page;
-  useEffect(() => {
-    if (loaded || !read) return;
-    let active = true;
-    setFailed(false);
-    void read(sessionId).catch(() => { if (active) setFailed(true); });
-    return () => { active = false; };
-  }, [sessionId, loaded, read, retry]);
-
-  const turns = useMemo(() => {
-    const seen = new Set<string>();
-    return normalizeChatMessagesForDisplay(messages ?? []).filter(message => {
-      if (message.role !== 'user' || isContextGuidance(message)) return false;
-      const key = message.turnId || message.id;
-      if (seen.has(key)) return false;
-      seen.add(key); return true;
-    }).reverse();
-  }, [messages]);
-  const more = async () => {
-    if (failed) { setRetry(value => value + 1); return; }
-    if (turns.length <= limit && history?.page.hasMore) await history.earlier(sessionId);
-    setLimit(value => value + pageSize);
-  };
-  return <TurnListView language={language} turns={turns.slice(0, limit)} select={select}
-    loading={!loaded && !failed} failed={failed || Boolean(page?.historyError)} loadingOlder={Boolean(page?.loadingOlder)}
-    hasMore={turns.length > limit || Boolean(page?.hasMore)} more={more}/>;
 }

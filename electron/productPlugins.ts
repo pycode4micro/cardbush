@@ -175,8 +175,16 @@ export async function loadEnabledProductRuntimeRenderers(roots: PluginRoot[], co
   return result;
 }
 
+export interface DeferredPluginServer {
+  id: string;
+  pluginId: string;
+  description: string;
+  load: () => Promise<Record<string, unknown>>;
+}
+
 /** External plugin MCP servers use their own namespace and explicit permission. */
-export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string, standalone: Array<Record<string, unknown>> = [], dataRoot = join(dirname(configPath), 'plugin-data')) {
+export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string, standalone: Array<Record<string, unknown>> = [], dataRoot = join(dirname(configPath), 'plugin-data'),
+  activateOptional?: (server: DeferredPluginServer) => boolean) {
   const { resolvePluginMcpConnection } = await import('./pluginMcpConfiguration.mjs');
   const servers: Record<string, unknown>[] = [];
   for (const plugin of await loadEnabledProductPlugins(roots, configPath)) {
@@ -185,7 +193,7 @@ export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], co
     const { manifest, registeredApps } = await resolvePluginManifest(root);
     const policies = objectOrEmpty(plugin.config.mcp_servers);
     const declarations = objectOrEmpty(manifest.mcpServers);
-    let implementationFingerprint: string | undefined;
+    let fingerprint: string | undefined;
     for (const name of new Set([...Object.keys(declarations), ...Object.keys(registeredApps)])) {
       const settings = objectOrEmpty(policies[name]);
       let configured;
@@ -197,11 +205,15 @@ export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], co
         throw error;
       }
       if (configured) {
-        if (configured.transport.kind === 'stdio' || ('headersHelper' in configured.transport && configured.transport.headersHelper)) await mkdir(pluginDataDirectory(plugin.id, dataRoot), { recursive: true });
-        if (configured.transport.kind === 'stdio') {
-          implementationFingerprint ??= await pluginRuntimeFingerprint(root, plugin.version);
-          servers.push({ ...configured, implementationFingerprint });
-        } else servers.push(configured);
+        const load = async () => {
+          if (configured.transport.kind === 'stdio' || ('headersHelper' in configured.transport && configured.transport.headersHelper)) await mkdir(pluginDataDirectory(plugin.id, dataRoot), { recursive: true });
+          if (configured.transport.kind !== 'stdio') return configured;
+          fingerprint ??= await pluginRuntimeFingerprint(root, plugin.version);
+          return { ...configured, implementationFingerprint: fingerprint };
+        };
+        if (plugin.source === 'user' && !configured.required && activateOptional &&
+          !activateOptional({ id: configured.id, pluginId: plugin.id, description: plugin.description || plugin.name, load })) continue;
+        servers.push(await load());
       }
     }
   }

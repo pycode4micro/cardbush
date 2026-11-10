@@ -1,7 +1,7 @@
 import type { McpSnapshotResult } from '@cardbush/bush-protocol';
 import type { McpServerConfig } from '../types';
 
-export type McpConnectionState = 'connected' | 'auth_required' | 'configuration_required' | 'pending' | 'waiting_for_resources' | 'restarting' | 'unavailable' | 'disabled' | 'unknown';
+export type McpConnectionState = 'idle' | 'connected' | 'auth_required' | 'configuration_required' | 'pending' | 'waiting_for_resources' | 'restarting' | 'unavailable' | 'disabled' | 'unknown';
 export type McpConnectionOverview = {
   revision: number;
   servers: Pick<McpServerConfig, 'id' | 'name' | 'description' | 'enabled' | 'transport' | 'proxy'>[];
@@ -29,6 +29,7 @@ export function mcpConnectionState(
   if (!enabled) return 'disabled';
   if (server?.health === 'auth_required') return 'auth_required';
   if (server?.health === 'configuration_required') return 'configuration_required';
+  if (server?.health === 'idle') return 'idle';
   if (server?.health === 'ready') return 'connected';
   if (server?.health === 'restarting') return 'restarting';
   return server?.health === 'unavailable' ? 'unavailable' : 'unknown';

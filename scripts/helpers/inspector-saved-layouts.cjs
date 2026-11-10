@@ -11,7 +11,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const tabs=views.useInspectorTabs();
       const [section,setSection]=React.useState('chat'),[sidebarCollapsed,setSidebarCollapsed]=React.useState(false),[inspectorOpen,setInspectorOpen]=React.useState(true),[saving,setSaving]=React.useState(null);
       const workspace=views.useInspectorWorkspace({language:'zh',windowMaximized:false,compactLayout:false,section,setSection,sidebarCollapsed,sidebarWidth:280,setSidebarCollapsed,
-        inspectorOpen,setInspectorOpen,inspectorTabs:tabs.tabs,activeInspectorTab:tabs.activeTab,openInspectorTab:tabs.openTab,setInspectorTabsMenuOpen:()=>{}});
+        inspectorOpen,setInspectorOpen,inspectorTabs:tabs.tabs,activeInspectorTab:tabs.activeTab,openInspectorTab:tabs.openTab});
       const open=saved=>{const restored=views.restoreInspectorLayout(saved,tabs.tabs,{});workspace.openMultiPage(restored.tabs,restored.layout);};
       const save=()=>setSaving({snapshot:views.captureInspectorLayout(workspace.inspectorLayout,tabs.tabs,{})});
       window.layoutFixture={tabs,workspace};

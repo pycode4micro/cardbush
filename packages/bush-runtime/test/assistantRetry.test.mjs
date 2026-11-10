@@ -155,7 +155,7 @@ test('assistant retries the same failed round without replaying earlier dispatch
     }
   } }, async delay => { waits.push(delay); if (waits.length === 1) await blocked; });
   t.after(release);
-  f.send(); await until(() => Boolean(f.read().retry));
+  f.send({ metadata: { assistantOutputMode: 'voice' } }); await until(() => Boolean(f.read().retry));
   assert.equal(f.read().busy, true); assert.equal(f.read().error, ''); assert.equal(f.read().retry.attempt, 2);
   assert.equal(f.read().retry.code, 'ECONNRESET'); assert.equal(f.delegated.length, 1);
   release(); await until(() => !f.read().busy);

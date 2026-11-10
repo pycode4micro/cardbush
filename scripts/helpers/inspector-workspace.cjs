@@ -9,12 +9,11 @@ module.exports = async ({ run, until, pause }) => {
     function WorkspaceFixture(){
       const [section,setSection]=React.useState('automations'),[sidebarCollapsed,setSidebarCollapsed]=React.useState(false);
       const [inspectorOpen,setInspectorOpen]=React.useState(true),[inspectorTabs,setTabs]=React.useState([]);
-      const [tabsMenu,setInspectorTabsMenuOpen]=React.useState(true);
       const openInspectorTab=React.useCallback(tab=>setTabs(current=>[...current,tab]),[]);
       const workspace=views.useInspectorWorkspace({language:'zh',windowMaximized:false,compactLayout:false,
         section,setSection,sidebarCollapsed,sidebarWidth:280,setSidebarCollapsed,inspectorOpen,setInspectorOpen,
-        inspectorTabs,activeInspectorTab:inspectorTabs[0]||null,openInspectorTab,setInspectorTabsMenuOpen});
-      window.workspaceFixture={...workspace,section,setSection,sidebarCollapsed,inspectorOpen,setInspectorOpen,inspectorTabs,setTabs,tabsMenu};
+        inspectorTabs,activeInspectorTab:inspectorTabs[0]||null,openInspectorTab});
+      window.workspaceFixture={...workspace,section,setSection,sidebarCollapsed,inspectorOpen,setInspectorOpen,inspectorTabs,setTabs};
       return h('div',null,'Workspace lifecycle');
     }
     renderView(h(WorkspaceFixture));
@@ -24,7 +23,7 @@ module.exports = async ({ run, until, pause }) => {
     const failure = await run('try { workspaceFixture.toggleMultiPage(); null } catch (error) { error.stack }');
     assert.equal(failure, null);
     await until('workspaceFixture.inspectorTabs.length===2 && !!workspaceFixture.inspectorLayout','two panes created');
-    assert.deepEqual(await run('[workspaceFixture.sidebarCollapsed,workspaceFixture.tabsMenu]'),[true,false]);
+    assert.equal(await run('workspaceFixture.sidebarCollapsed'),true);
     await run('workspaceFixture.enterInspectorCover()'); await pause();
     await run("workspaceFixture.setQuickInputOpen(true);workspaceFixture.setSection('chat')"); await pause();
     await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))"); await pause();
@@ -47,6 +46,6 @@ module.exports = async ({ run, until, pause }) => {
     await until('!workspaceFixture.inspectorCover','closing inspector releases cover');
     await run('renderView(null)'); await pause();
     assert.equal(await run('document.body.classList.contains("window-right-edge-resizing")'),false);
-    console.log('Inspector workspace ownership passed: immediate pane creation without confirmation, menu closure, Escape, section/sidebar/width restore and close cleanup.');
+    console.log('Inspector workspace ownership passed: immediate pane creation without confirmation, Escape, section/sidebar/width restore and close cleanup.');
   } finally { await run('window.confirm=workspaceConfirm; crypto.randomUUID=workspaceRandomUUID; void 0'); }
 };

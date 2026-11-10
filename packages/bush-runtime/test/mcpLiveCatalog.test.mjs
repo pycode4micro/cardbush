@@ -8,6 +8,36 @@ const manifest = { effect_kind: 'observation', operation: 'test', risk: 'low', o
 const tool = (name, extra = {}) => ({ definition: { name, description: name, inputSchema: { type: 'object' } }, manifest,
   decodeInput: x => x, execute: () => ({ ok: true }), mcpHook: { server: 'added', tool: name, call: async () => ({}) }, ...extra });
 
+test('discovery lists dormant plugins and loads only the selected server within the current scope', async () => {
+  const registry = new ToolRegistry(), opened = [];
+  const directory = [{ server: 'added', description: 'Echo' }, { server: 'other', description: 'Another plugin' }];
+  registerMcpDiscovery(registry, undefined, async server => {
+    if (server) {
+      opened.push(server);
+      registry.replaceOwned('runtime_mcp', [tool('echo'), tool('hidden', { visibleToChild: false })]);
+    }
+    return directory;
+  });
+  const initial = registry.definitions();
+  const request = metadata => ({ sessionId: 's', turnId: 't', tools: [...initial],
+    metadata: { mcpToolDiscovery: true, mcpCatalogUpdates: 'additions', ...metadata } });
+  const search = (request, server) => registry.resolve('mcp_search').execute({ input: { query: '*', server }, turn: { request } });
+  const parent = request({});
+  assert.deepEqual((await search(parent)).available_servers, directory);
+  for (const restricted of [{ agentRole: 'child' }, { mcpCatalogUpdates: 'restricted' }, { shadowMode: 'readonly' }]) {
+    const result = await search(request(restricted), 'added');
+    assert.equal(result.available_servers, undefined);
+    assert.deepEqual(result.matches, []);
+  }
+  assert.deepEqual(opened, []);
+  const child = request({ agentRole: 'child', inheritedPluginDiscovery: true });
+  assert.deepEqual((await search(child, 'added')).matches.map(match => match.name), ['echo']);
+  assert.deepEqual(opened, ['added']);
+  assert.equal(mcpToolWasDiscovered(registry, child, 'echo'), false, 'a search does not authorize invocation');
+  assert.deepEqual((await search(parent)).matches.map(match => match.name).sort(), ['echo', 'hidden']);
+  assert.deepEqual(opened, ['added'], 'a broad search never connects another plugin');
+});
+
 test('live additions remain opt-in, scoped and unloaded; provider definitions stay stable', () => {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
   const initial = registry.definitions();

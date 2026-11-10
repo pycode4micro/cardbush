@@ -191,6 +191,8 @@ export function buildChildTurnRequest(input: {
       ...parentRequest.metadata,
       ...input.metadata,
       agentRole: "child",
+      inheritedPluginDiscovery: !input.allowedToolNames && !input.toolAllowlist && !input.metadata.pluginAgentId &&
+        parentRequest.metadata.mcpCatalogUpdates === 'additions' && parentRequest.metadata.mcpPluginDiscovery !== false,
       parentSessionId: input.context.sessionId,
       parentTurnId: input.context.turnId,
       inheritedObservationSessionId: input.context.sessionId,

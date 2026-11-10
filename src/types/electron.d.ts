@@ -68,10 +68,12 @@ declare global {
       rendererReady: () => Promise<void>;
       onOpenDesktopHome?: (callback: () => void) => () => void;
       onWorkspacePresence?: (callback: (present: boolean) => void) => () => void;
-      assistantMode?: (action: 'read' | 'float' | 'workspace' | 'startup', enabled?: boolean) => Promise<{ floating: boolean; nextLaunch: boolean; hasWorkspace: boolean }>;
+      assistantMode?: (action: 'read' | 'float' | 'startup', enabled?: boolean) => Promise<{ floating: boolean; nextLaunch: boolean; hasWorkspace: boolean }>;
       measureAssistantReplies?: (height: number) => void;
       dragAssistantSurface?: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => void;
       assistantSurface?: (surface: 'read' | import('../../electron/assistantSurface').AssistantSurface) => Promise<import('../../electron/assistantSurface').AssistantSurface>;
+      setCapsuleCallPhase?: (phase: import('../../electron/assistantSurface').AssistantCallPhase | null) => void;
+      onCapsuleCallPhase?: (listener: (phase: import('../../electron/assistantSurface').AssistantCallPhase | null) => void) => () => void;
       onAssistantSurface?: (listener: (surface: import('../../electron/assistantSurface').AssistantSurface) => void) => () => void;
       retainAssistantWindow?: (retained: boolean) => Promise<void>;
       ensureTaskWorkspace: (sessionId: string) => Promise<string>;

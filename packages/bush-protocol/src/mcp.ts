@@ -147,7 +147,7 @@ export const mcpSnapshotResultSchema = z.object({
   servers: z.array(z.object({
     id: z.string().min(1),
     negotiatedProtocolVersion: z.string().min(1).optional(),
-    health: z.enum(["ready", "restarting", "unavailable", "auth_required", "configuration_required"]).default("ready"),
+    health: z.enum(["ready", "idle", "restarting", "unavailable", "auth_required", "configuration_required"]).default("ready"),
     restartAttempts: z.number().int().nonnegative().default(0),
     lastError: z.string().optional(),
     // Keep the last exit attributable after the connection recovers.

@@ -78,7 +78,7 @@ async function bundle() {
       export * from ${JSON.stringify(path.join(root, 'src/features/ssh/WorkspaceLocationPicker.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/features/composer/Composer.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/components/TopBar.tsx'))};
-      export * from ${JSON.stringify(path.join(root, 'src/features/desktop/WorkspaceChatNavigation.tsx'))};
+      export * from ${JSON.stringify(path.join(root, 'src/features/sidebar/WorkspaceChatNavigation.tsx'))};
       export * from ${JSON.stringify(path.join(root, 'src/features/sidebar/ChatSidebar.tsx'))};\n${navigationFixture}`
  : undefined,
   }], build: { write: false, minify: false, lib: { entry: path.join(root, '__welcome__.ts'), formats: ['cjs'] },
@@ -144,11 +144,11 @@ app.whenReady().then(async () => {
         React.useLayoutEffect(() => { navigationRenders.push({ id:activeId, projectDir:routing.projectDir }); });
         window.changeDraft = setDraft; window.changeTheme = setTheme; window.showWelcome = setShown; window.draftValue = draft;
         return h('div', { className: 'app theme-' + theme },
-          h('header', { className: 'window-frame' }, h(WorkspaceChatNavigation, {language:'zh',assistantActive:false,onNewChat:routing.newChat,onAssistant:()=>setSection('assistant')})),
           h('main', { className: 'desktop-shell' },
             h(ChatSidebar, { projectsHost, recentList: recentHost && {element:recentHost, selectedId:activeId, limit:40, select:routing.openConversation, more:noop}, language:'zh', section, activeConversationId:activeId, projects, conversations, changeReportsByConversation:{},
               runningConversationIds:running, onConversationWorkspaceChange:(id, project)=>routing.chat.setConversationProject(id, project?.rootPath??null, project?.id??null),
-              onSectionChange:setSection, onConversationChange:routing.openConversation, onCreateConversation:routing.newChat,
+              onSectionChange:setSection, onConversationChange:routing.openConversation,
+              workspaceNavigation:h(WorkspaceChatNavigation, {language:'zh',projectsActive:false,onProjects:noop,onNewChat:routing.newChat}),
               onAddProject:noop, onProjectAction:routing.handleProjectAction,
               onDeleteConversation:noop, onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:noop }),
             h('div',{ref:setProjectsHost}), h('aside', {className:'recent-turn-drawer', ref:setRecentHost}),

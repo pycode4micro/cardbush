@@ -34,7 +34,8 @@ function fixture(t, provider, delegate = async () => ({ status: 'accepted' }), c
     const journal = new ConversationJournal(root);
     const assistant = new AssistantConversation(journal, { provider, delegate, exists: () => true, tasks: () => [], checkpoint });
     instances.push(assistant);
-    return { assistant, journal, send: key => assistant.command({ action: 'turn', sessionId: id, entry: entry(key), parent, profile: assistantProfileSchema.parse({}) }),
+    return { assistant, journal, send: (key, outputMode = 'text') => assistant.command({ action: 'turn', sessionId: id,
+      entry: { ...entry(key), source: outputMode }, parent: { ...parent, metadata: { ...parent.metadata, assistantOutputMode: outputMode } }, profile: assistantProfileSchema.parse({}) }),
       read: () => assistant.command({ action: 'read', sessionId: id }) };
   };
   t.after(() => { instances.forEach(a => a.close()); assert.equal(dirname(resolve(root)), resolve(tmpdir())); rmSync(root, { recursive: true, force: true }); });
@@ -55,7 +56,7 @@ for (const protocol of ['chat', 'responses']) test(`${protocol}: assistant prese
     requests.push(structuredClone(request));
     yield* reply(request, requests.length === 1 ? { calls, reasoning, replay } : { text: `Answer ${requests.length}` });
   } }, async () => { delegated++; return { status: 'accepted' }; });
-  const first = f.create(); first.send('first'); await until(() => !first.read().busy);
+  const first = f.create(); first.send('first', 'voice'); await until(() => !first.read().busy);
   assert.equal(first.read().error, '');
   const wire = request => protocol === 'chat' ? toChatCompletionsParams(request, 'https://api.deepseek.com').messages : toResponsesCreateParams(request).input;
   const previous = wire(requests[1]);
@@ -133,6 +134,34 @@ test('Assistant timestamps each input and task result once, preserving clocks ac
   assert.ok(clocks(requests.at(-1)).every(m => m.visibility === 'internal'));
   assert.ok(!restarted.read().entries.some(e => e.content.includes('<time_context>')), 'clock metadata stays outside visible chat text');
   requests.forEach(request => validateConversation(request.messages));
+});
+
+test('verification reuses its assignment brief and retains new corrections or a compacted assignment', async t => {
+  const requests = [];
+  const f = fixture(t, { async *stream(request) {
+    requests.push(request); yield* reply(request, { text: 'Acknowledged.' });
+  } });
+  const app = f.create();
+  app.send('assignment'); await until(() => !app.read().busy);
+  const finish = async taskId => {
+    app.journal.append(id, { ...entry(taskId), source: 'task', visibility: 'internal', responseTo: ['assignment'] });
+    app.assistant.command({ action: 'retry', sessionId: id, parent, profile: assistantProfileSchema.parse({}) });
+    await until(() => !app.read().busy);
+    assert.equal(app.read().error, '');
+    const messages = requests.at(-1).messages;
+    assert.equal(messages.at(-1).content, taskId);
+    return messages.filter(m => m.name === 'delegated_user_request').map(m => JSON.parse(m.content));
+  };
+  const original = await finish('result');
+  assert.equal(original.length, 1);
+  assert.deepEqual(await finish('verification'), original);
+  app.send('correction'); await until(() => !app.read().busy);
+  const corrected = await finish('revised-result');
+  assert.equal(corrected.length, 2);
+  assert.deepEqual(corrected[1].laterUserMessages.map(m => m.messageId), ['correction']);
+  const history = app.journal.modelHistory(id);
+  history.checkpoint(history.read().messages.length, 'Prior work');
+  assert.deepEqual(await finish('post-checkpoint'), [corrected[1]]);
 });
 
 test('interrupted persisted tools receive an explicit unknown receipt without replaying side effects', async t => {

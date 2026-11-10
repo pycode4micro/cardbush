@@ -60,14 +60,14 @@ for (const remote of [false, true]) test(`${remote ? 'remote' : 'local'} Team no
   };
   const f = await setup(t, async request => {
     assert.equal(request.metadata.permissionRouting, 'parent', 'Team nodes retain the user-selected model approval route');
-    assert.match(request.inputMessages.find(entry => entry.message.name === 'delivery_guidance').message.content, /report bodies and long tables out of Tool-loop messages/);
+    assert.match(request.inputMessages.find(entry => entry.message.name === 'delivery_guidance').message.content, /Never paste, embed or read aloud a report body in any conversation, at any stage/);
     record(request.sessionId, request.turnId, 'Assigned task'); return outcome(request, answer);
   }, remote ? { remoteAgents: {
     list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
     run: async input => {
       calls.push(input);
       assert.equal(input.permissionRouting, 'parent', 'remote Team dispatch carries the same approval route');
-      assert.match(input.prompt, /report bodies and long tables out of Tool-loop messages/, 'remote workers receive the same delivery rule even before their host is upgraded');
+      assert.match(input.prompt, /Never paste, embed or read aloud a report body in any conversation, at any stage/, 'remote workers receive the same delivery rule even before their host is upgraded');
       const run = (await f.manager.listRuns('parent'))[0], node = run.nodes[0];
       assert.equal(node.taskId, input.taskId, 'identity is durable before remote execution');
       assert.equal(node.sessionId, input.sessionId);

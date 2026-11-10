@@ -16,6 +16,9 @@ let contextVersion = 0;
 export const assistantBackend = {
   ensure: (name: string) => createConversation({ sessionId, title: name, metadata: { personalAssistant: true } }),
   read: (after = 0, language?: string) => readConversationJournal(sessionId, after, language),
+  activity: async () => (await conversationJournalCommand<{activity: import('@cardbush/bush-protocol').AssistantWorkActivity}>({
+    action: 'activity', sessionId,
+  })).activity,
   async react(messageId: string, reaction: import('@cardbush/bush-protocol').AssistantReaction | null) {
     const version = contextVersion;
     const { generation } = await assistantBackend.read();
@@ -42,7 +45,7 @@ export const assistantBackend = {
     try {
       const profile = readAssistantProfile();
       const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId, userInput: entry.content }, runtime,
-        { turnId: `assistant_${crypto.randomUUID()}` });
+        { turnId: `assistant_${crypto.randomUUID()}`, journalEntries: entries });
       parent.metadata.assistantOutputMode = entry.source === 'voice' ? 'voice' : 'text';
       if (resetting || version !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
       // Resume the authoritative model history and tool receipts; do not append
@@ -61,10 +64,18 @@ export const assistantBackend = {
     })().finally(() => { resetting = undefined; });
   },
   async send(text: UserPromptInput, config: ChatStreamRequest, spoken: boolean, expectedVersion = contextVersion,
-    identity?: Pick<ConversationEntry, 'id' | 'createdAt' | 'replyTo'>) {
+    identity?: Pick<ConversationEntry, 'id' | 'createdAt' | 'replyTo'>, onDispatch?: () => void) {
     if (resetting) throw Error(uiText()('assistantBackend.context_is_being_reset_send_the_message'));
     if (expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
+    let stageStart = performance.now();
+    const stageFinished = (stage: string) => {
+      const now = performance.now(), durationMs = Math.round(now - stageStart);
+      stageStart = now;
+      if (durationMs >= 1000) void window.cardbushDesktop?.writeDebugLog?.('assistant-send',
+        { messageId: identity?.id, stage, durationMs }).catch(() => undefined);
+    };
     const { generation, entries } = await assistantBackend.read();
+    stageFinished('journal');
     if (resetting || expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
     // A lost acknowledgement must not duplicate an already admitted message.
     if (identity && entries.some(entry => entry.id === identity.id)) return;
@@ -76,16 +87,21 @@ export const assistantBackend = {
       const profile = readAssistantProfile();
       const attachments = await assistantExecutionAttachments(await chatAttachmentsFromOutbound(outbound), profile.targetAgent);
       const input = streamAttachmentsForVision(outbound, config.standardImageInputEnabled === true);
+      stageFinished('attachments');
       const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId, userInput: input.userInput,
         promptContext: outbound.promptContext,
-        files: profile.targetAgent ? attachments.map(file => file.execution!.path) : input.files, images: input.images, attachments }, runtime, { turnId: `assistant_${crypto.randomUUID()}` });
+        files: profile.targetAgent ? attachments.map(file => file.execution!.path) : input.files, images: input.images, attachments }, runtime,
+        { turnId: `assistant_${crypto.randomUUID()}`, journalEntries: entries, stageFinished });
       parent.metadata.assistantOutputMode = spoken ? 'voice' : 'text';
       const entry: ConversationEntry = { id: identity?.id ?? `input-${crypto.randomUUID()}`, role: 'user', content: outbound.displayInput || input.userInput,
         ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
         ...(outbound.promptContext ? { promptContext: outbound.promptContext } : {}),
         ...(attachments.length ? { attachments } : {}),
         source: spoken ? 'voice' : 'text', visibility: spoken ? 'internal' : 'conversation', createdAt: identity?.createdAt ?? new Date().toISOString() };
+      if (resetting || expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
+      onDispatch?.();
       await conversationJournalCommand({ action: 'turn', sessionId, entry, parent, profile, generation });
+      stageFinished('admission');
     } finally { runtime.dispose(); }
   },
   voice(prepare: () => Promise<ChatStreamRequest>) {

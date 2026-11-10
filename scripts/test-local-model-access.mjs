@@ -187,7 +187,9 @@ for (const mode of ['siwc', 'anthropic']) test(`real local CLI: ${mode} authoriz
   const code = await done;
   assert.equal(code, 0, stderr); assert.match(stdout, /CLI verified local file/); assert.doesNotMatch(stdout + stderr, /PRIVATE_/);
   const logged = await readFile(log, 'utf8'), requests = logged.trim().split('\n').map(JSON.parse);
-  assert.equal(requests.length, mode === 'siwc' ? 3 : 2); assert.doesNotMatch(logged, /PRIVATE_/);
+  assert.equal(requests.filter(request => request.purpose === 'chat').length, mode === 'siwc' ? 3 : 2);
+  assert.equal(requests.filter(request => request.purpose === 'title').length, 1);
+  assert.doesNotMatch(logged, /PRIVATE_/);
   assert.equal(f.refreshes(), mode === 'siwc' ? 1 : 0);
   const modelFile = join(config, 'models.json');
   const storedConfig = await readFile(modelFile, 'utf8');

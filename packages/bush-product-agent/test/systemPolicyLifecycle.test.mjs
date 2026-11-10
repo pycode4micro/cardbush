@@ -132,7 +132,7 @@ test('delivery and continuation guidance reaches an old session without rewritin
   assert.deepEqual(store.snapshot('policy').turns[0], originalTurn);
   const guidance = dispatched.messages.find(message => message.name === 'delivery_guidance');
   assert.match(guidance.content, /Deliver every report, including research and backtests, as a verified file/);
-  assert.match(guidance.content, /final reply gives only key findings, execution status and a verified file link or attachment/);
+  assert.match(guidance.content, /only key findings, status or blockers and a verified file link or attachment/);
   assert.match(guidance.content, /same assignment.*existing subagent task_id/);
   assert.match(guidance.content, /historical backtests must not inherit later evidence/);
   assert.match(guidance.content, /node_ids=.*nextCursor/);

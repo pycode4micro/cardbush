@@ -18,7 +18,7 @@ async function bundleViews() {
   const files = [
     'src/features/appearance/windowAppearance.ts', 'src/components/WindowFrame.tsx', 'src/components/WindowSidebarToggle.tsx',
     'src/components/TopBar.tsx', 'src/features/sidebar/ChatSidebar.tsx',
-    'src/features/chat/WelcomeComposer.tsx', 'src/features/composer/Composer.tsx', 'src/features/desktop/RecentConversationBar.tsx', 'src/features/desktop/WorkspaceChatNavigation.tsx',
+    'src/features/chat/WelcomeComposer.tsx', 'src/features/composer/Composer.tsx', 'src/features/desktop/RecentConversationBar.tsx', 'src/features/sidebar/WorkspaceChatNavigation.tsx',
   ];
   const result = await build({
     configFile: false, logLevel: 'error', plugins: [react(), {
@@ -138,11 +138,12 @@ app.whenReady().then(async () => {
           onBack:settings ? () => setSettings(false) : undefined, onError:error => failures.push(String(error)), menus:[{id:'view',label:'视图',items:[
             {id:'theme',label:'切换主题',onSelect:() => changeAppearance(theme === 'dark' ? 'bright' : 'dark', material)},
             {id:'material',label:'切换材质',onSelect:() => setMaterial(material === 'auto' ? 'solid' : 'auto')},
-          ]}] }, h(views.RecentConversationBar, {language:'zh', navigation:h(views.WorkspaceChatNavigation,{language:'zh', assistantActive:false, onNewChat:noop, onAssistant:noop}),conversation:{id:'fixture',title:'Conversation',updatedAt:'',preview:''},
-            conversations:[],transcripts:{},pageFor:()=>({hasMore:false,loadingOlder:false,historyError:''}),onRecentList:noop,read:async()=>[],earlier:noop,open:noop})),
+          ]}] }, h(views.RecentConversationBar, {language:'zh', theme, assistantName:'assistant', selectedId:'fixture',
+            notices:[],openNotice:noop,onRecentList:noop,open:noop})),
         h('main', { className:'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-sidebar-layout':'docked','data-settings-visible':settings || undefined },
           h(views.WindowSidebarToggle, {language:'zh',collapsed,onToggle:() => setCollapsed(!collapsed)}),
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
+            workspaceNavigation:h(views.WorkspaceChatNavigation,{language:'zh', projectsActive:false, onProjects:noop, onNewChat:noop}),
             railCollapsed:collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
             onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:()=>setSettings(true) }),
           h('section', { className: settings ? 'settings-shell' : 'main-stage' }, h('div', { className:settings ? 'settings-content' : 'chat-panel' },

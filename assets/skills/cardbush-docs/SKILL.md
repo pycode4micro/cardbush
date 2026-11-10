@@ -10,7 +10,7 @@ license: Apache-2.0
 
 | 任务 | 读取文档 |
 |---|---|
-| 通过对话创建自定义主页组件，使用 HTML、CSS、TypeScript、JavaScript 或打包后的前端项目，添加到主页或只存入组件库 | [主页自定义组件](references/home-components.md) |
+| 创建或修改已安装的主页组件、按 ID 局部更新、预览，或者接入公开 JSON 数据源 | [主页自定义组件](references/home-components.md) |
 | 应用中心、快捷方式、@ 应用引用、独立应用链接 | [应用中心](references/app-center.md) |
 | 创作文档、Team 的文档可视化、从写作到协作实践 | [创作与 Team](references/bush-it.md) |
 | 添加 MCP 服务、检查连接、配置插件 OAuth | [MCP 接入](references/mcp-management.md) |

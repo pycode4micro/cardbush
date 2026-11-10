@@ -299,7 +299,9 @@ export interface InMemoryRuntimeHostOptions {
   eventLogOptions?: RuntimeEventLogOptions;
   projectorOptions?: RuntimeEventProjectorOptions;
   toolRegistry?: ToolRegistry;
-  prepareToolCatalog?: () => Promise<void> | undefined;
+  /** Restore the MCP server for a verified event collector after a cold start. */
+  prepareToolCatalog?: (toolName: string) => Promise<void> | undefined;
+  preparePluginSearch?: import('./mcpToolDiscovery.js').PreparePluginSearch;
   createPermissionId?: () => string;
   checkpointStore?: RuntimeCheckpointStore;
   checkpointNow?: () => string;
@@ -378,7 +380,6 @@ export class InMemoryRuntimeHost {
   readonly #wait: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly #projectorOptions: RuntimeEventProjectorOptions;
   readonly #toolRegistry: ToolRegistry;
-  readonly #prepareToolCatalog?: InMemoryRuntimeHostOptions['prepareToolCatalog'];
   readonly #botMessaging?: BotMessagingBridge;
   readonly #bridgePlugins: BridgePluginTools;
   readonly #pluginHookScopes: PluginHookScopes;
@@ -402,6 +403,7 @@ export class InMemoryRuntimeHost {
   readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
+  readonly #reconcileChildTasks?: (parentSessionId: string, taskId?: string) => void;
   #realtimeAgents?: RealtimeAgentDispatcher;
   readonly #assistant: AssistantConversation;
   readonly #assistantEvents: AssistantEvents;
@@ -499,8 +501,7 @@ export class InMemoryRuntimeHost {
     this.#wait = options.wait ?? wait;
     this.#projectorOptions = options.projectorOptions ?? {};
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
-    this.#prepareToolCatalog = options.prepareToolCatalog;
-    registerMcpDiscovery(this.#toolRegistry, options.loadSearchResultLimit);
+    registerMcpDiscovery(this.#toolRegistry, options.loadSearchResultLimit, options.preparePluginSearch);
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     registerFileMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
     registerSourceMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
@@ -534,6 +535,8 @@ export class InMemoryRuntimeHost {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
+      runningTaskCount: id => this.#subagentTasks.runningCount(id),
+      eventRunning: () => this.#assistantEvents.executingAssistantEvent,
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),
       eventNeedsResponse: () => {
@@ -621,7 +624,12 @@ export class InMemoryRuntimeHost {
       validateToolInput: (name, input) => { this.#toolRegistry.resolve(name)?.decodeInput(input); }, callMcp: async (hook, input, context) => {
       const scoped = hook.server!.match(/^plugin:([^:]+):(.+)$/);
       const pluginServer = scoped ? `plugin_${scoped[1]!.replace(/\./g, '_')}_${scoped[2]}` : `plugin_${hook.pluginId.replace(/\./g, '_')}_${hook.server}`;
-      const target = this.#toolRegistry.mcpHook(pluginServer, hook.tool!, context.request.sessionId) ?? this.#toolRegistry.mcpHook(hook.server!, hook.tool!, context.request.sessionId);
+      const findTarget = () => this.#toolRegistry.mcpHook(pluginServer, hook.tool!, context.request.sessionId) ?? this.#toolRegistry.mcpHook(hook.server!, hook.tool!, context.request.sessionId);
+      let target = findTarget();
+      if (!target && options.preparePluginSearch) {
+        await options.preparePluginSearch(pluginServer, context.signal);
+        target = findTarget();
+      }
       if (!target) throw new Error(`MCP hook tool ${hook.server}/${hook.tool} is not connected or exposed.`);
       return target.call(input, { request: context.request, signal: context.signal, timeoutMs: hook.timeout * 1000 });
     } });
@@ -772,6 +780,7 @@ export class InMemoryRuntimeHost {
         ...(options.loadPluginExtensions ? { loadPluginAgents: async () => (await options.loadPluginExtensions!()).agents } : {}),
       },
     );
+    this.#reconcileChildTasks = subagents?.reconcile;
     this.#teams = new TeamWorkflowManager(this.#registeredAgents, (context, input) => {
       if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
       return subagents.dispatch(context, input);
@@ -1747,10 +1756,12 @@ export class InMemoryRuntimeHost {
       }
       case GET_RUNTIME_SUBAGENT_TASK_COMMAND: {
         const identity = subagentTaskIdentitySchema.parse(command.payload);
+        this.#reconcileChildTasks?.(identity.parentSessionId, identity.taskId);
         return this.#subagentTasks.get(identity.parentSessionId, identity.taskId) ?? null;
       }
       case LIST_RUNTIME_SUBAGENT_TASKS_COMMAND: {
         const input = subagentTaskListRequestSchema.parse(command.payload);
+        this.#reconcileChildTasks?.(input.parentSessionId);
         return this.#subagentTasks.list(input.parentSessionId, input.parentTurnId);
       }
       case GET_RUNTIME_PLAN_COMMAND: {
@@ -1956,10 +1967,7 @@ export class InMemoryRuntimeHost {
     if (previous && this.#eventLog.isTerminal(input.sessionId, input.turnId)) throw new Error(`Turn ${input.turnId} is already terminal.`);
     this.#agentExecutions.begin(input);
     try {
-      if (this.#prepareToolCatalog && input.tools.length) {
-        await this.#prepareToolCatalog();
-        signal?.throwIfAborted();
-      }
+      signal?.throwIfAborted();
       const result = await run();
       if (result.kind === 'turn_terminal') this.#agentExecutions.observe(result);
       return result;

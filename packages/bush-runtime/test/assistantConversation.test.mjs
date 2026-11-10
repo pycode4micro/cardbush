@@ -6,11 +6,47 @@ import { join } from 'node:path';
 import { delegatedRequestContext } from '../dist/assistantDelegationOrigins.js';
 import { ConversationJournal } from '../dist/conversationJournal.js';
 import { AssistantConversation } from '../dist/assistantConversation.js';
-import { InMemoryRuntimeHost, SessionStore, ToolRegistry, SubagentTaskStore } from '../dist/index.js';
+import { InMemoryRuntimeEventLog, InMemoryRuntimeHost, SessionStore, ToolRegistry, SubagentTaskStore } from '../dist/index.js';
 import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION as id, REPORT_DELIVERY_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import { withToolDisplayTitle } from '../dist/toolDisplay.js';
 
 const temporary = () => mkdtempSync(join(tmpdir(), 'assistant-conversation-'));
+test('stopped child with a surviving running receipt is idle in the toolbar and stopped in task history', async () => {
+  const events = [];
+  const persistence = { load: () => events, append: event => events.push(event) };
+  const previous = new SubagentTaskStore({ persistence });
+  const child = previous.start({ parentSessionId: id, parentTurnId: 'parent-turn', taskId: 'old-task',
+    childSessionId: 'child', childTurnId: 'child-turn', prompt: 'fixture', inheritContext: false, inheritedMessageCount: 0 });
+  const log = new InMemoryRuntimeEventLog();
+  log.append({ sessionId: child.childSessionId, turnId: child.childTurnId, requestId: 'fixture' },
+    { kind: 'turn_terminal', payload: { status: 'stopped', reason: 'user', details: {} } });
+  const restored = new SubagentTaskStore({ persistence });
+  const host = new InMemoryRuntimeHost({ dataRoot: temporary(), eventLog: log, subagentTaskStore: restored,
+    provider: { async *stream() { assert.fail('checking activity must not run a model'); } } });
+  try {
+    assert.equal(restored.get(id, child.taskId).status, 'running');
+    const activity = await host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, action: 'activity' } });
+    assert.equal(activity.activity, 'idle');
+    const receipt = await host.sendCommand({ kind: 'runtime.get_subagent_task', payload: { parentSessionId: id, taskId: child.taskId } });
+    assert.equal(receipt.status, 'stopped');
+    assert.equal(new SubagentTaskStore({ persistence }).get(id, child.taskId).status, 'stopped');
+  } finally { await host.sendCommand({ kind:'runtime.shutdown', payload:{} }); }
+});
+test('the title bar observes only personal Assistant work without opening a conversation or reading its history', () => {
+  let running = 0, waiting = false, event = false;
+  const assistant = new AssistantConversation({ read: () => assert.fail('read the transcript') }, {
+    exists: () => false, tasks: () => assert.fail('copied complete task records'),
+    runningTaskCount: session => { assert.equal(session, id); return running; },
+    eventNeedsResponse: () => waiting, eventRunning: () => event,
+  });
+  const activity = () => assistant.command({ action: 'activity', sessionId: id }).activity;
+  assert.equal(activity(), 'idle');
+  running = 1; assert.equal(activity(), 'working');
+  waiting = true; assert.equal(activity(), 'waiting');
+  running = 0; waiting = false; event = true; assert.equal(activity(), 'working');
+  event = false; assert.equal(activity(), 'idle');
+  assert.throws(() => assistant.command({ action:'activity', sessionId:'ordinary-chat' }));
+});
 const entry = (key, content = '请帮我检查文件', role = 'user', source = 'text') => ({ id: key, content, role, source, visibility: 'conversation', createdAt: new Date().toISOString() });
 const gate = () => { let resolve; const promise = new Promise(r => resolve = r); return { promise, resolve }; };
 const until = async fn => { for (let i = 0; i < 400; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 10)); } assert.fail('condition timed out'); };
@@ -59,17 +95,19 @@ test('assistant accepts provider display metadata on all four tools, including a
   let round = 0;
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks, checkpoint: () => ({}),
     delegate: async input => {
+      assert.equal(assistant.command({ action: 'activity', sessionId: id }).activity, 'working');
       delegated.push(input);
       if (input.action === 'subagent' && !input.taskId) tasks.push({ taskId: 'child', status: 'running', finalResponse: '' });
       return { taskId: 'child', status: 'running' };
     }, provider: { async *stream(request) {
+      assert.equal(assistant.command({ action: 'activity', sessionId: id }).activity, 'thinking');
       const index = round++;
       receipts.push(...request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content)));
       for (const definition of request.tools) assert.ok(withToolDisplayTitle(definition).inputSchema.properties._display_title);
       yield* response(request, { calls: (batches[index] ?? []).map((call, i) => ({ ...call, id: `${index}-${i}`, args: { ...call.args, _display_title: title } })) });
     } } });
   try {
-    assistant.command({ action: 'turn', sessionId: id, entry: entry('decorated'), parent: parent(), profile: assistantProfileSchema.parse({}) });
+    assistant.command({ action: 'turn', sessionId: id, entry: entry('decorated', 'Inspect', 'user', 'voice'), parent: parent(undefined, true), profile: assistantProfileSchema.parse({}) });
     await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
     assert.deepEqual(receipts.filter(receipt => receipt.status === 'failed'), []);
@@ -368,7 +406,7 @@ test('conversation journal survives restart, deduplicates retries and repairs on
   restored.forget('chat-a'); assert.deepEqual(new ConversationJournal(root).read('chat-a'), []);
 });
 
-test('assistant dispatch/await stay nonblocking; only Markdown and final replies render, task completion wakes the parent', async () => {
+test('text assistant reports a child deliverable in one final reply even if the provider attempts a page write', async () => {
   const journal = new ConversationJournal(temporary()), tasks = [], seen = [], modelGate = gate();
   let round = 0;
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks,
@@ -381,8 +419,8 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
       if (index === 0) { await modelGate.promise; yield* response(request, { text: '我会检查文件。', calls: [{ id: 'dispatch', name: 'subagent', args: { prompt: 'Read only: inspect files' } }] }); }
       else if (index === 1) yield* response(request, { calls: [{ id: 'watch', name: 'tasks', args: { task_ids: ['child-task'] } }] });
       else if (index === 2) yield* response(request, { text: '已经交给后台处理，我们可以继续聊。' });
-      else if (index === 3) yield* response(request, { calls: [{ id: 'page', name: 'page_write', args: { content: '**已核对**：文件正常。' } }] });
-      else yield* response(request);
+      else if (index === 3) yield* response(request, { calls: [{ id: 'page', name: 'page_write', args: { content: '# Full report\n\n| A | B |\n|---|---|\n| 1 | 2 |' } }] });
+      else yield* response(request, { text: '已核对：[报告](C:/work/report.html)' });
     } } });
   const command = { action: 'turn', sessionId: id, entry: entry('first'), parent: parent(), profile: assistantProfileSchema.parse({ targetAgent: 'saved-ssh-agent' }) };
   try {
@@ -391,14 +429,16 @@ test('assistant dispatch/await stay nonblocking; only Markdown and final replies
     modelGate.resolve(); await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(tasks[0].status, 'running', 'main response finishes while child still executes');
     assert.equal(round, 3); assistant.command(command); await new Promise(r => setTimeout(r, 20)); assert.equal(round, 3, 'retry does not re-execute');
-    assert.deepEqual(seen[0].tools.map(tool => tool.name).sort(), ['page_write', 'subagent', 'tasks']);
+    assert.deepEqual(seen[0].tools.map(tool => tool.name).sort(), ['subagent', 'tasks']);
     assert.ok(seen[0].messages.some(m => m.role === 'system' && m.content.includes(REPORT_DELIVERY_INSTRUCTIONS)));
     assert.ok(!journal.read(id).some(item => item.content === '我会检查文件。'), 'loop commentary is not a page message');
-    tasks[0].status = 'completed'; tasks[0].finalResponse = '文件正常';
-    await until(() => journal.read(id).some(item => item.source === 'page'));
+    tasks[0].status = 'completed'; tasks[0].finalResponse = 'Verified C:/work/report.html';
+    await until(() => journal.read(id).some(item => item.source === 'text' && item.content.includes('report.html')));
+    assert.equal(JSON.parse(seen.at(-1).messages.find(message => message.toolCallId === 'page').content).code, 'tool_unavailable');
     const visible = journal.read(id).filter(item => item.visibility !== 'internal');
     assert.deepEqual(visible.map(item => item.role), ['user', 'assistant', 'assistant']);
-    assert.match(visible.at(-1).content, /已核对/);
+    assert.equal(visible.at(-1).content, '已核对：[报告](C:/work/report.html)');
+    assert.ok(!visible.some(item => item.source === 'page' || item.content.includes('Full report')));
     assert.equal(journal.read(id).filter(item => item.source === 'task').length, 1);
   } finally { modelGate.resolve(); assistant.close(); }
 });

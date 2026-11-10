@@ -5,7 +5,6 @@ import { AssistantEventsDialog } from './events/AssistantEventsDialog';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
-import { UsersRound } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry, type AssistantReaction } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
 import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
@@ -15,8 +14,9 @@ import { VoiceConversation, applicationVoiceSession } from '../voice/VoiceConver
 import type { VoiceTarget } from '../voice/voiceSession';
 import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '../chatMessages/MessageBubble';
 import { AssistantComposer, type AssistantComposerControls } from './AssistantComposer';
-import { AssistantBulb } from './AssistantBulb';
-import { readAssistantProfile, saveAssistantProfile, useAssistantProfile, setAssistantWorking } from './assistantProfile';
+import { AssistantCharacter } from './AssistantCharacter';
+import { setAssistantActivity } from './assistantActivity';
+import { readAssistantProfile, saveAssistantProfile, useAssistantProfile } from './assistantProfile';
 import { TopBar } from '../../components/TopBar';
 import { ScrollBottomButton } from '../chat/ScrollBottomButton';
 import { ConversationConnectionNotice, RuntimeStatusBanner } from '../chat/ChatStatusViews';
@@ -41,15 +41,15 @@ import { copyText } from '../messageFeedback';
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 // Also hide transcripts saved by older versions, without deleting conversational memory.
 const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
-type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'sending' | 'accepted' | 'failed' };
-export function AssistantView({ active, language, floating, prepare, ownsConfiguration = true, onManageHosts, composerControls,
-  headerActionsTarget, workSummaryAvailable = true, requestedMessageId, onTurnLocated, transcriptFooter, inspectorOpen = false, onToggleInspector,
+type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'preparing' | 'sending' | 'accepted' | 'failed' };
+export function AssistantView({ active, language, floating, prepare, observeActivity, ownsConfiguration = true, composerControls,
+  headerActionsTarget, workSummaryAvailable = true, transcriptFooter, inspectorOpen = false, onToggleInspector,
   browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
-  active: boolean; language: string; floating?: { returnToWorkspace(): void; retainDraft?(value: boolean): void };
-  prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean; onManageHosts?(): void;
+  active: boolean; language: string; observeActivity?: boolean; floating?: { retainDraft?(value: boolean): void };
+  prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean;
   composerControls?: AssistantComposerControls;
   transcriptFooter?: ReactNode;
-  headerActionsTarget?: HTMLElement | null; workSummaryAvailable?: boolean; requestedMessageId?: string; onTurnLocated?(): void;
+  headerActionsTarget?: HTMLElement | null; workSummaryAvailable?: boolean;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
 }) {
@@ -163,7 +163,8 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
       else if (result.entries.length) setEntries(current => [...current, ...result.entries.filter(entry => !current.some(old => old.id === entry.id))]);
       if (result.entries.length) setSubmitted(current => current.filter(item => !result.entries.some(entry => entry.id === item.entry.id)));
       setEventNeedsResponse(result.eventNeedsResponse === true);
-      setBusy(result.busy); setAssistantWorking(result.busy || Boolean(result.workingTasks)); setRuntimeError(result.error); setRetry(result.retry);
+      setBusy(result.busy); setAssistantActivity(result.activity ?? (result.busy ? 'thinking' : result.workingTasks ? 'working' : 'idle'));
+      setRuntimeError(result.error); setRetry(result.retry);
       setNextStepPrediction(current => JSON.stringify(current) === JSON.stringify(result.nextStepPrediction) ? current : result.nextStepPrediction);
       setManagement(current => JSON.stringify(current) === JSON.stringify(result.management) ? current : result.management);
       setCanRetry(result.canRetry === true);
@@ -171,11 +172,39 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
     return refreshing.current;
   }, [animateEntries, closeMessageMenu, language]);
   useEffect(() => {
+    if (!ready || capsule.surface !== 'replies') return;
+    let closed = false;
+    const syncOnOpen = async () => {
+      // A poll started before the click may have captured an older journal cursor.
+      await refreshing.current?.catch(() => {});
+      if (!closed) await refresh();
+    };
+    void syncOnOpen().catch(reason => { if (!closed) setError(String(reason)); });
+    return () => { closed = true; };
+  }, [ready, capsule.surface, refresh]);
+  useEffect(() => {
     const reset = () => { sendingRequest.current = undefined; setSubmission(undefined); setSubmitted([]); setManagement(undefined); setCapsuleFiles([]); setDraft(''); setQuote(undefined); setReactions({}); closeMessageMenu(); setError(''); setRuntimeError(''); setRetry(null); setArriving(new Set()); void refresh().then(() => refresh()).catch(error => setError(String(error))); };
     window.addEventListener('cardbush:assistant-reset', reset);
     return () => window.removeEventListener('cardbush:assistant-reset', reset);
   }, [refresh, closeMessageMenu]);
   useEffect(() => {
+    if (!active && !callHere && observeActivity !== undefined) {
+      if (!observeActivity) { setAssistantActivity('idle'); return; }
+      let disposed = false, pending = false;
+      const observe = async () => {
+        if (pending || document.hidden) return;
+        pending = true;
+        try {
+          const state = await assistantBackend.activity();
+          if (!disposed) setAssistantActivity(state);
+        } catch { if (!disposed) setAssistantActivity('idle'); }
+        finally { pending = false; }
+      };
+      void observe();
+      const timer = setInterval(observe, 1500);
+      document.addEventListener('visibilitychange', observe);
+      return () => { disposed = true; clearInterval(timer); document.removeEventListener('visibilitychange', observe); };
+    }
     if (!active && !ready) return;
     let disposed = false, pending = false;
     const tick = async () => {
@@ -186,11 +215,14 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
     };
     void tick(); const timer = setInterval(() => void tick(), 1000);
     return () => { disposed = true; clearInterval(timer); };
-  }, [active, ready, ensure, refresh]);
+  }, [active, ready, callHere, observeActivity, ensure, refresh]);
   const submit = useCallback(async (text: UserPromptInput, spoken = false, identity?: ConversationEntry, contextVersion = assistantBackend.contextVersion()) => {
     await ensure();
     const config = await prepareRef.current();
-    await assistantBackend.send(text, config, spoken, contextVersion, identity);
+    await assistantBackend.send(text, config, spoken, contextVersion, identity, () => {
+      if (identity) setSubmitted(current => current.map(item => item.entry.id === identity.id && item.state === 'preparing'
+        ? { ...item, state: 'sending' } : item));
+    });
     // Admission succeeded; a later journal read failure is not a send failure.
     void refresh().catch(() => {}); return true;
   }, [ensure, refresh]);
@@ -210,7 +242,7 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
       const prior = failed?.entry ? failed : submittedRef.current.find(item => item.state === 'failed' && JSON.stringify(item.prompt) === JSON.stringify(text) && JSON.stringify(item.entry.replyTo) === JSON.stringify(replyTo));
       entry = prior?.entry ?? { ...await assistantInputEntry(text), ...(replyTo ? { replyTo } : {}) };
       if (contextVersion !== assistantBackend.contextVersion()) return true;
-      const message: SubmittedMessage = { entry, prompt: text, state: 'sending' };
+      const message: SubmittedMessage = { entry, prompt: text, state: 'preparing' };
       setSubmitted(current => [...current.filter(item => item.entry.id !== entry!.id), message]);
       animateEntries([entry.id]);
       await submit(text, false, entry, contextVersion);
@@ -243,9 +275,6 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
     scrollToMessage(row); row.querySelector<HTMLElement>('article')?.focus({ preventScroll: true }); setHighlighted(id);
     return true;
   }, [composerPortalTarget, scrollToMessage]);
-  useEffect(() => {
-    if (active && requestedMessageId && jumpToMessage(requestedMessageId)) onTurnLocated?.();
-  }, [active, requestedMessageId, jumpToMessage, pageMessages, onTurnLocated]);
   const reactToMessage = async (id: string, reaction: AssistantReaction | null) => {
     if (reactionPending.current) return;
     const version = assistantBackend.contextVersion(), contextGeneration = generation.current;
@@ -276,9 +305,6 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
   target.refresh = () => ({ ...target, contextGeneration: generation.current, messages: speechMessages(entriesRef.current),
     historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
   const [eventsOpen, setEventsOpen] = useState(false);
-  const manageHostsLabel = uiText(language)('teamSidebar.manageAgents');
-  const headerControls = onManageHosts && <button className="topbar-inspector-action icon-only" type="button" data-manage-hosts
-    title={manageHostsLabel} aria-label={manageHostsLabel} onClick={onManageHosts}><UsersRound size={17}/></button>;
   const renderTimelineItem = (item: typeof timeline[number]) => {
     if ('task' in item) return <AssistantTaskBubble key={item.key} task={item.task} language={language}/>;
     const { entry } = item;
@@ -312,7 +338,9 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
       title={uiText(language)('assistantMessage.removeReaction', { reaction: reactionName(language, reaction) })}
       aria-label={uiText(language)('assistantMessage.removeReaction', { reaction: reactionName(language, reaction) })}
       onClick={() => void reactToMessage(entry.id, null)}>{reaction}</button>}
-    {pending?.state === 'sending' && <span className="assistant-message-delivery" role="status">{uiText(language)('assistantView.sendingMessage')}</span>}
+    {(pending?.state === 'preparing' || pending?.state === 'sending') && <span className="assistant-message-delivery" role="status">
+      {uiText(language)(pending.state === 'preparing' ? 'assistantView.preparingMessage' : 'assistantView.sendingMessage')}
+    </span>}
     {pending?.state === 'failed' && <button type="button" className="assistant-message-retry" disabled={submitting} onClick={() => void send(pending.prompt, pending)}>{uiText(language)('assistantView.retryMessage')}</button>}
   </article></div>;
   };
@@ -334,7 +362,6 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
         files={capsuleFiles} changeFiles={setCapsuleFiles} compose={() => void capsule.show('compose')}
         collapse={() => void capsule.show('capsule')} open={() => void capsule.show('replies')} send={send}
         repliesOpen={capsule.surface === 'replies'} replies={capsule.replies} error={error || runtimeError ? assistantErrorText(error || runtimeError, language) : ''}
-        returnToWorkspace={floating.returnToWorkspace}
         openVoice={() => {
           if (!callHere) { voice.update(target); void voice.start('call'); }
           void capsule.show('voice');
@@ -345,8 +372,8 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
     hidden={!active} aria-label={profile.name}>
     {floatingView}
     <TopBar title={profile.name} actionsTarget={headerActionsTarget} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
-      titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantBulb size={22} working={busy}/></span>}
-      workspaceControl={headerControls} conversationContentAvailable={workSummaryAvailable && timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
+      titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantCharacter/></span>}
+      conversationContentAvailable={workSummaryAvailable && timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {eventsOpen && active && <AssistantEventsDialog language={language} close={() => setEventsOpen(false)}/>}
     {messageMenu && active && <AssistantMessageMenu key={messageMenu.entry.id} target={messageMenu} language={language} reaction={reactions[messageMenu.entry.id]} pending={reacting}
@@ -372,7 +399,7 @@ export function AssistantView({ active, language, floating, prepare, ownsConfigu
       <div className="chat-content-frame">
       <div className="assistant-messages message-list" ref={scroller} tabIndex={-1} role="log" aria-label={uiText(language)('assistantView.assistantConversation')}>
       <div className="message-list-content">
-        {!timeline.length && <div className="assistant-welcome"><AssistantBulb size={68}/><h2>{uiText(language)('assistantView.letSTalk')}</h2><p>{uiText(language)('assistantView.shareAThoughtOrHandOverA')}</p></div>}
+        {!timeline.length && <div className="assistant-welcome"><AssistantCharacter/><h2>{uiText(language)('assistantView.letSTalk')}</h2><p>{uiText(language)('assistantView.shareAThoughtOrHandOverA')}</p></div>}
         {renderTimeline(timeline)}
         {typingBubble}
         {transcriptFooter}

@@ -5,6 +5,8 @@ import type { AppLanguage } from '../../types';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { componentId } from './componentId';
 import { componentProtocol, maxComponentBytes, type HtmlComponent } from './componentModel';
+import { componentOrigins } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
+import { approvedOrigins } from './componentNetwork';
 
 export function componentError(language: AppLanguage, cause: unknown) {
   const t = uiText(language);
@@ -18,11 +20,14 @@ export function ComponentEditor({ language, initial, onClose, onSave }: { langua
   const dialog = useRef<HTMLDialogElement>(null), [title, setTitle] = useState(initial?.title ?? ''), [html, setHtml] = useState(initial?.html ?? ''), [allowActions, setAllowActions] = useState(initial?.allowActions ?? false), [error, setError] = useState('');
   useEffect(() => { dialog.current?.showModal(); const element = dialog.current; return () => element?.close(); }, []);
   const [busy, setBusy] = useState(false);
+  const requested = componentOrigins(initial?.networkDomains);
+  const [approved, setApproved] = useState<string[]>(() => initial ? approvedOrigins(initial) : []);
   return <dialog className="inspector-page-dialog component-import" ref={dialog} aria-label={uiText(language)('componentsApp.customComponent')} onCancel={dialogEventHandler(onClose)}>
     <form onSubmit={async event => { event.preventDefault(); if (busy) return; setBusy(true); try {
       if (!title.trim() || !html.trim()) throw new Error(uiText(language)('componentsApp.enterANameAndHtmlContent'));
       if (new TextEncoder().encode(html).length > maxComponentBytes) throw new Error(uiText(language)('componentsApp.htmlMustNotExceed256Kib'));
-      await onSave({ width: 6, height: 280, order: 0, ...initial, id: initial?.id ?? componentId(), title: title.trim().slice(0, 80), html, allowActions });
+      await onSave({ width: 6, height: 280, order: 0, ...initial, id: initial?.id ?? componentId(), title: title.trim().slice(0, 80), html, allowActions,
+        networkDomains: requested, approvedNetworkOrigins:approved });
     } catch (cause) { setError(componentError(language, cause)); } finally { setBusy(false); } }}>
       <div className="component-import-heading"><h2>{uiText(language)('componentsApp.customComponent')}</h2><button type="button" aria-label={uiText(language)('common.close')} onClick={onClose}><X size={15}/></button></div>
       <label>{uiText(language)('agentConnectionForm.name')}<input autoFocus value={title} maxLength={80} onChange={event => setTitle(event.target.value)}/></label>
@@ -51,6 +56,10 @@ export function ComponentEditor({ language, initial, onClose, onSave }: { langua
       }}/></label>
       <label>{uiText(language)('componentsApp.html')}<textarea value={html} onChange={event => setHtml(event.target.value)} spellCheck={false} rows={7} placeholder={uiText(language)('componentsApp.main_main')}/></label>
       <small>{uiText(language)('componentsApp.supportsInlineCssJavascriptAndDataImages')}</small>
+      {requested.length > 0 && <fieldset><legend>{uiText(language)('homeComponents.networkSources')}</legend>
+        {requested.map(origin => <label className="component-action-grant" key={origin}><input type="checkbox" checked={approved.includes(origin)}
+          onChange={event => setApproved(event.target.checked ? [...approved,origin] : approved.filter(site=>site!==origin))}/><span>{origin}</span></label>)}
+      </fieldset>}
       <label className="component-action-grant"><input type="checkbox" checked={allowActions} onChange={event => setAllowActions(event.target.checked)}/><span>{uiText(language)('componentsApp.allowConversationAndBrowserActionsMayUse')}</span></label>
       {error && <p role="alert">{error}</p>}
       <footer><button type="button" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" disabled={busy}>{uiText(language)('appCenter.save')}</button></footer>

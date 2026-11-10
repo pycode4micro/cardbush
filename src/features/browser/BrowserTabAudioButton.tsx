@@ -3,12 +3,11 @@ import { Volume2, VolumeX } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import type { InspectorNavigationState, InspectorWebviewHandle } from '../inspector/InspectorWebview';
 
-export function BrowserTabAudioButton({ navigation, handle, language, title, menu = false, contextMenu = false, onAction }: {
+export function BrowserTabAudioButton({ navigation, handle, language, title, contextMenu = false, onAction }: {
   navigation?: InspectorNavigationState;
   handle?: InspectorWebviewHandle;
   language: AppLanguage;
   title: string;
-  menu?: boolean;
   contextMenu?: boolean;
   onAction?: () => void;
 }) {
@@ -19,10 +18,9 @@ export function BrowserTabAudioButton({ navigation, handle, language, title, men
   const label = muted
     ? uiText(language)('browserTabAudioButton.unmuteTab')
     : uiText(language)('browserTabAudioButton.muteTab');
-  const menuItem = menu || contextMenu;
   return <button type="button" className={contextMenu ? 'right-inspector-tab-context-action' : `right-inspector-tab-audio${muted ? ' muted' : ''}`}
-    title={label} aria-label={`${label} · ${title}`} role={menuItem ? 'menuitemcheckbox' : undefined}
-    aria-checked={menuItem ? muted : undefined} aria-pressed={menuItem ? undefined : muted}
+    title={label} aria-label={`${label} · ${title}`} role={contextMenu ? 'menuitemcheckbox' : undefined}
+    aria-checked={contextMenu ? muted : undefined} aria-pressed={contextMenu ? undefined : muted}
     disabled={contextMenu && (!handle?.toggleAudioMuted || !navigation?.guestWebContentsId)}
     onPointerDown={event => event.stopPropagation()} onAuxClick={event => event.stopPropagation()}
     onClick={event => { event.stopPropagation(); handle?.toggleAudioMuted?.(); onAction?.(); }}>

@@ -2,7 +2,7 @@ export const componentProtocol = 'cardbush.html-surface/1';
 export const componentStorageKey = 'cardbush.html_components.v1';
 export const maxComponentBytes = 256 * 1024;
 export type HtmlComponent = { id: string; title: string; html: string; allowActions: boolean;
-  width: number; height: number; order: number; home?: boolean };
+  width: number; height: number; order: number; home?: boolean; networkDomains?: string[]; approvedNetworkOrigins?: string[] };
 export type ComponentCollection = { version: 1; revision: number; items: HtmlComponent[] };
 export const defaultComponents: ComponentCollection = {version: 1, revision: 0, items: []};
 

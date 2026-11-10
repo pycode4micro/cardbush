@@ -1,4 +1,4 @@
-import { dragAssistantSurface, residentCapsuleSize, sizeAssistantSurface, type AssistantSurface } from './assistantSurface';
+import { assistantCallPhases, dragAssistantSurface, residentCapsuleSize, sizeAssistantSurface, type AssistantCallPhase, type AssistantSurface } from './assistantSurface';
 import { browserConnectionEnvironment } from './browserEnvironment';
 import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
@@ -29,7 +29,6 @@ import {
   Menu,
   net,
   Notification,
-  powerMonitor,
   protocol,
   Tray,
   dialog,
@@ -110,7 +109,8 @@ import {
 } from './browserConnectorRegistration';
 import { BrowserConnectorLifecycle } from './browserConnectorLifecycle';
 import { installApplicationInstance } from './applicationInstance';
-import { residentRuntimeWakeAt } from './assistantResidentStartup';
+import { previewHomeComponent } from './homeComponentPreview';
+import type { HomeToolHost, HomeSnapshot, HomeItem } from './homeComponentTools.mjs' with { 'resolution-mode': 'import' };
 import { connectorDataRoot } from './browserConnectorFiles';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
@@ -303,6 +303,12 @@ let assistantWindow: BrowserWindow | null = null;
 let assistantWindowReady = false;
 let openHomeOnReady = false;
 let assistantSurface: AssistantSurface = 'capsule';
+let capsuleCallPhase: AssistantCallPhase | null = null;
+function setCapsuleCallPhase(phase: AssistantCallPhase | null) {
+  if (phase === capsuleCallPhase) return;
+  capsuleCallPhase = phase;
+  sendToLiveRenderer(mainWindow, 'assistant:capsule-call-changed', phase);
+}
 let assistantAttachmentPicker: BrowserWindow | undefined;
 let assistantReplyHeight = 96;
 function showAssistantSurface(surface: AssistantSurface) {
@@ -312,7 +318,6 @@ function showAssistantSurface(surface: AssistantSurface) {
   sendToLiveRenderer(assistantWindow, 'assistant:surface-changed', surface);
 }
 let retainAssistantWindow = false;
-let residentBootTimer: ReturnType<typeof setTimeout> | undefined;
 const residentPreferencePath = () => path.join(app.getPath('userData'), 'assistant-resident.json');
 type DesktopModelProxy = { mode: 'none' | 'system' | 'manual'; httpProxy: string; httpsProxy: string; noProxy: string };
 let residentProxy: DesktopModelProxy = { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' };
@@ -1261,8 +1266,7 @@ function createTray() {
   tray = new Tray(icon);
   tray.setToolTip('cardbush');
   updateTrayMenu();
-  tray.on('double-click', () => showMainWindow());
-  tray.on('click', () => { if (assistantResident) showMainWindow(); });
+  tray.on('click', showWorkspaceHome);
 }
 
 let nativeUiLanguage: string | undefined;
@@ -1281,7 +1285,6 @@ function updateTrayMenu() {
 }
 
 function requestAppQuit() {
-  clearTimeout(residentBootTimer);
   if (isQuitting && quitFallbackTimer != null) {
     return;
   }
@@ -1728,6 +1731,8 @@ function showFloatingAssistant() {
     }
   };
   window.on('blur', collapse);
+  window.webContents.on('render-process-gone', () => setCapsuleCallPhase(null));
+  window.webContents.on('did-start-loading', () => setCapsuleCallPhase(null));
   window.on('hide', collapse);
   window.on('close', event => {
     if (!isQuitting && (retainAssistantWindow || desktopVoiceHost.hasActiveCall(window.webContents.id))) {
@@ -1737,11 +1742,9 @@ function showFloatingAssistant() {
   });
   window.once('closed', () => {
     if (window !== assistantWindow) return;
+    setCapsuleCallPhase(null);
     assistantWindow = null; assistantWindowReady = false; retainAssistantWindow = false;
-    if (assistantResident && !isQuitting) {
-      void runtimeHostController?.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
-        command: { kind: 'runtime.assistant_window_closed', payload: {} } }).catch(() => undefined);
-    }
+
   });
   loadRenderer(window, 'assistant');
 }
@@ -1802,7 +1805,6 @@ ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown
   const owner = requireAppFrame(event);
   if (action === 'startup' && typeof enabled === 'boolean') await saveResidentPreference(enabled);
   else if (action === 'float') showFloatingAssistant();
-  else if (action === 'workspace') showWorkspaceHome();
   else if (action !== 'read') throw Error('invalid_assistant_mode');
   return { floating: owner === assistantWindow, nextLaunch: assistantNextLaunch, hasWorkspace: Boolean(mainWindow) };
 });
@@ -1817,6 +1819,14 @@ ipcMain.on('assistant:reply-height', (event, height: unknown) => {
 ipcMain.on('assistant:drag-surface', (event, action: unknown, dx: unknown, dy: unknown) => {
   if (assistantWindow && event.sender === assistantWindow.webContents && event.senderFrame === event.sender.mainFrame)
     dragAssistantSurface(assistantWindow, action, dx, dy);
+});
+ipcMain.handle('assistant:read-capsule-call', event => {
+  requireAppFrame(event);
+  return capsuleCallPhase;
+});
+ipcMain.on('assistant:set-capsule-call', (event, phase: unknown) => {
+  if (event.sender !== assistantWindow?.webContents || event.senderFrame !== event.sender.mainFrame) return;
+  if (phase === null || assistantCallPhases.some(value => value === phase)) setCapsuleCallPhase(phase as AssistantCallPhase | null);
 });
 ipcMain.handle('assistant:surface', (event, surface: unknown) => {
   const owner = requireAppFrame(event);
@@ -3174,10 +3184,8 @@ ipcMain.handle('files:pasted-text', async (event, action: string, input: unknown
   throw new Error('Unknown text attachment action.');
 });
 
-type HomeLibraryItem = {id: string; title: string; html: string; width: number; height: number; order: number; home?: boolean; allowActions: boolean};
-type HomeLibrarySnapshot = { version: 1; revision: number; items: HomeLibraryItem[] };
-type HomeLibrary = {snapshot(revision?: number): HomeLibrarySnapshot | null; save(items: HomeLibraryItem[], revision: number): HomeLibrarySnapshot;
-  migrate(items: HomeLibraryItem[]): HomeLibrarySnapshot; close(): void};
+type HomeLibrary = HomeToolHost & {snapshot(revision?: number): HomeSnapshot | null; save(items: HomeItem[], revision: number): HomeSnapshot;
+  migrate(items: HomeItem[]): HomeSnapshot; close(): void};
 let homeLibrary: HomeLibrary | undefined;
 function desktopHomeLibrary(): HomeLibrary {
   if (homeLibrary) return homeLibrary;
@@ -3715,12 +3723,9 @@ app.whenReady().then(async () => {
   void ensureLegacyProductSkillsMigrated();
   if (!assistantResident || fs.existsSync(path.join(app.getPath('userData'), 'webhooks', 'state.json')))
     void contextWebhookHost().catch(() => console.warn('[webhooks] startup unavailable'));
-  powerMonitor.on('resume', () => { if (assistantResident && !runtimeHostController) void scheduleResidentBoot(); });
-  if (assistantResident) {
-    void scheduleResidentBoot();
-    if (fs.existsSync(path.join(app.getPath('userData'), 'embodied', 'devices.json')))
-      void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
-  } else void startRuntimeServices();
+  if (assistantResident && fs.existsSync(path.join(app.getPath('userData'), 'embodied', 'devices.json')))
+    void embodiedHost().catch(error => console.warn('[embodied] startup:', String(error)));
+  void startRuntimeServices();
   setImmediate(() => {
     const shortcutUpdated = ensureWindowsTaskbarShortcut();
     if (process.platform !== 'win32') return;
@@ -3757,18 +3762,6 @@ function publishRuntimeStartupStatus(next: RuntimeStartupStatus) {
     sendToLiveRenderer(mainWindow, runtimeStartupStatusChannel, { ...next });
   }
   if (assistantWindow) sendToLiveRenderer(assistantWindow, runtimeStartupStatusChannel, { ...next });
-}
-
-async function scheduleResidentBoot() {
-  clearTimeout(residentBootTimer);
-  const at = await residentRuntimeWakeAt(path.join(app.getPath('userData'), 'runtime-state'));
-  const arm = () => {
-    if (at === undefined || !assistantResident || isQuitting || runtimeServicesInitialization || runtimeHostController) return;
-    const delay = at - Date.now();
-    if (delay <= 0) void startRuntimeServices().catch(() => undefined);
-    else residentBootTimer = setTimeout(arm, Math.min(delay, 2_147_483_647));
-  };
-  arm();
 }
 
 function isComputerUseRuntimeTool(toolName: string): boolean {
@@ -3956,7 +3949,6 @@ function disposeDesktopControlMonitor(): void {
 }
 
 async function startRuntimeServices(force = false): Promise<void> {
-  clearTimeout(residentBootTimer);
   if (runtimeServicesInitialization) return runtimeServicesInitialization;
   if (runtimeServicesStopping || (!force && runtimeStartupStatus.attempt > 0 && runtimeStartupStatus.phase !== 'initializing')) return;
   const attempt = runtimeStartupStatus.attempt + 1;
@@ -4071,7 +4063,7 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
   const management = await runtimeStartupStep<NonNullable<typeof productMcpManagement>>('management-bridge', () => managementModule.startProductMcpManagement(() => {
     if (!productHostController) throw new Error('CardBush Product Host is not ready.');
     return productHostController;
-  }));
+  }, desktopHomeLibrary, (item: HomeItem, abort: AbortSignal) => previewHomeComponent(item,abort,devServerUrl)));
   if (signal.aborted) { await management.close(); signal.throwIfAborted(); }
   productMcpManagement = management;
   const browserModule = await runtimeStartupStep('browser-module', () => import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href));
@@ -4166,8 +4158,12 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal, onAccepted: () => void) => {
+        if (operation === 'mcp.ensure-directory') {
+          if (!productHostController) throw new Error('Product Host is not ready.');
+          await productHostController.refreshMcp(undefined, undefined, signal);
+          return true;
+        }
         if (operation === 'assistant.is-resident') return assistantResident;
-        if (operation === 'assistant.is-background') return assistantResident && !mainWindow && !assistantWindow && !isQuitting;
         if (operation === 'assistant.attention') {
           const notice = payload as { id: string; text?: string; interaction: boolean };
           if ((assistantResident || assistantWindow) && typeof notice?.id === 'string') return showSessionAttentionNotification({

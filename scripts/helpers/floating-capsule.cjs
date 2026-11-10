@@ -4,10 +4,21 @@ const path = require('node:path');
 module.exports = async ({current, read, click, visible, wait, project, holdAudioSettings}) => {
   const edit = '.floating-capsule [data-action=compose]', bell='.floating-capsule [data-action=replies]';
   assert.ok(current.getSize()[0]<200 && current.getSize()[1]<100, 'the actual native window fits the pill');
-  assert.equal(await read("document.querySelectorAll('.floating-capsule button').length"),4);
-  const pixels = (await current.webContents.capturePage()).toBitmap();
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.floating-capsule button'), b => b.dataset.action)"), ['compose','voice','replies']);
+  const image = await current.webContents.capturePage();
+  const {width,height} = image.getSize(1);
+  const pixels = image.toBitmap({scaleFactor:1});
   assert.equal(pixels[3], 0, 'the native renderer keeps the area outside the capsule transparent');
   if (process.platform === 'win32') {
+    // capturePage contains Chromium's alpha BEFORE the native window clips the desktop.
+    // Every visibly painted span, including antialiasing/shadow, must fit the native region.
+    const edges = [];
+    for (let y=0; y<height; y++) {
+      let first=width, last=-1;
+      for (let x=0; x<width; x++) if (pixels[(width*y+x)*4+3]>=8) { first=Math.min(first,x); last=x; }
+      if (last>=0) edges.push(first,y,last,y);
+    }
+    assert.ok(edges.length>0);
     const handle = current.getNativeWindowHandle();
     const hwnd = handle.length === 8 ? handle.readBigUInt64LE() : handle.readUInt32LE();
     const probe = `Add-Type -TypeDefinition @'
@@ -16,12 +27,15 @@ using System.Runtime.InteropServices;
 public static class CapsuleWindowRegion {
   [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
   [DllImport("user32")] public static extern int GetWindowRgn(IntPtr window, IntPtr region);
+  [DllImport("user32")] public static extern bool GetClientRect(IntPtr window, out Rect bounds);
+  [DllImport("user32")] public static extern bool SetProcessDPIAware();
   [DllImport("gdi32")] public static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
   [DllImport("gdi32")] public static extern int GetRgnBox(IntPtr region, out Rect bounds);
   [DllImport("gdi32")] public static extern bool PtInRegion(IntPtr region, int x, int y);
   [DllImport("gdi32")] public static extern bool DeleteObject(IntPtr region);
 }
 '@
+[void][CapsuleWindowRegion]::SetProcessDPIAware()
 $region = [CapsuleWindowRegion]::CreateRectRgn(0,0,1,1)
 try {
   if ([CapsuleWindowRegion]::GetWindowRgn([IntPtr]::new([long]${hwnd}),$region) -le 1) { exit 1 }
@@ -29,9 +43,17 @@ try {
   [void][CapsuleWindowRegion]::GetRgnBox($region,[ref]$box)
   if ([CapsuleWindowRegion]::PtInRegion($region,$box.Left,$box.Top)) { exit 2 }
   if (![CapsuleWindowRegion]::PtInRegion($region,($box.Left+$box.Right)/2,($box.Top+$box.Bottom)/2)) { exit 3 }
+  $client = New-Object CapsuleWindowRegion+Rect
+  [void][CapsuleWindowRegion]::GetClientRect([IntPtr]::new([long]${hwnd}),[ref]$client)
+  $edges = @(${edges.join(',')})
+  for ($i=0;$i -lt $edges.Length;$i+=2) {
+    $x = [Math]::Floor(($edges[$i]+0.5)*$client.Right/${width})
+    $y = [Math]::Floor(($edges[$i+1]+0.5)*$client.Bottom/${height})
+    if (![CapsuleWindowRegion]::PtInRegion($region,$x,$y)) { exit 4 }
+  }
 } finally { [void][CapsuleWindowRegion]::DeleteObject($region) }`;
     const result = require('node:child_process').spawnSync('powershell.exe', ['-NoProfile','-NonInteractive','-Command',probe], {windowsHide:true,encoding:'utf8',timeout:15000});
-    assert.equal(result.status,0,'native capsule has rounded, click-through corners: '+result.stderr);
+    assert.equal(result.status,0,'native capsule keeps click-through corners without clipping blended edge pixels: '+result.stderr);
   }
   assert.ok(await read("!document.querySelector('.assistant-messages')"));
   fs.writeFileSync(path.join(project,'tmp','floating-capsule.png'),(await current.webContents.capturePage()).toPNG());
@@ -55,7 +77,15 @@ try {
   pointer({type:'mouseUp',button:'left',clickCount:1,...button});
   assert.equal(await read("!!document.querySelector('.capsule-form')"),false,'dragging does not activate the underlying button');
   const dragged = current.getBounds();
+  await read("window.capsuleAnimations=[];document.addEventListener('animationstart',e=>capsuleAnimations.push(e.animationName));void 0");
   await click(edit); await visible('.capsule-form input');
+  if (await read("matchMedia('(prefers-reduced-motion: no-preference)').matches"))
+    await wait(()=>read("capsuleAnimations.includes('capsule-open') && capsuleAnimations.includes('capsule-reveal')"),'opening the editor animates');
+  current.webContents.debugger.attach('1.3');
+  try {
+    await current.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    assert.ok(await read("['.floating-capsule','.capsule-form'].every(s=>getComputedStyle(document.querySelector(s)).animationName==='none')"), 'reduced motion opens the same editor without animating');
+  } finally { current.webContents.debugger.detach(); }
   await wait(()=>read("document.activeElement.matches('.capsule-form input')"),'editor takes keyboard focus');
   assert.ok(current.getSize()[0]>=300 && current.getSize()[1]<100,'compose expands horizontally');
   assert.equal(right(current.getBounds()),right(dragged),'the editor expands left from the dragged anchor');
@@ -114,7 +144,16 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
     const workspace = require('electron').BrowserWindow.getAllWindows().find(win => win !== current && !win.webContents.getURL().includes('window=assistant'));
     assert.ok((await workspace.webContents.executeJavaScript(`window.cardbushDesktop.productHostCommand({protocol:'cardbush.product_host_ipc.v1',kind:'models.update',config:${JSON.stringify(config)}})`)).ok);
     await read("localStorage.setItem('cardbush_theme_mode','light')");
-    await new Promise(resolve=>{current.webContents.once('did-finish-load',resolve);current.webContents.reload();});
+    // Simulate a throttled resident renderer so that opening the bell must do its own journal read.
+    current.webContents.debugger.attach('1.3');
+    try {
+      await current.webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {source: `
+        const interval = window.setInterval.bind(window);
+        window.setInterval = (fn, delay, ...args) => delay === 1000 && typeof fn === 'function'
+          ? interval(() => { if (!window.holdJournalPoll) fn(...args); }, delay) : interval(fn, delay, ...args);
+      `});
+      await new Promise(resolve=>{current.webContents.once('did-finish-load',resolve);current.webContents.reload();});
+    } finally { current.webContents.debugger.detach(); }
     await visible(edit); await click(edit); await visible('.capsule-form input');
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     fs.writeFileSync(path.join(__dirname,'../../tmp/floating-capsule-editor-light.png'),(await current.webContents.capturePage()).toPNG());
@@ -153,6 +192,35 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
     assert.equal(await read("!!document.querySelector('[data-action=workspace]')"),false);
     assert.ok(current.getSize()[1]<350 && !await read("!!document.querySelector('.assistant-view')"),'reply sheet stays lightweight');
     fs.writeFileSync(path.join(__dirname,'../../tmp/floating-capsule-replies.png'),(await current.webContents.capturePage()).toPNG());
+    await click('.capsule-replies header button');
+    await wait(() => !current.isDestroyed() && current.isVisible() && read("!document.querySelector('.capsule-replies') && !!document.querySelector('.floating-capsule [data-action=replies]')"), 'the close control only collapses replies');
+    await read('window.holdJournalPoll=true; void 0');
+    const append = content => {
+      const entry = {id:crypto.randomUUID(), role:'assistant', source:'text', visibility:'conversation', createdAt:new Date().toISOString(), content};
+      const command = {kind:'runtime.assistant_conversation', payload:{action:'append', sessionId:'personal-assistant', entry}};
+      const request = {protocol:'bush.runtime_ipc.v1', type:'command', operationId:crypto.randomUUID(), command};
+      return workspace.webContents.executeJavaScript(`window.cardbushDesktop.runtime.command(${JSON.stringify(request)})`);
+    };
+    assert.ok((await append('Previous reply')).ok);
+    assert.ok((await append('Latest reply from Assistant')).ok);
+    await click(bell);
+    await wait(() => read("document.querySelector('.capsule-replies article:first-of-type p')?.textContent==='Latest reply from Assistant' && document.querySelector('.capsule-reply-scroll').scrollTop===0"), 'opening reads the latest Assistant reply before polling resumes');
+    await click('.capsule-replies article:first-of-type p');
+    assert.ok(await read("!!document.querySelector('.capsule-replies')"), 'reading a reply keeps the list open');
+    const gap = await read(`(() => {
+      const rect=document.querySelector('.floating-capsule').getBoundingClientRect();
+      const x=Math.round(rect.left+3), y=Math.round(rect.top+rect.height/2);
+      if (document.elementFromPoint(x,y)?.closest('button')) throw Error('Expected toolbar padding');
+      return {x,y};
+    })()`);
+    for (const type of ['mouseDown','mouseUp']) current.webContents.sendInputEvent({type,button:'left',clickCount:1,...gap});
+    await wait(() => read("!document.querySelector('.capsule-replies')"), 'clicking toolbar space collapses replies');
+    await click(bell); await visible('.capsule-replies');
+    await click(edit); await visible('.capsule-form input');
+    assert.ok(!await read("!!document.querySelector('.capsule-replies')"), 'one click goes directly from replies to writing');
+    await read("document.querySelector('.capsule-form input').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await click(bell); await visible('.capsule-replies');
+    await read('window.holdJournalPoll=false; void 0');
     workspace.focus(); await wait(()=>read("!document.querySelector('.capsule-replies')"),'outside focus closes replies');
     current.focus();
     const releaseAudio=holdAudioSettings();
@@ -161,6 +229,8 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
       await click(voice);
       const controls = '.floating-capsule[data-surface=voice] .voice-composer-call';
       await visible(controls);
+      const workPhase = () => workspace.webContents.executeJavaScript("document.querySelector('.recent-bar-chat .assistant-stage')?.dataset.state");
+      await wait(async()=>await workPhase()==='connecting', 'the workspace character sees the capsule connecting');
       assert.ok(await read(`(() => { const row=document.querySelector('.floating-capsule').getBoundingClientRect();return !document.querySelector('.voice-call-undocked,[data-action=workspace]') && [...document.querySelectorAll('.voice-composer-call button')].every(b=>{const r=b.getBoundingClientRect();return r.left>=row.left && r.right<=row.right && r.top>=row.top && r.bottom<=row.bottom && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}); })()`),'the capsule hosts one unclipped row of call controls');
       const mic = controls + ' .voice-audio-toggle';
       await click(mic);
@@ -175,6 +245,7 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
       await visible(controls);
       await click('.voice-composer-end');
       await wait(()=>read("!!document.querySelector('[data-action=voice][aria-pressed=false]')"),'hanging up restores the normal capsule');
+      await wait(async()=>await workPhase()==='idle', 'hanging up clears the voice animation in the workspace');
     } finally { releaseAudio(); }
   } finally { dialog.showOpenDialog=picker; release(); server.closeAllConnections(); await new Promise(resolve=>server.close(resolve)); }
 }

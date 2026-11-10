@@ -1,11 +1,13 @@
 import { screen, type BrowserWindow, type Rectangle } from 'electron';
 
 export type AssistantSurface = 'capsule' | 'compose' | 'replies' | 'voice';
+export const assistantCallPhases = ['connecting', 'listening', 'speaking', 'muted', 'error'] as const;
+export type AssistantCallPhase = typeof assistantCallPhases[number];
 const height = 40;
-const inset = 4;
+const inset = 6;
 const desktopMargin = 12;
 const anchors = new WeakMap<BrowserWindow, { x: number; y: number }>();
-export const residentCapsuleSize = { width: 176, height: height + inset * 2 };
+export const residentCapsuleSize = { width: 128 + inset * 2, height: height + inset * 2 };
 
 function roundedRows(x: number, y: number, width: number, height: number, radius: number): Rectangle[] {
   const rows: Rectangle[] = [];
@@ -36,13 +38,14 @@ export function sizeAssistantSurface(win: BrowserWindow, mode: AssistantSurface,
   win.setMinimumSize(1, 1); win.setResizable(false);
   win.setBounds(fit({ x: anchor.x + 1 - width, y: anchor.y + 1 - targetHeight, width, height: targetHeight }, area));
   if (process.platform === 'win32' || process.platform === 'linux') {
-    // Clip both the painted surface and native hit testing to the visible controls.
+    // Native regions are binary. Keep their edges outside the CSS curves and shadow
+    // so the compositor can blend those pixels with the desktop.
     const client = win.getContentBounds();
     const padding = dip(inset);
     const rowWidth = mode === 'replies' ? Math.min(client.width, dip(residentCapsuleSize.width)) : client.width;
-    const shape = roundedRows(client.width - rowWidth + padding, client.height - padding - dip(height),
-      rowWidth - 2 * padding, dip(height), dip(height) / 2);
-    if (replyHeight) shape.push(...roundedRows(padding, padding, client.width - 2 * padding, replyHeight, Math.min(dip(14), replyHeight / 2)));
+    const rowHeight = dip(residentCapsuleSize.height);
+    const shape = roundedRows(client.width - rowWidth, client.height - rowHeight, rowWidth, rowHeight, rowHeight / 2);
+    if (replyHeight) shape.push(...roundedRows(0, 0, client.width, replyHeight + 2 * padding, Math.min(dip(14), replyHeight / 2) + padding));
     win.setShape(shape);
   }
 }

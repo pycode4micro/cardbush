@@ -5,17 +5,19 @@ import { componentDocument } from './componentDocument';
 import { componentProtocol, validateComponentText, type HtmlComponent } from './componentModel';
 import { bookmarkUrl } from '../inspector/browserBookmarks';
 import { componentId } from './componentId';
+import { approvedOrigins, fetchComponentJson } from './componentNetwork';
 
 import type { EventPresentation } from '@cardbush/bush-protocol';
 type EventPageContext = Pick<EventPresentation['pages'][number], 'id' | 'title' | 'layout' | 'items'>;
-export function HtmlComponentSurface({ component, active = true, eventPage }: { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext }) {
+export function HtmlComponentSurface({ component, active = true, eventPage, homeNetwork = false, onReady }: { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext; homeNetwork?: boolean; onReady?:()=>void }) {
   const frame = useRef<HTMLIFrameElement>(null), host = useContext(HtmlComponentContext), latest = useRef(host);
   latest.current = host;
   const page = useRef(eventPage); page.current = eventPage;
   const visible = useRef(active); visible.current = active;
   const [error, setError] = useState(''), loads = useRef(0), mounted = useRef(true);
-  const token = useMemo(() => componentId(), [component.id, component.html]);
-  const document = useMemo(() => componentDocument(component.html, token), [component.html, token]);
+  const sites = homeNetwork && active && !eventPage ? approvedOrigins(component).join(' ') : '';
+  const token = useMemo(() => componentId(), [component.id, component.html, sites]);
+  const document = useMemo(() => componentDocument(component.html, token, Boolean(sites)), [component.html, token, sites]);
   const reply = (message: unknown) => frame.current?.contentWindow?.postMessage({ protocol: componentProtocol, token, ...message as object }, '*');
   const context = () => { const current = latest.current;
     if (page.current) {
@@ -26,6 +28,7 @@ export function HtmlComponentSurface({ component, active = true, eventPage }: { 
   const publish = useRef(() => {});
   useEffect(() => {
     mounted.current = true; loads.current = 0; setError('');
+    const requests = new AbortController();
     const replay = new Map<string, { input: string; result: Promise<unknown> }>(); let inFlight = 0;
     const handler = async (event: MessageEvent) => {
       const message = event.data;
@@ -39,7 +42,10 @@ export function HtmlComponentSurface({ component, active = true, eventPage }: { 
         const params = message.params ?? {}; let result: unknown;
         const storageKey = 'cardbush.component-state.' + component.id;
         if (message.method === 'context.read') result = context();
-        else if (message.method === 'state.read') { const raw = page.current ? null : localStorage.getItem(storageKey); result = raw ? JSON.parse(raw) : null; }
+        else if (message.method === 'net.fetchJson') {
+          if (!visible.current || page.current || !sites) throw Error('CAPABILITY_DENIED');
+          result = await fetchComponentJson(params.url, sites.split(' '), requests.signal);
+        } else if (message.method === 'state.read') { const raw = page.current ? null : localStorage.getItem(storageKey); result = raw ? JSON.parse(raw) : null; }
         else if (message.method === 'state.write') {
           if (page.current) throw new Error('CAPABILITY_DENIED');
           if (!visible.current) throw new Error('INACTIVE_SURFACE');
@@ -73,8 +79,8 @@ export function HtmlComponentSurface({ component, active = true, eventPage }: { 
       finally { inFlight--; }
     };
     window.addEventListener('message', handler);
-    return () => { mounted.current = false; window.removeEventListener('message', handler); };
-  }, [token, component.id, component.allowActions]);
+    return () => { mounted.current = false; requests.abort(); window.removeEventListener('message', handler); };
+  }, [token, component.id, component.allowActions, sites]);
   useEffect(() => {
     const app = window.document.querySelector('.app'); let scheduled = 0;
     const update = () => {
@@ -102,7 +108,7 @@ export function HtmlComponentSurface({ component, active = true, eventPage }: { 
   }, [token]);
   useEffect(() => { publish.current(); }, [host?.revision, host?.language, host?.running, active, eventPage]);
   if (error) return <div className="html-component-error" role="alert">{error}</div>;
-  return <iframe ref={frame} className="html-component-frame" title={component.title} srcDoc={document} sandbox="allow-scripts"
+  return <iframe key={token} ref={frame} className="html-component-frame" title={component.title} srcDoc={document} sandbox="allow-scripts"
     referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"
-    onLoad={() => { if (++loads.current > 1) { setError(uiText(host?.language)('htmlComponentSurface.componentNavigatedAwayFromItsSandboxDocument')); return; } publish.current(); }} />;
+    onLoad={() => { if (++loads.current > 1) { setError(uiText(host?.language)('htmlComponentSurface.componentNavigatedAwayFromItsSandboxDocument')); return; } publish.current(); onReady?.(); }} />;
 }

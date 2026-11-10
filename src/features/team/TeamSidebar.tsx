@@ -1,5 +1,5 @@
 import { uiText } from '../../i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Plus, GitBranch, Files, FolderOpen, History, RefreshCw, Search, UsersRound } from 'lucide-react';
 import type { AppLanguage } from '../../types';
 import { refreshTeamWorkspace, useTeamWorkspace } from './teamWorkspaceStore';
@@ -7,7 +7,7 @@ import { requestTeamDocument, showTeamWorkspaceTab, useTeamWorkspaceNavigation }
 import { ProfileMenu } from '../profile/ProfileMenu';
 import './team-workspace.css';
 
-export function NativeTeamSidebar({ language, onSelect, softVisible = true }: { language: AppLanguage; onSelect?: () => void; onOpenSettings?: () => void; softVisible?: boolean }) {
+export function NativeTeamSidebar({ language, onSelect, softVisible = true, workspaceNavigation }: { language: AppLanguage; onSelect?: () => void; onOpenSettings?: () => void; softVisible?: boolean; workspaceNavigation?: ReactNode }) {
   const state = useTeamWorkspace(), navigation = useTeamWorkspaceNavigation();
   const [searchOpen, setSearchOpen] = useState(false), [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -21,6 +21,7 @@ export function NativeTeamSidebar({ language, onSelect, softVisible = true }: { 
   const visibleDocuments = documents.filter(item => !search || `${item.name} ${item.id}`.toLocaleLowerCase().includes(search));
   return <aside className={`sidebar native-team-sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`} aria-label={uiText(language)('creationCanvasApp.team')}>
     <div className="sidebar-panel-content team-sidebar-content">
+      {workspaceNavigation}
       <header className="team-sidebar-heading"><h2>{uiText(language)('appCenterModel.workflows')}</h2>
         <button type="button" aria-label={uiText(language)('teamSidebar.searchWorkflows')} aria-expanded={searchOpen} onClick={() => { setSearchOpen(value => !value); setQuery(''); }}><Search size={16}/></button>
       </header>

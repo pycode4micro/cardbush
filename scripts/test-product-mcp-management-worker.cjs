@@ -139,6 +139,10 @@ async function run() {
       args: ['${CARDBUSH_PLUGIN_ROOT}/server.mjs'], env: { ELECTRON_RUN_AS_NODE: '1' } } } }));
     writeFileSync(appsConfig, JSON.stringify({ protocol: 'cardbush.apps_config.v1', revision: 2, serviceEnabled: true, plugins: [] }));
     await host.refreshMcp();
+    const idle = await applied();
+    assert.equal(idle.servers.find(s => s.id === 'plugin_hot_main').health, 'idle');
+    const activate = await client.callTool({ name: 'reconnect_mcp_server', arguments: { id: 'plugin_hot_main' } });
+    assert.notEqual(activate.isError, true, JSON.stringify(activate));
     const beforeUpdate = await applied();
     assert.deepEqual(beforeUpdate.servers.find(s => s.id === 'plugin_hot_main').tools.map(t => t.remoteName), ['echo']);
     writeFileSync(join(plugin, 'server.mjs'), fixtureCode.replace("registerTool('echo'", "registerTool('new_music_tool'"));

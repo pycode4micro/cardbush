@@ -35,7 +35,7 @@ function observationValue(tool: string, result: unknown) {
 export class EventCollector {
   constructor(private deps: Pick<ToolExecutionCoordinatorOptions, 'registry' | 'capabilities'> & {
     tasks(owner: string, id: string): SubagentTask | undefined;
-    prepareToolCatalog?: () => Promise<void> | undefined;
+    prepareToolCatalog?: (toolName: string) => Promise<void> | undefined;
     executions: ToolExecutionStore;
     loadChild(session: string): Promise<RuntimeSessionTurnRequest | undefined>;
     messages(session: string, turn: string): ModelMessage[];
@@ -55,8 +55,9 @@ export class EventCollector {
       context.metadata.toolExecutionPolicy === 'web_restricted' || isSshExecution(context.metadata)))
       throw Error('Collector requires a locally permitted execution context.');
     let registration = this.deps.registry.resolve(rule.tool);
-    if (this.deps.prepareToolCatalog && (!registration || registration.mcpHook)) {
-      await this.deps.prepareToolCatalog();
+    if (!registration && rule.tool.startsWith('mcp__') && this.deps.prepareToolCatalog &&
+        saved.tools.some(tool => tool.name === rule.tool) && parent.tools.some(tool => tool.name === rule.tool)) {
+      await this.deps.prepareToolCatalog(rule.tool);
       registration = this.deps.registry.resolve(rule.tool);
     }
     if (!registration || registration.forwardToolCall || registration.delegatesToolExecution || registration.registrationOwner?.startsWith('bridge:') ||

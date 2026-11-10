@@ -61,6 +61,8 @@ async function run() {
   try {
     stage = 'initial MCP refresh';
     await host.refreshMcp();
+    assert.equal((await command('runtime.get_mcp_snapshot')).result.servers.find(s => s.id === 'plugin_alpha_echo').health, 'idle');
+    await command('runtime.mcp_reconnect', { serverId: 'plugin_alpha_echo' });
     let snapshot;
     try { await until(async () => { snapshot = await command('runtime.get_mcp_snapshot'); return snapshot.result?.servers.some(server => server.id === 'plugin_alpha_echo' && server.health === 'ready'); }); }
     catch (error) { console.error(snapshot); throw error; }

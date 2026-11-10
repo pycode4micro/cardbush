@@ -89,7 +89,7 @@ Office 与 3D 预览使用独立 HTML 入口。Vite 的命名分组按实际入�
 
 个人助手采用固定的 `personal-assistant` 会话身份。`ConversationJournal` 追加页面内容、内部转写、任务回执和摘要，与普通执行会话的 `SessionStore` / Turn 日志分开；语音追加不占用正在执行的文字 Turn 序号。条目以消息 ID 幂等追加，重置增加上下文代次，旧通话与旧请求不能迟到写入新上下文。界面按显式的 `source` 和 `visibility` 显示记录，不解析正文推断是否该展示。
 
-助手文字交流通过 `AssistantConversation` 与公共模型轮接入所选模型，提供派发、即时状态、主子消息、分页读取和 `page_write`。普通实时语音提供前四类入口，assistant 实时通话另提供 `page_write`。执行任务由 `RealtimeAgentDispatcher` 接到既有子 Agent 调度、工具注册表、权限和持久化执行循环；交流父会话不会直接运行文件或终端工具。任务完成通过真实状态异步反馈，页面以任务气泡打开共用执行详情。
+助手文字交流通过 `AssistantConversation` 与公共模型轮接入所选模型，提供派发、即时状态、主子消息和分页读取。文字最终回复直接进入会话，助手通话另提供 `page_write` 保存书面内容。执行任务由 `RealtimeAgentDispatcher` 接到既有子 Agent 调度、工具注册表、权限和持久化执行循环；交流父会话不会直接运行文件或终端工具。任务完成通过真实状态异步反馈，页面以任务气泡打开共用执行详情。
 
 `AssistantManagement` 为文字及转写后模型链路增加六个直接管理工具：`schedule_task`、`scheduled_results`、`search_skills`、`list_plugin_commands`、`mcp_search`、`update_task_plan`。声明和执行都取白名单与父请求实际能力的交集；目录查询使用父请求完整工具范围，但不暴露通用执行网关。调用复用 `ToolExecutionCoordinator`、插件 Hook、权限 grants 和 `ToolExecutionStore`；管理调用在同轮串行执行。定时配置保存完整父执行设置，复用原调度器；总体计划使用原 `CoordinationStore`，重置通过 `plan_cleared` 事件持久清除。日志读取快照附带计划及待处理权限；界面复用工作摘要和审批卡，答案回到同一权限 broker。没有新增子 Agent 类型、调度系统或独立权限规则。
 

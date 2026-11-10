@@ -4337,7 +4337,7 @@ export function useCardbushChat(
     skills,
     loading,
     messagesLoading,
-    historyPages, loadSessionHistory,
+    historyPages,
     sending,
     stopping,
     activeTurnId,

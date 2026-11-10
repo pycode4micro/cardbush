@@ -47,11 +47,14 @@ module.exports = async ({win, read, wait, visible, project}) => {
     fs.writeFileSync(path.join(project,'tmp','featured-cover-hover.png'),(await win.webContents.capturePage()).toPNG());
     win.webContents.sendInputEvent({ type:'mouseMove', ...await center('.recent-bar-list') });
     await wait(async () => (await hoveredCovers()).every(opacity => opacity === 0), 'leaving restores the cover');
-    await moveTo('.featured-step[data-step="next"]');
+    await read("document.querySelector('.featured-step[data-step=next]').click()");
     await wait(async () => (await shelf()).last,'next reveals the fourth card');
-    assert.ok(await read('!!document.querySelector('+JSON.stringify(open)+')'),'browsing keeps the docked list open');
-    await moveTo('.featured-step[data-step="previous"]');
-    await wait(() => read("document.querySelector('.desktop-covers').scrollLeft<1"),'previous returns to the first card');
+    await read("document.querySelector('.featured-step[data-step=previous]').addEventListener('click', e => window.shelfReceivedClick=e.isTrusted, {once:true})");
+    await moveTo('.featured-step[data-step=previous]');
+    await wait(() => read(`window.shelfReceivedClick && !document.querySelector('${open}')`),'one click activates the shelf button and dismisses the wide list');
+    await wait(async () => (await shelf()).count===4 && await read("document.querySelector('.desktop-covers').scrollLeft<1"),'all four cards fit starting with the first');
+    await motion(); await visible('.recent-session-rows');
+    await wait(() => read("!document.querySelector('.recent-turn-drawer').getAnimations().length"),'reopened list has settled');
     // Reopening a partially dismissed popover must not let the old exit clear the new list.
     await read(`(() => {
       document.querySelector('.recent-bar-list').click();

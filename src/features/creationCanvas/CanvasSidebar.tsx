@@ -1,19 +1,20 @@
 import { WindowBackTarget } from '../navigation/WindowBackTarget';
 import { uiText } from '../../i18n';
 import { FolderOpen, Plus, RotateCcw, Search, Square, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { acceptCanvas, archiveCanvas, createCanvas, selectCanvas, useCanvases } from './canvasStore';
 import { ProfileMenu } from '../profile/ProfileMenu';
 import { canvasErrorMessage } from './canvasErrors';
 import './canvasSidebar.css';
 import './creationCanvas.css';
 
-export function CanvasSidebar({ language, onSelect, softVisible = true }: { language: string; onSelect?: () => void; softVisible?: boolean }) {
+export function CanvasSidebar({ language, onSelect, softVisible = true, workspaceNavigation }: { language: string; onSelect?: () => void; softVisible?: boolean; workspaceNavigation?: ReactNode }) {
   const state = useCanvases(), [query, setQuery] = useState(''), [search, setSearch] = useState(false), [trash, setTrash] = useState(false), [error, setError] = useState('');
 
   const open = async () => { try { const result = await window.cardbushDesktop?.creationCanvas({ action: 'open' }); if (result && 'document' in result) { acceptCanvas(result); setTrash(false); onSelect?.(); } setError(''); } catch (error) { setError(String((error as Error).message)); } };
   return <aside className={`sidebar bush-it-sidebar canvas-sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`} aria-label={uiText(language)('appCenterModel.create')}>
     <div className="sidebar-panel-content bush-pages-sidebar-content">
+      {workspaceNavigation}
       <header className="creation-sidebar-heading"><h2>{uiText(language)('appCenterModel.create')}</h2><button aria-label={uiText(language)('canvasSidebar.searchCanvases')} aria-expanded={search} onClick={() => setSearch(!search)}><Search size={16}/></button></header>
       <button className="bush-new-page" onClick={() => { createCanvas(); setTrash(false); setQuery(''); onSelect?.(); }}><Plus size={16}/>{uiText(language)('creationCanvasApp.newCanvas')}</button>
       {search && <label className="bush-page-search"><Search size={14}/><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder={uiText(language)('canvasSidebar.searchCanvases_72ce883')} aria-label={uiText(language)('canvasSidebar.searchCanvases')}/></label>}

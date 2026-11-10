@@ -82,7 +82,7 @@ export function useConversationHistoryPages(input: {
     hasMore: !!pages.current.get(id)?.nextCursor, loadingOlder: pending.current.has(id), historyError: errors[id] ?? '',
   });
   void revision;
-  return { read, readMessages, loadOlder, loadOlderFor, forSession, registerPrependAnchor,
+  return { read, readMessages, loadOlder, registerPrependAnchor,
     ...forSession(input.activeId), needsRefresh: invalidated.current.has(input.activeId) };
 }
 

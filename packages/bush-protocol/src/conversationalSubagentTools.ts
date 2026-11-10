@@ -24,3 +24,9 @@ export const conversationalSubagentTools: ToolDefinition[] = [{
   description: 'Inspect owned child tasks immediately or read one child conversation with action=conversation and task_ids. Follow nextCursor for more history. Private reasoning and tool logs are excluded. Running tasks notify automatically; continue talking without polling or waiting silently.',
   inputSchema: z.toJSONSchema(conversationalTaskInput, { io: 'input' }),
 }];
+
+export const assistantPageInputSchema = z.object({ content: z.string().trim().min(1).max(64000) }).strict();
+export const assistantPageTool = {
+  name: 'page_write', description: 'During a voice call, save requested written material to this conversation. For a report, share its verified file link and essential finding. Keep the report body, reasoning and tool logs out of the message.',
+  inputSchema: { type: 'object', additionalProperties: false, required: ['content'], properties: { content: { type: 'string', minLength: 1, maxLength: 64000 } } },
+};

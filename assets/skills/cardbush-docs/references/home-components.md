@@ -1,8 +1,14 @@
 # 通过对话创建主页组件
 
-用户可以在普通对话中说「做一个可以勾选的清单，放到主页」。主页组件区的 **＋ → 通过对话创建** 会准备一条可编辑的请求。先按用户要求在工作目录创建前端文件，再运行本技能随附的发布脚本，读取发布回执。桌面和脚本共用当前系统用户的本机组件库，主页打开时会自动刷新。
+用户可以在普通对话或 Assistant 中说「改一下主页的比赛比分卡」。任务对象是当前桌面已安装的组件。首选在工具搜索中找 `read_home_component`、`edit_home_component`、`preview_home_component`，不要修改 CardBush 源码、构建产物、单实例锁、数据库或全局网络策略，也不用启动第二个客户端。
 
-## 创建和放置
+1. 调用 `read_home_component({})`，按标题确认 ID。提供 `id` 可以分段回读 HTML；大组件用 `find` 直接定位要改的函数，或用 `offset`、`nextOffset` 翻页。
+2. 用 `edit_home_component`，传 `mode:"update"`、ID 和刚读到的 `expectedRevision`。小改动传 `replacements:[{before,after}]`，每段原文须唯一匹配。新建才用 `mode:"create"`，传标题和 HTML，`home:true` 放到主页。版本冲突时重新读取后再决定如何合并。不要清库、复制出另一个同名组件或覆盖其他人的改动。
+3. 回读确认修改已安装，使用 `preview_home_component({id})` 查看同一版本的沙箱截图。预览不操作用户的窗口，也不读真实组件状态或连接网络；截图不能证明实时数据已刷新。
+
+**需要实时数据时**，在编辑参数中用 `networkDomains` 声明最多 8 个确切的 HTTPS 来源，例如 `["https://scores.example.org"]`。请用户在主页卡片的铅笔中勾选来源并保存。新来源默认不获准，Agent 修改代码后要重新授权；已有临时字段也不能当成用户授权。在主页使用 `window.cardbush.net?.fetchJson(url)`，没有该能力时显示快照或明确缺少授权。该接口只发不带凭据的 GET，要求站点允许跨域并返回 JSON，不跟随重定向。优先按可见性刷新，失败时保留带时间戳的上次数据。缺少授权、跨域支持或桌面连接时，说明限制，不得绕过。
+
+## 从独立前端文件发布
 
 例如，创建下面三个文件。脚本路径相对于本技能目录，示例中的源文件路径相对于命令的工作目录。请使用 Node.js 24。
 
@@ -41,6 +47,6 @@ node "<技能目录>/scripts/home-component.mjs" list
 - 主页点 **＋ → 自定义组件** 也可同时选择一个 HTML 和多个 CSS、JS、MJS、TS 或 MTS 文件导入，查看合并后的内容后保存。单独导入脚本时默认提供一个 `#app` 容器。
 - 可直接发布带内联样式、脚本和 data 图片的 HTML。独立 CSS 用 `--style`，独立 JavaScript 模块或 TypeScript 用 `--script`，可重复传入。样式和脚本由发布命令嵌入，HTML 不需要再用外部路径加载它们。
 - 使用 React、Vue、Svelte、JSX、Sass、资源文件或有模块依赖的项目时，先用项目自己的构建工具产出可独立运行的 HTML，或将依赖打包为一个浏览器 JS 文件、一个 CSS 文件并内联资源，再按上例发布。原始工程保留在用户的工作区。
-- 要编辑已存在的组件，可先 `list` 核对 ID，再用 `export --id daily-review --output current.html` 取得当前 HTML，用相同 ID 发布修改。默认卡片宽度为 6/12 列，高 280 像素，`--width` 可取 3–12，`--height` 可取 120–1200。窄主页自动使用整行。
+- 脚本适合在组件自己的工作目录中组装多文件。通过 `export --id daily-review --output current.html` 取得当前 HTML 和版本，再用相同 ID 和 `--expected-revision <版本>` 发布；未指定的标题、尺寸和位置会保留。`--origin https://scores.example.org` 只申请来源。新卡默认 6/12 列、280 像素高。
 - 脚本使用操作系统默认 CardBush 桌面配置目录。独立测试或自定义配置目录用 `--profile "<目录>"`。命令必须运行在目标桌面所在机器、对应系统用户下。远程 Agent 若只能操作远程文件系统，可交付自包含 HTML，由用户在目标主页 **＋ → 自定义组件** 导入。
 - 组件在隔离 iframe 内运行。最多 12 个，每个打包后最多 256 KiB。交互可使用 DOM、内联脚本、`cardbush.state.read/write` 和 `--cb-*` 主题变量。外部网络、宿主文件和 Electron API 不可直接访问。发布脚本不会授予会话或浏览器动作权限，用户可在编辑器内开启。

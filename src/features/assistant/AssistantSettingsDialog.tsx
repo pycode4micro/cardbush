@@ -3,7 +3,8 @@ import { emptyEventPreferences } from './events/eventPreferences';
 import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Lightbulb, RotateCcw, X } from 'lucide-react';
+import { Camera, RotateCcw, X } from 'lucide-react';
+import { AssistantPortrait } from './AssistantCharacter';
 import { readAssistantProfile, saveAssistantProfile } from './assistantProfile';
 import { readAssistantAvatar, saveAssistantAvatar } from './assistantAvatar';
 import { prepareAvatarImage } from '../../shared/avatarImage';
@@ -50,11 +51,11 @@ export function AssistantSettingsDialog({ language, onClose }: { language: strin
         <button type="button" className="assistant-settings-close" aria-label={uiText(language)('assistantSettingsDialog.closeSettings')} onClick={onClose}><X size={18}/></button></header>
       <div className="assistant-avatar-picker">
         <button type="button" className="assistant-avatar-preview" aria-label={uiText(language)('assistantSettingsDialog.changeAvatar')} disabled={loading} onClick={() => fileInput.current?.click()}>
-          {avatar ? <img src={avatar} alt=""/> : <Lightbulb size={34} strokeWidth={1.5}/>}
+          <AssistantPortrait avatar={avatar} state="idle"/>
           <span><Camera size={13}/></span>
         </button>
         <div><button type="button" disabled={loading} onClick={() => fileInput.current?.click()}>{loading ? uiText(language)('assistantSettingsDialog.preparing') : uiText(language)('assistantSettingsDialog.chooseImage')}</button>
-          {avatar && <button type="button" className="assistant-avatar-reset" disabled={loading} onClick={() => { setAvatar(''); setError(''); }}><RotateCcw size={13}/>{uiText(language)('assistantSettingsDialog.restoreLightbulb')}</button>}
+          {avatar && <button type="button" className="assistant-avatar-reset" disabled={loading} onClick={() => { setAvatar(''); setError(''); }}><RotateCcw size={13}/>{uiText(language)('assistantSettingsDialog.restoreCharacter')}</button>}
           <small>{uiText(language)('assistantSettingsDialog.pngJpgWebpUpTo8Mb')}</small></div>
         <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; void choose(file); }}/>
       </div>

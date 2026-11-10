@@ -895,7 +895,7 @@ function McpCatalogNotice({ language, loading, error }: { language: AppLanguage;
 
 function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; language: AppLanguage }) {
   const labels = {
-    waiting_for_resources: 'pluginMcpSettings.waitingForResources' as const,
+    idle: 'pluginMcpSettings.onDemand' as const, waiting_for_resources: 'pluginMcpSettings.waitingForResources' as const,
     auth_required: 'pluginMcpSettings.signInRequired' as const, configuration_required: 'pluginMcpSettings.configurationRequired' as const, connected: 'browserConnectionSettings.connected' as const, pending: 'pluginManagementPanel.pending' as const, restarting: 'pluginManagementPanel.reconnecting' as const,
     unavailable: 'pluginManagementPanel.unavailable' as const, disabled: 'pluginManagementPanel.disabled' as const, unknown: 'pluginManagementPanel.connection_unconfirmed' as const,
   };

@@ -104,13 +104,16 @@ async function run() {
   const click = async selector => { await visible(selector); await read('document.querySelector(' + JSON.stringify(selector) + ').click();void 0'); };
   await visible('[data-desktop-page="overview"]');
   await visible('.recent-bar-chat');
+  const enterChatFromList = async id => {
+    await click('.recent-bar-list'); await click('[data-recent-tab=sessions]'); await click('[data-recent-session='+id+']');
+  };
   await wait(() => requested, 'runtime request held');
   await read('document.fonts.ready.then(() => true)');
   await pause(300);
   const positions = () => read(`Array.from(document.querySelectorAll('.recent-bar-chat,.recent-bar-list,.desktop-covers > *'), el => {
     const r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height].map(Math.round);
   })`);
-  assert.ok(await read("!!document.querySelector('.recent-bar-chat:disabled') && !!document.querySelector('.recent-bar-list:enabled')"));
+  assert.ok(await read("!!document.querySelector('.recent-bar-chat:enabled') && !!document.querySelector('.recent-bar-list:enabled')"));
   assert.equal(await read("document.querySelectorAll('.desktop-covers > *').length"), 4);
   assert.ok(await read("!!document.querySelector('.desktop-covers[aria-busy=true]')"));
   await wait(() => win.isVisible(), 'native window visible before data arrives');
@@ -118,7 +121,7 @@ async function run() {
   const initialPositions = await positions();
   fs.writeFileSync(path.join(project, 'tmp/workspace-awaiting-data.png'), (await win.webContents.capturePage()).toPNG());
   releaseData();
-  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录' && !!document.querySelector('.desktop-covers[aria-busy=false]')"), 'conversation and events arrived');
+  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === 'assistant' && !!document.querySelector('.desktop-covers[aria-busy=false]')"), 'conversation and events arrived');
   assert.deepEqual(await positions(), initialPositions, 'real data fills the initial toolbar and card slots without reflow');
   // Measure cold start at the actual launch size. A resize also changes the
   // native caption and rail breakpoint, independently of runtime hydration.
@@ -160,7 +163,7 @@ async function run() {
     app.quit(); return;
   }
   if (materialTest) {
-    await click('.recent-bar-chat');
+    await enterChatFromList(sessionId);
     await visible('.chat-panel[role=region] .message-list');
     await require('./helpers/sidebar-material.cjs').inspect({ win, read, click, wait, pause, project });
     app.quit();
@@ -233,14 +236,27 @@ async function run() {
     await checkWorkspaceNavigation();
     app.quit(); return;
   }
-  assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
-  assert.equal(await read("document.querySelector('.recent-chat-copy').textContent"), '设计评审记录', 'the title bar omits assistant output');
+  assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), 'assistant');
+  assert.ok(await read("!!document.querySelector('.recent-bar-chat .assistant-sprite[data-state=idle]') && !document.querySelector('.recent-chat-copy').textContent.includes('assistant-answer')"), 'the Assistant entry shows its identity and activity');
   assert.equal(await read("Boolean(document.querySelector('.recent-turn-scroll'))"), false);
-  assert.deepEqual(await read("Array.from(document.querySelectorAll('.window-frame [data-nav-section]'), el => el.dataset.navSection)"), ['chat','projects','assistant'], 'new chat and Assistant live in the title bar');
-  assert.equal(await read("!!document.querySelector('.sidebar :is([data-nav-section=chat],[data-nav-section=assistant])')"), false);
-  assert.equal(await read("document.querySelectorAll('.recent-bar button.no-drag').length"), 5, 'home toolbar includes both navigation buttons, the title and the list');
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.window-frame [data-nav-section]'), el => el.dataset.navSection)"), ['assistant'], 'Assistant owns the title bar');
+  assert.ok(await read("document.querySelectorAll('[data-nav-section=assistant]').length===1 && document.querySelector('.recent-bar-chat').dataset.navSection==='assistant'"), 'the scene is the only Assistant navigation button');
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.sidebar :is([data-nav-section=chat],[data-nav-section=projects],[data-nav-section=assistant])'), b => b.dataset.navSection)"), ['chat','projects']);
+  assert.equal(await read("document.querySelectorAll('.recent-bar button.no-drag').length"), 2, 'home toolbar contains only the Assistant scene and list');
   const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar button.no-drag')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
   assert.ok(await bounds());
+  const scenes = [];
+  win.webContents.debugger.attach('1.3');
+  try {
+    for (const scheme of ['light','dark']) {
+      await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:scheme}]});
+      await visible('.app.theme-'+(scheme==='light'?'bright':'dark')+' .recent-bar-chat');
+      scenes.push(await read("document.querySelector('.assistant-panorama img').decode().then(()=>document.querySelector('.assistant-panorama img').currentSrc)"));
+      const rect = await read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return {x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)};})()");
+      fs.writeFileSync(path.join(project,'tmp','assistant-scene-'+scheme+'.png'),(await win.webContents.capturePage(rect)).toPNG());
+    }
+    assert.notEqual(...scenes, 'switching the App theme replaces the scene artwork');
+  } finally { win.webContents.debugger.detach(); }
   fs.writeFileSync(path.join(project, 'tmp/conversation-glass-bar.png'), (await win.webContents.capturePage()).toPNG());
   win.setContentSize(1400, 600); await pause(180);
   await read("document.querySelector('.desktop-library').scrollTop=270;void 0");
@@ -253,7 +269,13 @@ async function run() {
   await pause(350);
   const captureMaterial = async name => fs.writeFileSync(path.join(project, 'tmp', 'workspace-material-' + name + '.png'),
     (await win.webContents.capturePage()).toPNG());
-  assert.equal(await read("document.querySelector('.recent-bar-chat img') === null"), true, 'the title bar contains only the title');
+  assert.ok(await read("document.querySelector('.recent-bar-chat .assistant-sprite img').naturalWidth > 0"), 'the packaged pixel character loads');
+  assert.ok(await read(`(() => {
+    const button = document.querySelector('.recent-bar-chat'), stage = button.querySelector('.assistant-stage');
+    const bounds = button.getBoundingClientRect(), scene = stage.getBoundingClientRect(), film = stage.querySelector('.assistant-panorama').getBoundingClientRect();
+    return Math.abs(scene.width-bounds.width)<1 && Math.abs(scene.height-bounds.height)<1 &&
+      film.left<=scene.left+1 && film.right>=scene.right-1 && film.top<=scene.top+1 && film.bottom>=scene.bottom-1;
+  })()`), 'the panorama covers the entire Assistant entry');
   await captureMaterial('toolbar');
   await click('.window-sidebar-toggle');
   await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width>265"), 'expanded navigation is over the artwork');
@@ -287,27 +309,23 @@ async function run() {
   win.setContentSize(1400, 800);
   await click('.recent-bar-list');
   await visible('[data-recent-tab=pinned][aria-selected=true]');
-  await click('[data-recent-tab=sessions]'); await click('[data-recent-session=local-navigation-test]');
-  await visible('.recent-turn-text');
-  assert.equal(await read("document.querySelectorAll('.recent-turn-text').length"), 20, 'only the tail page is loaded initially');
-  assert.equal(await read("document.querySelector('.recent-turn-text').textContent"), examples.get(45)[0]);
+  const hoverCategory = async tab => {
+    const selector = '[data-recent-tab=' + tab + ']';
+    await visible(selector);
+    await wait(() => read(`(() => {const el=document.querySelector('${selector}'), r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()`), 'category reachable');
+    const point = await read(`(() => {const r=document.querySelector('${selector}').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
+    win.webContents.sendInputEvent({type:'mouseMove',...point});
+    await visible(selector+'[aria-selected=true]');
+  };
+  await hoverCategory('notifications');
+  await hoverCategory('sessions');
   await visible('[data-desktop-page="overview"]');
-  await wait(() => read("document.querySelector('.recent-turn-attachment')?.naturalWidth > 0"), 'user attachment thumbnail');
-  assert.equal(await read("document.querySelector('[data-turn-message]').firstElementChild.classList.contains('recent-turn-text')"), true);
-  assert.ok(!(await read("document.querySelector('.recent-turn-scroll').textContent")).includes(examples.get(45)[1]), 'turn list omits assistant replies');
-  assert.equal(await read("document.querySelector('.recent-bar-chat img') === null"), true, 'turn thumbnails stay in the turn list');
+  assert.equal(await read("!!document.querySelector('.recent-tabs button, [data-turn-message]')"), false);
   fs.writeFileSync(path.join(project, 'tmp/recent-conversation-drawer.png'), (await win.webContents.capturePage()).toPNG());
-  await click('.recent-turn-more');
-  await wait(() => read("document.querySelectorAll('.recent-turn-text').length === 40"), 'previous page');
-  const targetId = await read("Array.from(document.querySelectorAll('.recent-turn-scroll li button')).find(b => b.querySelector('.recent-turn-text').textContent === '评审方案 9').dataset.turnMessage");
-  await click('[data-turn-message="' + targetId + '"]');
-  const offset = () => read("(() => { const t=document.querySelector('[data-message-id=\"" + targetId + "\"]'); return t?.checkVisibility() ? t.getBoundingClientRect().top - t.closest('.message-list').getBoundingClientRect().top : null; })()");
-  await wait(async () => { const value = await offset(); return typeof value === 'number' && value >= -3 && value < 80; }, 'selected older turn visible').catch(async error => {
-    const details = await read("({page:document.querySelector('[data-desktop-page]')?.dataset.desktopPage,title:document.querySelector('.recent-chat-copy strong')?.textContent,scroll:document.querySelector('.message-list')?.scrollTop,first:document.querySelector('[data-message-role=user]')?.dataset.messageId,rows:document.querySelectorAll('[data-message-role=user]').length,focus:document.activeElement?.className})");
-    throw new Error(JSON.stringify({ targetId, offset: await offset(), ...details }), { cause: error });
-  });
-  await pause(300);
-  assert.ok(Math.abs((await offset()) - 16) < 30, 'the target stays in view after layout settles');
+  await click('[data-recent-session=local-navigation-test]');
+  const targetId = 'turn-45-0';
+  await visible('[data-message-id="' + targetId + '"]');
+  await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'one click enters the chat');
   await visible('.main-stage .chat-panel[role=region]');
   assert.equal(await read("!!document.querySelector('.main-stage .chat-panel[role=region] > .topbar')"), false, 'the transcript starts directly below the window toolbar');
   const summary = '.window-frame [data-work-summary-toggle]', inspector = '.window-frame [data-inspector-toggle]';
@@ -321,19 +339,14 @@ async function run() {
     if (!title?.width || !summary?.width || !inspector?.width || !list?.width) return false;
     const topGap = title.top - bar.top, bottomGap = bar.bottom - title.bottom;
     if (Math.min(topGap, bottomGap) < 7.5 || Math.abs(topGap - bottomGap) > 1) return false;
-    const projects = bounds('.window-frame [data-nav-section=projects]');
-    const newChat = bounds('.window-frame [data-nav-section=chat]');
-    const assistant = bounds('.window-frame [data-nav-section=assistant]');
-    const shortcuts = [...document.querySelectorAll('.workspace-chat-navigation button')];
-    if (shortcuts.length !== 3 || shortcuts.some(button =>
-      button.textContent.trim() || !button.getAttribute('aria-label') || !button.querySelector('svg,img'))) return false;
-    if (!newChat || !assistant || newChat.width < 24 || assistant.width < 24 || newChat.left < bar.left - 1 ||
-        newChat.right > projects.left + 1 || projects.right > assistant.left + 1 || assistant.right > title.left + 1 || title.right > summary.left + 1) return false;
+    const shortcuts = [...document.querySelectorAll('.sidebar :is([data-nav-section=chat],[data-nav-section=projects])')];
+    if (shortcuts.length !== 2 || shortcuts.some(button => !button.getAttribute('aria-label') || !button.querySelector('svg'))) return false;
+    const [newChat, projects] = shortcuts.map(b => b.getBoundingClientRect());
+    if (newChat.width < 24 || projects.width < 24 || newChat.bottom > projects.top + 1 ||
+        Math.abs(newChat.left - projects.left) > 1 || title.left < bar.left - 1 || title.right > summary.left) return false;
     const actions = [...document.querySelectorAll('.recent-bar-actions button')]
       .map(button => button.getBoundingClientRect()).filter(rect => rect.width > 0);
-    if (!actions.length || Math.abs((title.left - assistant.right) - (actions[0].left - title.right)) > 1) return false;
-    const buttonGaps = [projects.left - newChat.right, assistant.left - projects.right,
-      ...actions.slice(1).map((rect, i) => rect.left - actions[i].right)];
+    const buttonGaps = actions.slice(1).map((rect, i) => rect.left - actions[i].right);
     if (Math.min(...buttonGaps) <= 0 || Math.max(...buttonGaps) - Math.min(...buttonGaps) > 1) return false;
     const centerY = rect => rect.top + rect.height / 2;
     return summary.right <= inspector.left + 1 && inspector.right <= list.left + 1 &&
@@ -349,7 +362,7 @@ async function run() {
   await click(inspector);
   win.maximize();
   await wait(() => win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window maximized');
-  await wait(toolbarFits, 'matching gaps on both sides of the title and between icons when maximized');
+  await wait(toolbarFits, 'title and action spacing and stacked rail shortcuts when maximized');
   win.unmaximize();
   await wait(() => !win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window restored');
   await wait(toolbarFits, 'matching title and icon spacing after restoring the window');
@@ -394,7 +407,9 @@ async function run() {
   const titleText = () => read("document.querySelector('.recent-chat-copy strong').textContent");
   assert.equal(await titleText(), 'assistant');
   assert.equal(await read("!!document.querySelector('.assistant-view > .topbar')"), false, 'Assistant has a single desktop title bar');
-  await visible('.window-chat-actions [data-manage-hosts]');
+  await visible(summary);
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.window-chat-actions button'), button => [button.hasAttribute('data-work-summary-toggle'),button.hasAttribute('data-inspector-toggle')])"),
+    [[true,false],[false,true]], 'Assistant toolbar offers work summary and inspector only');
   await click(summary); await visible('.assistant-view .conversation-work-summary'); await click(summary);
   await click(inspector); await visible('.right-inspector'); await click(inspector);
   await read("document.querySelector('[data-nav-section=assistant]').dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:72, clientY:120}));void 0");
@@ -406,37 +421,34 @@ async function run() {
   await wait(async () => await titleText() === customName, 'rename updates the window title immediately and preserves the full name');
   win.setContentSize(480, 720);
   await wait(toolbarFits, 'Assistant actions fit beside a long name in a narrow window');
-  assert.ok(await read("document.querySelector('.recent-bar-chat').getBoundingClientRect().right <= document.querySelector('.window-chat-actions [data-manage-hosts]').getBoundingClientRect().left"));
   await click('.recent-bar-chat'); await visible('.assistant-view:not([hidden])');
-  await click('.recent-bar-list'); await click('[data-recent-tab=sessions]'); await click('[data-recent-session=personal-assistant]'); await visible('[data-turn-message=assistant-question]');
-  assert.equal(await read("document.querySelector('.recent-turn-drawer h2').textContent"), customName);
-  assert.deepEqual(await read("Array.from(document.querySelectorAll('[data-turn-message]'), row => row.dataset.turnMessage)"), ['assistant-question']);
-  await click('[data-turn-message=assistant-question]');
-  await visible('.assistant-view [data-message-id=assistant-question] [data-quote-highlight=true]');
+  await click('.recent-bar-list'); await click('[data-recent-tab=sessions]');
+  await click('[data-recent-session=personal-assistant]');
+  await visible('.assistant-view [data-message-id=assistant-answer]');
+  assert.equal(await read("!!document.querySelector('.recent-turn-drawer:popover-open,[data-turn-message]')"), false);
   win.setContentSize(1400, 800);
-  await wait(() => read("innerWidth === 1400 && document.activeElement.closest('[data-message-id]')?.dataset.messageId === 'assistant-question' && document.querySelector('.assistant-messages').scrollTop < 8"), 'selected Assistant turn keeps its reading position after resize');
   await click('[data-nav-section=explore]');
   assert.equal(await read("!!document.querySelector('.window-chat-actions')"), false, 'chat-only controls leave with the conversation');
-  assert.equal(await titleText(), '设计评审记录', 'visiting Assistant preserves the last ordinary conversation');
+  assert.equal(await titleText(), customName, 'exploring keeps the Assistant identity');
   await click('.recent-bar-list');
   await visible('[data-desktop-page=explore]');
   await visible('[data-recent-tab=pinned][aria-selected=true]');
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
   await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'dismiss with Escape');
-  await click('.recent-bar-chat');
+  await click('.recent-bar-chat'); await visible('.assistant-view:not([hidden])');
+  await enterChatFromList(sessionId);
   await visible('[data-message-id="' + targetId + '"]');
-  assert.equal(await read("document.querySelector('.main-stage .chat-panel[role=region]').getAttribute('aria-label')"), await read("document.querySelector('.recent-chat-copy strong').textContent"), 'the active chat and title agree');
-  // Browsing another session does not change the page or register it as visited.
+  assert.equal(await read("document.querySelector('.main-stage .chat-panel[role=region]').getAttribute('aria-label')"), '设计评审记录', 'the chat retains its own accessible title');
+  // Recent rows open even an empty conversation in one step.
   await click('[data-nav-section=home]');
   assert.equal(await read("document.querySelectorAll('.sidebar .conversation-row').length"), 0);
   await click('.recent-bar-list'); await click('[data-recent-tab=sessions]');
   await visible('[data-recent-session=local-earlier]');
   assert.equal(await read("document.querySelectorAll('[data-recent-session]').length"), 3);
   await click('[data-recent-session=local-empty]');
-  await visible('[data-desktop-page=overview]');
-  await wait(() => read("!!document.querySelector('.recent-turn-scroll p:not([role])')"), 'empty chat has no turns');
-  assert.equal(await read("document.querySelector('.recent-chat-copy strong').textContent"), '设计评审记录');
+  await wait(() => read("document.querySelector('.main-stage .chat-panel[role=region]')?.getAttribute('aria-label')==='Empty conversation' && !document.querySelector('.recent-turn-drawer:popover-open')"), 'empty chat opens directly');
+  await click('[data-nav-section=home]'); await click('.recent-bar-list');
   await click('[data-recent-tab=sessions]');
   const earlierRow = '[data-recent-session=local-earlier]';
   await visible(earlierRow);
@@ -446,15 +458,13 @@ async function run() {
   assert.equal(await read("document.querySelector('.sidebar .conversation-row') === null"), true);
   await click('[data-recent-tab=sessions]');
   await click(earlierRow);
-  await visible('[data-desktop-page=overview]');
-  await click('[data-turn-message=other-user]');
   await visible('[data-message-id=other-user]');
-  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === 'Earlier conversation'"), 'last visit overrides background activity');
+  assert.equal(await titleText(), customName, 'ordinary navigation does not retarget the Assistant entry');
   await click('[data-nav-section=home]');
   await read("localStorage.setItem('cardbush_projects',JSON.stringify([{id:'fixture-project', rootPath:"+JSON.stringify(root)+",title:'Pinned project',pinned:true}]));void 0");
   win.webContents.reload();
   await visible('[data-desktop-page="overview"]');
-  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === 'Earlier conversation'"), 'last visit survives reload');
+  await wait(async () => await titleText() === customName, 'the Assistant identity survives reload');
   await click('.recent-bar-list');
   await visible('[data-recent-tab=pinned][aria-selected=true]');
   await visible('.recent-session-rows [data-workspace-drop=fixture-project]');
@@ -463,12 +473,15 @@ async function run() {
   await click('[data-nav-section=home]');
   win.setSize(480, 650); await pause(200); assert.ok(await bounds(), 'toolbar controls fit at minimum width');
   win.setSize(590, 650);
-  await click('.recent-bar-list'); await click('[data-recent-tab=sessions]'); await click('[data-recent-session=local-earlier]');
-  await visible('[data-turn-message=other-user]');
+  await click('.recent-bar-list'); await click('[data-recent-tab=sessions]');
+  await visible('[data-recent-session=local-earlier]');
   await wait(() => read("(() => {const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect();const a=document.querySelector('.recent-bar-chat').getBoundingClientRect(),b=document.querySelector('.recent-bar-list').getBoundingClientRect();return p.left>=0 && p.right<=innerWidth && a.width>0 && a.right<=b.left})()"), 'the open drawer settles within the narrow viewport');
-  await click('.recent-bar-list');
+  await click('[data-recent-session=local-earlier]'); await visible('[data-message-id=other-user]');
+  await click('[data-nav-section=home]');
   await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-earlier']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
-  await wait(() => read("document.querySelector('.recent-chat-copy strong')?.textContent === '设计评审记录'"), 'archived and hidden sessions are excluded');
+  await click('.recent-bar-list'); await click('[data-recent-tab=sessions]');
+  await wait(() => read("!!document.querySelector('[data-recent-session=local-navigation-test]') && !document.querySelector('[data-recent-session=local-earlier],[data-recent-session=local-hidden]')"), 'archived and hidden sessions are excluded');
+  await click('.recent-bar-list');
   win.setContentSize(1084, 760);
   await pause(300);
   await read("window.pageEntrances=[];document.addEventListener('animationstart',event=>{if(event.animationName==='workspace-page-entrance') pageEntrances.push(event.target.className)});void 0");
@@ -479,7 +492,7 @@ async function run() {
   assert.equal(await read("!!document.querySelector('.desktop-explore button[aria-haspopup=dialog]')"),false,'no app management button on Explore');
   assert.equal(await read("!!document.querySelector('.desktop-menu-toggle')"),false);
   await wait(() => read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return Math.abs((r.left+r.right)/2-innerWidth/2)<9})()"),'compact-rail summary is centered in the window').catch(async error => {
-    const rects = await read("Object.fromEntries(['.window-navigation','.recent-bar','.workspace-chat-navigation','.recent-bar-chat','.recent-bar-actions'].map(selector=>[selector,document.querySelector(selector).getBoundingClientRect().toJSON()]))");
+    const rects = await read("Object.fromEntries(['.window-navigation','.recent-bar','.recent-bar-chat','.recent-bar-actions'].map(selector=>[selector,document.querySelector(selector).getBoundingClientRect().toJSON()]))");
     throw Error('Title alignment: '+JSON.stringify(rects),{cause:error});
   });
   await click('.window-sidebar-toggle'); await visible('.desktop-menu-toggle');
@@ -508,13 +521,14 @@ async function run() {
   win.webContents.debugger.attach('1.3');
   try {
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    assert.ok(await read("Array.from(document.querySelectorAll('.assistant-stage img'), img=>getComputedStyle(img).animationName).every(name=>name==='none')"), 'reduced motion shows still frames across the stage');
     await click('[data-nav-section=home]'); await visible('[data-desktop-page=overview]'); await pause(300);
     assert.deepEqual(await read('pageEntrances'),[], 'reduced motion skips the transition');
   } finally { win.webContents.debugger.detach(); }
   await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-navigation-test','local-earlier','local-empty']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
   await click('[data-nav-section=chat]');
   await visible(inspector);
-  assert.equal(await read("!!document.querySelector('.recent-bar-chat:disabled') && !!document.querySelector('.recent-bar-list:enabled')"), true, 'empty history keeps the controls in place and the inspector available');
+  assert.equal(await read("!!document.querySelector('.recent-bar-chat:enabled') && !!document.querySelector('.recent-bar-list:enabled')"), true, 'empty history keeps the controls in place and the inspector available');
   await click(inspector);
   await visible('.right-inspector');
   await click(inspector);
@@ -528,21 +542,22 @@ async function run() {
   await click('[data-nav-section=assistant]');
   await visible('.recent-bar-chat:enabled');
   assert.equal(await titleText(), customName, 'Assistant keeps its saved name after reload even with no ordinary chats');
-  await click('.recent-bar-list'); await click('[data-recent-tab=sessions]'); await click('[data-recent-session=personal-assistant]'); await visible('[data-turn-message=assistant-question]');
-  await click('.recent-bar-list');
+  await click('.recent-bar-list'); await click('[data-recent-tab=sessions]'); await click('[data-recent-session=personal-assistant]'); await visible('.assistant-view [data-message-id=assistant-answer]');
   win.setContentSize(480, 700);
   await wait(() => read('innerWidth === 480'), 'narrow workspace');
   await click('.window-sidebar-toggle');
   await visible('.desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)');
-  await wait(() => read("['chat','projects','assistant'].every(section => { const b = document.querySelector('.window-frame [data-nav-section='+section+']'); const r = b.getBoundingClientRect(); return r.width>=24 && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })"), 'both title bar buttons remain reachable above the open sidebar');
-  await click('.window-frame [data-nav-section=chat]');
+  await wait(() => read("['chat','projects'].every(section => { const b = document.querySelector('.sidebar [data-nav-section='+section+']'); const r = b.getBoundingClientRect(); return b.lastElementChild.checkVisibility() && r.width>=24 && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })"), 'both expanded rail rows show labels and accept clicks');
+  await click('.sidebar [data-nav-section=chat]');
   await visible('.desktop-shell.sidebar-is-collapsed .new-chat-input .composer-surface');
-  await click('.window-frame [data-nav-section=projects]');
+  await wait(() => read("['chat','projects'].every(section => !document.querySelector('.sidebar [data-nav-section='+section+']').lastElementChild.checkVisibility())"), 'collapsed navigation shows only icons');
+  await click('.sidebar [data-nav-section=projects]');
   await visible('[data-desktop-page=projects] .project-list-actions');
   await visible('[data-desktop-page=projects] [data-workspace-drop=fixture-project] .project-row');
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.sidebar [data-nav-section][aria-current=page]'), b => b.dataset.navSection)"), ['projects'], 'projects is the only selected sidebar page');
   await click('.sidebar [data-nav-section=tabs]');
   await visible('[data-page=tabs] .right-inspector-tab-page.active');
-  assert.deepEqual(await read("Array.from(document.querySelectorAll('[data-nav-section][aria-current=page]'), b => b.dataset.navSection)"), ['tabs'], 'the covered projects page and its title bar shortcut are inactive');
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('[data-nav-section][aria-current=page]'), b => b.dataset.navSection)"), ['tabs'], 'the covered projects page and its sidebar shortcut are inactive');
   const tab = await read("document.querySelector('.right-inspector-tab-page.active').getAttribute('data-inspector-page-id')");
   await click('.sidebar [data-nav-section=tabs]');
   await wait(() => read("!document.querySelector('[data-page=tabs]')"), 'return from tab workspace');
@@ -552,7 +567,7 @@ async function run() {
   await visible('[data-page=tabs] .right-inspector-tab-page.active');
   assert.equal(await read("document.querySelector('.right-inspector-tab-page.active').getAttribute('data-inspector-page-id')"), tab);
   console.log('Workspace navigation passed: compact rail and caption alignment, Explore without a management button, section/category entrance and reduced motion.');
-  console.log('Recent conversation navigation passed: Home and Explore, paging and exact turn, resume, Escape, reload, empty state, archive and narrow layout.');
+  console.log('Recent conversation navigation passed: hover categories, direct chat entry, resume, Escape, reload, empty state, archive and narrow layout.');
   await checkWorkspaceNavigation();
   app.quit();
 }

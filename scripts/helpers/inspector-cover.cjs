@@ -34,7 +34,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       const [tabs]=React.useState([{id:'first',kind:'resource',detail:{target:'https://first.example/'}},{id:'second',kind:'resource',detail:{target:'https://second.example/'}}]);
       const workspace=views.useInspectorWorkspace({language:'zh',windowMaximized,compactLayout:false,
         section,setSection,sidebarCollapsed,sidebarWidth:280,setSidebarCollapsed,inspectorOpen,setInspectorOpen,
-        inspectorTabs:tabs,activeInspectorTab:tabs[0],openInspectorTab:()=>{},setInspectorAddMenuOpen:()=>{},setInspectorTabsMenuOpen:()=>{}});
+        inspectorTabs:tabs,activeInspectorTab:tabs[0],openInspectorTab:()=>{},setInspectorAddMenuOpen:()=>{}});
       const {inspectorCover:covered,inspectorControlsVisible,conversationCovered,mainStageRef,inspectorWidth:width,setInspectorWidth:setWidth,quickInputOpen:input,setQuickInputOpen:setInput}=workspace;
       const presence=views.useSoftPanelPresence(inspectorOpen,240,{keepMounted:true});
       window.coverWorkspace={...workspace,setSidebarCollapsed,setInspectorOpen,inspectorOpen,setSection,section,setWindowMaximized};

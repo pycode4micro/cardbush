@@ -4,27 +4,40 @@ import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { EventCollector } from '../dist/eventCollector.js';
 import { ToolRegistry, ToolExecutionStore } from '../dist/index.js';
 
-function fixture() {
+function fixture(cold = false) {
   const registry = new ToolRegistry(), executions = new ToolExecutionStore(), calls = [];
   const definition = { name: 'mcp__fixture__read', description: 'Read a source.', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } };
   const task = { parentSessionId: PERSONAL_ASSISTANT_SESSION, parentTurnId: 'user', taskId: 'verified', status: 'completed', childSessionId: 'child', childTurnId: 'sample' };
   const parent = { sessionId: PERSONAL_ASSISTANT_SESSION, tools: [definition], permissionMode: 'task_free', inputMessages: [], metadata: {} };
   const saved = { ...parent, sessionId: 'child', turnId: 'sample', metadata: { agentRole: 'child' } };
   const settings = { withhold: false, allow: true };
-  registry.register({ definition, manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'fixture', dispatch_scope: 'session', mutating: false },
+  const register = () => registry.register({ definition, manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'fixture', dispatch_scope: 'session', mutating: false },
     decodeInput: v => v, execute: async context => { calls.push(context.input); return { start: '11:00' }; },
     authorize: () => settings.allow ? { kind: 'allow' } : { kind: 'deny', code: 'source_revoked', message: 'Revoked' },
     mcpHook: { readOnly: true, modelVisible: true, server: 'fixture', tool: 'read', call: () => assert.fail('Use normal tool admission') } });
+  if (!cold) register();
+  const prepared = [];
   const record = id => executions.record({ protocol: 'bush.tool_call.v1', id, name: definition.name, argumentsText: '{"id":"g1"}' },
     { requestId: 'first', sessionId: 'child', turnId: 'sample', round: 1, ordinal: 0 }, { kind: 'returned', result: { start: '09:00' }, workspaceChanges: [] });
   record('actual-read');
   const collector = new EventCollector({ registry, executions, tasks: (owner, id) => id === task.taskId && owner === task.parentSessionId ? task : undefined,
+    prepareToolCatalog: async name => { prepared.push(name); assert.equal(name, definition.name); register(); },
     loadChild: async () => saved, messages: () => [], hooks: () => ({
       before: async () => ({ messages: [], ...(settings.withhold ? { blocked: 'Policy blocked the source.' } : {}) }), after: async () => ({ messages: [] }),
     }) });
   const rule = { source: 'collector', tool: definition.name, everySeconds: 30, taskId: task.taskId, code: 'return 1;' };
-  return { collector, record, calls, rule, task, parent, saved, settings, registry };
+  return { collector, record, calls, rule, task, parent, saved, settings, registry, prepared };
 }
+
+test('a cold collector restores only its authorized tool and reuses the connection on subsequent reads', async () => {
+  const f = fixture(true);
+  await assert.rejects(f.collector.resolve(f.rule, { ...f.parent, tools: [] }), /available read-only tool/);
+  assert.deepEqual(f.prepared, []);
+  const binding = await f.collector.resolve(f.rule, f.parent);
+  assert.deepEqual(await binding.read(new AbortController().signal), { start: '11:00' });
+  await f.collector.resolve(f.rule, f.parent);
+  assert.deepEqual(f.prepared, [f.rule.tool]);
+});
 
 test('replays the verified tool and inputs with live permission checks and hooks', async () => {
   const f = fixture(), signal = new AbortController().signal;

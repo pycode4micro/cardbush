@@ -37,7 +37,8 @@ async function buildFixture(directory) {
           stop:async()=>{fixture.stops=(fixture.stops??0)+1;fixture.busy=false;fixture.retry=null;fixture.runtimeError='已停止回复，可以稍后重试。';},
           retry:async()=>{fixture.retries=(fixture.retries??0)+1;fixture.runtimeError='';fixture.busy=true;},
           reset:async()=>{fixture.resetCount=(fixture.resetCount??0)+1;fixture.generation=(fixture.generation??0)+1;fixture.entries=[];fixture.reactions={};window.dispatchEvent(new Event('cardbush:assistant-reset'));},
-          send:async(text,config,spoken,version,identity)=>{
+          send:async(text,config,spoken,version,identity,onDispatch)=>{
+            onDispatch?.();
             fixture.sendCalls??=[];fixture.sendCalls.push({text,identity});
             if(fixture.holdSend)await new Promise(resolve=>fixture.releaseSend=resolve);
             if(version!==(fixture.generation??0))throw Error('fixture context reset');
@@ -54,9 +55,9 @@ async function buildFixture(directory) {
         import {ProfileCenter} from ${file('src/features/profile/ProfileCenter.tsx')};
         import {AssistantView} from ${file('src/features/assistant/AssistantView.tsx')};
         import {uiText} from ${file('src/i18n/index.ts')};
-        import {saveComponents,useComponents} from ${file('src/features/components/componentStore.ts')};
         import {ChatSidebar} from ${file('src/features/sidebar/ChatSidebar.tsx')};
-        import {WorkspaceChatNavigation} from ${file('src/features/desktop/WorkspaceChatNavigation.tsx')};
+        import {AssistantStageButton} from ${file('src/features/desktop/AssistantStageButton.tsx')};
+        import ${file('src/features/desktop/recentConversationBar.css')};
         import {ApplicationVoiceHost,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
         import {realtimeConversationContext} from ${file('src/features/voice/realtimeAgentBridge.ts')};
         import {useAssistantProfile} from ${file('src/features/assistant/assistantProfile.ts')};
@@ -81,16 +82,15 @@ async function buildFixture(directory) {
         fixture.uiText=uiText;
         fixture.callHistory=()=>applicationVoiceSession().target?.historyMessages??[];
         fixture.voiceState=()=>applicationVoiceSession().snapshot();
-        function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile(),collection=useComponents();
-          fixture.setLayout=(width,flow={afterSend:'bottom',output:'above'})=>saveComponents({...collection,welcomeLayout:width?{viewportHeight:752,items:[{componentId:'system-input',x:(100-width)/2,y:260,width,height:52,inputStyle:'simple',composerFlow:flow}]}:undefined},collection.revision);
+        function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile();
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
           return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost language="zh"><ProfileCenter language={language} ready={false} floating={false} prepare={noop} settings={noop} switchWindow={noop}>
-            <header className="window-frame"><WorkspaceChatNavigation language={language} assistantActive onNewChat={noop} onAssistant={noop}/></header>
+            <header className="window-frame" style={{position:'absolute',top:0,left:0,width:180}}><AssistantStageButton language={language} theme={theme} active={active} onOpen={noop}/></header>
             <ChatSidebar language="zh" section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
             <section className="main-stage"><AssistantView active={active} language={language}
-              composerControls={controls} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:''};}} onManageHosts={()=>fixture.managed=true} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
+              composerControls={controls} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:''};}} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
               composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
             {portal&&<aside ref={setTarget} className="inspector-quick-input" style={{position:"fixed",bottom:20,left:300,width:450,zIndex:30}}/>}
           </ProfileCenter></ApplicationVoiceHost></div>;
@@ -165,7 +165,6 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".assistant-view .conversation-connection-notice")');
     await until('!document.querySelector(".assistant-typing-bubble")');
     assert.equal(await read('!!document.querySelector(".assistant-composer-dock .composer-stack.simple")'), true);
-    assert.equal(await read('!!document.querySelector(".assistant-composer-dock [data-manage-hosts]")'), false);
     assert.equal(await read('fixture.permissionChanged'), undefined);
     assert.equal(await read('document.querySelector(".assistant-view .topbar").getBoundingClientRect().height'),48,'shared header height');
     assert.ok(await read('Math.abs(document.querySelector(".composer-surface").getBoundingClientRect().width-704)<1'),'shared default input width');
@@ -229,17 +228,17 @@ app.whenReady().then(async () => {
     };
     await selectAvatar('corrupted'); await until('document.querySelector(".assistant-settings-error")?.textContent.includes("无法读取")');
     await selectAvatar('oversized'); await until('document.querySelector(".assistant-settings-error")?.textContent.includes("8 MB")');
-    await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview img")');
+    await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview .assistant-avatar img")');
     assert.equal(await read('!!localStorage.cardbush_personal_assistant_avatar_v1'), false, 'selection remains a draft');
-    const draftAvatar = await read('document.querySelector(".assistant-avatar-preview img").src');
+    const draftAvatar = await read('document.querySelector(".assistant-avatar-preview .assistant-avatar img").src');
     await cancelAvatarPicker();
-    assert.equal(await read('document.querySelector(".assistant-avatar-preview img").src'),draftAvatar,'cancelling another selection retains the draft avatar');
+    assert.equal(await read('document.querySelector(".assistant-avatar-preview .assistant-avatar img").src'),draftAvatar,'cancelling another selection retains the draft avatar');
     await fill(dialog+' input[name="assistant-name"]', 'Cancelled');
     win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
     await until('!document.querySelector(".assistant-settings-dialog")');
     assert.equal(await read('document.activeElement.title'), '个人资料', 'closing returns focus to the profile trigger');
     assert.equal(await read('document.querySelector(".assistant-view .topbar h1").textContent'), 'assistant');
-    await openSettings(); await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview img")');
+    await openSettings(); await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview .assistant-avatar img")');
     await fill(dialog+' input[name="assistant-name"]', 'Lumi'); await fill(dialog+' textarea', '温和、可靠');
     win.webContents.invalidate(); await pause(250);
     fs.writeFileSync(path.join(directory, 'assistant-settings-dark.png'), (await win.webContents.capturePage()).toPNG());
@@ -252,17 +251,16 @@ app.whenReady().then(async () => {
     assert.equal(await read('JSON.stringify(JSON.parse(localStorage.cardbush_personal_assistant_v1)).includes("data:image")'), false, 'avatar stays out of the inference profile');
     await openSettings(); await click('.assistant-avatar-reset'); await click(dialog+' .assistant-settings-close');
     assert.equal(await read('document.querySelectorAll(".assistant-avatar img").length'), 2, 'cancelled restore preserves saved avatar');
-    await openSettings(); assert.equal(await read('!!document.querySelector(".assistant-avatar-preview img")'), true);
+    await openSettings(); assert.equal(await read('!!document.querySelector(".assistant-avatar-preview .assistant-avatar img")'), true);
     await click('.assistant-avatar-reset'); await click(dialog+' button[type=submit]');
     await until('!document.querySelector(".assistant-avatar")'); assert.equal(await read('localStorage.cardbush_personal_assistant_avatar_v1'), undefined);
     await openSettings(); await read('fixture.hide();void 0'); assert.ok(await read('!!document.querySelector(".assistant-settings-dialog:modal")')); await click(dialog+' .assistant-settings-close');
     await read('fixture.show();void 0'); await until('!document.querySelector(".assistant-view").hidden');
-    assert.equal(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label="Lumi"]\')'), true);
+    assert.equal(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label*="Lumi"]\')'), true);
     assert.equal(await read('document.querySelector(".assistant-view .topbar [role=combobox]")===null'), true, 'Assistant no longer mixes local conversation with a separate execution-host selector');
-    await click('.assistant-view .topbar [data-manage-hosts]');
-    assert.equal(await read('fixture.managed'), true, 'employee management remains available');
+    assert.equal(await read('!!document.querySelector(".assistant-view button[aria-label=员工管理]")'), false, 'the Assistant does not offer team administration');
     await read('fixture.hide();void 0'); await until('document.querySelector(".assistant-view").hidden');
-    await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-bulb[data-state=working]")');
+    await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-character[data-state=thinking]")');
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'), 3);
     const dark = await read('getComputedStyle(document.querySelector(".assistant-view")).color');
     await read('fixture.theme("bright");void 0'); await until(`getComputedStyle(document.querySelector('.assistant-view')).color!==${JSON.stringify(dark)}`);
@@ -301,7 +299,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('getComputedStyle(document.querySelector(".assistant-message-assistant>div")).animationName'), 'none');
     win.webContents.debugger.detach();
     win.setSize(1120,800);await until('innerWidth===1120');await pause(150);
-    const menu=async()=>{await read(`document.querySelector('[data-nav-section=assistant][aria-label="'+document.querySelector('.assistant-view .topbar h1').textContent+'"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:95}));void 0`);await until('document.querySelector(".sidebar-context-menu")');};
+    const menu=async()=>{await read(`document.querySelector('[data-nav-section=assistant]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:95}));void 0`);await until('document.querySelector(".sidebar-context-menu")');};
     const choose=label=>read(`Array.from(document.querySelectorAll('.sidebar-context-menu button')).find(button=>button.textContent.trim()===${JSON.stringify(label)}).click();void 0`);
     await menu();assert.equal(await read('document.querySelectorAll(".sidebar-context-menu button").length'),4);
     await choose('麦克风静音');assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).microphoneMuted'),true);
@@ -312,7 +310,7 @@ app.whenReady().then(async () => {
     await menu();await choose('重命名');await until('document.querySelector(".assistant-rename-dialog[open]")');
     await fill('.assistant-rename-dialog input','Nova');await click('.assistant-rename-dialog button[type=submit]');
     await until('document.querySelector(".assistant-view .topbar h1").textContent==="Nova"');
-    assert.ok(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label="Nova"]\')'));
+    assert.ok(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label*="Nova"]\')'));
     await menu();win.webContents.invalidate();await pause(100);
     fs.writeFileSync(path.join(directory,'assistant-context-menu.png'),(await win.webContents.capturePage()).toPNG());
     await choose('重置上下文');await until('document.querySelector(".confirm-action-dialog[open]")');
@@ -355,20 +353,12 @@ app.whenReady().then(async () => {
     await click('.scroll-bottom');await until('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")==="true"');
     assert.ok(await read('document.querySelector(".assistant-message-row:last-child").getBoundingClientRect().bottom<document.querySelector(".composer-surface").getBoundingClientRect().top'),'last bubble clears the input');
     await require('./helpers/assistant-scroll.cjs')({ read, until, fill, click, pause, win, directory });
-    for (const customWidth of [null, 65]) {
-      await read('fixture.setLayout(' + customWidth + ');void 0');
-      for (const width of [1440, 800, 1120]) {
-        win.setSize(width,800); await until('innerWidth===' + width); await pause(200);
-        const [row, input, pane] = await read('[".assistant-message-row",".composer-surface",".assistant-chat"].map(selector=>{const {left,width}=document.querySelector(selector).getBoundingClientRect();return {left,width}})');
-        const expectedWidth = customWidth ? pane.width * customWidth / 100 : row.width;
-        assert.ok(Math.abs(input.width - expectedWidth) < 2 && Math.abs(input.left + input.width/2 - row.left - row.width/2) < 2,
-          'docked input stays centered and respects its saved width at ' + width + ': ' + JSON.stringify({ customWidth, row, input, pane }));
-      }
+    for (const width of [1440, 800, 1120]) {
+      win.setSize(width,800); await until('innerWidth===' + width); await pause(200);
+      const [row, input] = await read('[".assistant-message-row",".composer-surface"].map(selector=>{const {left,width}=document.querySelector(selector).getBoundingClientRect();return {left,width}})');
+      assert.ok(Math.abs(input.width-row.width)<2 && Math.abs(input.left-row.left)<2,
+        'docked input aligns with the conversation at ' + width + ': ' + JSON.stringify({row,input}));
     }
-    await read('fixture.setLayout(65,{afterSend:"keep",output:"below"});void 0');await until('document.querySelector(".assistant-view.composer-anchored")');
-    await read('document.querySelector(".assistant-messages").scrollTop=0;void 0');await pause(100);
-    assert.ok(await read('document.querySelector(".assistant-message-row").getBoundingClientRect().top>=document.querySelector(".composer-surface").getBoundingClientRect().bottom'),'saved below-input layout reserves transcript space');
-    await read('fixture.setLayout(null);void 0');await until('!document.querySelector(".assistant-view.composer-anchored")');
     await read('fixture.portal(true);void 0');await until('document.querySelector(".inspector-quick-input textarea")');
     await fill('.inspector-quick-input textarea','覆盖模式继续向助手发送');await click('.inspector-quick-input .send-button[aria-label="发送"]');
     await until('fixture.sent.at(-1).text==="覆盖模式继续向助手发送"');
@@ -401,7 +391,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),0,'reset does not resurrect earlier tasks');
     await require('./helpers/assistant-reference-bubbles.cjs')({read,until,fill,click,pause,win,directory});
     assert.deepEqual(errors, []);
-    console.log('Assistant UI passed: shared header/docking, inspector/summary, browser references, portal draft, saved layout/resize, scroll follow, simple Composer, employee management, file picker/send/retry, dictation draft, Markdown, private speech, model settings, history, bubble/reduced-motion animations and responsive themes. Screenshots: ' + directory);
+    console.log('Assistant UI passed: shared header/docking, inspector/summary, browser references, portal draft, responsive input alignment, scroll follow, simple Composer, file picker/send/retry, dictation draft, Markdown, private speech, model settings, history, bubble/reduced-motion animations and responsive themes. Screenshots: ' + directory);
   } finally { win.destroy(); clearTimeout(deadline); }
   app.quit();
 }).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); });

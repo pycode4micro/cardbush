@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PassThrough, Writable } from 'node:stream';
 import { stripVTControlCharacters } from 'node:util';
+import { compactConversationTitle, conversationTitleLimit } from '@cardbush/bush-protocol';
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { followAgentTurn, recoverAgentObservation, stopAgentTurn, resumeHint, terminalText } from '../dist-electron/agentChatCli.mjs';
 import { NativeChatTerminal } from '../dist-electron/agentChatTerminal.mjs';
 import { AgentHttpClient, AgentHttpError, AgentNetworkError } from '../dist-electron/agentHttpClient.mjs';
@@ -696,15 +698,24 @@ test('configuration prompt runs bare editor commands and waits for a separate re
 async function fixture(t) {
   await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, 'case-'));
   let nextTool, nextFailure, nextText, blocked = false; const calls = [], pending = new Set(), toolQueue = [];
+  const titlePrompt = renderPromptTemplate('conversation-title', { limit: conversationTitleLimit });
+  let titles = 0;
   const release = () => { blocked = false; for (const finish of pending) finish(); pending.clear(); };
   const model = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     if (req.url.endsWith('/input_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 100 })); return; }
-    calls.push(body); const index = calls.length;
-    if (nextFailure) { const message = nextFailure; nextFailure = undefined; res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message, type: 'invalid_request_error' } })); return; }
-    const selected = nextTool ?? toolQueue.shift(); nextTool = undefined;
-    const text = nextText ?? `fixture-answer-${index}`; nextText = undefined;
+    const titleRequest = body.input?.some(message => message.role === 'system' && message.content === titlePrompt);
+    let index, selected, text;
+    if (titleRequest) {
+      index = `title-${++titles}`;
+      text = compactConversationTitle(body.input.find(message => message.role === 'user')?.content ?? '');
+    } else {
+      calls.push(body); index = calls.length;
+      if (nextFailure) { const message = nextFailure; nextFailure = undefined; res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message, type: 'invalid_request_error' } })); return; }
+      selected = nextTool ?? toolQueue.shift(); nextTool = undefined;
+      text = nextText ?? `fixture-answer-${index}`; nextText = undefined;
+    }
     const item = selected ? { id: `function-${index}`, call_id: `call-${index}`, type: 'function_call', name: selected.name,
       arguments: JSON.stringify(selected.arguments), status: 'completed' }
       : { id: `message-${index}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] };
@@ -720,7 +731,7 @@ async function fixture(t) {
       emit({ type: 'response.output_item.done', output_index: 0, item });
       emit({ type: 'response.completed', response: { ...response, status: 'completed', output: [item], usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105 } } }); res.end();
     };
-    if (blocked) { pending.add(finish); res.once('close', () => pending.delete(finish)); }
+    if (blocked && !titleRequest) { pending.add(finish); res.once('close', () => pending.delete(finish)); }
     else finish();
   });
   model.listen(0, '127.0.0.1'); await once(model, 'listening');
@@ -1914,6 +1925,27 @@ test('shared local sessions exchange room messages and retain stale-file protect
   assert.equal(await readFile(file, 'utf8'), 'changed by another editor');
   assert.match(JSON.stringify(f.calls.at(-1).input.filter(item => item.type === 'function_call_output')), /workspace_revision_not_observed/);
   await client.close();
+});
+
+test('local CLI completes a message while an MCP server is still waiting for its handshake', async t => {
+  const f = await fixture(t); await f.stopService();
+  const env = await sharedCliEnv(f);
+  const started = join(f.root, 'handshake-started'), slow = join(f.root, 'slow.cjs');
+  await writeFile(slow, "process.stdin.once('data', () => require('node:fs').writeFileSync(process.argv[2], 'pending')); process.stdin.resume();");
+  await writeFile(join(env.CARDBUSH_CLI_PROFILE_DIR, 'product-host', 'config', 'mcp-servers.json'), JSON.stringify({
+    protocol: 'cardbush.product_mcp_config.v1', revision: 1,
+    servers: [{ id: 'slow_fixture', enabled: true, transport: 'stdio', command: process.execPath, args: [slow, started] }],
+  }));
+  const local = cli(t, [], { env, cwd: f.cwd, interactive: true });
+  await until(() => local.stderr, text => text.includes('❯ '));
+  await until(() => readFile(started, 'utf8').catch(() => ''), value => value === 'pending');
+  local.child.stdin.write('Tell me hello\n');
+  await until(() => local.stdout + local.stderr, text => text.includes('✓ Completed') && text.includes('fixture-answer-'));
+  const client = await localClient(env);
+  const slowState = (await client.call('mcp.list', {})).runtime;
+  assert.ok(slowState.pendingServerIds.includes('slow_fixture'), 'the reply arrived before the handshake completed or timed out');
+  local.child.stdin.write('/exit\n');
+  assert.equal((await local.result).code, 0);
 });
 
 test('late noisy MCP diagnostics never overwrite a local draft, hide tool failures or pollute pipe output', async t => {

@@ -99,10 +99,10 @@ async function run() {
   if (resident) {
     await sleep(1500); stats.idle = take();
     assert.equal(stats.idle.windows, 0); assert.equal(stats.idle.renderers, 0);
-    assert.ok(!app.getAppMetrics().some(p => p.name === 'CardBush Runtime Host'), 'a future event does not need a worker at launch');
+    await wait(() => app.getAppMetrics().some(p => p.name === 'CardBush Runtime Host'), 'resident Runtime starts without opening a window');
     const notice = await wait(() => notices.find(n => n.body === 'Resident reminder'), 'cold-start reminder without renderer');
     stats.delivered = take(); assert.equal(stats.delivered.windows, 0);
-    if (process.platform === 'win32') assert.equal(stats.delivered.stdioSupervisors, 0, 'local reminders do not start stdio tool processes');
+    assert.equal(stats.delivered.windows, 0, 'the built-in catalog warms without opening a window');
     notice.emit('click');
     const win = await wait(() => BrowserWindow.getAllWindows()[0], 'notification opened Assistant');
     await wait(() => win.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant .floating-capsule"))'), 'floating Assistant');
@@ -120,7 +120,7 @@ async function run() {
       await target.webContents.executeJavaScript("document.querySelector('[data-action=compose]').click()");
       return wait(() => target.webContents.executeJavaScript("document.querySelector('.capsule-form input')?.value"), 'retained draft in editor');
     };
-    tray.emit('double-click'); assert.equal(await openDraft(win), 'Unsent fixture draft');
+    menu.items[1].click(); assert.equal(await openDraft(win), 'Unsent fixture draft');
     await win.webContents.executeJavaScript(`(() => { const n = document.querySelector('.capsule-form input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,''); n.dispatchEvent(new Event('input',{bubbles:true})); })()`);
     await sleep(150);
     win.close(); await wait(() => win.isDestroyed(), 'release floating renderer');
@@ -145,13 +145,13 @@ async function run() {
       await sleep(35_000);
       stats.afterTools = await wait(() => {
         const sample = take();
-        return sample.stdioSupervisors === 1 && !sample.renderers && sample;
-      }, 'retire idle document tools and retain desktop safety state');
-      tray.emit('double-click');
+        return sample.stdioSupervisors >= stats.withTools.stdioSupervisors && sample.stdioSupervisors > 0 && !sample.renderers && sample;
+      }, 'keep document tools resident after closing the capsule');
+      menu.items[1].click();
       const next = await wait(() => BrowserWindow.getAllWindows()[0], 'restore Assistant after cleanup');
       await wait(() => next.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant"))'), 'restored UI');
       const restored = await readCatalog(next);
-      assert.ok(restored.ok && restored.result.servers.some(s => s.id === 'plugin_xlsx_documents' && s.tools.length), 'document tools reconnect after cleanup');
+      assert.ok(restored.ok && restored.result.servers.some(s => s.id === 'plugin_xlsx_documents' && s.tools.length), 'document tools remain available after idle');
     }
     menu.items[1].click();
     const capsule = await wait(() => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('window=assistant')), 'resident capsule');
@@ -159,7 +159,7 @@ async function run() {
     await capsule.webContents.executeJavaScript("document.querySelector('[data-action=compose]').click()");
     await wait(() => capsule.webContents.executeJavaScript("!!document.querySelector('.capsule-form input')"), 'resident editor');
     await capsule.webContents.executeJavaScript(`const input=document.querySelector('.capsule-form input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Keep this draft');input.dispatchEvent(new Event('input',{bubbles:true}));`);
-    menu.items[0].click();
+    tray.emit('click');
     const workspace = await wait(() => BrowserWindow.getAllWindows().find(w => w!==capsule && w.isVisible()), 'tray creates Home with a pending capsule draft');
     await wait(() => workspace.webContents.executeJavaScript("!!document.querySelector('[data-desktop-page=overview]')"), 'Home after resident launch');
     assert.ok(capsule.isVisible());
@@ -172,9 +172,9 @@ async function run() {
     await sleep(1500); stats.open = take(); win.close(); await sleep(1500); stats.idle = take();
     assert.equal(stats.idle.windows, 1);
     assert.ok(!win.isVisible(), 'closing the workspace hides it in the tray');
-    menu.items[0].click();
+    tray.emit('click');
     await wait(() => win.isVisible(), 'tray Open restores the same workspace');
-    await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, openHome: () => menu.items[0].click(),
+    await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, openHome: () => tray.emit('click'),
       openAssistant: () => menu.items[1].click(), wait, root, project, holdAudioSettings });
   }
   fs.writeFileSync(path.join(root, 'metrics.json'), JSON.stringify(stats, null, 2));

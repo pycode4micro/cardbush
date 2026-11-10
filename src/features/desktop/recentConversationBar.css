@@ -4,40 +4,41 @@
   --summary-width: min(36vw, 460px, 54%);
   --bar-button-size: 30px;
   --bar-button-gap: 4px;
-  --nav-min-width: calc(3 * var(--bar-button-size) + 2 * var(--bar-button-gap));
   --title-gap: clamp(4px, calc((100% - var(--summary-width)) / 4 - 40px), 144px);
   /* Balance the native caption reservation so the summary stays on the workspace centerline. */
   --caption-inset: clamp(0px, calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)), 150px);
   --center-offset: clamp(0px, calc((var(--caption-inset) - 48px) / 2), 51px);
   display:grid; align-items:center;
-  grid-template-columns:minmax(var(--nav-min-width),calc((100% - var(--summary-width)) / 2 - var(--title-gap) + var(--center-offset))) minmax(0,var(--summary-width)) minmax(max-content,1fr);
+  grid-template-columns:minmax(0,calc((100% - var(--summary-width)) / 2 - var(--title-gap) + var(--center-offset))) minmax(0,var(--summary-width)) minmax(max-content,1fr);
   column-gap:var(--title-gap); margin-inline-end:8px;
 }
 .recent-bar button { font:inherit; color:inherit; cursor:pointer; }
-.workspace-chat-navigation {
-  grid-column: 1; display: flex; align-items: center; justify-content: flex-end; gap: var(--bar-button-gap); min-width: 0;
-  container: chat-navigation / inline-size;
+.theme-bright .recent-bar-chat {
+  --stage-title:#173d45; --stage-status:#31585b;
+  --stage-scrim:linear-gradient(90deg,#f4fbf5ed,#eff8efd9 60%,transparent);
 }
-.workspace-chat-navigation button {
-  display: inline-flex; align-items: center; justify-content: center; gap: var(--bar-button-gap); min-width: var(--bar-button-size);
-  height: 30px; padding: 0 5px; border: 0; border-radius: 5px; background: transparent;
-}
-.workspace-chat-navigation button:is(:hover, [aria-current="page"]) { background: var(--chrome-control-hover, var(--menu-hover)); }
-.workspace-chat-navigation svg { width: 16px; height: 16px; flex: none; }
-.workspace-chat-navigation .assistant-bulb { flex: none; display: grid; place-items: center; }
-.workspace-chat-navigation .workspace-chat-status { width: 12px; height: 12px; color: var(--text-soft); }
-@container chat-navigation (max-width: 148px) {
-  .workspace-chat-navigation .workspace-chat-status { display: none; }
+.theme-dark .recent-bar-chat {
+  --stage-title:#f4f9fb; --stage-status:#d0e0e4;
+  --stage-scrim:linear-gradient(90deg,#132633e8,#1326339e 65%,transparent);
 }
 .recent-bar-chat {
   grid-column:2; width:100%; min-width:0; height:clamp(24px, calc(100% - 16px), 54px); padding:0;
-  display:flex; align-items:center; overflow:hidden; border:0; border-radius:4px;
+  position:relative; isolation:isolate; display:flex; align-items:center; overflow:hidden; border:0; border-radius:5px; padding:0;
   background:var(--chrome-control,transparent);
   box-shadow:inset 0 1px color-mix(in srgb,white 10%,transparent),inset 0 -1px var(--chrome-edge,var(--border));
 }
 
-.recent-bar-chat:disabled, .recent-bar-list:disabled { cursor:default; }
-.recent-chat-copy { flex:1; min-width:0; display:grid; padding-inline:8px; text-align:center; }
+.recent-bar-list:disabled { cursor:default; }
+.recent-chat-copy {
+  z-index:1; display:grid; align-content:center; box-sizing:border-box; width:46%; height:100%;
+  padding-inline:clamp(4px,1vw,14px) 10px; text-align:start; pointer-events:none;
+  color:var(--stage-title,var(--text)); background:var(--stage-scrim);
+}
+.recent-chat-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--stage-status,var(--text-mid)); font-size:calc(10px * var(--ui-font-scale,1)); }
+@media (forced-colors:active) {
+  .recent-chat-copy { color:ButtonText; background:ButtonFace; }
+  .recent-chat-copy small { color:ButtonText; }
+}
 .recent-chat-copy strong { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; line-height:1.25;
   font-size:calc(12.5px * var(--ui-font-scale,1)); font-weight:550; }
 .recent-bar-actions, .window-chat-actions { display:flex; align-items:center; gap:var(--bar-button-gap); }
@@ -53,7 +54,7 @@
 .recent-unread-count { display:inline-block; margin-inline-start:4px; min-width:1.35em; padding-inline:3px; border-radius:1em; background:var(--info); color:var(--surface); font:600 10px/1.45 system-ui; }
 .recent-bar :focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 @media (max-width:760px) {
-  .recent-bar { --title-gap:4px; grid-template-columns:var(--nav-min-width) minmax(0,1fr) auto; margin-inline-end:4px; }
+  .recent-bar { --title-gap:4px; grid-template-columns:minmax(0,1fr) minmax(0,var(--summary-width)) minmax(max-content,1fr); margin-inline-end:4px; }
 }
 .recent-turn-drawer {
   position: fixed; inset: var(--workspace-bar-height, var(--window-frame-height)) 0 0 auto; margin: 0;
@@ -66,18 +67,18 @@
 }
 .recent-turn-drawer:popover-open { display: flex; translate: 0 0; pointer-events: auto; }
 @starting-style { .recent-turn-drawer:popover-open { translate: 100% 0; } }
-.recent-tabs { display: flex; margin: 9px 10px 6px; padding: 3px; border-radius: 7px; background: color-mix(in srgb, var(--text) 6%, transparent); }
-.recent-tabs button { flex: 1; border: 0; border-radius: 5px; padding: 5px; font-size: 12px; background: transparent; color: var(--text-mid); }
-.recent-tabs button[aria-selected="true"] { color: var(--text); background: var(--surface); box-shadow: 0 1px 3px var(--shadow); font-weight: 600; }
+.recent-tabs { display: flex; margin: 6px 12px; border-bottom: 1px solid var(--border); }
+.recent-tabs [role="tab"] { flex: 1; position: relative; text-align: center; padding: 8px 3px; font-size: 12px; color: var(--text-mid); cursor: pointer; }
+.recent-tabs [aria-selected="true"] { color: var(--text); font-weight: 600; }
+.recent-tabs [aria-selected="true"]::after { content: ''; position: absolute; bottom: -1px; left: 50%; translate: -50% 0; width: 18px; height: 2px; border-radius: 2px; background: var(--accent); }
+.recent-tabs [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .recent-turn-drawer [role="tabpanel"] { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.recent-turn-drawer h2 { flex: none; font-size: 12px; font-weight: 600; margin: 0; padding: 12px 14px 9px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .recent-turn-scroll { min-height: 0; padding: 0 6px 12px; overflow: hidden auto; overscroll-behavior: contain; }
 .recent-turn-scroll p { font-size: 13px; color: var(--text-mid); margin: 16px 8px; }
 .recent-turn-scroll ol { padding: 0; margin: 0; list-style: none; }
 .recent-turn-scroll li button, .recent-session-rows .conversation-row { box-sizing: border-box; position: relative; display: flex; align-items: center; width: 100%; min-height: 42px; gap: 9px; padding: 6px 8px; text-align: start; border: 0; border-radius: 5px; background: transparent; color: var(--text); }
 .recent-turn-scroll li + li > button::before, .recent-session-rows .conversation-row + .conversation-row::before { content: ''; position: absolute; top: 0; inset-inline: 8px; height: 1px; background: var(--border); }
 .recent-turn-scroll li button:hover, .recent-session-rows .conversation-row:is(:hover,.active) { background: var(--surface-hover); }
-.recent-turn-attachment { flex: none; width: 30px; height: 30px; border-radius: 4px; object-fit: cover; }
 .recent-row-copy { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 520; line-height: 1.35; }
 .recent-turn-scroll time { flex: none; font-size: 12px; font-weight: 400; color: var(--text-mid); font-variant-numeric: tabular-nums; }
 .recent-notification { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; border-bottom:1px solid var(--border); }
@@ -116,9 +117,5 @@
   .recent-turn-drawer, .app[data-desktop-workspace] > .desktop-shell { transition: none; }
 }
 
-.recent-list-back { display:flex; align-items:center; gap:6px; max-width:100%; padding:0; background:transparent; border:0; }
-.recent-list-back svg { width:16px; height:16px; flex:none; }
-
-.recent-list-back span, .recent-assistant-session { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.recent-assistant-session { width:100%; height:40px; padding-inline:12px; text-align:start; border:0; border-radius:5px; background:transparent; }
+.recent-assistant-session { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:100%; height:40px; padding-inline:12px; text-align:start; border:0; border-radius:5px; background:transparent; }
 .recent-assistant-session:hover { background:var(--surface-hover); }

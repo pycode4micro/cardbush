@@ -349,6 +349,25 @@ export class McpClientManager {
     if (this.#parent) this.#parent.#notifyObservers();
   }
 
+  /** Wait for one requested server without coupling discovery to other connections. */
+  async waitForServer(id: string, signal?: AbortSignal): Promise<void> {
+    for (;;) {
+      signal?.throwIfAborted();
+      const update = this.#updates.get(id);
+      if (this.#closed || !update || update.state === 'failed' || this.#applicationError) break;
+      let wake!: () => void;
+      try {
+        await new Promise<void>(resolve => {
+          wake = resolve;
+          this.#observers.add(wake);
+          signal?.addEventListener('abort', wake, { once: true });
+        });
+      } finally { this.#observers.delete(wake); signal?.removeEventListener('abort', wake); }
+    }
+    const server = this.snapshot()?.servers.find(item => item.id === id);
+    if (server?.health !== 'ready') throw Error(server?.lastError || `MCP server ${id} is ${server?.health ?? 'unavailable'}.`);
+  }
+
   #queuePump(): void {
     if (this.#closed || this.#pumpScheduled) return;
     this.#pumpScheduled = true;

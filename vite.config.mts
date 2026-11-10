@@ -27,6 +27,7 @@ export default defineConfig({
     rolldownOptions: {
       input: {
         main: path.resolve(rootDir, 'index.html'),
+        componentPreview: path.resolve(rootDir, 'component-preview.html'),
         officePreview: path.resolve(rootDir, 'office-preview.html'),
         modelPreview: path.resolve(rootDir, 'model-preview.html'),
       },
