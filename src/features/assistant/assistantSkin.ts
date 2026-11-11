@@ -1,22 +1,16 @@
 import sprite from './art/pixel-robot.png';
-import observatory from './art/observatory.png';
-import observatoryDay from './art/observatory-day.png';
-import type { ThemeMode } from '../../types';
 import type { AssistantActivity } from './assistantActivity';
 
 /** Each clip starts at column zero of its row. Frame zero also serves reduced motion. */
 type SpriteClip = { row: number; frames: number; durationMs: number };
 export interface SpriteSheet {
   image: string;
-  themeImages?: Partial<Record<ThemeMode, string>>;
   columns: number;
   rows: number;
   clips: { idle: SpriteClip } & Partial<Record<AssistantActivity, SpriteClip>>;
 }
 export interface AssistantSkin {
   portrait: SpriteSheet;
-  /** Panoramic clips fill the entire title bar. A scene can also supply its own character. */
-  scene: SpriteSheet & { frameRatio: number; includesCharacter: boolean };
 }
 const robotFrames: SpriteSheet = {
   image: sprite, columns: 8, rows: 10,
@@ -35,5 +29,4 @@ const robotFrames: SpriteSheet = {
 };
 export const pixelRobot: AssistantSkin = {
   portrait: robotFrames,
-  scene: { ...robotFrames, image: observatory, themeImages: { bright: observatoryDay }, frameRatio: 320 / 36, includesCharacter: false },
 };

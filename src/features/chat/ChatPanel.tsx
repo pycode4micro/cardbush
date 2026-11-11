@@ -2383,7 +2383,7 @@ export function ChatPanel({
   }
 
   return (
-    <VoiceConversation language={language} disabled={readOnlyActions || inputReadOnly}
+    <VoiceConversation disabled={readOnlyActions || inputReadOnly}
       target={{ agent: voiceAgent, environment: host?.environmentId ?? 'local', sessionId: runtimeSessionId, messages,
         sending, stopping, activeTurnId, language, waiting: hasInteraction,
         send: (text, options) => handleComposerSend(text, { ...options, acknowledge: true }) }}>

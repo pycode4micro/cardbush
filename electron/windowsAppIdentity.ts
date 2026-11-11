@@ -7,6 +7,9 @@ export function windowsShellIconPath({ packaged, executablePath, candidates, exi
   candidates: readonly string[];
   exists?: (filePath: string) => boolean;
 }) {
-  const paths = packaged ? [executablePath, ...candidates] : [...candidates, executablePath];
+  // Explorer caches icons by path and index. Our development launcher embeds the
+  // icon in an EXE whose name changes with its bytes; the source ICO path is stable.
+  const branded = /(?:^|[\\/])cardbush-dev-[a-f0-9]+\.exe$/i.test(executablePath);
+  const paths = packaged || branded ? [executablePath, ...candidates] : [...candidates, executablePath];
   return paths.find(filePath => !/(?:^|[\\/])[^\\/]+\.asar(?:[\\/]|$)/i.test(filePath) && exists(filePath));
 }

@@ -8,10 +8,18 @@ test('packaged Shell identity uses the branded executable even when Electron can
     candidates: ['C:\\Program Files\\应用 space\\resources\\app.asar\\assets\\cardbush.ico'] }), executablePath);
 });
 
-test('development keeps the real ICO and rejects ASAR paths accepted by the virtual filesystem', () => {
+test('unbranded Electron uses the real ICO and rejects ASAR paths accepted by the virtual filesystem', () => {
   const icon = 'C:/workspace/assets/cardbush.ico';
   assert.equal(windowsShellIconPath({ packaged: false, executablePath: 'C:/workspace/cardbush-dev.exe',
     candidates: ['C:/workspace/resources/app.asar/assets/cardbush.ico', icon], exists: () => true }), icon);
+});
+
+test('a rebranded development build gives Explorer a new icon location', () => {
+  const candidates = ['C:/workspace/assets/cardbush.ico'];
+  for (const identity of ['e11eb10a3260', '74f03e8dc8b2']) {
+    const executablePath = 'C:\\workspace\\cardbush-dev-' + identity + '.exe';
+    assert.equal(windowsShellIconPath({ packaged: false, executablePath, candidates, exists: () => true }), executablePath);
+  }
 });
 
 test('native unpacked resources and a missing icon have valid fallbacks', () => {

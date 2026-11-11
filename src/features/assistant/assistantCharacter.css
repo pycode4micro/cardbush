@@ -21,15 +21,10 @@
 @keyframes assistant-sprite-frames { to { translate: var(--clip-end) 0; } }
 
 .assistant-stage { position:absolute; inset:0; container-type:size; overflow:hidden; pointer-events:none; }
-.assistant-panorama {
-  position:absolute; left:50%; top:50%; translate:-50% -50%; overflow:hidden;
-  width:max(100cqw, calc(100cqh * var(--frame-ratio))); aspect-ratio:var(--frame-ratio);
-}
 .assistant-stage-actor {
-  position:absolute; bottom:10%; left:54%; display:flex; translate:-50% 0;
-  --assistant-character-size: min(36px, 84cqh);
+  position:absolute; top:50%; left:50%; display:flex; translate:-50% -50%; pointer-events:auto; -webkit-app-region:no-drag;
+  --assistant-character-size: min(46px, 96cqh);
 }
-.assistant-stage .assistant-avatar { box-shadow:0 1px 3px #152d40; border-radius:50%; }
 .assistant-stage[data-state=working] .assistant-stage-actor {
   animation:var(--assistant-travel, assistant-patrol) 4s steps(16) infinite alternate;
   animation-play-state:var(--assistant-motion-play, running);
@@ -39,4 +34,4 @@ html[data-motion-preference="on"] { --assistant-film: none; --assistant-travel: 
 @media (prefers-reduced-motion: reduce) {
   html:not([data-motion-preference="off"]) { --assistant-film: none; --assistant-travel: none; }
 }
-@keyframes assistant-patrol { from { left:48%; } to { left:68%; } }
+@keyframes assistant-patrol { from { left:25%; } to { left:75%; } }

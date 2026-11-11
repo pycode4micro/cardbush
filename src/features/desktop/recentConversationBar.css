@@ -1,41 +1,53 @@
 .app[data-desktop-workspace] { --recent-drawer-width: min(336px, 100vw); }
 .recent-bar {
   flex:1; min-width:0; align-self:flex-start; height:var(--workspace-bar-height, var(--window-frame-height));
-  --summary-width: min(32vw, 352px, 54%);
   --bar-button-size: 30px;
   --bar-button-gap: 4px;
   --title-gap: 10px;
-  /* Balance the native caption reservation so the summary stays on the workspace centerline. */
-  --caption-inset: clamp(0px, calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)), 150px);
-  --center-offset: clamp(0px, calc((var(--caption-inset) - 48px) / 2), 51px);
   display:grid; align-items:center;
-  grid-template-columns:minmax(0,calc((100% - var(--summary-width)) / 2 - var(--title-gap) + var(--center-offset))) minmax(0,var(--summary-width)) minmax(max-content,1fr);
+  grid-template-columns:minmax(0,1fr) max-content;
   column-gap:var(--title-gap); margin-inline-end:8px;
 }
 .recent-bar button { font:inherit; color:inherit; cursor:pointer; }
-.theme-bright .recent-bar-chat {
-  --stage-title:#173d45; --stage-status:#31585b;
-  --stage-scrim:linear-gradient(90deg,#f4fbf5ed,#eff8efd9 60%,transparent);
-}
-.theme-dark .recent-bar-chat {
-  --stage-title:#f4f9fb; --stage-status:#d0e0e4;
-  --stage-scrim:linear-gradient(90deg,#132633e8,#1326339e 65%,transparent);
-}
 .recent-bar-chat {
-  grid-column:2; width:100%; min-width:0; height:clamp(24px, calc(100% - 16px), 40px);
-  position:relative; isolation:isolate; display:flex; align-items:center; overflow:hidden; border:0; border-radius:8px; padding:0;
-  background:var(--chrome-control,transparent);
+  grid-column:1; width:100%; min-width:0; height:clamp(24px, calc(100% - 16px), 40px);
+  position:relative; isolation:isolate; display:flex; align-items:center; overflow:hidden; border:0; padding:0; background:transparent;
 }
-.recent-bar-chat::after { content:''; position:absolute; inset:0; z-index:2; border-radius:inherit; pointer-events:none;
-  box-shadow:inset 0 0 0 1px var(--chrome-edge,var(--border)); }
+.window-drag button.recent-bar-chat { app-region:drag; cursor:default; }
+.recent-bar-chat :is(.recent-chat-copy,.assistant-stage-actor) { cursor:pointer; app-region:no-drag; }
+.stage-call-slot {
+  grid-column:1; position:relative; min-width:0; height:clamp(24px, calc(100% - 16px), 40px);
+  container-type:inline-size;
+}
+.stage-call-slot > .recent-bar-chat { height:100%; }
+.stage-call-slot .assistant-stage { inset-inline-end:clamp(80px, 24%, 140px); }
+.stage-call-slot .voice-composer-call { color:inherit; }
+.stage-call-controls {
+  position:absolute; inset-inline-end:2px; top:50%; transform:translateY(-50%);
+  width:clamp(80px, 24%, 140px); padding-inline:2px; box-sizing:border-box;
+  color:var(--text-mid);
+}
+.stage-call-controls .voice-composer-call { height:26px; gap:1px; }
+.stage-call-controls :is(.voice-audio-toggle,.voice-composer-end) {
+  flex:0 0 24px; width:24px; height:24px; margin:0; padding:0;
+}
+.stage-call-controls .voice-composer-end { color:var(--danger); background:transparent; }
+.stage-call-controls .voice-composer-end:hover { background:var(--hover); }
+.stage-call-controls .voice-call-signal, .stage-call-controls .voice-call-wave { height:22px; }
+@container (max-width:210px) {
+  .stage-call-controls { width:auto; }
+  .stage-call-controls .voice-call-signal { width:1px; height:1px; flex:0 0 1px; }
+  .stage-call-slot .recent-chat-copy { max-width:calc(100% - 115px); padding-inline:2px; }
+  .stage-call-slot .assistant-stage { inset-inline-start:0; }
+}
 
 .recent-bar-list:disabled { cursor:default; }
 .recent-chat-copy {
-  z-index:1; display:grid; align-content:center; box-sizing:border-box; width:46%; height:100%;
-  padding-inline:clamp(4px,1vw,14px) 10px; text-align:start; pointer-events:none;
-  color:var(--stage-title,var(--text)); background:var(--stage-scrim);
+  z-index:1; display:grid; align-content:center; box-sizing:border-box; width:max-content; max-width:32%; height:100%;
+  padding-inline:clamp(4px,1vw,14px) 10px; text-align:start; pointer-events:auto; -webkit-app-region:no-drag;
+  color:var(--text);
 }
-.recent-chat-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--stage-status,var(--text-mid)); font-size:calc(10px * var(--ui-font-scale,1)); }
+.recent-chat-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-mid); font-size:calc(10px * var(--ui-font-scale,1)); }
 @media (forced-colors:active) {
   .recent-chat-copy { color:ButtonText; background:ButtonFace; }
   .recent-chat-copy small { color:ButtonText; }
@@ -43,19 +55,19 @@
 .recent-chat-copy strong { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; line-height:1.25;
   font-size:calc(12.5px * var(--ui-font-scale,1)); font-weight:550; }
 .recent-bar-actions, .window-chat-actions { display:flex; align-items:center; gap:var(--bar-button-gap); }
-.recent-bar-actions { grid-column:3; justify-self:start; }
+.recent-bar-actions { grid-column:2; justify-self:start; }
 .window-chat-actions:empty { display:none; }
 .recent-bar :is(.recent-bar-list, .topbar-inspector-action.icon-only) { width:var(--bar-button-size); }
 .recent-bar-list { position:relative; display:grid; place-items:center; border:0; height:30px; border-radius:5px; background:transparent; }
 .recent-bar-list svg { width:18px; height:18px; }
-.recent-bar-chat:hover:not(:disabled), .recent-bar-list:hover:not(:disabled) { background:var(--chrome-control-hover,var(--menu-hover)); }
+.recent-bar-list:hover:not(:disabled) { background:var(--chrome-control-hover,var(--menu-hover)); }
 .recent-bar-list[aria-expanded="true"] { background:var(--chrome-control-hover,var(--menu-hover)); }
 .recent-bar .recent-bar-list[data-unread] { color:var(--info); }
 .recent-unread-dot { position:absolute; inset:3px 2px auto auto; width:7px; height:7px; border-radius:50%; background:var(--info); box-shadow:0 0 0 2px var(--surface); }
 .recent-unread-count { display:inline-block; margin-inline-start:4px; min-width:1.35em; padding-inline:3px; border-radius:1em; background:var(--info); color:var(--surface); font:600 10px/1.45 system-ui; }
 .recent-bar :focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 @media (max-width:760px) {
-  .recent-bar { --title-gap:6px; grid-template-columns:minmax(0,1fr) minmax(0,var(--summary-width)) minmax(max-content,1fr); margin-inline-end:4px; }
+  .recent-bar { --title-gap:6px; margin-inline-end:4px; }
 }
 .recent-turn-drawer {
   position: fixed; inset: var(--workspace-bar-height, var(--window-frame-height)) 0 0 auto; margin: 0;

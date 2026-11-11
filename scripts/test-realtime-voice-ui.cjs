@@ -53,6 +53,8 @@ app.whenReady().then(async()=>{
   ipcMain.handle('voice:realtime-save',(_,settings)=>service.save(settings));
   ipcMain.handle('voice:realtime-save-voices',(_,settings)=>service.saveVoices(settings));
   ipcMain.handle('voice:realtime-start',(event,input)=>service.start(event.sender.id,input,value=>event.sender.send('voice:realtime-event',value)));
+  ipcMain.handle('voice:realtime-sync-text',(event,id,sessionId,snapshot)=>service.syncText(event.sender.id,id,sessionId,snapshot));
+  ipcMain.handle('assistant:read-capsule-call',()=>null);
   ipcMain.handle('voice:realtime-audio',async(event,id,pcm)=>{
     if(holdAudio)await new Promise(resolve=>heldAudio.push(resolve));
     return service.audio(event.sender.id,id,pcm);
@@ -71,7 +73,9 @@ app.whenReady().then(async()=>{
     name:'realtime-voice-fixture',resolveId:id=>id.endsWith('__realtime_voice_fixture__.tsx')?'\0realtime-voice-fixture.tsx':undefined,
     load:id=>id==='\0realtime-voice-fixture.tsx'?`
       import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
+      import {VoiceStageFixture} from ${file('scripts/fixtures/VoiceStageFixture.tsx')};
       import {VoiceConversation,ApplicationVoiceHost,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
+      import {useVoiceComposer,VoiceComposerPanel} from ${file('src/features/voice/VoiceComposer.tsx')};
       import {VoiceCallButton} from ${file('src/features/voice/VoiceCallButton.tsx')};
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
       window.fixture={sent:[],tracks:[],tasks:[],recorded:[],previews:[],summaries:0};
@@ -81,13 +85,14 @@ app.whenReady().then(async()=>{
       fixture.outputLevel=()=>applicationVoiceSession().realtime.audio.outputGain.gain.value;
       const getMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia=async c=>{const s=await getMedia(c);fixture.tracks.push(...s.getTracks());return s;};
+      function OwnerPanel({language}){const {session,visible}=useVoiceComposer();return visible && <VoiceComposerPanel session={session} language={language}/>;}
       function Fixture(){const [messages,setMessages]=useState([]),[sessionId,setSession]=useState(''),[sending,setSending]=useState(false),[visible,setVisible]=useState(true),[language,setLanguage]=useState('zh');fixture.hide=()=>setVisible(false);fixture.language=setLanguage;
-        fixture.switch=()=>setSession('other');
+        fixture.messages=setMessages;fixture.switch=()=>setSession('other');
         fixture.complete=()=>{for(const task of fixture.tasks){task.status='completed';task.finalResponse='测试任务完成';}};
-        return <div className="app theme-dark"><ApplicationVoiceHost language={language}>{visible && <VoiceConversation language={language} target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'own':null,
-          agent:{list:async()=>fixture.tasks,preview:async entry=>fixture.previews.push(entry),record:async entry=>fixture.recorded.push(entry),summarize:async()=>{fixture.summaries++;throw Error('Automatic speech summaries are disabled');},execute:async(id,name,args)=>{fixture.sent.push(args.prompt);const task={taskId:id,childSessionId:'child-'+id,parentTurnId:'voice_turn_'+id,status:'running',finalResponse:'',errorMessage:''};fixture.tasks.push(task);setTimeout(()=>setSession('created'),30);return task;}},
+        return <div className="app theme-dark"><ApplicationVoiceHost><VoiceStageFixture language={language}/>{visible && <VoiceConversation target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'own':null,
+          agent:{prepareConversation:async()=>{setSession("created");return "created";},list:async()=>fixture.tasks,preview:async entry=>fixture.previews.push(entry),record:async entry=>fixture.recorded.push(entry),summarize:async()=>{fixture.summaries++;throw Error('Automatic speech summaries are disabled');},execute:async(id,name,args)=>{fixture.sent.push(args.prompt);const task={taskId:id,childSessionId:'child-'+id,parentTurnId:'voice_turn_'+id,status:'running',finalResponse:'',errorMessage:''};fixture.tasks.push(task);setTimeout(()=>setSession('created'),30);return task;}},
           send:async text=>{fixture.sent.push(text);setSending(true);setMessages([{id:'u',role:'user',turnId:'own',content:text}]);setTimeout(()=>setSession('created'),30);return true;}}}>
-          <VoiceCallButton callEnabled className="send-button" aria-label="长按语音通话">Call</VoiceCallButton>
+          <OwnerPanel language={language}/><VoiceCallButton callEnabled className="send-button" aria-label="长按语音通话">Call</VoiceCallButton>
         </VoiceConversation>}</ApplicationVoiceHost></div>;}
       createRoot(document.getElementById('root')).render(<Fixture/>);
     `:undefined,
@@ -113,6 +118,12 @@ app.whenReady().then(async()=>{
     await win.loadFile(path.join(directory,'index.html'));await dom('document.querySelector("button[aria-label=长按语音通话]")');
     await holdCall();await dom('document.querySelector(".voice-call-status")?.textContent==="正在聆听"');
     await until(()=>audioFrames>=5);
+    await read('fixture.messages([{id:"typed",role:"user",content:"Keep the green cover"}]);void 0');
+    await until(()=>received.some(e=>e.type==='session.update' && JSON.stringify(e.session).includes('Keep the green cover')));
+    await read('fixture.messages([{id:"typed",role:"user",content:"Keep the green cover"},{id:"confirmed",role:"assistant",content:"The green cover is saved",status:"completed",metadata:{cardbush_terminal_snapshot:true}}]);void 0');
+    await until(()=>received.some(e=>e.type==='conversation.item.create' && JSON.stringify(e).includes('The green cover is saved')));
+    assert.equal(received.filter(e=>e.type==='conversation.item.create' && JSON.stringify(e).includes('The green cover is saved')).length,1);
+
     assert.deepEqual(received[0].session.tools.map(tool=>tool.name).sort(), ['hang_up','recall_conversation','subagent','tasks']);
     await click('通话音色');await dom('document.querySelector(".settings-dropdown-popover:popover-open")');
     await read('document.querySelector("[role=option][value=zh_male_m191_uranus_bigtts]").click();void 0');
@@ -134,7 +145,7 @@ app.whenReady().then(async()=>{
     assert.equal(service.settings().customVoices[0].name,'自定义音色');
     assert.equal(connections,1,'voice changes keep the same connection');
     assert.equal(received.some(e=>e.type==='response.cancel'),false,'switching a voice must not interrupt speech');
-    assert.ok(await read('document.querySelector(".voice-call-signal").getBoundingClientRect().width>=32'),'floating voice controls retain a visible waveform');
+    assert.ok(await read('document.querySelector(".voice-call-signal").getBoundingClientRect().width>=32'),'call controls retain a visible waveform');
     await read('fixture.language("en");void 0');await dom(`document.querySelector('[role=combobox][aria-label="Call voice"]')`);
     win.setSize(360,760);await pause(300);await click('Call voice');
     await dom('document.querySelector(".settings-dropdown-popover:popover-open")');

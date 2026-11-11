@@ -91,7 +91,7 @@ app.whenReady().then(async () => {
   await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
   const css = ['theme.css', 'app.css', 'windowMaterial.css', 'appearance.css']
     .map(file => readSourceFile(path.join(root, 'src/styles', file), 'utf8')).join('\n');
-  const pageStyles = ['desktop/desktopCollection.css', 'desktop/recentConversationBar.css', 'settings/settingsDirectory.css']
+  const pageStyles = ['desktop/desktopCollection.css', 'desktop/recentConversationBar.css', 'assistant/assistantCharacter.css', 'settings/settingsDirectory.css']
     .map(file => readSourceFile(path.join(root, 'src/features', file), 'utf8')).join('\n');
   await win.webContents.insertCSS(css + '\n' + pageStyles);
   await run(`

@@ -1,8 +1,9 @@
+import { isAssistantPageMessage } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { PERSONAL_ASSISTANT_SESSION as sessionId, type ConversationEntry } from '@cardbush/bush-protocol';
 import { createConversation, type ChatStreamRequest } from '../../backend/api';
-import { conversationJournalCommand, readConversationJournal, journalMessages } from '../../backend/conversationJournal';
+import { conversationJournalCommand, readConversationJournal, assistantVoiceMessages } from '../../backend/conversationJournal';
 import { prepareRuntimeAgentRequest } from '../../backend/runtimeChat';
 import { createRealtimeAgentExecutor } from '../../backend/realtimeAgent';
 import { createDesktopRuntimeSession } from '../../runtime-client/ElectronRuntimeSession';
@@ -79,7 +80,7 @@ export const assistantBackend = {
     if (resetting || expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
     // A lost acknowledgement must not duplicate an already admitted message.
     if (identity && entries.some(entry => entry.id === identity.id)) return;
-    if (identity?.replyTo && !entries.some(entry => entry.id === identity.replyTo!.messageId && entry.visibility === 'conversation' && !['voice', 'task'].includes(entry.source))) throw Error(uiText()('assistantMessage.referenceUnavailable'));
+    if (identity?.replyTo && !entries.some(entry => entry.id === identity.replyTo!.messageId && isAssistantPageMessage(entry) && entry.source !== 'task')) throw Error(uiText()('assistantMessage.referenceUnavailable'));
     const runtime = createDesktopRuntimeSession();
     try {
       const prompt = readUserPrompt(text);
@@ -97,7 +98,7 @@ export const assistantBackend = {
         ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
         ...(outbound.promptContext ? { promptContext: outbound.promptContext } : {}),
         ...(attachments.length ? { attachments } : {}),
-        source: spoken ? 'voice' : 'text', visibility: spoken ? 'internal' : 'conversation', createdAt: identity?.createdAt ?? new Date().toISOString() };
+        source: spoken ? 'voice' : 'text', visibility: 'conversation', ...(spoken ? { voiceMode: 'chained' as const } : {}), createdAt: identity?.createdAt ?? new Date().toISOString() };
       if (resetting || expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
       onDispatch?.();
       await conversationJournalCommand({ action: 'turn', sessionId, entry, parent, profile, generation });
@@ -112,8 +113,7 @@ export const assistantBackend = {
       const config = await prepare(), { generation, entries } = await assistantBackend.read(), executor = make(async () => config, generation);
       // A call started just after reset must not seed the old view's cached history.
       const pinned = { ...target, agent: executor, contextGeneration: generation,
-        messages: journalMessages(entries.filter(entry => !['page','task'].includes(entry.source)).map(entry => ({ ...entry, visibility: 'conversation' })), sessionId),
-        historyMessages: journalMessages(entries.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId) };
+        ...assistantVoiceMessages(entries, sessionId) };
       return { ...pinned, refresh: () => {
         const fresh = target.refresh?.();
         return fresh && fresh.contextGeneration === generation ? { ...fresh, agent: executor } : pinned;

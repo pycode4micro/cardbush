@@ -77,6 +77,7 @@ const desktopApi = {
       saveSettings: (input: import('./realtimeVoiceTypes').RealtimeVoiceSettingsInput) => ipcRenderer.invoke('voice:realtime-save', input),
       saveVoices: (input: import('./realtimeVoiceTypes').RealtimeVoiceSelection) => ipcRenderer.invoke('voice:realtime-save-voices', input),
       start: (input: Parameters<import('./realtimeVoiceTypes').RealtimeVoiceApi['start']>[0]) => ipcRenderer.invoke('voice:realtime-start', input),
+      syncText: (id: string, sessionId: string, snapshot: import('./realtimeVoiceTypes').VoiceTextSnapshot) => ipcRenderer.invoke('voice:realtime-sync-text', id, sessionId, snapshot),
       audio: (id: string, pcm: ArrayBuffer) => ipcRenderer.invoke('voice:realtime-audio', id, pcm),
       control: (id: string, action: 'mute' | 'unmute' | 'interrupt' | 'commit') => ipcRenderer.invoke('voice:realtime-control', id, action),
       history: (id: string, cursor?: number) => ipcRenderer.invoke('voice:realtime-history', id, cursor),

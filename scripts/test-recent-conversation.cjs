@@ -242,23 +242,25 @@ async function run() {
   assert.deepEqual(await read("Array.from(document.querySelectorAll('.window-frame [data-nav-section]'), el => el.dataset.navSection)"), ['assistant'], 'Assistant owns the title bar');
   assert.ok(await read("document.querySelectorAll('[data-nav-section=assistant]').length===1 && document.querySelector('.recent-bar-chat').dataset.navSection==='assistant'"), 'the scene is the only Assistant navigation button');
   assert.deepEqual(await read("Array.from(document.querySelectorAll('.sidebar :is([data-nav-section=chat],[data-nav-section=projects],[data-nav-section=assistant])'), b => b.dataset.navSection)"), ['chat','projects']);
-  assert.equal(await read("document.querySelectorAll('.recent-bar button.no-drag').length"), 2, 'home toolbar contains only the Assistant scene and list');
+  assert.equal(await read("document.querySelectorAll('.recent-bar :is(.recent-bar-chat,.recent-bar-list)').length"), 2, 'home toolbar contains only the Assistant scene and list');
   const stageActionGap = () => read("document.querySelector('.recent-bar-actions').getBoundingClientRect().left - document.querySelector('.recent-bar-chat').getBoundingClientRect().right");
   const homeGap = await stageActionGap();
   assert.ok(homeGap >= 4 && homeGap <= 12, 'the list sits beside the scene on Home even when other actions are absent');
-  const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar button.no-drag')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
+  const bounds = () => read("Array.from(document.querySelectorAll('.recent-bar :is(.recent-bar-chat,.recent-bar-list)')).every(button => {const r=button.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=24;})");
   assert.ok(await bounds());
-  const scenes = [];
+  const titleColors = [];
   win.webContents.debugger.attach('1.3');
   try {
     for (const scheme of ['light','dark']) {
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:scheme}]});
       await visible('.app.theme-'+(scheme==='light'?'bright':'dark')+' .recent-bar-chat');
-      scenes.push(await read("document.querySelector('.assistant-panorama img').decode().then(()=>document.querySelector('.assistant-panorama img').currentSrc)"));
+      await read("document.querySelector('.assistant-stage-actor img').decode().then(()=>true)");
+      titleColors.push(await read("getComputedStyle(document.querySelector('.recent-chat-copy')).color"));
+      assert.ok(await read("['.recent-bar-chat','.recent-chat-copy'].every(sel=>{const c=getComputedStyle(document.querySelector(sel));return c.backgroundImage==='none' && c.backgroundColor==='rgba(0, 0, 0, 0)'})"), 'the robot and name sit directly on the title bar');
       const rect = await read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return {x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)};})()");
       fs.writeFileSync(path.join(project,'tmp','assistant-scene-'+scheme+'.png'),(await win.webContents.capturePage(rect)).toPNG());
     }
-    assert.notEqual(...scenes, 'switching the App theme replaces the scene artwork');
+    assert.notEqual(...titleColors, 'identity and status follow the native theme');
   } finally { win.webContents.debugger.detach(); }
   fs.writeFileSync(path.join(project, 'tmp/conversation-glass-bar.png'), (await win.webContents.capturePage()).toPNG());
   win.setContentSize(1400, 600); await pause(180);
@@ -275,10 +277,11 @@ async function run() {
   assert.ok(await read("document.querySelector('.recent-bar-chat .assistant-sprite img').naturalWidth > 0"), 'the packaged pixel character loads');
   assert.ok(await read(`(() => {
     const button = document.querySelector('.recent-bar-chat'), stage = button.querySelector('.assistant-stage');
-    const bounds = button.getBoundingClientRect(), scene = stage.getBoundingClientRect(), film = stage.querySelector('.assistant-panorama').getBoundingClientRect();
-    return Math.abs(scene.width-bounds.width)<1 && Math.abs(scene.height-bounds.height)<1 &&
-      film.left<=scene.left+1 && film.right>=scene.right-1 && film.top<=scene.top+1 && film.bottom>=scene.bottom-1;
-  })()`), 'the panorama covers the entire Assistant entry');
+    const bounds = button.getBoundingClientRect(), scene = stage.getBoundingClientRect(), actor = stage.querySelector('.assistant-stage-actor').getBoundingClientRect();
+    const rail = document.querySelector('.recent-bar').getBoundingClientRect();
+    return scene.width > rail.width * .75 && Math.abs(scene.width-bounds.width)<1 && Math.abs(scene.height-bounds.height)<1 &&
+      actor.left >= scene.left && actor.right <= scene.right && actor.top >= scene.top && actor.bottom <= scene.bottom;
+  })()`), 'the transparent stage uses the available title bar and contains the robot');
   await captureMaterial('toolbar');
   await click('.window-sidebar-toggle');
   await wait(() => read("document.querySelector('.sidebar').getBoundingClientRect().width>265"), 'expanded navigation is over the artwork');
@@ -495,7 +498,7 @@ async function run() {
   assert.ok(await read("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"),'Explore has a title followed directly by search');
   assert.equal(await read("!!document.querySelector('.desktop-explore button[aria-haspopup=dialog]')"),false,'no app management button on Explore');
   assert.equal(await read("!!document.querySelector('.desktop-menu-toggle')"),false);
-  await wait(() => read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return Math.abs((r.left+r.right)/2-innerWidth/2)<9})()"),'compact-rail summary is centered in the window').catch(async error => {
+  await wait(() => read("(()=>{const r=document.querySelector('.recent-bar-chat').getBoundingClientRect();return Math.abs(r.left-document.querySelector('.recent-bar').getBoundingClientRect().left)<2 && r.width>innerWidth/2})()"),'robot stage spans the space beside the compact rail').catch(async error => {
     const rects = await read("Object.fromEntries(['.window-navigation','.recent-bar','.recent-bar-chat','.recent-bar-actions'].map(selector=>[selector,document.querySelector(selector).getBoundingClientRect().toJSON()]))");
     throw Error('Title alignment: '+JSON.stringify(rects),{cause:error});
   });

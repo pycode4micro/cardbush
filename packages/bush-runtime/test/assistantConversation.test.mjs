@@ -443,19 +443,37 @@ test('text assistant reports a child deliverable in one final reply even if the 
   } finally { modelGate.resolve(); assistant.close(); }
 });
 
-test('chained assistant speech is retained internally while page_write remains visible', async () => {
+test('chained speech and additional written material share the Assistant conversation', async () => {
   const journal = new ConversationJournal(temporary()); let calls = 0;
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}), delegate: async () => ({}),
     provider: { async *stream(request) { const index = calls++; yield* response(request, index % 2 ? { text: '我把重点写在页面上了。' } : { calls: [{ id: 'written', name: 'page_write', args: { content: `## 重点\n这里是第 ${index / 2 + 1} 份资料。` } }] }); } } });
   try {
-    assistant.command({ action: 'turn', sessionId: id, entry: entry('spoken', '需要一份资料', 'user', 'voice'), parent: parent(undefined, true), profile: assistantProfileSchema.parse({}) });
+    assistant.command({ action: 'turn', sessionId: id, entry: { ...entry('spoken', '需要一份资料', 'user', 'voice'), voiceMode: 'chained' }, parent: parent(undefined, true), profile: assistantProfileSchema.parse({}) });
     await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
-    assert.deepEqual(journal.read(id).map(item => [item.role, item.visibility]), [['user', 'conversation'], ['assistant', 'conversation'], ['assistant', 'internal']]);
+    assert.deepEqual(journal.read(id).map(item => [item.role, item.source, item.voiceMode, item.visibility]), [['user', 'voice', 'chained', 'conversation'], ['assistant', 'page', undefined, 'conversation'], ['assistant', 'voice', 'chained', 'conversation']]);
     assistant.command({ action: 'turn', sessionId: id, entry: entry('spoken-again', '再整理另一份资料', 'user', 'voice'), parent: parent(undefined, true), profile: assistantProfileSchema.parse({}) });
     await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
     assert.equal(journal.read(id).filter(item => item.source === 'page').length, 2, 'reused provider call IDs in later turns do not collide');
   } finally { assistant.close(); }
+});
+
+test('a typed follow-up sees both speakers from the preceding realtime call exactly once', async () => {
+  const journal = new ConversationJournal(temporary()), turns = [];
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}), delegate: async () => ({}),
+    provider: { async *stream(request) { turns.push(request); yield* response(request,{text:'Saved.'}); } } });
+  try {
+    for (const [key,role,content] of [['u','user','Use the fern cover'],['a','assistant','The fern cover is ready']]) {
+      const message = { ...entry(key,content,role,'voice'),voiceMode:'realtime' };
+      for (let attempt = 0; attempt < 2; attempt++) assistant.command({ action:'append',sessionId:id,entry:message });
+    }
+    assert.equal(turns.length,0);
+    assistant.command({ action:'turn',sessionId:id,entry:entry('follow','Send that cover tomorrow'),parent:parent(),profile:assistantProfileSchema.parse({}) });
+    await until(() => !assistant.command({action:'read',sessionId:id}).busy);
+    assert.equal(turns.length,1);
+    assert.deepEqual(turns[0].messages.filter(m => ['Use the fern cover','The fern cover is ready','Send that cover tomorrow'].includes(m.content))
+      .map(m=>[m.role,m.content]), [['user','Use the fern cover'],['assistant','The fern cover is ready'],['user','Send that cover tomorrow']]);
+  } finally {assistant.close();}
 });
 
 test('long assistant history checkpoints through the text model, retaining original messages and loading no maintenance tools normally', async () => {

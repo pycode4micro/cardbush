@@ -60,10 +60,13 @@ export class RealtimeVoiceHistory {
     return pair.sequence;
   }
   seed(context: VoiceContextMessage[]) {
+    const added: VoiceContextMessage[] = [];
     for (let i=0;i<context.length;i+=2) {
       const user=context[i].text, assistant=context[i+1].text;
-      this.append(user,assistant,hash(JSON.stringify([user,assistant])));
+      const sequence=this.append(user,assistant,hash(JSON.stringify([user,assistant])));
+      if (sequence) added.push({id:`history_${sequence}_u`,role:'user',text:user},{id:`history_${sequence}_a`,role:'assistant',text:assistant});
     }
+    return added;
   }
   checkpoint(through: number, summary: string) {
     if (!this.pairs.some(pair=>pair.sequence===through) || through <= this.through) throw Error('Stale voice checkpoint.');

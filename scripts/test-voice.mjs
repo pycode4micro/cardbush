@@ -522,7 +522,9 @@ test('late transcription after hangup cannot submit; first message can adopt its
   const fresh = sessionFixture(); fresh.target.sessionId = '';
   fresh.target.send = async () => { fresh.session.update({ ...fresh.target, sessionId: 'created' }); return true; };
   fresh.session.update(fresh.target); await fresh.session.start('call'); fresh.callbacks.clip(new Blob(['audio'], { type: 'audio/webm' })); await pause(); await pause();
-  assert.equal(fresh.session.snapshot().mode, 'call'); fresh.session.end();
+  assert.equal(fresh.session.snapshot().mode, 'call');
+  assert.equal(fresh.session.snapshot().sessionId, 'created', 'returning to a call opens its newly created conversation');
+  fresh.session.end();
 });
 test('task stop and revised assistant text stop queued audio without ending the call', async () => {
   const f = sessionFixture(); await f.session.start('call');

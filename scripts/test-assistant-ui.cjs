@@ -59,7 +59,7 @@ async function buildFixture(directory) {
         import {AssistantStageButton} from ${file('src/features/desktop/AssistantStageButton.tsx')};
         import ${file('src/features/desktop/recentConversationBar.css')};
         import {ApplicationVoiceHost,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
-        import {realtimeConversationContext} from ${file('src/features/voice/realtimeAgentBridge.ts')};
+        import {realtimeConversationSnapshot} from ${file('src/features/voice/realtimeAgentBridge.ts')};
         import {useAssistantProfile} from ${file('src/features/assistant/assistantProfile.ts')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};import ${file('src/features/voice/voice.css')};
         import ${file('src/features/inspector/inspectorWorkspace.css')};
@@ -78,14 +78,14 @@ async function buildFixture(directory) {
           {id:'p',role:'assistant',content:'## 今日重点\\n\\n先确认方向，再逐步推进。\\n\\n- 保留关键资料\\n- 后台任务可以继续执行',source:'page',visibility:'conversation',createdAt:new Date().toISOString()},
           {id:'loop',role:'user',content:'不应显示的工具日志',source:'task',visibility:'internal',createdAt:new Date().toISOString()}
         ],busy:false};
-        fixture.callContext=()=>realtimeConversationContext(applicationVoiceSession().target);
+        fixture.callContext=()=>realtimeConversationSnapshot(applicationVoiceSession().target).context;
         fixture.uiText=uiText;
         fixture.callHistory=()=>applicationVoiceSession().target?.historyMessages??[];
         fixture.voiceState=()=>applicationVoiceSession().snapshot();
         function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile();
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
-          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost language="zh"><ProfileCenter language={language} ready={false} floating={false} prepare={noop} settings={noop} switchWindow={noop}>
-            <header className="window-frame" style={{position:'absolute',top:0,left:0,width:180}}><AssistantStageButton language={language} theme={theme} active={active} onOpen={noop}/></header>
+          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} floating={false} prepare={noop} settings={noop} switchWindow={noop}>
+            <header className="window-frame" style={{position:'absolute',top:0,left:0,width:180}}><AssistantStageButton language={language} active={active} onOpen={noop} onReturnToCall={noop}/></header>
             <ChatSidebar language="zh" section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
@@ -287,6 +287,9 @@ app.whenReady().then(async () => {
     assert.ok(await read('fixture.sent.at(-1).text.includes("@C:/fixture/report.txt")'));
     assert.equal(await read('document.querySelector(".assistant-message-row:last-child .assistant-message-user .message-file-attachment strong").textContent'), 'report.txt');
     assert.equal(await read('document.querySelector(".assistant-composer-dock textarea").value'), '');
+    await read('fixture.entries.push({id:"spoken-user",role:"user",content:"换成绿色封面",source:"voice",voiceMode:"realtime",visibility:"conversation",createdAt:new Date().toISOString()}, {id:"spoken-reply",role:"assistant",content:"我会用绿色",source:"voice",voiceMode:"realtime",visibility:"conversation",createdAt:new Date().toISOString()});void 0');
+    await until('document.querySelectorAll(".assistant-messages [data-message-id=spoken-user]").length===1 && document.querySelectorAll(".assistant-messages [data-message-id=spoken-reply]").length===1');
+    assert.equal(await read('document.querySelector(".assistant-messages").textContent.includes("通话记忆")'),false,'previously private transcripts stay private');
     await read('fixture.entries.push({id:"received",role:"assistant",content:"已读文件。",createdAt:new Date().toISOString(),source:"page",visibility:"conversation"});void 0');
     await until('document.querySelector(".assistant-message-assistant.assistant-message-arriving")');
     assert.equal(await read('getComputedStyle(document.querySelector(".assistant-message-assistant>div")).animationName'), 'assistant-bubble-receive');

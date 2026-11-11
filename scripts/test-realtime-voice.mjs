@@ -39,7 +39,7 @@ test('voice lists preserve legacy IDs and isolate custom choices and credentials
 });
 const compile=file=>{const exports={};const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function('exports','require',source)(exports,spec=>spec==='../../i18n'?i18n:spec==='@cardbush/bush-protocol'?protocol:spec==='@cardbush/bush-runtime/realtime-conversation'?conversation:compile(path.resolve(path.dirname(file),spec+'.ts')));return exports;};
-const { RealtimeAgentBridge, realtimeConversationContext }=compile('src/features/voice/realtimeAgentBridge.ts');
+const { RealtimeAgentBridge, realtimeConversationSnapshot }=compile('src/features/voice/realtimeAgentBridge.ts');
 const { RealtimeVoiceCall }=compile('src/features/voice/realtimeVoiceCall.ts');
 const { RealtimeVoiceAudio }=compile('src/features/voice/realtimeVoiceAudio.ts');
 const { RealtimeVoiceCaptions }=compile('src/features/voice/realtimeVoiceCaptions.ts');
@@ -341,19 +341,40 @@ test('a failed delegation is visible while the live microphone and playback cont
   } finally { call.close(); }
 });
 test('voice context contains bounded complete visible QA only',()=>{
-  const context=realtimeConversationContext(target([{id:'u',role:'user',content:'问题'},terminal('t','回答'),{id:'secret',role:'assistant',content:'internal',metadata:{visibility:'internal'}},{id:'dangling',role:'user',content:'未完成'}]));
-  assert.deepEqual(context,[{role:'user',text:'问题'},{role:'assistant',text:'回答'}]);
+  const context=realtimeConversationSnapshot(target([{id:'u',role:'user',content:'问题'},terminal('t','回答'),{id:'secret',role:'assistant',content:'internal',metadata:{visibility:'internal'}},{id:'dangling',role:'user',content:'未完成'}]));
+  assert.deepEqual(context.context,[{role:'user',text:'问题'},{role:'assistant',text:'回答'}]);
+});
+test('the connected call tracks submitted text, imports chained speech, and skips duplicate snapshots and other chats',async()=>{
+  const updates=[],audio=playbackFixture();
+  const api={onEvent:()=>()=>{},start:async input=>assert.equal(input.pendingText,'first question'),close:async()=>{},
+    syncText:async (id,owner,snapshot)=>updates.push({owner,...snapshot})};
+  const call=new RealtimeVoiceCall(api,()=>{},()=>{},audio.make);
+  const first={id:'u',role:'user',content:'first question'};
+  call.update(target([first]));
+  try {
+    await call.start('','female');
+    const messages=[first,terminal('r','first answer'),{id:'next',role:'user',content:'typed while talking'}];
+    call.update(target(messages)); await pause();
+    call.update(target([...messages])); call.update({...target([]),sessionId:'elsewhere'}); await pause();
+    assert.equal(updates.length,1); assert.equal(updates[0].owner,'chat');
+    assert.equal(updates[0].pendingText,'typed while talking');
+    assert.deepEqual(updates[0].context.map(e=>e.text),['first question','first answer']);
+    const voiceMeta={voice_transcript:true,voice_mode:'chained'};
+    call.update(target([...messages,{id:'s',role:'user',content:'chained question',metadata:voiceMeta},
+      {...terminal('t','chained answer'),metadata:{...voiceMeta,cardbush_terminal_snapshot:true}}]));
+    await pause(); assert.deepEqual(updates.at(-1).context.slice(-2).map(e=>e.text),['chained question','chained answer']);
+  } finally {call.close();}
 });
 test('reconnecting does not import archived voice transcripts again or pair them with text-chat answers',()=>{
   const voice=(id,role,content)=>({id,role,content,status:'completed',metadata:{voice_transcript:true,cardbush_terminal_snapshot:role==='assistant'}});
-  const context=realtimeConversationContext(target([
+  const context=realtimeConversationSnapshot(target([
     {id:'u',role:'user',content:'typed question'},terminal('a','typed answer'),
     voice('vu','user','spoken question'),voice('va','assistant','spoken answer'),
     {id:'u2',role:'user',content:'unanswered typed question'},voice('vu2','user','another spoken question'),
     terminal('unpaired','not a reply to the earlier typed question'),
     {id:'u3',role:'user',content:'new typed question'},terminal('a3','new typed answer'),
   ]));
-  assert.deepEqual(context,[{role:'user',text:'typed question'},{role:'assistant',text:'typed answer'},
+  assert.deepEqual(context.context,[{role:'user',text:'typed question'},{role:'assistant',text:'typed answer'},
     {role:'user',text:'new typed question'},{role:'assistant',text:'new typed answer'}]);
 });
 test('audio and dialogue continue during concurrent dispatch and await batches',async()=>{
@@ -423,7 +444,7 @@ test('renderer runs background compaction without blocking audio, persists an in
   call.close();assert.equal(signal.aborted,true);release();await pause();assert.equal(summaries.length,0);
 });
 
-test('final voice transcripts remain in the owning chat; both sides of assistant calls are internal and page_write is assistant-only', async()=>{
+test('final voice transcripts remain in the owning chat; both sides of assistant calls become conversation messages and page_write is assistant-only', async()=>{
   for (const personal of [false,true]) {
     let callback,started;const recorded=[],pages=[],results=[],playback=playbackFixture();
     const api={onEvent:fn=>(callback=fn,()=>{}),start:async input=>{started=input;},audio:async()=>{},control:async()=>{},close:async()=>{},
@@ -441,7 +462,7 @@ test('final voice transcripts remain in the owning chat; both sides of assistant
     callback({id:call.id,type:'tools',calls:[tool('page','page_write',{content:'## 方案'})]});await pause();
     call.close();
     assert.equal(started.sessionId,'owner');assert.equal(recorded.length,2);assert.equal(recorded[0].content,'我想了解方案');
-    assert.equal(recorded[0].visibility,personal?'internal':'conversation');assert.equal(recorded[1].visibility,personal?'internal':'conversation');
+    assert.equal(recorded[0].visibility,'conversation');assert.equal(recorded[1].visibility,'conversation');
     assert.equal(pages.length,personal?1:0);
     assert.equal(JSON.parse(results[0][0].output).status,personal?'written':'error');
   }

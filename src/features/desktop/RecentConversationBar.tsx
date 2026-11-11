@@ -1,6 +1,6 @@
 import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { AppLanguage, ThemeMode } from '../../types';
+import type { AppLanguage } from '../../types';
 import { AssistantStageButton } from './AssistantStageButton';
 import { RecentConversationBarView, NotificationListView, type RecentTab } from './RecentConversationBarView';
 import type { WorkspaceNotice } from './workspaceNotifications';
@@ -13,12 +13,13 @@ export type RecentListOutlet = {
 };
 type Props = {
   actions?: ReactNode;
-  language: AppLanguage; theme: ThemeMode; assistantName: string; selectedId: string;
+  composerObscured?: boolean;
+  language: AppLanguage; assistantName: string; selectedId: string;
   notices: WorkspaceNotice[]; openNotice(notice: WorkspaceNotice): void;
-  open(id: string): void; onRecentList(value: RecentListOutlet | null): void;
+  open(id: string, returnToCall?: boolean): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ actions, language, theme, assistantName, selectedId, open, onRecentList, notices, openNotice }: Props) {
+export function RecentConversationBar({ actions, composerObscured, language, assistantName, selectedId, open, onRecentList, notices, openNotice }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
@@ -37,9 +38,9 @@ export function RecentConversationBar({ actions, language, theme, assistantName,
       window.removeEventListener('blur', dismiss);
     };
   }, [expanded]);
-  const enter = useCallback((id: string) => {
+  const enter = useCallback((id: string, returnToCall = false) => {
     panel.current?.hidePopover();
-    open(id);
+    open(id, returnToCall);
   }, [open]);
   const togglePanel = (open: boolean) => {
     const version = ++toggleVersion.current;
@@ -56,8 +57,8 @@ export function RecentConversationBar({ actions, language, theme, assistantName,
   };
   return <RecentConversationBarView actions={actions} language={language} panelId={id}
     panelRef={panel} expanded={expanded} unread={notices.length} tab={tab} onTab={setTab}
-    assistant={<AssistantStageButton language={language} theme={theme} active={selectedId === PERSONAL_ASSISTANT_SESSION}
-      onOpen={() => enter(PERSONAL_ASSISTANT_SESSION)}/>} onToggle={togglePanel}>
+    assistant={<AssistantStageButton language={language} active={selectedId === PERSONAL_ASSISTANT_SESSION}
+      composerObscured={composerObscured} onOpen={() => enter(PERSONAL_ASSISTANT_SESSION)} onReturnToCall={id => enter(id, true)}/>} onToggle={togglePanel}>
     {present && (tab === 'notifications' ? <NotificationListView notices={notices} language={language}
       open={notice => { panel.current?.hidePopover(); openNotice(notice); }}/>
       : <RecentSessions key={tab} tab={tab} selectedId={selectedId} register={onRecentList} enter={enter}>

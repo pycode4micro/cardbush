@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, truncateSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { conversationEntrySchema, assistantReactionsSchema, type AssistantReaction, type ConversationEntry } from '@cardbush/bush-protocol';
+import { conversationEntrySchema, isAssistantPageMessage, assistantReactionsSchema, type AssistantReaction, type ConversationEntry } from '@cardbush/bush-protocol';
 import { AssistantModelHistory } from './assistantModelHistory.js';
 
 /** External conversation messages never reserve or alter a foreground Turn sequence. */
@@ -41,10 +41,10 @@ export class ConversationJournal {
   }
   append(sessionId: string, value: ConversationEntry) {
     const entry = conversationEntrySchema.parse(value), entries = this.read(sessionId);
-    if (entry.replyTo && (entry.role !== 'user' || !entries.some(item => item.id === entry.replyTo!.messageId && item.visibility === 'conversation' && !['voice', 'task'].includes(item.source)))) throw Error('assistant_quote_unavailable');
+    if (entry.replyTo && (entry.role !== 'user' || !entries.some(item => item.id === entry.replyTo!.messageId && isAssistantPageMessage(item) && item.source !== 'task'))) throw Error('assistant_quote_unavailable');
     const old = entries.find(item => item.id === entry.id);
     if (old) {
-      if (old.content !== entry.content || old.role !== entry.role || old.source !== entry.source || old.visibility !== entry.visibility || JSON.stringify(old.attachments) !== JSON.stringify(entry.attachments) || JSON.stringify(old.promptContext) !== JSON.stringify(entry.promptContext) || JSON.stringify(old.replyTo) !== JSON.stringify(entry.replyTo)) throw Error('Conversation message ID reused with different content.');
+      if (old.content !== entry.content || old.role !== entry.role || old.source !== entry.source || old.visibility !== entry.visibility || old.voiceMode !== entry.voiceMode || JSON.stringify(old.attachments) !== JSON.stringify(entry.attachments) || JSON.stringify(old.promptContext) !== JSON.stringify(entry.promptContext) || JSON.stringify(old.replyTo) !== JSON.stringify(entry.replyTo)) throw Error('Conversation message ID reused with different content.');
       return old;
     }
     mkdirSync(this.root, { recursive: true });
@@ -63,7 +63,7 @@ export class ConversationJournal {
     return { ...state };
   }
   setReaction(sessionId: string, messageId: string, reaction: AssistantReaction | null) {
-    if (!this.read(sessionId).some(item => item.id === messageId && item.visibility === 'conversation' && !['voice', 'task'].includes(item.source))) throw Error('assistant_message_unavailable');
+    if (!this.read(sessionId).some(item => item.id === messageId && isAssistantPageMessage(item) && item.source !== 'task')) throw Error('assistant_message_unavailable');
     const state = { ...this.readReactions(sessionId), ...(reaction === null ? {} : { [messageId]: reaction }) };
     if (reaction === null) delete state[messageId];
     const file = this.file(sessionId) + '.reactions.json', temporary = file + '.' + randomUUID() + '.tmp';

@@ -118,6 +118,7 @@ export class VoiceSession {
     // A pinned call owns its callbacks and executor; view rerenders only refresh its transcript.
     if (this.state.mode === 'call' && previous?.refresh) target = previous.refresh();
     this.target = target;
+    if (this.state.mode === 'call' && target.sessionId !== this.state.sessionId) this.patch({ sessionId: target.sessionId });
     if (target.sessionId) this.sendingFirst = false;
     this.realtime?.update(target);
     if (this.state.mode !== 'idle') this.applyAudioPreferences();

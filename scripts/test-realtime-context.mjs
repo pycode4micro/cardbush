@@ -225,6 +225,31 @@ async function recoveryFixture(t){
   return{service,sockets,events,diagnostics,dir,handshake,ack,dispose};
 }
 
+test('live text reaches only the owning call, at a speech gap, and survives a reconnect once',async t=>{
+  const f = await recoveryFixture(t);
+  const send = snapshot => f.service.syncText(1,'recover','remember-me',snapshot);
+  const question = 'Use the green cover', answer = 'I saved the green cover.';
+  const snapshot = {context:[{role:'user',text:question},{role:'assistant',text:answer}],pendingText:''};
+  try {
+    assert.throws(() => f.service.syncText(2,'recover','remember-me',snapshot));
+    assert.throws(() => f.service.syncText(1,'recover','another',snapshot));
+    f.service.playback(1,'recover',true);
+    const socket = f.sockets[0], before = socket.sent.length;
+    send({context:[],pendingText:question});
+    assert.equal(socket.sent.length,before);
+    f.service.playback(1,'recover',false);
+    assert.ok(socket.sent.slice(before).some(event=>event.type==='session.update' && JSON.stringify(event).includes(question)));
+    send(snapshot); send(snapshot);
+    const added = socket.sent.slice(before).filter(event=>event.type==='conversation.item.create' && JSON.stringify(event).includes(answer));
+    assert.equal(added.length,1); assert.equal(added[0].items.length,2);
+    assert.ok(!socket.sent.slice(before).some(event=>event.type==='response.create'));
+    socket.fire('close',{code:1006}); t.mock.timers.tick(1); await pause();
+    const restored=f.handshake(f.sockets[1]);
+    assert.equal(restored.items.filter(item=>JSON.stringify(item).includes(answer)).length,1);
+    f.ack(f.sockets[1],restored);
+  } finally {f.dispose();}
+});
+
 test('transport diagnostics distinguish abnormal socket closure from planned context maintenance',async t=>{
   const f=await recoveryFixture(t);
   try{

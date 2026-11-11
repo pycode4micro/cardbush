@@ -5,9 +5,6 @@
 .realtime-voice-picker[data-compact=true] .settings-dropdown-trigger:hover { background:var(--hover); color:var(--text); }
 .realtime-voice-picker[data-compact=true] .settings-dropdown-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .realtime-voice-picker .settings-dropdown-option > svg { width:14px; height:14px; flex-shrink:0; }
-.voice-call-undocked .realtime-voice-picker { max-width:72px; }
-.voice-call-undocked > .voice-composer-call { gap:6px; }
-.voice-call-undocked .voice-call-signal { min-width:32px; }
 .realtime-voice-dialog { box-sizing:border-box; width:min(360px,calc(100vw - 24px)); max-height:calc(100vh - 24px); padding:20px; border:1px solid var(--border); border-radius:18px; background:var(--surface); color:var(--text); box-shadow:0 12px 48px #0004; }
 .realtime-voice-dialog::backdrop { background:#0005; }
 .realtime-voice-dialog form { display:flex; flex-direction:column; gap:14px; margin:0; }

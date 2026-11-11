@@ -33,13 +33,13 @@ export function VoiceWave({ level, quiet }: { level: number; quiet: boolean }) {
   return <svg className="voice-call-wave" viewBox="0 0 600 32" preserveAspectRatio="none" aria-hidden="true"><path ref={path} d="M0,16 L600,16" vectorEffect="non-scaling-stroke"/></svg>;
 }
 
-export function VoiceComposerPanel({ session, language, showVoicePicker = true }: { session: VoiceSession; language: string; showVoicePicker?: boolean }) {
+export function VoiceComposerPanel({ session, language, showVoicePicker = true, playConnectingCue = true }: { session: VoiceSession; language: string; showVoicePicker?: boolean; playConnectingCue?: boolean }) {
   const state = useSyncExternalStore(session.subscribe, session.snapshot);
   const error = state.error || state.agentError;
   const connecting = state.phase === 'connecting' || state.reconnecting;
   const audible = state.speaking && !state.outputMuted;
-  useEffect(() => connecting && !state.reconnecting && !state.outputMuted ? startConnectingCue() : undefined,
-    [connecting, state.reconnecting, state.outputMuted]);
+  useEffect(() => playConnectingCue && connecting && !state.reconnecting && !state.outputMuted ? startConnectingCue() : undefined,
+    [playConnectingCue, connecting, state.reconnecting, state.outputMuted]);
   const label = error || (connecting ? uiText(language)('voiceComposerPanel.connecting') : state.speaking && !state.outputMuted ? uiText(language)('voiceComposerPanel.speaking') : state.muted ? uiText(language)('chatSidebar.microphoneMuted') : state.capturePaused ? uiText(language)('voiceComposerPanel.processingSpeech') : uiText(language)('voiceComposerPanel.listening'));
   return <div className="voice-composer-call" data-connecting={Boolean(connecting)} data-error={Boolean(error)} title={label}>
     <button type="button" className="voice-audio-toggle" aria-pressed={state.muted}

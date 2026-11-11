@@ -67,6 +67,7 @@ app.whenReady().then(async () => {
     name: 'voice-fixture', resolveId: id => id.endsWith('__voice_fixture__.tsx') ? entry : undefined,
     load: id => id === entry ? `
       import React, { useState } from 'react'; import { createRoot } from 'react-dom/client';
+      import {VoiceStageFixture} from ${JSON.stringify(path.resolve("scripts/fixtures/VoiceStageFixture.tsx").replaceAll("\\","/"))};
       import { VoiceConversation, VoiceButton, ApplicationVoiceHost, applicationVoiceSession } from ${JSON.stringify(path.resolve('src/features/voice/VoiceConversation.tsx').replaceAll('\\','/'))};
       import { VoiceCallButton } from ${JSON.stringify(path.resolve('src/features/voice/VoiceCallButton.tsx').replaceAll('\\','/'))};
       import { VoiceSettingsPanel } from ${JSON.stringify(path.resolve('src/features/voice/VoiceSettingsPanel.tsx').replaceAll('\\','/'))};
@@ -99,7 +100,7 @@ app.whenReady().then(async () => {
       function Fixture() {
         const [messages, setMessages] = useState([]), [sessionId,setSessionId] = useState(''), [sending,setSending] = useState(false), [settings,setSettings] = useState(false), [draft,setDraft] = useState('');
         window.fixture.messages = setMessages; window.fixture.session = setSessionId; window.fixture.sending = setSending; window.fixture.settings = setSettings;
-        return <ApplicationVoiceHost language="zh"><VoiceConversation language="zh" target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'turn':null,
+        return <ApplicationVoiceHost><VoiceStageFixture language="zh"/><VoiceConversation target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'turn':null,
           send:async(text,options)=>{window.fixture.sent.push({text,options});setSessionId('created');return true;}}}>
           <div style={{padding:50}}><VoiceButton language="zh" onTranscript={text=>{fixture.dictated.push(text);setDraft(value=>value+text);}}/><VoiceCallButton callEnabled className="send-button">Call</VoiceCallButton><button onClick={()=>setSettings(!settings)}>配置</button><input aria-label="消息" value={draft} onChange={event=>setDraft(event.target.value)} /></div>
         </VoiceConversation>{settings && <VoiceSettingsPanel language="zh"/>}</ApplicationVoiceHost>;
@@ -210,7 +211,7 @@ app.whenReady().then(async () => {
     // Real MediaRecorder/VAD/IPC still merges live call segments and speaks Agent responses.
     const transcriptionsBeforeCall=requests.filter(r=>r.url.endsWith('/transcriptions')).length;
     await holdCall();await until('fixture.state().phase==="listening"');
-    assert.equal(await read('!!document.querySelector(".voice-call-undocked .voice-call-wave")'),true);
+    assert.equal(await read('!!document.querySelector(".stage-call-controls .voice-call-wave")'),true);
     assert.equal(await read('!!document.querySelector(".voice-dialog,.voice-mini")'),false);
     await until('fixture.state().inputPending');
     assert.equal(await read('fixture.sent.length'),0,'a live utterance does not submit early');
@@ -233,9 +234,9 @@ app.whenReady().then(async () => {
     await until('fixture.state().activity.includes("核对最新行情")');await pause(250);
     assert.equal(speechCount(),2,'tool reasons stay silent');
     win.setSize(520,680);await pause(150);
-    assert.equal(await read('(()=>{const r=document.querySelector(".voice-call-undocked").getBoundingClientRect();return r.left>=7&&r.right<=innerWidth-7&&r.bottom<=innerHeight-7;})()'),true);
+    assert.equal(await read('(()=>{const r=document.querySelector(".stage-call-controls").getBoundingClientRect();return r.left>=7&&r.right<=innerWidth-7&&r.bottom<=innerHeight-7;})()'),true);
     await read('document.querySelector("input[aria-label=消息]").focus();window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",cancelable:true}));fixture.session("different-conversation");void 0');
-    assert.equal(await read('!!document.querySelector(".voice-call-undocked")'),true);
+    assert.equal(await read('!!document.querySelector(".stage-call-controls")'),true);
     assert.equal(await read('fixture.tracks.some(t=>t.readyState==="live")'),true);
     win.setSize(850,950);await click('结束通话');await until('!document.querySelector(".voice-composer-call")');
     // Settings use real persistence and remain usable at narrow sizes.

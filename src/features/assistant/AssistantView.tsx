@@ -5,9 +5,9 @@ import { AssistantEventsDialog } from './events/AssistantEventsDialog';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
-import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry, type AssistantReaction } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION, isAssistantPageMessage, type ConversationEntry, type AssistantReaction } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
-import { journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
+import { assistantVoiceMessages, journalMessages, type ConversationJournalSnapshot } from '../../backend/conversationJournal';
 import { assistantBackend } from './assistantBackend';
 import { assistantErrorText } from './assistantError';
 import { VoiceConversation, applicationVoiceSession } from '../voice/VoiceConversation';
@@ -39,8 +39,6 @@ import { AssistantMessageMenu, AssistantQuote, assistantQuoteText, reactionName,
 import { copyText } from '../messageFeedback';
 
 const sessionId = PERSONAL_ASSISTANT_SESSION;
-// Also hide transcripts saved by older versions, without deleting conversational memory.
-const isPageEntry = (entry: ConversationEntry) => entry.visibility !== 'internal' && entry.source !== 'voice';
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'preparing' | 'sending' | 'accepted' | 'failed' };
 export function AssistantView({ active, language, floating, prepare, observeActivity, ownsConfiguration = true, composerControls,
   headerActionsTarget, workSummaryAvailable = true, transcriptFooter, inspectorOpen = false, onToggleInspector,
@@ -70,7 +68,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   useEffect(() => { if (highlighted) { const timer = setTimeout(() => setHighlighted(undefined), 1500); return () => clearTimeout(timer); } }, [highlighted]);
   const submittedRef = useRef(submitted); submittedRef.current = submitted;
   const sendingRequest = useRef<string | undefined>(undefined);
-  const pageEntries = useMemo(() => [...entries.filter(isPageEntry), ...submitted
+  const pageEntries = useMemo(() => [...entries.filter(isAssistantPageMessage), ...submitted
     .filter(item => !entries.some(entry => entry.id === item.entry.id)).map(item => item.entry)], [entries, submitted]);
   const allTasks = useLoopSubagentTasks(sessionId, active && !floating && ready, active && !floating);
   // Reset removes the journal; do not resurrect old tasks in a fresh conversation.
@@ -154,7 +152,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       if (!reactionPending.current) setReactions(current => JSON.stringify(current) === JSON.stringify(result.reactions ?? {}) ? current : result.reactions ?? {});
       if (reset && historyLoaded.current) { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); setReactions(result.reactions ?? {}); closeMessageMenu(); }
       if (historyLoaded.current && !reset && activeRef.current && result.entries.length) {
-        const ids = result.entries.filter(entry => isPageEntry(entry) && !submittedRef.current.some(item => item.entry.id === entry.id)).map(entry => entry.id);
+        const ids = result.entries.filter(entry => isAssistantPageMessage(entry) && !submittedRef.current.some(item => item.entry.id === entry.id)).map(entry => entry.id);
         animateEntries(ids);
       }
       historyLoaded.current = true;
@@ -294,16 +292,14 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     finally { setSubmission(undefined); }
   };
-  // Both sides of the call remain available to inference and speech, independently of the page.
-  const speechMessages = (items: ConversationEntry[]) => journalMessages(items.filter(entry => entry.source !== 'page' && entry.source !== 'task')
-    .map(entry => ({ ...entry, visibility: 'conversation' })), sessionId);
-  const target: VoiceTarget = { agent, environment: 'local', sessionId, contextGeneration: generation.current, messages: speechMessages(entries),
-    historyMessages: journalMessages(entries.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busy, language,
+  const voiceMessages = useMemo(() => assistantVoiceMessages(entries, sessionId), [entries]);
+  const voiceMessagesRef = useRef(voiceMessages);
+  voiceMessagesRef.current = voiceMessages;
+  const target: VoiceTarget = { agent, environment: 'local', sessionId, contextGeneration: generation.current, ...voiceMessages, sending: busy, language,
     assistant: { name: profile.name, persona: profile.persona }, audioPreferences: readAssistantProfile,
     onMicrophoneMuteChange: microphoneMuted => saveAssistantProfile({ ...readAssistantProfile(), microphoneMuted }),
     send: text => voice.snapshot().mode === 'call' ? submit(text, true) : send(text) };
-  target.refresh = () => ({ ...target, contextGeneration: generation.current, messages: speechMessages(entriesRef.current),
-    historyMessages: journalMessages(entriesRef.current.filter(entry => entry.source !== 'task').map(entry => ({ ...entry, visibility: 'conversation' })), sessionId), sending: busyRef.current });
+  target.refresh = () => ({ ...target, contextGeneration: generation.current, ...voiceMessagesRef.current, sending: busyRef.current });
   const [eventsOpen, setEventsOpen] = useState(false);
   const renderTimelineItem = (item: typeof timeline[number]) => {
     if ('task' in item) return <AssistantTaskBubble key={item.key} task={item.task} language={language}/>;
@@ -367,7 +363,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
           void capsule.show('voice');
         }}/>, capsule.host);
   if (!active && !hasOpened.current) return null;
-  if (!composerControls) return <VoiceConversation target={target} language={language} disabled={!ready} active={active}>{floatingView}</VoiceConversation>;
+  if (!composerControls) return <VoiceConversation target={target} disabled={!ready} active={active}>{floatingView}</VoiceConversation>;
   return <section className={`assistant-view chat-panel composer-layout-managed${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     hidden={!active} aria-label={profile.name}>
     {floatingView}
@@ -404,7 +400,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
         {typingBubble}
         {transcriptFooter}
       </div></div>
-      <VoiceConversation target={target} language={language} disabled={!ready} active={active}>
+      <VoiceConversation target={target} disabled={!ready} active={active}>
         <div className="assistant-composer-dock composer-dock" ref={composerDock}>
           <ComposerPortalContext.Provider value={composerPortalTarget}>
           <QuickInputStatus language={language} messages={pageMessages} sending={busy || tasks.some(task => !task.terminal)}

@@ -27,10 +27,13 @@ function subscribe(notify: () => void) {
   };
 }
 export function assistantVoiceActivity(state: VoiceState): AssistantCallPhase | null {
-  if (!state.assistant || state.sessionId !== PERSONAL_ASSISTANT_SESSION || state.mode !== 'call') return null;
-  if (state.error) return 'error';
+  return state.assistant && state.sessionId === PERSONAL_ASSISTANT_SESSION ? voiceCallActivity(state) : null;
+}
+export function voiceCallActivity(state: VoiceState): AssistantCallPhase | null {
+  if (state.mode !== 'call') return null;
+  if (state.error || state.agentError) return 'error';
   if (state.reconnecting || state.phase === 'connecting') return 'connecting';
-  if (state.speaking) return 'speaking';
+  if (state.speaking && !state.outputMuted) return 'speaking';
   return state.muted ? 'muted' : 'listening';
 }
 export function useAssistantActivity(): AssistantActivity {

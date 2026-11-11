@@ -1,10 +1,8 @@
 import { uiText } from '../../i18n';
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
-import { GripVertical, Mic, MicOff, Square, X } from 'lucide-react';
+import { Mic, MicOff, Square, X } from 'lucide-react';
 import { VoiceSession, type VoiceState, type VoiceTarget } from './voiceSession';
-import { voiceComposerPresentation } from './voiceComposerPresentation';
-import { VoiceComposerPanel, VoiceWave } from './VoiceComposerPanel';
+import { VoiceWave } from './VoiceComposerPanel';
 import { playDictationCue } from './voiceCue';
 import type { DictationUpdate } from './dictationPreview';
 import './voice.css';
@@ -15,12 +13,12 @@ export const useVoiceContext = () => useContext(VoiceContext);
 const VoiceHostContext = createContext(false);
 let applicationSession: VoiceSession | undefined;
 export const applicationVoiceSession = () => applicationSession ??= new VoiceSession(window.cardbushDesktop?.voice);
-export function ApplicationVoiceHost({ language, children }: { language: string; children: ReactNode }) {
+export function ApplicationVoiceHost({ children }: { children: ReactNode }) {
   const session = applicationVoiceSession();
   useEffect(() => () => session.end(), [session]);
-  return <VoiceHostContext.Provider value={true}>{children}<UndockedVoiceCall session={session} language={language}/></VoiceHostContext.Provider>;
+  return <VoiceHostContext.Provider value={true}>{children}</VoiceHostContext.Provider>;
 }
-export function VoiceConversation({ target, language, disabled, active = true, children }: { target: VoiceTarget; language: string; disabled?: boolean; active?: boolean; children: ReactNode }) {
+export function VoiceConversation({ target, disabled, active = true, children }: { target: VoiceTarget; disabled?: boolean; active?: boolean; children: ReactNode }) {
   const hosted = useContext(VoiceHostContext);
   const [session] = useState(() => hosted ? applicationVoiceSession() : new VoiceSession(window.cardbushDesktop?.voice));
   const currentTarget = useRef(target);
@@ -34,7 +32,7 @@ export function VoiceConversation({ target, language, disabled, active = true, c
     if (hosted) session.releaseRecording(currentTarget.current);
     else session.end();
   }, [session, hosted]);
-  return <VoiceContext.Provider value={disabled || !active ? null : { session, target }}>{children}{!hosted && <UndockedVoiceCall session={session} language={language}/>}</VoiceContext.Provider>;
+  return <VoiceContext.Provider value={disabled || !active ? null : { session, target }}>{children}</VoiceContext.Provider>;
 }
 
 const idle = { mode: 'idle', phase: 'idle', error: '', retryAvailable: false } as const;
@@ -130,31 +128,4 @@ export function VoiceButton({ language, disabled, onTranscript, onTranscriptUpda
     </>}
     {error && !starting && <DictationErrorNotice key={error} message={error} language={language}/>}
   </span>;
-}
-
-/** Navigation keeps a call alive; its stop control must remain reachable. */
-function UndockedVoiceCall({ session, language }: { session: VoiceSession; language: string }) {
-  const mode = useSyncExternalStore(session.subscribe, () => session.snapshot().mode);
-  const presentation = voiceComposerPresentation(session);
-  const docked = useSyncExternalStore(presentation.subscribe, presentation.snapshot);
-  const box = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ x: number; y: number }>();
-  const drag = useRef<{ id: number; x: number; y: number; left: number; top: number } | undefined>(undefined);
-  const move = (x: number, y: number) => {
-    const rect = box.current?.getBoundingClientRect();
-    if (rect) setPosition({ x: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)), y: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)) });
-  };
-  useEffect(() => {
-    const resize = () => { const rect = box.current?.getBoundingClientRect(); if (rect) move(rect.left, rect.top); };
-    window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize);
-  }, []);
-  if (mode !== 'call' || docked) return null;
-  return createPortal(<div ref={box} className="voice-call-undocked" style={position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : undefined}>
-    <button type="button" className="voice-call-drag" aria-label={uiText(language)('voiceComposerPanel.moveCall')}
-      onPointerDown={event => { if (event.button !== 0) return; const rect = box.current!.getBoundingClientRect(); drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top }; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); }}
-      onPointerMove={event => { const start = drag.current; if (start?.id === event.pointerId) move(start.left + event.clientX - start.x, start.top + event.clientY - start.y); }}
-      onPointerUp={() => { drag.current = undefined; }} onLostPointerCapture={() => { drag.current = undefined; }} onPointerCancel={() => { drag.current = undefined; }}
-      onKeyDown={event => { const delta = { ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -16], ArrowDown: [0, 16] }[event.key]; const rect = box.current?.getBoundingClientRect(); if (delta && rect) { event.preventDefault(); move(rect.left + delta[0], rect.top + delta[1]); } }}><GripVertical/></button>
-    <VoiceComposerPanel session={session} language={language}/></div>,
-    document.querySelector('.app') ?? document.body);
 }

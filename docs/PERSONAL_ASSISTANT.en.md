@@ -42,7 +42,7 @@ Right-click a text message to reply, quote or copy; select text first to quote o
 | Text messages, dictation after the user sends it | Visible and included in ongoing context. |
 | Final text reply | Visible prose without expanded reasoning, tool arguments or loop internals. |
 | `page_write` | Save written material during a voice call. Share a verified file link and the key finding when delivering a report. |
-| Call transcripts | Retained internally without per-utterance bubbles, animations or scrolling. Ordinary conversations still display their own call transcripts. |
+| Speech during a call | Final speech appears as ordinary messages in the same conversation. The active call receives new text from that conversation. Dictation still fills the draft. |
 | Background-task bubble | Intent and actual status; opens the original child execution, remaining available afterward. |
 
 Delegation returns a task ID immediately so conversation can continue. Acceptance is not completion; actual task states determine completed/failed/stopped. Follow-up work stays in the same child conversation, including continuation after completion. Results arrive asynchronously.

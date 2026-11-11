@@ -22,6 +22,7 @@ export const conversationEntrySchema = z.object({
   id: z.string().min(1).max(220), role: z.enum(['user', 'assistant']),
   content: z.string().trim().min(1).max(64000), createdAt: z.string().datetime(),
   source: z.enum(['voice', 'page', 'text', 'task']),
+  voiceMode: z.enum(['realtime', 'chained']).optional(),
   status: z.enum(['completed', 'interrupted']).optional(),
   visibility: z.enum(['conversation', 'internal']).default('conversation'),
   replyTo: assistantReplySchema.optional(),
@@ -40,6 +41,10 @@ export const conversationEntrySchema = z.object({
   }).strict()).max(64).optional(),
 }).strict();
 export type ConversationEntry = z.infer<typeof conversationEntrySchema>;
+/** Historical speech entries were private, including some saved with default visibility. */
+export function isAssistantPageMessage(entry: ConversationEntry) {
+  return entry.visibility === 'conversation' && (entry.source !== 'voice' || entry.voiceMode !== undefined);
+}
 export const assistantEventPreferencesSchema = z.object({
   recognition: z.record(z.string(), z.string().max(8000)),
   beforeExecution: z.enum(['ask', 'within-scope']), report: z.enum(['always', 'important']),

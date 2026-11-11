@@ -2012,14 +2012,17 @@ function CardbushApp() {
   const showChatRail = sidebarCollapsed || hasWorkspaceSidebar;
   const [requestedTurn, setRequestedTurn] = useState<{ sessionId: string; turnId: string } | null>(null);
   const clearRequestedTurn = useCallback(() => setRequestedTurn(null), []);
-  const openRecentConversation = useCallback((id: string) => {
+  const openRecentConversation = useCallback((id: string, returnToCall = false) => {
     revealConversation();
     if (id === PERSONAL_ASSISTANT_SESSION) setSection('assistant');
+    else if (returnToCall && !id) { chat.clearConversationSelection(); setSection('chat'); }
+    else if (returnToCall && id === creationSessionId) setSection('md-presentation');
+    else if (returnToCall && id === teamInspector?.sessionId) setSection('team');
     else if (!openConversation(id)) return;
     setSettingsOpen(false);
     if (drawerLayout) collapseSidebar();
     setRequestedTurn(null);
-  }, [openConversation, revealConversation, drawerLayout, collapseSidebar]);
+  }, [chat.clearConversationSelection, creationSessionId, teamInspector?.sessionId, openConversation, revealConversation, drawerLayout, collapseSidebar]);
   const openWorkspaceNotice = async (notice: WorkspaceNotice) => {
     if (notice.type === 'event') return openEventResult(notice.item);
     const { sessionId, kind, turnId } = notice.item;
@@ -2107,7 +2110,7 @@ function CardbushApp() {
         await chat.reloadConversations();
         handlePreviousConversation(fork.id);
       }}>
-    <ApplicationVoiceHost language={language}>
+    <ApplicationVoiceHost>
     <ImageGalleryProvider sessionId={chat.activeConversationId} messages={chat.activeMessages}
       workspaceRoot={activeProjectDir} pathAliases={activeProjectPathAliases} language={language}>
     <div
@@ -2148,7 +2151,8 @@ function CardbushApp() {
       >
         <RecentConversationBar
           key={JSON.stringify([currentPage, inspectorOpen && inspectorCover])} actions={chatActionsSlot}
-          language={language} theme={theme}
+          composerObscured={settingsOpen || workspacePage || inspectorControlsVisible || drawerLayout && !sidebarCollapsed || compactLayout && inspectorOpen}
+          language={language}
           assistantName={assistantProfile.name} selectedId={assistantVisible ? PERSONAL_ASSISTANT_SESSION : chat.activeConversationId}
           onRecentList={setRecentList} notices={chat.workspaceNotices} openNotice={openWorkspaceNotice} open={openRecentConversation}/>
       </WindowFrame>

@@ -41,11 +41,16 @@ export type RealtimeVoiceEvent = { id: string; responseId?: string } & (
   | { type: 'connection-state'; state: 'reconnecting' | 'paused' | 'connected'; message: string }
   | { type: 'context-compact'; job: RealtimeContextJob }
 );
+export interface VoiceTextSnapshot {
+  context: { role: 'user' | 'assistant'; text: string }[];
+  pendingText?: string;
+}
 export interface RealtimeVoiceApi {
   settings(): Promise<RealtimeVoiceSettings>;
   saveSettings(input: RealtimeVoiceSettingsInput): Promise<RealtimeVoiceSettings>;
   saveVoices(input: RealtimeVoiceSelection): Promise<RealtimeVoiceSettings>;
-  start(input: { id: string; sessionId?: string; timeZone?: string; assistant?: { name: string; persona: string }; voice: string; context: { role: 'user' | 'assistant'; text: string }[] }): Promise<void>;
+  start(input: VoiceTextSnapshot & { id: string; sessionId?: string; timeZone?: string; assistant?: { name: string; persona: string }; voice: string }): Promise<void>;
+  syncText(id: string, sessionId: string, snapshot: VoiceTextSnapshot): Promise<void>;
   audio(id: string, pcm: ArrayBuffer): Promise<void>;
   history(id: string, cursor?: number): Promise<{ history: string; nextCursor: number | null; totalCharacters: number }>;
   control(id: string, action: 'mute' | 'unmute' | 'interrupt' | 'commit'): Promise<void>;

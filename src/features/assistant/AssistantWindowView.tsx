@@ -8,7 +8,7 @@ export function AssistantWindowView({language, theme, appearance, prepare, retai
   language:string; theme:string; appearance:Record<string,string>; prepare():Promise<ChatStreamRequest>;
   retainDraft(value:boolean):void; enabled:boolean; ownsConfiguration:boolean;
 }) {
-  return <UiLanguageProvider language={language}><ApplicationVoiceHost language={language}>
+  return <UiLanguageProvider language={language}><ApplicationVoiceHost>
     <main className={`app resident-assistant ${theme}`} lang={language} style={appearance}>
       <AssistantView active language={language} prepare={prepare} ownsConfiguration={ownsConfiguration}
         floating={{retainDraft}}/>

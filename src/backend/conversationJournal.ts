@@ -29,5 +29,12 @@ export function journalMessages(entries: ConversationEntry[], sessionId: string,
       // Journal replies address the user even while speech is still playing.
       // Display intent is separate from playback/turn completion.
       ...(entry.role === 'assistant' ? { transcript_kind: 'assistant_final' } : {}),
-      conversation_journal: true, cardbush_terminal_snapshot: !streaming && entry.role === 'assistant', voice_transcript: entry.source === 'voice' } }));
+      conversation_journal: true, cardbush_terminal_snapshot: !streaming && entry.role === 'assistant', voice_transcript: entry.source === 'voice', ...(entry.voiceMode ? { voice_mode: entry.voiceMode } : {}) } }));
+}
+
+export function assistantVoiceMessages(entries: ConversationEntry[], sessionId: string) {
+  const historyMessages = journalMessages(entries.filter(entry => entry.source !== 'task' && (entry.source === 'voice' || entry.visibility === 'conversation'))
+    .map(entry => ({ ...entry, visibility: 'conversation' })), sessionId);
+  const publishedPageIds = new Set(entries.filter(entry => entry.source === 'page').map(entry => entry.id));
+  return { historyMessages, messages: historyMessages.filter(message => !publishedPageIds.has(message.id)) };
 }

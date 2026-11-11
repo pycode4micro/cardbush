@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import type { ConversationEntry } from '@cardbush/bush-protocol';
+import { isAssistantPageMessage, type ConversationEntry } from '@cardbush/bush-protocol';
 import type { AssistantSurface } from '../../../electron/assistantSurface';
 
 const readKey = 'cardbush_assistant_read_receipt';
@@ -37,7 +37,7 @@ export function useFloatingAssistant(floating: boolean, active: boolean, entries
     document.addEventListener('visibilitychange', sync);
     return () => { window.removeEventListener('focus', sync); window.removeEventListener('blur', sync); document.removeEventListener('visibilitychange', sync); };
   }, [active]);
-  const replies = useMemo(() => entries.filter(e => e.role === 'assistant' && e.visibility !== 'internal' && e.source !== 'voice'), [entries]);
+  const replies = useMemo(() => entries.filter(e => e.role === 'assistant' && isAssistantPageMessage(e)), [entries]);
   const latest = replies.at(-1);
   useEffect(() => {
     if (generation === undefined || !active) return;

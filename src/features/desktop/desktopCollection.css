@@ -37,8 +37,9 @@
   background:var(--surface);
   box-shadow:inset 0 -1px var(--chrome-edge);
 }
-/* Only a surface overlapping actual content needs a glass backdrop. */
-.app[data-desktop-workspace]:has(> .desktop-shell:not([data-settings-visible]) > .main-stage > .desktop-library[data-header-underlap]) > .window-frame::before {
+html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-window-material-preference="solid"]) > .window-frame::before { background:transparent; }
+/* Keep artwork under the header readable using the existing glass material. */
+html .app[data-desktop-workspace]:has(> .desktop-shell:not([data-settings-visible]) > .main-stage > .desktop-library[data-header-underlap]) > .window-frame::before {
   background:var(--chrome-grain) repeat var(--header-glass); backdrop-filter:var(--chrome-glass-filter);
 }
 html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar::before {
@@ -56,6 +57,7 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
   --chrome-grain:none; --chrome-glass-filter:none; --sidebar-glass-filter:none; --material-layer-display:none;
 }
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  html[data-window-material] .app[data-desktop-workspace]:not([data-window-material-preference="solid"]) > .window-frame::before { background:var(--surface); backdrop-filter:none; }
   :root .app[data-desktop-workspace] .desktop-shell > .sidebar { background:var(--surface); backdrop-filter:none; }
   :root .app[data-desktop-workspace] {
     --header-glass:var(--surface); --drawer-glass:var(--surface);
@@ -68,6 +70,7 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
     flex:0 1 min(100%, calc(var(--header-rail-width) - 10px));
   }
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar > :is(.recent-bar-chat, .recent-bar-actions) { display: none; }
+  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)):has(.stage-call-slot) .window-navigation { flex-basis:48px; }
 }
 .app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
 .app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }

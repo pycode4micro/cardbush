@@ -19,6 +19,7 @@ app.whenReady().then(async()=>{
     name:'voice-routing-fixture',resolveId:id=>id.endsWith('__voice_routing_fixture__.tsx')?'\0voice-routing-fixture.tsx':undefined,
     load:id=>id==='\0voice-routing-fixture.tsx'?`
       import React,{useState,useEffect,useSyncExternalStore} from 'react';import {createRoot} from 'react-dom/client';
+      import {VoiceStageFixture} from ${file('scripts/fixtures/VoiceStageFixture.tsx')};
       import {ApplicationVoiceHost,VoiceConversation,VoiceButton,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
       import {VoiceCallButton} from ${file('src/features/voice/VoiceCallButton.tsx')};
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
@@ -38,19 +39,19 @@ app.whenReady().then(async()=>{
       function BackgroundAssistant({active}){
         const session=applicationVoiceSession();useSyncExternalStore(session.subscribe,session.snapshot);
         const [,tick]=useState(0);useEffect(()=>{const timer=setInterval(()=>tick(i=>i+1),40);return()=>clearInterval(timer);},[]);
-        return <section hidden={!active} data-view="assistant"><VoiceConversation active={active} language="zh"
+        return <section hidden={!active} data-view="assistant"><VoiceConversation active={active}
           target={{...target('personal-assistant'),assistant:{name:'assistant',persona:''},audioPreferences:()=>({microphoneMuted:true,outputMuted:true})}}>
           <VoiceButton language="zh" onTranscript={text=>fixture.dictated.push({owner:'personal-assistant',text})}/><VoiceCallButton callEnabled className="send-button">Call</VoiceCallButton>
         </VoiceConversation></section>;
       }
       function Fixture(){const [view,setView]=useState('assistant'),[mounted,setMounted]=useState(true),[chat,setChat]=useState('chat-a');
         fixture.navigate=setView;fixture.mountChat=setMounted;fixture.changeChat=setChat;
-        return <div className="app theme-dark" style={{padding:40}}><ApplicationVoiceHost language="zh">
+        return <div className="app theme-dark" style={{padding:40}}><ApplicationVoiceHost><VoiceStageFixture language="zh"/>
           <BackgroundAssistant active={view==='assistant'}/>
-          {mounted&&<section hidden={view!=='chat'} data-view="chat"><VoiceConversation active={view==='chat'} language="zh" target={target(chat)}>
+          {mounted&&<section hidden={view!=='chat'} data-view="chat"><VoiceConversation active={view==='chat'} target={target(chat)}>
             <VoiceButton language="zh" onTranscript={text=>fixture.dictated.push({owner:chat,text})}/><VoiceCallButton callEnabled className="send-button">Call</VoiceCallButton>
           </VoiceConversation></section>}
-          <section hidden={view!=='agent'} data-view="agent"><VoiceConversation active={view==='agent'} language="zh" target={target('remote-chat','ssh-host')}>
+          <section hidden={view!=='agent'} data-view="agent"><VoiceConversation active={view==='agent'} target={target('remote-chat','ssh-host')}>
             <VoiceButton language="zh" onTranscript={text=>fixture.dictated.push({owner:'remote-chat',text})}/>
           </VoiceConversation></section>
         </ApplicationVoiceHost></div>;

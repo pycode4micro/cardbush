@@ -25,6 +25,7 @@ app.whenReady().then(async()=>{
     name:'voice-composer-fixture',resolveId:id=>id.endsWith('__voice_composer_fixture__.tsx')?'\0voice-composer-fixture.tsx':undefined,
     load:id=>id==='\0voice-composer-fixture.tsx'?`
       import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
+      import {VoiceStageFixture} from ${file('scripts/fixtures/VoiceStageFixture.tsx')};
       import {ApplicationVoiceHost,VoiceConversation,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
       import {Composer} from ${file('src/features/composer/Composer.tsx')};
       import {ComposerPresentationContext} from ${file('src/features/composer/ComposerPresentationContext.ts')};
@@ -44,8 +45,8 @@ app.whenReady().then(async()=>{
       function Fixture(){const [style,setStyle]=useState('standard'),[draft,setDraft]=useState(''),[view,setView]=useState('chat'),[theme,setTheme]=useState('dark'),[sending,setSending]=useState(false),[portal,setPortal]=useState(false),[portalTarget,setPortalTarget]=useState(null),[language,setLanguage]=useState('zh');
         fixture.sending=setSending;fixture.draft=setDraft;fixture.style=setStyle;fixture.view=setView;fixture.theme=setTheme;fixture.portal=setPortal;fixture.language=value=>{document.documentElement.lang=value;setLanguage(value);};
         const target={environment:'local',sessionId:view,messages:[],sending,...(view==='assistant'?{assistant:{name:'assistant',persona:''}}:{}),send:async text=>{if(fixture.failSend){fixture.failSend=false;throw Error('fixture send failed');}fixture.sent.push(text);return true;}};
-        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost language={language}>
-          <div style={{width:'min(704px,100%)',margin:'0 auto'}}><VoiceConversation language={language} target={target} active={view!=='hidden'}>
+        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost><VoiceStageFixture language={language} returnToCall={setView}/>
+          <div style={{width:'min(704px,100%)',margin:'0 auto'}}><VoiceConversation target={target} active={view!=='hidden'}>
             <ComposerPresentationContext.Provider value={{style,preservePermissions:true}}><ComposerPortalContext.Provider value={portal?portalTarget:null}>
               <Composer {...controls} compact language={language} draft={draft} onDraftChange={setDraft} sending={sending} referencePlanAvailable={false} onSend={target.send} onCancel={async()=>{fixture.cancelled++;}}/>
             </ComposerPortalContext.Provider></ComposerPresentationContext.Provider>
@@ -237,18 +238,16 @@ app.whenReady().then(async()=>{
       await click('.voice-composer-call .voice-audio-toggle:nth-of-type(2)');await until('fixture.state().outputMuted===true');
       await click('.voice-composer-call .voice-audio-toggle:nth-of-type(2)');await until('fixture.state().outputMuted===false');
       const startedAt=await read('fixture.state().startedAt'),frames=await read('fixture.frames');
-      await read('fixture.view("other");void 0');await until('document.querySelector(".voice-call-undocked")&&!document.querySelector(".voice-call-active")');
-      const floating=await rect('.voice-call-undocked'),handle=await rect('.voice-call-drag');
-      const x=Math.round(handle.x+handle.width/2),y=Math.round(handle.y+handle.height/2);
-      win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x,y});
-      win.webContents.sendInputEvent({type:'mouseMove',x:x-80,y:y-50});
-      win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:x-80,y:y-50});await pause(80);
-      const moved=await rect('.voice-call-undocked');assert.ok(moved.x<floating.x-60&&moved.y<floating.y-35,'floating call moves freely');
-      assert.ok(moved.width<=246&&moved.height<55,'background controls remain compact');
-      await screenshot(style+'-floating');
+      await read('fixture.view("other");void 0');await until('document.querySelector(".stage-call-slot .voice-composer-end")&&!document.querySelector(".voice-call-active,.voice-call-undocked")');
+      const contained = () => read('(()=>{const stage=document.querySelector(".stage-call-slot").getBoundingClientRect();return [...document.querySelectorAll(".stage-call-controls button")].every(b=>{const r=b.getBoundingClientRect();return r.width>=22 && r.left>=stage.left && r.right<=stage.right && r.top>=stage.top && r.bottom<=stage.bottom && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})})()');
+      assert.ok(await contained(),'background call controls fit inside the Assistant scene');
+      await click('.stage-call-controls .voice-audio-toggle'); await until('fixture.state().muted');
+      await click('.stage-call-controls .voice-audio-toggle'); await until('!fixture.state().muted');
+      win.setSize(480,600); await pause(200); assert.ok(await contained(),'narrow scene keeps controls clickable');
+      await screenshot(style+'-stage-call'); win.setSize(900,600);
       await until('fixture.frames>'+frames+'+4');assert.equal(await read('fixture.state().startedAt'),startedAt);
-      await read('fixture.view('+JSON.stringify(index?'assistant':'chat')+');void 0');
-      await until('document.querySelector(".voice-call-active")&&!document.querySelector(".voice-call-undocked")');
+      await click('.stage-call-slot .recent-bar-chat');
+      await until('document.querySelector(".voice-call-active")&&!document.querySelector(".stage-call-controls,.voice-call-undocked")');
       await read('fixture.portal(true);void 0');await until('document.querySelector(".inspector-quick-input .voice-call-active")');
       await screenshot(style+'-portal');await read('fixture.portal(false);void 0');
       await until('!document.querySelector(".inspector-quick-input .composer-stack")');

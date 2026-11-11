@@ -89,6 +89,7 @@ export function registerVoiceIpc(windowForSender: (sender: Electron.WebContents)
   });
   ipcMain.handle('voice:realtime-audio', (event, id, pcm) => { authorized(event); return realtime.audio(event.sender.id, id, pcm); });
   ipcMain.handle('voice:realtime-control', (event, id, action) => { authorized(event); return realtime.control(event.sender.id, id, action); });
+  ipcMain.handle('voice:realtime-sync-text', (event, id, sessionId, snapshot) => { authorized(event); return realtime.syncText(event.sender.id, id, sessionId, snapshot); });
   ipcMain.handle('voice:realtime-history', (event, id, cursor) => { authorized(event); return realtime.history(event.sender.id, id, cursor); });
   ipcMain.handle('voice:realtime-results', (event, id, results) => { authorized(event); return realtime.results(event.sender.id, id, results); });
   ipcMain.handle('voice:realtime-notify', (event, id, result) => { authorized(event); return realtime.notify(event.sender.id, id, result); });

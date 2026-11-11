@@ -4,7 +4,7 @@ import type { VoiceState, VoiceTarget } from './voiceSession';
 import { RealtimeVoiceAudio } from './realtimeVoiceAudio';
 import { RealtimeVoiceHangup } from './realtimeVoiceHangup';
 import { RealtimeVoiceCaptions } from './realtimeVoiceCaptions';
-import { RealtimeAgentBridge, realtimeConversationContext } from './realtimeAgentBridge';
+import { RealtimeAgentBridge, realtimeConversationSnapshot } from './realtimeAgentBridge';
 
 export class RealtimeVoiceCall {
   readonly id=crypto.randomUUID();
@@ -83,10 +83,41 @@ export class RealtimeVoiceCall {
     } catch { /* Logging must not affect the audio lifecycle. */ }
   }
   private ownerSessionId?: string;
+  private sentText = '';
+  private syncingText = false;
+  private checkedMessages?: VoiceTarget['messages'];
+  private textRetry?: ReturnType<typeof setTimeout>;
+  private textSyncFailed = false;
+  private async syncText() {
+    if (!this.started || this.closed || !this.ownerSessionId || this.target?.sessionId !== this.ownerSessionId || this.syncingText || this.textRetry) return;
+    this.syncingText = true;
+    try {
+      while (!this.closed) {
+        const messages = this.target?.historyMessages ?? this.target?.messages;
+        if (messages === this.checkedMessages) break;
+        const snapshot = realtimeConversationSnapshot(this.target);
+        const signature = JSON.stringify(snapshot);
+        this.checkedMessages = messages;
+        if (signature !== this.sentText) {
+          await this.api.syncText(this.id, this.ownerSessionId, snapshot);
+          this.sentText = signature;
+        }
+        if (this.textSyncFailed && !this.closed) { this.textSyncFailed = false; this.patch({ contextNotice: '' }); }
+      }
+    } catch {
+      if (!this.closed) {
+        this.checkedMessages = undefined;
+        this.textSyncFailed = true;
+        this.textRetry = setTimeout(() => { this.textRetry = undefined; void this.syncText(); }, 3000);
+        this.patch({ contextNotice: uiText(this.target?.language)('voiceConversation.contextSyncFailed') });
+      }
+    } finally { this.syncingText = false; }
+  }
   update(target:VoiceTarget) {
     if (this.ownerSessionId && target.sessionId !== this.ownerSessionId) return;
     this.target = this.ownerSessionId ? { ...target, agent: this.target?.agent } : target;
     this.bridge.update(this.target);
+    void this.syncText();
   }
   async start(microphoneId:string,voice:string) {
     if (this.target?.environment!=='local') throw Error(uiText()('realtimeVoiceCall.start_realtime_calls_in_a_local_agent'));
@@ -100,9 +131,12 @@ export class RealtimeVoiceCall {
     }
     if (this.closed) return;
     this.ownerSessionId = sessionId || undefined;
-    await this.api.start({id:this.id,sessionId:sessionId||undefined,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,voice,context:realtimeConversationContext(this.target), assistant:this.target?.assistant});
+    const snapshot = realtimeConversationSnapshot(!sessionId || this.target?.sessionId === sessionId ? this.target : undefined);
+    this.sentText = JSON.stringify(snapshot);
+    await this.api.start({id:this.id,sessionId:sessionId||undefined,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,voice,...snapshot, assistant:this.target?.assistant});
     if (this.closed) return;
     this.started=true; this.audio.mute(this.muted); this.diagnostic('connected');
+    void this.syncText();
     if (this.muted) await this.api.control(this.id,'mute');
     if (!this.closed) this.patch({phase:'listening',realtime:true,speakerLocked:false,muted:this.muted});
   }
@@ -185,7 +219,7 @@ export class RealtimeVoiceCall {
   private publishTranscript(role:'user'|'assistant',id:string,text:string,final:boolean,status?:'completed'|'interrupted') {
     const key=role+':'+id,createdAt=this.captionTimes.get(key)??new Date().toISOString();this.captionTimes.set(key,createdAt);
     const entry={id:`${this.id}:${key}`,role,content:text.trim(),createdAt,source:'voice' as const,status,
-      visibility:this.target?.assistant?'internal' as const:'conversation' as const};
+      voiceMode:'realtime' as const, visibility:'conversation' as const};
     if(!final&&text.trim())void this.target?.agent?.preview?.(entry).catch(()=>{});
     if(final){this.captionTimes.delete(key);if(text.trim()&&this.target?.agent?.record){const record=this.target.agent.record.bind(this.target.agent);
       void record(entry).catch(()=>record(entry)).catch(()=>this.patch({agentError:uiText()('realtimeVoiceCall.could_not_save_the_call_transcript_keep')}));}}
@@ -248,7 +282,7 @@ export class RealtimeVoiceCall {
       if (role && entryRole!==role) continue;
       if (content.trim()) void this.target?.agent?.record?.({id:`${this.id}:${key}`,role:entryRole,content:content.trim(),
         createdAt:this.captionTimes.get(key) ?? new Date().toISOString(),source:'voice',status,
-        visibility:this.target.assistant?'internal':'conversation'}).catch(()=>{});
+        voiceMode:'realtime',visibility:'conversation'}).catch(()=>{});
       this.captions.delete(key); this.captionTimes.delete(key);
     }
   }
@@ -263,6 +297,7 @@ export class RealtimeVoiceCall {
   async setVoice(voice:string) { if (this.started && !this.closed) await this.api.setVoice(this.id,voice); }
   private fail(message:string) { if (this.closed) return; this.diagnostic('failed',message); this.close(); this.patch({phase:'idle',reconnecting:false,connectionNotice:'',error:message,speaking:false,muted:true,inputPending:false,level:0}); }
   close() { if (this.closed) return; this.diagnostic('closed'); this.closed=true; this.queuedFrames=[]; this.bridge.close();
+    clearTimeout(this.textRetry);
     this.finishCaptions();
     this.hangup.close();
     this.maintenance.abort(); this.patch({contextNotice:''});
