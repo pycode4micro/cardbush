@@ -31,7 +31,7 @@ async function buildFixture(directory) {
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
-          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
+          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
           react:async(messageId,reaction)=>{if(fixture.failReact)throw Error('fixture reaction failed');fixture.reactions??={};if(reaction)fixture.reactions[messageId]=reaction;else delete fixture.reactions[messageId];return {reactions:structuredClone(fixture.reactions)};},
           answerPermission:async(answer)=>{if(fixture.failPermission)throw Error('Approval connection failed');(fixture.permissionAnswers??=[]).push(answer);fixture.management.permissions=fixture.management.permissions.filter(item=>item.permissionId!==answer.permissionId);},
           stop:async()=>{fixture.stops=(fixture.stops??0)+1;fixture.busy=false;fixture.retry=null;fixture.runtimeError='已停止回复，可以稍后重试。';},
@@ -85,8 +85,8 @@ async function buildFixture(directory) {
         function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile();
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
           return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} floating={false} prepare={noop} settings={noop} switchWindow={noop}>
-            <header className="window-frame" style={{position:'absolute',top:0,left:0,width:180}}><AssistantStageButton language={language} active={active} onOpen={noop} onReturnToCall={noop}/></header>
-            <ChatSidebar language="zh" section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
+            <ChatSidebar language={language} section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
+              assistantEntry={<AssistantStageButton language={language} active={active} onOpen={noop}/>}
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
             <section className="main-stage"><AssistantView active={active} language={language}
@@ -261,6 +261,32 @@ app.whenReady().then(async () => {
     assert.equal(await read('!!document.querySelector(".assistant-view button[aria-label=员工管理]")'), false, 'the Assistant does not offer team administration');
     await read('fixture.hide();void 0'); await until('document.querySelector(".assistant-view").hidden');
     await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-character[data-state=thinking]")');
+    const stage = '.sidebar-footer .assistant-stage';
+    const stageCue = cue => until(`document.querySelector('${stage} [data-cue=${cue}]')`);
+    await stageCue('thought');
+    await read('document.documentElement.dataset.motionPreference="off";fixture.activity="working";void 0');
+    await stageCue('terminal');
+    assert.deepEqual(await read(`(() => {
+      const actor = document.querySelector('${stage} .assistant-stage-actor');
+      const sprite = actor.querySelector('img');
+      const gesture = sprite.getAnimations()[0];
+      const iterations = gesture.effect.getTiming().iterations;
+      gesture.finish();
+      return [iterations, actor.getAnimations().length, getComputedStyle(sprite).translate];
+    })()`), [2, 0, 'none'], 'work gestures settle on a visible resting frame at a fixed position');
+    await read('fixture.theme("bright");void 0');
+    await until('document.querySelector(".app.theme-bright")');
+    assert.equal(await read(`document.querySelector('${stage} img').getAnimations().length`), 0, 'a re-render in the same scene does not restart the gesture');
+    const cursorStyle = `getComputedStyle(document.querySelector('${stage} [data-cue=terminal]'), '::after')`;
+    await read('document.documentElement.dataset.windowVisible="false";void 0');
+    assert.equal(await read(`${cursorStyle}.animationPlayState`), 'paused', 'the terminal cursor pauses in a hidden window');
+    await read('delete document.documentElement.dataset.windowVisible;document.documentElement.dataset.motionPreference="on";void 0');
+    assert.equal(await read(`${cursorStyle}.animationName`), 'none', 'the terminal stays legible without motion');
+    await read('delete document.documentElement.dataset.motionPreference;void 0');
+    await read('fixture.activity="waiting";void 0');
+    await stageCue('hourglass');
+    await read('delete fixture.activity;fixture.theme("dark");void 0');
+    await stageCue('thought');
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'), 3);
     const dark = await read('getComputedStyle(document.querySelector(".assistant-view")).color');
     await read('fixture.theme("bright");void 0'); await until(`getComputedStyle(document.querySelector('.assistant-view')).color!==${JSON.stringify(dark)}`);

@@ -100,7 +100,7 @@ app.whenReady().then(async () => {
       function Fixture() {
         const [messages, setMessages] = useState([]), [sessionId,setSessionId] = useState(''), [sending,setSending] = useState(false), [settings,setSettings] = useState(false), [draft,setDraft] = useState('');
         window.fixture.messages = setMessages; window.fixture.session = setSessionId; window.fixture.sending = setSending; window.fixture.settings = setSettings;
-        return <ApplicationVoiceHost><VoiceStageFixture language="zh"/><VoiceConversation target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'turn':null,
+        return <ApplicationVoiceHost><VoiceStageFixture language="zh" running={sending} open={id=>setSessionId(id)}/><VoiceConversation target={{environment:'local',sessionId,messages,sending,activeTurnId:sending?'turn':null,
           send:async(text,options)=>{window.fixture.sent.push({text,options});setSessionId('created');return true;}}}>
           <div style={{padding:50}}><VoiceButton language="zh" onTranscript={text=>{fixture.dictated.push(text);setDraft(value=>value+text);}}/><VoiceCallButton callEnabled className="send-button">Call</VoiceCallButton><button onClick={()=>setSettings(!settings)}>配置</button><input aria-label="消息" value={draft} onChange={event=>setDraft(event.target.value)} /></div>
         </VoiceConversation>{settings && <VoiceSettingsPanel language="zh"/>}</ApplicationVoiceHost>;

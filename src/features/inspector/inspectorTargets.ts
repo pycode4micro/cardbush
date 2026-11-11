@@ -1,4 +1,5 @@
 import { basename, fileUrl, isAbsoluteLocalPath, resourceTargetKind, stripWrappingQuotes } from '../../shared/localPaths';
+import { isCanvasFilePath } from '@cardbush/bush-protocol';
 import { resolveFilePreview } from './filePreviewRegistry';
 import type { InspectorMediaType, InspectorOpenDetail } from './inspectorEvents';
 import type { InspectorResourceTab } from './inspectorTabs';
@@ -93,6 +94,15 @@ export function inspectorSource(target: string) {
   return adapter.source(path, value);
 }
 
+function fileUrlPathname(decoded: string) {
+  return /^\/[a-z]:\//i.test(decoded) ? decoded.slice(1).replaceAll('/', '\\') : decoded;
+}
+
+export function localCanvasFilePath(target: string) {
+  const path = inspectorFilePath(target);
+  return isAbsoluteLocalPath(path) && isCanvasFilePath(path) ? path : undefined;
+}
+
 export function inspectorFilePath(target: string) {
   const value = stripWrappingQuotes(target.trim());
   if (/^cardbush-file:\/\//i.test(value)) {
@@ -108,7 +118,7 @@ export function inspectorFilePath(target: string) {
       if (parsed.hostname) {
         return `\\\\${decodeURIComponent(parsed.hostname)}${decoded.replaceAll('/', '\\')}`;
       }
-      return decoded.replace(/^\/([a-zA-Z]:)/, '$1').replaceAll('/', '\\');
+      return fileUrlPathname(decoded);
     } catch {
       return '';
     }
@@ -119,7 +129,7 @@ export function inspectorFilePath(target: string) {
       const decoded = decodeURIComponent(parsed.pathname);
       return parsed.hostname
         ? `\\\\${parsed.hostname}${decoded.replaceAll('/', '\\')}`
-        : decoded.replace(/^\/([a-zA-Z]:)/, '$1').replaceAll('/', '\\');
+        : fileUrlPathname(decoded);
     } catch {
       return '';
     }

@@ -31,10 +31,31 @@ const appStyles = readSourceFile(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
 );
-const { normalizeExecutionNarrationForDisplay, normalizeMarkdownContentForDisplay, remarkAutolinkBoundaries } = await loadChatTranscript({
+const { normalizeExecutionNarrationForDisplay, normalizeMarkdownContentForDisplay, remarkAutolinkBoundaries, remarkSectionLists } = await loadChatTranscript({
   source: `export * from ${JSON.stringify(sourcePath)};`,
 });
-const remarkPlugins = [remarkGfm, remarkCjkFriendly, remarkAutolinkBoundaries];
+const remarkPlugins = [remarkGfm, remarkCjkFriendly, remarkSectionLists, remarkAutolinkBoundaries];
+
+const renderMarkdown = content => renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins }, normalizeMarkdownContentForDisplay(content)));
+const firstGroup = '**国内**\n1. 甲\n2. 乙\n3. 丙';
+const secondGroup = '**国际**\n4. [丁](https://example.com)\n5. 戊\n6. 己\n7. 庚\n8. 辛\n9. 壬\n10. 癸';
+for (const newline of ['\n', '\r\n']) {
+  const content = [firstGroup, secondGroup, '末段'].join('\n\n').replaceAll('\n', newline);
+  const html = renderMarkdown(content);
+  assert.equal(html, renderMarkdown(content.replace('**国际**' + newline, '**国际**' + newline + newline)));
+  assert.equal(html.match(/<li>/g)?.length, 10);
+  assert.ok(html.includes('<ol start="4">') && html.includes('<a href="https://example.com">丁</a>'));
+}
+assert.match(renderMarkdown(firstGroup + '\n\n__Next__\n4) final item'), /<ol start="4">\n<li>final item<\/li>/);
+assert.match(renderMarkdown('**Next**\n8) eight\n9) nine'), /<ol start="8">\n<li>eight<\/li>\n<li>nine<\/li>/);
+for (const literal of [
+  '**Year**\n2026. A date',
+  'A **partial** label\n4. four\n5. five',
+  '**Escaped**\n4\\. four\n5\\. five',
+  '```md\n**Example**\n4. four\n5. five\n```',
+]) {
+  assert.equal(renderMarkdown(literal), renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [remarkGfm, remarkCjkFriendly] }, literal)), literal);
+}
 
 const emphasisCases = [
   ['**视频还没有生成。**已找到资料', '<p><strong>视频还没有生成。</strong>已找到资料</p>'],

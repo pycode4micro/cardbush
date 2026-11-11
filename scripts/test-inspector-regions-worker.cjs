@@ -5,7 +5,9 @@ const {pathToFileURL}=require('node:url');
 const assert=require('node:assert/strict');
 const {captureInspectorRegion}=require('../dist-electron/inspectorRegionCapture.js');
 const {renderOfficePreview}=require('../dist-electron/officePreview.js');
+const {localFileSystemPathFromProtocolUrl}=require('../dist-electron/localFileProtocol.js');
 const directory=process.argv[2];
+app.setPath('userData', join(directory, 'electron-profile'));
 protocol.registerSchemesAsPrivileged([{scheme:'cardbush-file',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true,stream:true}}]);
 app.on('window-all-closed',()=>{});
 app.whenReady().then(async()=>{
@@ -22,7 +24,7 @@ app.whenReady().then(async()=>{
    if(/\.docx?$/.test(path))return new Response(await renderOfficePreview(path),{headers:{'Content-Type':'text/html'}});
    return new Response(await readFile(resolve('dist/office-preview.html')),{headers:{'Content-Type':'text/html'}});
   }
-  const file=path||decodeURIComponent(url.pathname).replace(/^\/(?=[A-Za-z]:)/,'');
+  const file=path||localFileSystemPathFromProtocolUrl(request.url);
   return net.fetch(pathToFileURL(file).href);
  });
  const read=script=>win.webContents.executeJavaScript(script).catch(error=>{console.error('Failed script:',script.slice(0,900));throw error;});
@@ -40,6 +42,45 @@ app.whenReady().then(async()=>{
  const type=async value=>{await read(`(()=>{const input=document.querySelector('.inspector-region-conversation textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);await frame();};
  try {
   await win.loadFile(join(directory,'app/index.html'));await until('typeof openPreview==="function"');
+  if (process.argv.includes('--large-previews')) {
+   await open('pdf');
+   await until("document.querySelector('[data-region-page=\"1\"]:not([data-region-loading]) .pdf-region-text span')?.textContent.includes('Quarterly PDF')");
+   const pageCount = () => read("document.querySelectorAll('[data-region-page]').length");
+   const firstWindow = await pageCount();
+   assert.ok(firstWindow > 0 && firstWindow < 12);
+   await click(await point('[data-region-page="1"] .pdf-region-text span', false));
+   await until('document.querySelector(".inspector-region-conversation header")?.textContent.includes("第1页")');
+   await close();
+   await read("document.querySelector('.inspector-pdf-toolbar button:last-of-type').click()");
+   await until("document.querySelector('.inspector-pdf-toolbar')?.textContent.includes('125%')");
+   await read("const scroller=document.querySelector('.inspector-pdf-preview');scroller.scrollTop=scroller.scrollHeight*0.8");
+   const lastPainted = "Array.from(document.querySelectorAll('[data-region-page]:not([data-region-loading])')).at(-1)?.dataset.regionPage";
+   await until('Number(' + lastPainted + ') > 600');
+   await frame();
+   const anchor = Number(await read(lastPainted));
+   const farWindow = await pageCount();
+   assert.ok(farWindow < 12);
+   const visiblePage = '[data-region-page="' + anchor + '"]';
+   await read(`window.cachedPdfCanvas=document.querySelector('${visiblePage} canvas');window.cachedPdfText=document.querySelector('${visiblePage} .pdf-region-text span');void 0`);
+   await read('window.setPreviewVisible(false)');
+   await until("document.querySelectorAll('.inspector-pdf-page:not([data-region-loading])').length === 0");
+   await read('window.setPreviewVisible(true)');
+   await until('Math.abs(Number(' + lastPainted + ')-' + anchor + ') < 5');
+   assert.ok(await read(`document.querySelector('${visiblePage} canvas')===cachedPdfCanvas && cachedPdfCanvas.width>0 &&
+     cachedPdfText && document.querySelector('${visiblePage} .pdf-region-text span')===cachedPdfText`), 'the completed bitmap and text layer survive a quick return');
+   assert.ok(await read("document.querySelector('.inspector-pdf-toolbar').textContent.includes('125%')"));
+
+   await read(`window.setEnabled(false);window.openPreview(${JSON.stringify(join(directory,'frames.md'))})`);
+   const images = "Array.from(document.querySelectorAll('.markdown-inspector-document img'))";
+   await until(images + '.length === 64 && ' + images + '[0].naturalWidth > 0');
+   assert.ok(await read(images + ".every(image => image.loading === 'lazy')"));
+   const firstImages = await read(images + '.filter(image => image.naturalWidth > 0).length');
+   assert.ok(firstImages < 64);
+   await read(images + ".at(-1).scrollIntoView()");
+   await until(images + '.at(-1).naturalWidth > 0');
+   console.log('PASS: PDF text selection, 1000-page PDF mounted', firstWindow, 'then', farWindow, 'pages; restored zoom and page near', anchor, '; Markdown loaded', firstImages, 'of 64 images initially.');
+   return;
+  }
   await until('published?.scope==="agent-a"');assert.ok(await read('publisherRenderCount<8'),'equivalent message arrays do not cause a render loop');
   await read('setPublisherScope("agent-b")');await until('published?.scope==="agent-b"');await read('published.send("region")');assert.equal(await read('publisherSentTo'),'agent-b');
   await read('setPublisherActive(false)');await until('published===null');
@@ -67,6 +108,9 @@ app.whenReady().then(async()=>{
   await close();await read('document.querySelector("webview").setZoomFactor(1)');await delay(100);
   await close();pointer('mouseDown',{x:40,y:75});pointer('mouseMove',{x:600,y:250});pointer('mouseUp',{x:600,y:250});
   await until('document.querySelector(".inspector-region-conversation header")?.textContent.includes("自定义")');
+  const rectangle = await queryGuest('({point:{x:40,y:75},box:{x:40,y:75,width:560,height:175}})');
+  assert.equal(rectangle.custom, true);
+  assert.match(rectangle.text, /Selected paragraph to revise/);
   await type('Unsent draft');await read('setScope("session-b")');await until('!document.querySelector(".inspector-region-conversation")');
   await read('document.querySelector(".inspector-region-hit-area").dispatchEvent(new WheelEvent("wheel",{deltaY:450,clientX:150,clientY:300,bubbles:true,cancelable:true}))');await untilGuest('scrollY>200');
   const bottom=await queryGuest('(()=>{const r=document.querySelector("#bottom").getBoundingClientRect();return {point:{x:r.x+10,y:10},box:{x:40,y:0,width:300,height:300}}})()');assert.ok(!bottom.text.includes('Selected paragraph'),'offscreen text is excluded');
@@ -78,21 +122,23 @@ app.whenReady().then(async()=>{
   const selected=await queryGuest(JSON.stringify({point:{x:b2.rect.x+10,y:b2.rect.y+b2.rect.height/2}}));assert.equal(selected.sheet,'Revenue');assert.deepEqual(selected.cells,['B2']);assert.match(selected.text,/101/);
   const a1=cells.find(c=>c.cell==='A1'),c3=cells.find(c=>c.cell==='C3');
   const group=await queryGuest(JSON.stringify({point:{x:c3.rect.x+3,y:c3.rect.y+3},box:{x:a1.rect.x+1,y:a1.rect.y+1,width:c3.rect.x+c3.rect.width-a1.rect.x-2,height:c3.rect.y+c3.rect.height-a1.rect.y-2}}));assert.equal(group.cells.length,9);assert.equal(new Set(group.cells).size,9);
-  await guest('document.querySelector("[data-office-action=zoom-in]").click()');await delay(150);
-  const zoomed=await guest('document.querySelector("[data-region-grid]").cardbushRegionCells().find(cell=>cell.cell==="B2")');assert.ok(zoomed.rect.width>b2.rect.width);
+  const visibleB2='document.querySelector("[data-region-grid]").cardbushRegionCells().find(cell=>cell.cell==="B2")';
+  await guest('document.querySelector("[data-office-action=zoom-in]").click()');
+  await untilGuest(`(${visibleB2})?.rect.width > ${b2.rect.width}`);
+  const zoomed=await guest(visibleB2);
   assert.deepEqual((await queryGuest(JSON.stringify({point:{x:zoomed.rect.x+10,y:zoomed.rect.y+zoomed.rect.height/2}}))).cells,['B2']);
   await guest('document.querySelector("[data-region-grid]").cardbushRegionScroll(0,650)');await delay(250);assert.ok((await guest('document.querySelector("[data-region-grid]").cardbushRegionCells()')).some(cell=>Number(cell.cell.slice(1))>25));
   await guest('document.querySelectorAll(".sheet-tab")[1].click()');await delay(450);assert.equal((await guest('document.querySelector("[data-region-grid]").cardbushRegionCells()'))[0].sheet,'Expenses');
   await open('pptx');await untilGuest('!!document.querySelector("[data-slide-index],.slide")',40000);
   const slide=await queryGuest('(()=>{const r=document.querySelector("[data-slide-index],.slide").getBoundingClientRect();return {point:{x:r.x+120,y:r.y+100},box:{x:r.x,y:r.y,width:r.width,height:r.height}}})()');assert.equal(slide.page,'1');assert.match(slide.text,/Quarterly presentation/);
   const shape=await queryGuest('(()=>{const e=[...document.querySelectorAll(".block,p")].find(el=>el.textContent.includes("Quarterly presentation"));const r=e.getBoundingClientRect();return {point:{x:r.x+r.width/2,y:r.y+r.height/2}}})()');assert.equal(shape.page,'1');assert.match(shape.text,/Quarterly presentation/);
-  await open('pdf');await until('document.querySelector(".pdf-region-text span")?.textContent.includes("Quarterly PDF")',20000);
+  await open('pdf');await until(`document.querySelector('[data-region-page="1"]:not([data-region-loading]) .pdf-region-text span')?.textContent.includes('Quarterly PDF')`,20000);
   await click(await point('.pdf-region-text span',false));await until('document.querySelector(".inspector-region-conversation header")?.textContent.includes("第1页")');
   await type('Update this PDF heading');await until('!document.querySelector("[aria-label=发送选区要求]").disabled');await read('document.querySelector(".inspector-region-conversation").requestSubmit()');await until('prompts.length===3');assert.match(await read('prompts[2].content'),/Quarterly PDF/);
   assert.equal(await read('projectedUser.content'),'Update this PDF heading');
   await writeFile(resolve('tmp/inspector-region-pdf.png'),(await win.webContents.capturePage()).toPNG());
   await read(`document.querySelector('[aria-label="放大 PDF"]').click()`);await until('!document.querySelector(".inspector-region-conversation")');
-  await close();await read('document.querySelector(".inspector-pdf-preview").scrollTop=10000');await until(`document.querySelector('[data-region-page="2"] .pdf-region-text span')?.textContent.includes('Second landscape')`);
+  await close();await read('document.querySelector(".inspector-pdf-preview").scrollTop=10000');await until(`document.querySelector('[data-region-page="2"]:not([data-region-loading]) .pdf-region-text span')?.textContent.includes('Second landscape')`);
   await read(`document.querySelector('[data-region-page="2"] .pdf-region-text span').scrollIntoView({block:'center'})`);await frame();
   await click(await point('[data-region-page="2"] .pdf-region-text span',false));await until('document.querySelector(".inspector-region-conversation header")?.textContent.includes("第2页")');
   await close();await read('document.querySelector(".inspector-pdf-preview").scrollTop=0');win.setSize(300,420);await delay(250);await click(await point('.pdf-region-text span',false));await until('!!document.querySelector(".inspector-region-conversation")');

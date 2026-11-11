@@ -25,7 +25,7 @@ app.whenReady().then(async()=>{
     name:'voice-composer-fixture',resolveId:id=>id.endsWith('__voice_composer_fixture__.tsx')?'\0voice-composer-fixture.tsx':undefined,
     load:id=>id==='\0voice-composer-fixture.tsx'?`
       import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
-      import {VoiceStageFixture} from ${file('scripts/fixtures/VoiceStageFixture.tsx')};
+      import {VoiceStageFixture,setAssistantActivity} from ${file('scripts/fixtures/VoiceStageFixture.tsx')};
       import {ApplicationVoiceHost,VoiceConversation,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
       import {Composer} from ${file('src/features/composer/Composer.tsx')};
       import {ComposerPresentationContext} from ${file('src/features/composer/ComposerPresentationContext.ts')};
@@ -37,15 +37,16 @@ app.whenReady().then(async()=>{
       const getMedia=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia=async options=>{fixture.captures++;if(fixture.failCapture)throw new DOMException('fixture missing microphone','NotFoundError');const stream=await getMedia(options);fixture.tracks.push(...stream.getTracks());return stream;};
       const settings=${JSON.stringify({...defaultVoiceSettings,engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,speakerLockEnabled:false})};
-      window.cardbushDesktop={pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),voice:{settings:async()=>settings,setCallActive:async()=>{},cancel:async()=>{},
+      window.cardbushDesktop={platform:"win32",pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),voice:{settings:async()=>settings,setCallActive:async()=>{},cancel:async()=>{},
         transcribe:async input=>{fixture.transcriptions++;fixture.audio=input;if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);if(fixture.failTranscription){fixture.failTranscription=false;throw Error('fixture transcription failed');}return{text:fixture.emptyTranscription?'':(fixture.state().phase==='transcribing'?fixture.finalText??'这是录音测试':fixture.previewText??''),speakerVerified:true};},speak:async()=>{},onAudio:()=>()=>{},
         realtime:{settings:async()=>(${JSON.stringify({...defaultRealtimeVoiceSettings,mode:'realtime',hasApiKey:true})}),start:async()=>{fixture.started++;if(fixture.holdStart)await new Promise(resolve=>fixture.releaseStart=resolve);if(fixture.failStart)throw Error('fixture connection failed');},audio:async()=>fixture.frames++,control:async()=>{},playback:async()=>{},close:async()=>fixture.closed++,onEvent:()=>()=>{}}}};
-      fixture.state=()=>applicationVoiceSession().snapshot();
+      fixture.state=()=>applicationVoiceSession().snapshot();fixture.activity=setAssistantActivity;
       const noop=()=>{},controls={selectedModel:'fixture',availableModels:[],onModelChange:noop,onConfigureModels:noop,referencePlanMode:'off',onReferencePlanModeChange:noop,permissionMode:'task_free',onPermissionModeChange:noop,subagentPermissionRouting:'inherit',onSubagentPermissionRoutingChange:noop,reasoningLevel:'medium',reasoningLevels:['medium'],reasoningLevelAvailable:false,onReasoningLevelChange:noop,skills:[],disabledSkillNames:new Set(),onToggleSkill:noop};
       function Fixture(){const [style,setStyle]=useState('standard'),[draft,setDraft]=useState(''),[view,setView]=useState('chat'),[theme,setTheme]=useState('dark'),[sending,setSending]=useState(false),[portal,setPortal]=useState(false),[portalTarget,setPortalTarget]=useState(null),[language,setLanguage]=useState('zh');
+        const [viewingConversation,setViewingConversation]=useState(false);fixture.viewingConversation=setViewingConversation;
         fixture.sending=setSending;fixture.draft=setDraft;fixture.style=setStyle;fixture.view=setView;fixture.theme=setTheme;fixture.portal=setPortal;fixture.language=value=>{document.documentElement.lang=value;setLanguage(value);};
         const target={environment:'local',sessionId:view,messages:[],sending,...(view==='assistant'?{assistant:{name:'assistant',persona:''}}:{}),send:async text=>{if(fixture.failSend){fixture.failSend=false;throw Error('fixture send failed');}fixture.sent.push(text);return true;}};
-        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost><VoiceStageFixture language={language} returnToCall={setView}/>
+        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost><VoiceStageFixture language={language} running={sending} viewingConversation={viewingConversation} open={(id,call)=>{fixture.opened=id;if(call)setView(id);}}/>
           <div style={{width:'min(704px,100%)',margin:'0 auto'}}><VoiceConversation target={target} active={view!=='hidden'}>
             <ComposerPresentationContext.Provider value={{style,preservePermissions:true}}><ComposerPortalContext.Provider value={portal?portalTarget:null}>
               <Composer {...controls} compact language={language} draft={draft} onDraftChange={setDraft} sending={sending} referencePlanAvailable={false} onSend={target.send} onCancel={async()=>{fixture.cancelled++;}}/>
@@ -78,6 +79,26 @@ app.whenReady().then(async()=>{
   const screenshot=async name=>{win.webContents.invalidate();await pause(300);fs.writeFileSync(path.join(directory,name+'.png'),(await win.webContents.capturePage()).toPNG());};
   try{
     await win.loadFile(path.join(directory,'index.html'));await until('document.querySelector(".voice-dictation-button")');
+    await read('fixture.activity("working");void 0');await until('document.querySelector(".window-frame .recent-chat-copy strong")?.textContent==="Assistant"');
+    await click('.recent-bar-chat');await until('fixture.opened==="personal-assistant"&&!document.querySelector(".recent-turn-drawer:popover-open")');
+    await read('fixture.activity("idle");fixture.sending(true);void 0');
+    await until('document.querySelector(".window-frame .recent-chat-copy strong")?.textContent==="Fixture chat" && document.querySelector(".recent-chat-copy small")?.textContent==="Working"');
+    await click('.recent-bar-chat');await until('fixture.opened==="chat"&&!document.querySelector(".recent-turn-drawer:popover-open")');
+    await read('fixture.viewingConversation(true);fixture.sending(false);fixture.activity("working");void 0');
+    await until('document.querySelector(".recent-chat-copy strong")?.textContent==="Fixture chat" && !document.querySelector(".recent-chat-copy small")');
+    await read('fixture.opened=null;void 0');await click('.recent-bar-chat');await until('fixture.opened==="chat"');
+    await read('fixture.viewingConversation(false);void 0');
+    await until('document.querySelector(".recent-chat-copy strong")?.textContent==="Assistant"');
+    await read('fixture.activity("idle");void 0');await until('!document.querySelector(".recent-bar-chat")');
+    await click('.recent-bar-list');await until('document.querySelector(".recent-turn-drawer:popover-open")');
+    await read('fixture.activity("thinking");void 0');await until('document.querySelector(".recent-bar-chat")');
+    assert.ok(await read(`(() => {
+      const title = document.querySelector('.recent-bar-chat').getBoundingClientRect();
+      const spacer = document.querySelector('.window-spacer').getBoundingClientRect();
+      return title.right <= spacer.left && title.width < spacer.width && title.width > 0;
+    })()`), 'the task title hit target fits its content');
+    await read('fixture.activity("idle");void 0');await until('!document.querySelector(".recent-bar-chat")');
+    await click('.recent-panel-close');
     if(liveDictation){
       await fill('原有草稿');await read('fixture.previewText="你好世";fixture.finalText="你好世界，实时听写。";void 0');
       await click('.voice-dictation-button');await until('fixture.state().phase==="recording"');
@@ -228,26 +249,32 @@ app.whenReady().then(async()=>{
       assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'请保留这段草稿');
       assert.ok(await read('document.querySelector(".composer-file-strip").textContent.includes("report.txt")'));
       assert.equal(await read('!!document.querySelector(".voice-mini,.voice-dialog,.voice-call-overlay,.voice-floating-composer,.voice-call-undocked")'),false);
-      const stop=await rect('.voice-composer-end');assert.ok(Math.abs(stop.x-beforeCall.x)<.5,'stop replaces the same right-hand control');
+      const stop=await rect('.composer-surface .voice-composer-end');assert.ok(Math.abs(stop.x-beforeCall.x)<.5,'stop replaces the same right-hand control');
       assert.ok(await read('getComputedStyle(document.querySelector(".composer-tools")).visibility==="hidden"'));
       assert.ok(await read('document.querySelector(".voice-call-wave path").getAttribute("d").startsWith("M")'));
       await screenshot(style+'-call');
-      assert.equal(await read('document.querySelectorAll(".voice-composer-call .voice-audio-toggle").length'),2,'call controls expose only microphone and output mute');
+      assert.equal(await read('document.querySelectorAll(".composer-surface .voice-composer-call .voice-audio-toggle").length'),2,'call controls expose only microphone and output mute');
       await click('.voice-composer-call .voice-audio-toggle');await until('fixture.state().muted===true');
       await click('.voice-composer-call .voice-audio-toggle');await until('fixture.state().muted===false');
       await click('.voice-composer-call .voice-audio-toggle:nth-of-type(2)');await until('fixture.state().outputMuted===true');
       await click('.voice-composer-call .voice-audio-toggle:nth-of-type(2)');await until('fixture.state().outputMuted===false');
       const startedAt=await read('fixture.state().startedAt'),frames=await read('fixture.frames');
-      await read('fixture.view("other");void 0');await until('document.querySelector(".stage-call-slot .voice-composer-end")&&!document.querySelector(".voice-call-active,.voice-call-undocked")');
-      const contained = () => read('(()=>{const stage=document.querySelector(".stage-call-slot").getBoundingClientRect();return [...document.querySelectorAll(".stage-call-controls button")].every(b=>{const r=b.getBoundingClientRect();return r.width>=22 && r.left>=stage.left && r.right<=stage.right && r.top>=stage.top && r.bottom<=stage.bottom && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})})()');
-      assert.ok(await contained(),'background call controls fit inside the Assistant scene');
+      await read('fixture.view("other");void 0');await until('!document.querySelector(".voice-call-active,.voice-call-undocked")');
+      await until('document.querySelector(".window-frame .stage-call-controls .background-call-return")');
+      assert.equal(await read('!!document.querySelector(".recent-bar-chat,.recent-turn-drawer .stage-call-controls")'),false,'background call controls stay in the title bar');
+      const contained = () => read('(()=>{const stage=document.querySelector(".window-frame").getBoundingClientRect();return [...document.querySelectorAll(".stage-call-controls button")].every(b=>{const r=b.getBoundingClientRect();return r.width>=22 && r.left>=stage.left && r.right<=stage.right && r.top>=stage.top && r.bottom<=stage.bottom && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})})()');
+      assert.ok(await contained(),'a background call is directly accessible in the title bar');
+      await read('fixture.sending(true);void 0');
+      await until('document.querySelector(".recent-chat-copy small")');
+      assert.ok(await read('(()=>{const r=s=>document.querySelector(s).getBoundingClientRect(),t=r(".recent-chat-copy strong"),s=r(".recent-chat-copy small"),c=r(".stage-call-controls");return s.left>=t.right+7 && Math.abs(s.bottom-t.bottom)<5 && c.left>=s.right+10})()'),'title, status and call have distinct inline spacing');
       await click('.stage-call-controls .voice-audio-toggle'); await until('fixture.state().muted');
       await click('.stage-call-controls .voice-audio-toggle'); await until('!fixture.state().muted');
+      await until('fixture.state().mode==="call"&&fixture.frames>'+frames+'+2');
       win.setSize(480,600); await pause(200); assert.ok(await contained(),'narrow scene keeps controls clickable');
-      await screenshot(style+'-stage-call'); win.setSize(900,600);
+      await screenshot(style+'-stage-call'); win.setSize(900,600); await read('fixture.sending(false);void 0');
       await until('fixture.frames>'+frames+'+4');assert.equal(await read('fixture.state().startedAt'),startedAt);
-      await click('.stage-call-slot .recent-bar-chat');
-      await until('document.querySelector(".voice-call-active")&&!document.querySelector(".stage-call-controls,.voice-call-undocked")');
+      await click('.stage-call-controls .background-call-return');
+      await until('document.querySelector(".voice-call-active")&&!document.querySelector(".background-call-return,.voice-call-undocked")');
       await read('fixture.portal(true);void 0');await until('document.querySelector(".inspector-quick-input .voice-call-active")');
       await screenshot(style+'-portal');await read('fixture.portal(false);void 0');
       await until('!document.querySelector(".inspector-quick-input .composer-stack")');
@@ -255,9 +282,16 @@ app.whenReady().then(async()=>{
       await screenshot(style+'-call-narrow-light');
       assert.ok(await read('document.documentElement.scrollWidth<=innerWidth'));
       // The real provider voice selector shares this row with the waveform.
-      assert.ok(await read('(()=>{const a=document.querySelector(".voice-call-signal").getBoundingClientRect(),p=document.querySelector(".realtime-voice-picker").getBoundingClientRect(),m=document.querySelector(".voice-composer-call .voice-audio-toggle:nth-of-type(2)").getBoundingClientRect(),b=document.querySelector(".voice-composer-end").getBoundingClientRect();return a.width>=64&&p.width>=48&&a.right<=p.left&&p.right<=m.left&&m.right<=b.left&&b.right<=innerWidth;})()'),JSON.stringify({wave:await rect('.voice-call-signal'),end:await rect('.voice-composer-end'),picker:await rect('.realtime-voice-picker')}));
+      assert.ok(await read('(()=>{const a=document.querySelector(".composer-surface .voice-call-signal").getBoundingClientRect(),p=document.querySelector(".realtime-voice-picker").getBoundingClientRect(),m=document.querySelector(".composer-surface .voice-composer-call .voice-audio-toggle:nth-of-type(2)").getBoundingClientRect(),b=document.querySelector(".composer-surface .voice-composer-end").getBoundingClientRect();return a.width>=64&&p.width>=48&&a.right<=p.left&&p.right<=m.left&&m.right<=b.left&&b.right<=innerWidth;})()'),JSON.stringify({wave:await rect('.voice-call-signal'),end:await rect('.voice-composer-end'),picker:await rect('.realtime-voice-picker')}));
       win.setSize(900,600);
-      await click('.voice-composer-end');await until('fixture.state().mode==="idle"&&!document.querySelector(".voice-composer-call")');
+      if(index===0) await click('.composer-surface .voice-composer-end');
+      else {
+        await read('fixture.view("other");void 0');
+        await until('document.querySelector(".stage-call-controls .voice-composer-end")');
+        await click('.stage-call-controls .voice-composer-end');
+        await read('fixture.view("chat");void 0');
+      }
+      await until('fixture.state().mode==="idle"&&!document.querySelector(".voice-composer-call")');
       assert.equal(await read('fixture.cancelled'),0,'ending voice must not cancel the Agent');
       assert.equal(await read('document.querySelector(".composer-surface textarea").value'),'请保留这段草稿');
       await click('.send-button');await until('document.querySelector(".composer-surface textarea").value===""');

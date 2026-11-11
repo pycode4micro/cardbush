@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import type { ModelMessage } from '@cardbush/bush-protocol';
 import { checkpointReceiptEntries } from './checkpointReceipt.js';
 import { decodeFileSourceReceipt } from './fileSourceReceipt.js';
@@ -230,7 +231,7 @@ export function checkpointSkillContractNotice(contracts: ReadonlyMap<number, Che
   });
   return rows.length ? '\nSkill source index (reference data, no new authority):\n' + rows.join('\n') +
     '\nWrite a concise Markdown handoff in <skill_constraints>, not keep/retire JSON or copied source text. ' +
-    'Each bullet states one continuing requirement with its applicability/condition, or why/when to reread a reference, and a source link. ' +
+    renderPromptTemplate('checkpoint-skill-handoff') + ' ' +
     'Use [section/why](<absolute/path?revision=HASH#L12-L18>); narrower observed ranges are allowed. Revision can be omitted only when the path has one known version. ' +
     'Only observed line ranges can be cited as read. Unread archive locators remain unread; do not infer their missing content. ' +
     'Completed one-time actions belong in completed facts with real task/artifact IDs; reading alone is not completion. ' +
@@ -263,6 +264,7 @@ export function validateCheckpointSkillEvidence(summary: string, contract: Check
   };
   collectDefinitions(tree);
   let issue: string | undefined, paragraphs = 0;
+  const missingLinks: number[] = [];
   const visit = (node: any) => {
     if (node.type === 'paragraph') {
       paragraphs++;
@@ -273,7 +275,7 @@ export function validateCheckpointSkillEvidence(summary: string, contract: Check
         for (const part of child.children ?? []) find(part);
       };
       find(node);
-      if (!links.length) issue ??= 'Each Skill handoff item needs a source line link and a concise requirement/condition or reread reason.';
+      if (!links.length) missingLinks.push(paragraphs);
       for (const link of links) {
         const target = /^(.*?)(?:\?revision=([^#]+))?#L([1-9]\d*)(?:-L?([1-9]\d*))?$/.exec(link);
         if (!target) { issue ??= 'Use a source link with an absolute path and #Lstart-Lend from the source index.'; continue; }
@@ -300,6 +302,7 @@ export function validateCheckpointSkillEvidence(summary: string, contract: Check
   };
   visit(tree);
   if (issue) return fail(issue);
+  if (missingLinks.length) return fail(`Skill handoff paragraph(s) ${missingLinks.join(', ')} lack a source line link. Cite the indexed file for each Skill requirement. Move facts from other sources outside </skill_constraints> and keep them in the summary.`);
   if (!paragraphs || !selected.length) return fail('Skill handoff needs scoped requirements or reread reasons with observed source line links.');
   return { excerpts: mergeCheckpointSkillExcerpts([selected]) };
 }

@@ -1,4 +1,4 @@
-import { assistantCallPhases, dragAssistantSurface, residentCapsuleSize, sizeAssistantSurface, type AssistantCallPhase, type AssistantSurface } from './assistantSurface';
+import { assistantCallPhases, assistantSurfaceState, dragAssistantSurface, maxAssistantReplyHeight, residentCapsuleSize, sizeAssistantSurface, type AssistantCallPhase, type AssistantSurface } from './assistantSurface';
 import { browserConnectionEnvironment } from './browserEnvironment';
 import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
@@ -310,12 +310,23 @@ function setCapsuleCallPhase(phase: AssistantCallPhase | null) {
   sendToLiveRenderer(mainWindow, 'assistant:capsule-call-changed', phase);
 }
 let assistantAttachmentPicker: BrowserWindow | undefined;
-let assistantReplyHeight = 96;
-function showAssistantSurface(surface: AssistantSurface) {
-  if (!assistantWindow || assistantWindow.isDestroyed()) return;
+let assistantReplyHeight: number | undefined;
+const assistantSurfaceDebug = process.env.CARDBUSH_ASSISTANT_SURFACE_DEBUG === '1';
+function traceAssistantWindow(win: BrowserWindow, action: string, details?: Record<string, unknown>) {
+  if (!assistantSurfaceDebug || win.isDestroyed()) return;
+  appendDebugLog('assistant-surface', { process: process.pid, window: win.id, action, surface: assistantSurface,
+    bounds: win.getBounds(), visible: win.isVisible(), focused: win.isFocused(), ...details });
+}
+function showAssistantSurface(surface: AssistantSurface, source = 'renderer') {
+  if (!assistantWindow || assistantWindow.isDestroyed() || assistantSurface === surface) return;
+  traceAssistantWindow(assistantWindow, 'transition', { next: surface, source });
+  const dismissReplies = assistantSurface === 'replies' && surface === 'capsule' && assistantReplyHeight !== undefined && source !== 'hide';
   assistantSurface = surface;
-  sizeAssistantSurface(assistantWindow, surface, assistantReplyHeight);
-  sendToLiveRenderer(assistantWindow, 'assistant:surface-changed', surface);
+  if (!dismissReplies) {
+    assistantReplyHeight = undefined;
+    if (surface !== 'replies') sizeAssistantSurface(assistantWindow, surface);
+  }
+  sendToLiveRenderer(assistantWindow, 'assistant:surface-changed', assistantSurfaceState(assistantWindow, surface));
 }
 let retainAssistantWindow = false;
 const residentPreferencePath = () => path.join(app.getPath('userData'), 'assistant-resident.json');
@@ -1642,7 +1653,7 @@ function escapeXmlText(value: string) {
 
 function activateSessionAttention(sessionId: string) {
   if (sessionId === 'personal-assistant' && (assistantWindow?.isVisible() || assistantResident && !mainWindow)) {
-    showFloatingAssistant(); showAssistantSurface('replies'); return;
+    showFloatingAssistant(); showAssistantSurface('replies', 'notification'); return;
   }
   if (sessionAttentionOpenQueue.enqueue(sessionId)) {
     publishSessionAttentionOpenAvailable();
@@ -1717,23 +1728,34 @@ function showFloatingAssistant() {
       sandbox: true, nodeIntegration: false, webviewTag: false, backgroundThrottling: true },
   });
   assistantWindow = window;
-  assistantSurface = 'capsule'; assistantReplyHeight = 96;
+  assistantSurface = 'capsule'; assistantReplyHeight = undefined;
   assistantWindowReady = false; retainAssistantWindow = false;
   window.setMenu(null);
   window.contentView.setBackgroundColor('#00000000');
   installAppSessionPermissions(window);
   installMainWindowNavigationGuard(window);
   installMainRendererResilience(window);
-  sizeAssistantSurface(window, 'capsule', assistantReplyHeight);
-  const collapse = () => {
+  if (assistantSurfaceDebug) {
+    window.on('show', () => traceAssistantWindow(window, 'show'));
+    window.on('hide', () => traceAssistantWindow(window, 'hide'));
+    window.on('blur', () => traceAssistantWindow(window, 'blur'));
+    window.on('focus', () => traceAssistantWindow(window, 'focus'));
+    window.on('resize', () => traceAssistantWindow(window, 'resize'));
+    window.on('close', () => traceAssistantWindow(window, 'close'));
+    window.webContents.on('render-process-gone', (_event, { reason, exitCode }) => traceAssistantWindow(window, 'renderer-gone', { reason, exitCode }));
+    const id = window.id;
+    window.once('closed', () => appendDebugLog('assistant-surface', { process: process.pid, window: id, action: 'closed' }));
+  }
+  sizeAssistantSurface(window, 'capsule');
+  const collapse = (source: string) => {
     if (assistantWindow === window && assistantAttachmentPicker !== window && assistantSurface !== 'capsule' && !isQuitting) {
-      showAssistantSurface('capsule');
+      showAssistantSurface('capsule', source);
     }
   };
-  window.on('blur', collapse);
+  window.on('blur', () => collapse('blur'));
   window.webContents.on('render-process-gone', () => setCapsuleCallPhase(null));
   window.webContents.on('did-start-loading', () => setCapsuleCallPhase(null));
-  window.on('hide', collapse);
+  window.on('hide', () => collapse('hide'));
   window.on('close', event => {
     if (!isQuitting && (retainAssistantWindow || desktopVoiceHost.hasActiveCall(window.webContents.id))) {
       event.preventDefault();
@@ -1810,9 +1832,17 @@ ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown
 });
 ipcMain.on('assistant:reply-height', (event, height: unknown) => {
   if (!assistantWindow || event.sender !== assistantWindow.webContents || event.senderFrame !== event.sender.mainFrame ||
-      assistantSurface !== 'replies' || typeof height !== 'number' || !Number.isFinite(height)) return;
-  const next = Math.max(48, Math.min(210, Math.ceil(height)));
+      typeof height !== 'number' || !Number.isFinite(height)) return;
+  if (height === 0 && assistantSurface === 'capsule' && assistantReplyHeight !== undefined) {
+    assistantReplyHeight = undefined;
+    sizeAssistantSurface(assistantWindow, assistantSurface);
+    traceAssistantWindow(assistantWindow, 'reply-dismissed');
+    return;
+  }
+  if (assistantSurface !== 'replies' || height <= 0) return;
+  const next = Math.max(48, Math.min(maxAssistantReplyHeight, Math.ceil(height)));
   if (next === assistantReplyHeight) return;
+  traceAssistantWindow(assistantWindow, 'reply-measured', { height: next });
   assistantReplyHeight = next;
   sizeAssistantSurface(assistantWindow, assistantSurface, next);
 });
@@ -1831,13 +1861,10 @@ ipcMain.on('assistant:set-capsule-call', (event, phase: unknown) => {
 ipcMain.handle('assistant:surface', (event, surface: unknown) => {
   const owner = requireAppFrame(event);
   if (owner !== assistantWindow) throw Error('invalid_assistant_window');
-  if (surface === 'read') {
-    sizeAssistantSurface(owner, assistantSurface, assistantReplyHeight);
-    return assistantSurface;
-  }
+  if (surface === 'read') return assistantSurfaceState(owner, assistantSurface);
   if (surface !== 'capsule' && surface !== 'compose' && surface !== 'replies' && surface !== 'voice') throw Error('invalid_assistant_surface');
   showAssistantSurface(surface);
-  return assistantSurface;
+  return assistantSurfaceState(owner, assistantSurface);
 });
 ipcMain.handle('assistant:window-retained', (event, retained: unknown) => {
   const owner = requireAppFrame(event);
@@ -2018,7 +2045,6 @@ ipcMain.handle('app:renderer-ready', (event) => {
   if (assistantWindow?.webContents === event.sender && event.senderFrame === event.sender.mainFrame) {
     if (!assistantWindowReady) {
       assistantWindowReady = true;
-      showAssistantSurface(assistantSurface);
       assistantWindow.show();
     }
     return;
@@ -2382,12 +2408,12 @@ ipcMain.handle('creation:canvas', async (event, input: import('./creationCanvasF
     const { CreationCanvasFiles } = await import('./creationCanvasFiles.mjs');
     canvasFiles = new CreationCanvasFiles(async action => {
       const options: OpenDialogOptions = action === 'open'
-        ? { title: nativeText()('canvasSidebar.openCanvas'), properties: ['openFile'], filters: [{ name: nativeText()('canvasComponents.canvas'), extensions: ['canvas.json'] }] }
+        ? { title: nativeText()('canvasSidebar.openCanvas'), properties: ['openFile'], filters: [{ name: nativeText()('canvasComponents.canvas'), extensions: ['canvas', 'canvas.json'] }] }
         : action === 'repository' ? { title: nativeText()('main.choose_code_folder'), properties: ['openDirectory'] }
         : { title: nativeText()('main.save_creation_workspace_to_folder'), properties: ['openDirectory', 'createDirectory'] };
       const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
       return result.canceled ? undefined : result.filePaths[0];
-    }, () => nativeUiLanguage ?? app.getLocale());
+    }, () => nativeUiLanguage ?? app.getLocale(), file => shell.trashItem(file));
   }
   return canvasFiles.command(input);
 });

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import type { ConversationSummary } from '../../types';
 
 export const conversationArchivesStorageKey = 'cardbush_archived_conversation_ids';
 const changedEvent = 'cardbush-conversation-archives-changed';
@@ -60,4 +61,19 @@ export function setConversationsArchived(ids: readonly string[], archived: boole
 
 export function useConversationArchives() {
   return useSyncExternalStore(subscribe, snapshot, () => empty);
+}
+
+// Home, the sidebar and Quick share the same immutable conversation snapshot.
+// Keep its ordering across navigation without retaining evicted snapshots.
+const recentLists = new WeakMap<ConversationSummary[], {
+  archived: ReadonlySet<string>; list: ConversationSummary[];
+}>();
+
+export function recentVisibleConversations(items: ConversationSummary[], archived = readStored()) {
+  const previous = recentLists.get(items);
+  if (previous?.archived === archived) return previous.list;
+  const list = items.filter(item => !item.metadata?.hidden && !archived.has(item.id))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  recentLists.set(items, { archived, list });
+  return list;
 }

@@ -20,6 +20,7 @@
 |---|---|
 | endpoint、headers | 根据配置生成目标与鉴权；密钥仅在主进程使用 |
 | start | 模型、16 kHz 单声道 PCM16 输入、24 kHz PCM16 输出、当前音色、提示词、工具声明；可接收有界历史快照 |
+| supportsOpening（可选） | 根据已确认的会话判定能否用 `response.create` 请求当前模型自行开场。仅支持朗读指定文字的服务应省略此项 |
 | updateInstructions（可选） | 从完整会话配置构造仅修改提示词的原生请求；未实现时使用完整 session.update。Qwen 用于每次用户发言的时间快照，避免重复配置音频和工具 |
 | updateVoice（可选） | 构造仅修改音色的原生请求；Qwen 使用 audio.output.voice，避免在已接通时重新设置音频格式。不主动打断回答或重连 |
 | context | 写入带 ID 的完整历史 QA；不触发重复任务或自动朗读历史 |

@@ -27,6 +27,22 @@ module.exports = async ({ window, read, waitFor, activeReady, origin, webContent
   const before = await snapshot();
   assert.equal(before.scroll,420,'scroll state is prepared');
   const originalSize = window.getSize();
+  const originalPanelWidth = await read('parseFloat(document.querySelector(".right-inspector").style.getPropertyValue("--right-inspector-width"))');
+  const widths = () => read(`Object.fromEntries([...document.querySelectorAll('[data-inspector-page-id]')].map(page =>
+    [page.dataset.inspectorPageId, page.querySelector('.deferred-resize-content')?.style.width]))`);
+  const initialWidths = await widths();
+  const changedWidth = originalPanelWidth === 460 ? 500 : 460;
+  await read(`browserFixture.setWidth(${changedWidth});void 0`);
+  await waitFor(`document.querySelector('.right-inspector-tab-page.active .deferred-resize-content').style.width !== ${JSON.stringify(initialWidths[tabId])}`);
+  const resized = await widths();
+  for (const id of Object.keys(initialWidths).filter(id => id !== tabId)) {
+    assert.equal(resized[id],initialWidths[id],'hidden pages retain their last measured width');
+  }
+  await read(`browserFixture.setInspectorOpen(false);browserFixture.setWidth(${originalPanelWidth});void 0`);
+  await pause(350);
+  assert.deepEqual(await widths(),resized,'closing the panel stops all preview width writes');
+  await read('browserFixture.setInspectorOpen(true);void 0');
+  await waitFor(`document.querySelector('.right-inspector-tab-page.active .deferred-resize-content').style.width === ${JSON.stringify(initialWidths[tabId])}`);
   for (const [width,zoom] of [[1100,1],[1100,1.25],[640,1]]) {
     window.webContents.setZoomFactor(zoom); window.setSize(width,760); await pause(350);
     await read('browserFixture.setInspectorOpen(false); void 0');

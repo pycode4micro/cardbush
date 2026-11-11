@@ -229,12 +229,27 @@ test('three calls without progress stop without changing original source history
   let calls = 0;
   const host = new InMemoryRuntimeHost({ sessionStore: store, registerDefaultWorkspaceTools: false, provider: {
     countInputTokens: pressureCount,
-    async *stream(input) { calls++; yield* checkpoint(input, `invalid_${calls}`, []); },
+    async *stream(input) {
+      calls++;
+      yield event(input, 0, 'usage', { inputTokens: 80_131, outputTokens: 10 });
+      yield event(input, 1, 'tool_call_delta', { index: 0, toolCallId: `invalid_${calls}`, nameDelta: 'checkpoint_context', argumentsDelta: '{}' });
+      yield event(input, 2, 'response_completed', { finishReason: 'tool_calls' });
+    },
   } });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const terminal = await host.runSessionTurn(request());
   assert.equal(terminal.payload.status, 'failed');
   assert.equal(calls, 3);
+  assert.match(terminal.payload.details.message, /updates/);
+  const events = host.events('s', 'current');
+  const retries = events.filter(e => e.kind === 'context_compaction_retrying');
+  assert.deepEqual(retries.map(e => e.payload.diagnostics.failures), [1, 2]);
+  const estimated = events.find(e => e.kind === 'context_compaction_started').payload.estimatedInputTokens;
+  const usage = store.snapshot('s').turns.at(-1).usage;
+  assert.equal(usage.inputTokens, 3 * 80_131);
+  assert.equal(usage.lastRequestInputTokens, 80_131);
+  assert.equal(usage.conversationInputTokens, estimated);
+  assert.deepEqual(events.filter(e => e.kind === 'model_request_usage').map(e => e.payload.conversationInputTokens), Array(3).fill(estimated));
   assert.deepEqual(store.snapshot('s').turns.slice(0, 3), original);
   assert.equal(store.snapshot('s').turns.at(-1).contextCheckpoint, undefined);
   const next = assembleContext({ session: store.snapshot('s'), prefix: request().prefixMessages }).messages;

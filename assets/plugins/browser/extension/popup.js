@@ -13,6 +13,12 @@ const extensionUpdate = document.querySelector('#extension-update');
 const extensionUpdateMessage = document.querySelector('#extension-update-message');
 const reloadExtension = document.querySelector('#reload-extension');
 const popupBuild = globalThis.CARDBUSH_CONNECTOR_BUILD;
+// Both published 1.5.2 designs identified the identical worker by a hash
+// that included popup.css. Recognize them only for that exact worker.
+const legacyBuilds = new Set([
+  'f42287e7b305968d75b24dd074669afc7f93d3f8d29092016ed8a9fdfcba3892',
+  'a9c3fcd125d6a678a92a101012db86fe52b84e28974a7c735c5fcdfc6c906b64',
+]);
 const buttons = [...document.querySelectorAll('button[data-action]')];
 let selectedScopeId = '';
 let lastPairingState;
@@ -25,7 +31,14 @@ let lastScopeOptions = '';
 function needsReload(state) {
   // Older workers have no build ID. They must also be reloaded, even when
   // getManifest() in a freshly opened popup already reports the new version.
-  return Boolean(popupBuild) && state.runtimeBuild !== popupBuild;
+  const workerBuild = legacyBuilds.has(state.runtimeBuild)
+    ? '307e351a1cab7a55ff6498be5eb6c5614ac9ffa5983347ce6baa6a9411be18a8'
+    : state.runtimeBuild;
+  return Boolean(popupBuild) && workerBuild !== popupBuild;
+}
+
+function reloadBlocked(state) {
+  return state.nativeConnected || state.nativeConnecting || state.controlledTabCount > 0;
 }
 
 reloadExtension.addEventListener('click', async () => {
@@ -38,10 +51,7 @@ reloadExtension.addEventListener('click', async () => {
   try {
     const state = await chrome.runtime.sendMessage({ action: 'status' });
     if (state?.ok === false) throw new Error(state.error?.message || '无法读取连接状态');
-    if (!needsReload(state)) return;
-    if (state.nativeConnected || state.nativeConnecting || state.controlledTabCount > 0) {
-      throw new Error('连接或控制仍在进行。请先在 CardBush 中关闭连接器，再重新加载扩展。');
-    }
+    if (!needsReload(state) || reloadBlocked(state)) return;
     // Reload the existing installation. Never clear storage or replace pairing.
     chrome.runtime.reload();
   } catch (error) {
@@ -100,7 +110,7 @@ async function refresh(reconnect = false) {
     const staleWorker = needsReload(state);
     localConnectionRepair.hidden = staleWorker || !state.hasPairing || state.nativeConnected;
     extensionUpdate.hidden = !staleWorker;
-    reloadExtension.disabled = state.nativeConnected || state.nativeConnecting || state.controlledTabCount > 0;
+    reloadExtension.disabled = reloadBlocked(state);
     extensionUpdateMessage.textContent = t(reloadExtension.disabled ? 'browser.extension.update.busy' : 'browser.extension.update.ready');
     const pairingState = staleWorker ? 'outdated' : Boolean(state.hasPairing);
     if (lastPairingState !== pairingState) {
@@ -131,11 +141,11 @@ async function refresh(reconnect = false) {
     const savedConnection = state.hasPairing && !state.localConnectionRequested;
     const phaseKey = { handshake: 'browser.extension.handshake', authentication: 'browser.extension.authentication' }[state.connectionDiagnostic?.phase]
       ?? 'browser.extension.opening';
-    const statusKey = staleWorker ? 'browser.extension.stale'
+    const statusKey = state.nativeConnected ? state.controlledTabCount > 0 ? 'browser.extension.controlling' : 'browser.extension.connected'
+      : staleWorker ? 'browser.extension.stale'
       : !state.connectorEnabled && state.localConnectionRequested ? 'browser.extension.stopped'
       : state.pairingRequired ? 'browser.extension.removed'
       : !state.connectorEnabled ? 'browser.extension.disabled'
-      : state.nativeConnected ? state.controlledTabCount > 0 ? 'browser.extension.controlling' : 'browser.extension.connected'
       : state.nativeConnecting ? savedConnection ? phaseKey : 'browser.extension.enrolling'
       : state.reconnectPaused ? 'browser.extension.paused'
       : savedConnection ? state.reconnectWaiting ? 'browser.extension.waiting' : 'browser.extension.retrying'
@@ -146,7 +156,7 @@ async function refresh(reconnect = false) {
     });
     if (!actionError && !staleWorker && !state.nativeConnected && state.lastError) connection.textContent += `\n${state.lastError}`;
     connection.classList.toggle('offline', Boolean(actionError) || (!staleWorker && state.pairingRequired));
-    connection.classList.toggle('waiting', staleWorker || (!state.nativeConnected && !state.pairingRequired && !actionError));
+    connection.classList.toggle('waiting', !state.nativeConnected && (staleWorker || (!state.pairingRequired && !actionError)));
     siteAccess.textContent = t(staleWorker ? 'browser.extension.allSitesStale'
       : state.hasPairing ? 'browser.extension.allSitesSaved' : 'browser.extension.allSitesPending');
     scope.textContent = state.activeScope?.groupTitle

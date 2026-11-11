@@ -22,7 +22,9 @@ async function verify() {
   const event = {id:'release',logicalKey:'release',origin:'agent',title:'版本发布周报',intent:'整理本周的发布进展',status:'completed',
     archived:false,revision:1,createdAt:at,updatedAt:at,inputs:[],result:{text:'发布准备完成。',turnId:'report',createdAt:at},
     presentation:{summary:'本周完成了桌面端回归验证。',cover:'tide',pages:[{id:'checks',title:'验证结果',layout:'facts',items:[{label:'桌面',text:'已通过'}]},{id:'renderer',parentId:'checks',componentId:'local-check',title:'渲染进程',layout:'article',items:[{label:'回归',text:'完成'}]}]}};
-  fs.writeFileSync(path.join(friends,'events.json'),JSON.stringify({version:1,events:[event,{...event,id:'archived',archived:true,title:'Archived fixture'}],signals:[],detections:[]}));
+  const watch = {...event, id:'watch', logicalKey:'watch', title:'待回查的事件', status:'watching', updatedAt:'2024-02-01T00:00:00Z'};
+  fs.writeFileSync(path.join(friends,'events.json'),JSON.stringify({version:1,events:[event,watch,{...event,id:'archived',archived:true,title:'Archived fixture'}],
+    signals:[],detections:[{id:'watch-timer',eventId:'watch',at:'2099-02-01T00:00:00Z'}]}));
   const scheduler = path.join(root, 'runtime-state', 'scheduler');
   fs.mkdirSync(scheduler, {recursive:true});
   const previous = '2024-03-10T12:00:00Z';
@@ -38,6 +40,13 @@ async function verify() {
   const wait = code => until(() => js(code),code);
   const click = selector => js('document.querySelector('+JSON.stringify(selector)+').click()');
   const active = name => wait('!!document.querySelector('+JSON.stringify('[data-desktop-page="'+name+'"]')+')');
+  const eventButton = (selector, title) => `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find(node => node.textContent.includes(${JSON.stringify(title)}))`;
+  const openEventMenu = async (button, keyboard = false) => {
+    const trigger = keyboard ? "new KeyboardEvent('keydown',{bubbles:true,cancelable:true,shiftKey:true,key:'F10'})"
+      : "new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:160,clientY:200})";
+    await js(`${button}.dispatchEvent(${trigger});void 0`);
+    await wait("!!document.querySelector('[data-sidebar-menu-item=delete]')");
+  };
   const capture = async name => {await sleep(260);fs.writeFileSync(path.join(root,name+'.png'), (await win.webContents.capturePage()).toPNG());};
   win.setSize(1340,850); win.show();
   await active('overview');
@@ -66,6 +75,16 @@ async function verify() {
   await click('[data-history-action=back]'); await wait("!!document.querySelector('.desktop-authored[data-layout=facts]')");
   await click('[data-history-action=back]'); await wait("!!document.querySelector('.desktop-detail-heading')");
   await capture('event'); await click('[data-history-action=back]'); await active('overview');
+  const report = '版本发布周报', savedCheck = '已保存的项目检查';
+  await openEventMenu(eventButton('.desktop-cover', report));
+  await click('[data-sidebar-menu-item=delete]');
+  await wait("document.querySelector('.confirm-action-dialog[open]')?.textContent.includes('版本发布周报')");
+  await click('.confirm-action-dialog .secondary-button');
+  await wait("!document.querySelector('.confirm-action-dialog')");
+  await openEventMenu(eventButton('.desktop-row', report));
+  await click('[data-sidebar-menu-item=details]');
+  await active('event');
+  await click('[data-history-action=back]'); await active('overview');
   await js("Array.from(document.querySelectorAll('.desktop-shelf h2 button')).find(b=>b.textContent==='事件').click()");
   await active('events');
   await js("Array.from(document.querySelectorAll('.desktop-row')).find(b=>b.textContent.includes('已保存的项目检查')).click()");
@@ -75,6 +94,34 @@ async function verify() {
   await wait("document.querySelector('.event-result-disclosure[open]')?.innerText.includes('原始执行结果')");
   assert.equal(await js("document.querySelector('.desktop-library').innerText.includes('检查项目')"), false, 'history does not expose the scheduler prompt');
   assert.equal(await js("document.querySelector('#right-inspector')?.checkVisibility() ?? false"), false, 'reading history stays on the event page');
+  await click('[data-history-action=back]'); await active('events');
+  const savedRow = eventButton('.desktop-list .desktop-row', savedCheck);
+  const watchRow = eventButton('.desktop-list .desktop-row', watch.title);
+  await openEventMenu(watchRow);
+  await click('[data-sidebar-menu-item=pause]');
+  await wait(`${watchRow}?.textContent.includes('已暂停')`);
+  await openEventMenu(watchRow);
+  await click('[data-sidebar-menu-item=resume]');
+  await wait(`${watchRow}?.textContent.includes('等待触发')`);
+  await openEventMenu(watchRow);
+  await click('[data-sidebar-menu-item=archive]');
+  await wait(`!${watchRow}`);
+  await openEventMenu(savedRow, true);
+  assert.equal(await js("!!document.querySelector('[data-sidebar-menu-item=pause]')"), false, 'completed events cannot be paused');
+  await click('[data-sidebar-menu-item=delete]');
+  await wait("document.querySelector('.confirm-action-dialog[open]')?.textContent.includes('已保存的项目检查')");
+  await click('.confirm-action-dialog .danger');
+  await wait(`!${savedRow}`);
+  await click('[data-history-action=back]'); await active('overview');
+  await openEventMenu(eventButton('.desktop-row', report));
+  await click('[data-sidebar-menu-item=delete]');
+  await wait("!!document.querySelector('.confirm-action-dialog[open]')");
+  await click('.confirm-action-dialog .danger');
+  await wait(`!${eventButton('.desktop-cover, .desktop-row', report)}`);
+  await reload(); await active('overview');
+  await wait("document.querySelector('.desktop-covers')?.getAttribute('aria-busy')==='false'");
+  assert.equal(await js(`!!${eventButton('.desktop-cover, .desktop-row', report)} || !!${eventButton('.desktop-row', savedCheck)}`), false);
+  console.log('Home events passed: context menu on covers and rows, keyboard menu, named delete confirmation, cancellation, and persistent deletion of Assistant and conversation events.');
   await click('[data-nav-section=explore]'); await active('explore'); await capture('explore');
   assert.equal(await js("Array.from(document.querySelectorAll('.desktop-explore .desktop-row strong')).some(node=>node.textContent==='设置')"), false);
   const more = '.sidebar-more-apps', flyout = '.sidebar-app-flyout:popover-open';
@@ -82,6 +129,26 @@ async function verify() {
     const point = await js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
     win.webContents.sendInputEvent({type:'mouseMove', ...point});
   };
+  const checkSidebarTips = async () => {
+    // Deliver a separate initial position so Chromium observes real pointer movement.
+    win.webContents.sendInputEvent({type:'mouseMove', x:400, y:250});
+    await sleep(100);
+    for (const selector of ['.window-sidebar-toggle', '[data-nav-section=home]', '.desktop-search', '.sidebar .profile-trigger']) {
+      await hover(selector);
+      await wait(`(() => {
+        const button = document.querySelector(${JSON.stringify(selector)});
+        const tip = document.querySelector('.global-tooltip:popover-open');
+        if (!tip || button.getAttribute('aria-describedby') !== tip.id) return false;
+        const bounds = tip.getBoundingClientRect(), anchor = button.getBoundingClientRect();
+        const edge = document.querySelector('.desktop-shell > .sidebar').getBoundingClientRect().right;
+        const top = Math.max(8, Math.min(innerHeight - bounds.height - 8, anchor.top + (anchor.height - bounds.height) / 2));
+        return Math.abs(bounds.left - edge - 8) <= 1 && Math.abs(bounds.top - top) <= 1;
+      })()`);
+    }
+  };
+  win.webContents.debugger.attach('1.3');
+  await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {enabled:true});
+  await checkSidebarTips();
   await hover(more);
   await wait(`!!document.querySelector('${flyout}')`);
   assert.equal(await js("!!document.querySelector('[data-sidebar-app=\"builtin:automations\"]')"),false);
@@ -106,6 +173,8 @@ async function verify() {
   await reload(); await wait("document.querySelector('.theme-dark .desktop-library h1')?.textContent==='Home'");
   win.setMinimumSize(420,500);win.setSize(650,720);
   await wait("innerWidth < 760"); await capture('home-narrow-dark');
+  await checkSidebarTips();
+  win.webContents.debugger.detach();
   assert.ok(await js("document.querySelector('.desktop-library').scrollWidth<=document.querySelector('.desktop-library').clientWidth+1"));
   await js("document.querySelector('.sidebar-more-apps').focus();void 0");
   const press = keyCode => {

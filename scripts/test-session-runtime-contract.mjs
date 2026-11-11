@@ -91,11 +91,24 @@ assert.deepEqual(structuredClone(contextWindowMetrics({ lastRequestInputTokens: 
 }, 'live and historical occupancy use the compaction budget, not total context or hard input capacity');
 assert.deepEqual(structuredClone(contextWindowMetrics(undefined, 500_000, 128_000)), { totalTokens: 500_000, maxTokens: 241_952 }, 'empty conversations still show their calculated budget');
 assert.equal(contextWindowMetrics(undefined, 32_000).maxTokens, undefined, 'invalid configuration must not advertise a usable conversation window');
+const duringCompaction = contextWindowMetrics({ conversationInputTokens: 292_777, lastRequestInputTokens: 80_131,
+  contextWindowTokens: 530_000, maxOutputTokens: 128_000 });
+assert.equal(duringCompaction.usedTokens, 292_777, 'a maintenance request measures only one source');
+assert.equal(duringCompaction.maxTokens, 271_952);
+const oldLifecycle = [
+  { kind: 'context_compaction_started', payload: { compactionId: 'earlier', estimatedInputTokens: 276_453 } },
+  { kind: 'context_compaction_completed', payload: { compactionId: 'earlier' } },
+  { kind: 'context_compaction_started', payload: { compactionId: 'latest', estimatedInputTokens: 292_777 } },
+  { kind: 'context_compaction_failed', payload: { compactionId: 'latest' } },
+];
+assert.equal(contextModule.exports.failedCompactionInputTokens(oldLifecycle), 292_777);
+assert.equal(contextModule.exports.failedCompactionInputTokens(oldLifecycle.slice(-1)), undefined);
 assert.match(runtimeChat, /contextWindowMetrics\(\s*committed\?\.usage/);
 assert.match(runtimeChat, /case 'model_request_usage'/);
 assert.match(runtimeChat, /lastRequestInputTokens: event\.payload\.inputTokens/);
 assert.match(runtimeChat, /source: 'electron_runtime_model_request'/);
-assert.match(api, /contextWindowMetrics\(latest\?\.usage\)/);
+assert.match(api, /failedCompactionInputTokens\(events\)/);
+assert.match(api, /contextWindowMetrics\(usage\)/);
 assert.doesNotMatch(api, /usedTokens:\s*context\.estimatedTokens/);
 
 console.log('Session runtime frontend contract tests passed');

@@ -11,6 +11,8 @@ export interface RealtimeVoiceProvider {
   createConnection?(language: () => string): RealtimeVoiceProvider;
   endpoint: string | ((settings: RealtimeVoiceSettings) => string);
   serverInitiatedSession?: boolean;
+  /** Whether this connection accepts an explicit model turn before any live input. */
+  supportsOpening?(ready: RealtimeWireEvent): boolean;
   closeWithSocket?: boolean;
   archiveOnResponseDone?: boolean;
   /** Providers without item restore/delete use an acknowledged instructions snapshot. */
@@ -50,9 +52,12 @@ export function realtimeConversationInstructions(settings: Pick<RealtimeVoiceSet
 }
 
 const pageWrite = { type: 'function', name: assistantPageTool.name, description: assistantPageTool.description, parameters: assistantPageTool.inputSchema };
-export function realtimeSessionContent(settings: RealtimeVoiceSettings, assistant?: { name: string; persona: string }) {
+export function realtimeConversationStyle(settings: RealtimeVoiceSettings, assistant?: { name: string; persona: string }) {
   const persona = assistant ? renderPromptTemplate('realtime-assistant-persona', { name: assistant.name,
     persona: assistant.persona.trim() ? assistant.persona : renderPromptTemplate('assistant-default-persona') }) : '';
-  return { instructions: [persona, realtimeConversationInstructions(settings), realtimeExecutionInstructions].filter(Boolean).join('\n\n'),
+  return [persona, realtimeConversationInstructions(settings)].filter(Boolean).join('\n\n');
+}
+export function realtimeSessionContent(settings: RealtimeVoiceSettings, assistant?: { name: string; persona: string }) {
+  return { instructions: realtimeConversationStyle(settings, assistant) + '\n\n' + realtimeExecutionInstructions,
     tools: assistant ? [...realtimeAgentTools, pageWrite] : realtimeAgentTools };
 }

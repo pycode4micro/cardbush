@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import { uiText } from '../i18n';
-import { NotebookText, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { AlignLeft, PanelRight } from 'lucide-react';
 import type { AppLanguage } from '../types';
 import type { HTMLAttributes, ReactNode } from 'react';
 import { conversationDisplayTitle } from '../shared/conversationTitle';
@@ -43,7 +43,7 @@ export function TopBar({
           onClick={(event) => onToggleWorkSummary(event.currentTarget)}
           aria-label={uiText(language)('topBar.showOrHideWorkSummary')}
         >
-          <NotebookText size={15} />
+          <AlignLeft size={15} aria-hidden="true" />
         </button>
       )}
       {onToggleInspector && (!inspectorOpen || actionsTarget) && <button
@@ -56,7 +56,7 @@ export function TopBar({
         aria-expanded={inspectorOpen}
         aria-controls="right-inspector"
       >
-        {inspectorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+        <PanelRight size={15} aria-hidden="true" />
       </button>}
     </>
   );

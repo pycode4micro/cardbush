@@ -1,6 +1,6 @@
 import { uiText } from '../../i18n';
 import { developmentDesktop, emptyCanvas, replaceCanvasContent, type CanvasItem, type CanvasSnapshot, type CreationCanvas, type UserPromptInput } from '@cardbush/bush-protocol';
-import { Copy, FilePlus2, FolderDown, LayoutTemplate, MoreHorizontal, Play, Plus, RefreshCw, Scan, X } from 'lucide-react';
+import { Copy, FilePlus2, FolderDown, LayoutTemplate, Play, Plus, RefreshCw, Scan, X } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { CreationChatOptions, CreationInspectorContext } from '../mdPresentation/CreationConversation';
 import { takeBushItDocumentRequest, watchBushItDocument } from '../mdPresentation/bushItDocuments';
@@ -11,11 +11,13 @@ import type { MarkdownSelection } from '../mdPresentation/MarkdownSourceEditor';
 import { InspectorCoverControls } from '../inspector/InspectorCoverControls';
 import { useQuickInputDismiss } from '../inspector/useQuickInputDismiss';
 import { InspectorWebview } from '../inspector/InspectorWebview';
-import { inspectorSource } from '../inspector/inspectorTargets';
+import { inspectorSource, localCanvasFilePath } from '../inspector/inspectorTargets';
 import { openInspector } from '../inspector/inspectorEvents';
 import type { PreviewRegion } from '../inspector/regionSelection';
 import { HtmlComponentContext } from '../components/HtmlComponentContext';
-import { createCanvas, prepareCanvas, updateCanvasEntry, useCanvases } from './canvasStore';
+import { closeCanvas, createCanvas, deleteCanvas, openCanvasFile, prepareCanvas, selectCanvas, updateCanvasEntry, useCanvases } from './canvasStore';
+import { confirmAction } from '../../components/confirmAction';
+import { CanvasFileMenu, CanvasLibraryView } from './CanvasFilesView';
 import { canvasFileTarget, canvasRequest, placeCanvasItems } from './canvasModel';
 import { extractCanvasComponents } from './canvasComponents';
 import { CanvasStage } from './CanvasStage';
@@ -31,12 +33,16 @@ const ignoreNavigation = () => {};
 type Props = CreationChatOptions & { language: string };
 export function CreationCanvasApp(props: Props) {
   const library = useCanvases(), entry = library.canvases.find(item => item.id === library.selectedId && !item.archived);
+  const [openError, setOpenError] = useState('');
   useEffect(() => {
     const receive = () => { const request = takeBushItDocumentRequest(); if (!request) return; const { source, team } = request; const seed = emptyCanvas(source.match(/^# (.+)$/m)?.[1] || ''); seed.items = [{ id: 'document', title: seed.title, kind: 'markdown', markdown: source, frame: { x: 60, y: 60, width: 1000, height: 800 } }]; const id = createCanvas(seed); updateCanvasEntry(id, { editingId: 'document', team }); };
     receive(); return watchBushItDocument(receive);
   }, []);
   useEffect(() => { const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); event.stopImmediatePropagation(); if (!document.querySelector('.canvas-presentation[open]')) createCanvas(); } }; window.addEventListener('keydown', listener, true); return () => window.removeEventListener('keydown', listener, true); }, []);
-  if (!entry) return <div className="creation-canvas-app"><div className="canvas-empty"><button onClick={() => createCanvas()}>{uiText(props.language)('creationCanvasApp.newCanvas')}</button></div></div>;
+  if (!entry) return <CanvasLibraryView language={props.language} canvases={library.canvases} error={openError}
+    onNew={() => { setOpenError(''); createCanvas(); }}
+    onOpen={async () => { setOpenError(''); try { await openCanvasFile(); } catch (error) { setOpenError(canvasErrorMessage(error, props.language)); } }}
+    onSelect={id => { setOpenError(''); selectCanvas(id); }}/>;
   return <CanvasSpace key={entry.id} {...props} entry={entry}/>;
 }
 function CanvasSpace({ entry, language, composerPortalTarget, externalComposerControls = false, onOpenComposer, onInspectorContext, ...chatOptions }: Props & { entry: ReturnType<typeof useCanvases>['canvases'][number] }) {
@@ -94,6 +100,18 @@ function CanvasSpace({ entry, language, composerPortalTarget, externalComposerCo
     finally { saving.current = false; }
   };
   const action = async (run: () => Promise<void>) => { if (operating.current) return; operating.current = true; setBusy(true); setError(''); setNotice(''); setMenu(false); try { await run(); } catch (cause) { if (alive.current) setError(String((cause as Error).message)); } finally { operating.current = false; if (alive.current) setBusy(false); } };
+  const fileAction = (run: () => Promise<unknown> | void) => action(async () => {
+    if (saving.current) throw Error(uiText(language)('creationCanvasApp.savingPleaseRetryShortly'));
+    if (editor) await saveCreationFile(editor.pageId);
+    await run();
+  });
+  const removeFile = async () => {
+    const value = current.current;
+    if (!value) return;
+    const t = uiText(language);
+    if (await confirmAction({ title: t('canvasFiles.delete'), message: t('canvasFiles.confirmDelete', { path: value.path }),
+      confirmLabel: t('appCenter.delete'), cancelLabel: t('agentConnectionForm.cancel') })) await deleteCanvas(entry.id, value);
+  };
   const addPaths = (paths: string[]) => action(async () => {
     if (!paths.length) return; const snapshot = current.current; if (!snapshot) throw Error(uiText(language)('creationCanvasApp.theCanvasIsNotReady'));
     const items = paths.map(source => ({ id: crypto.randomUUID(), title: source.split(/[\\/]/).pop() || source, kind: 'file' as const, source }));
@@ -186,7 +204,9 @@ function CanvasSpace({ entry, language, composerPortalTarget, externalComposerCo
       {!editor && <button className="canvas-present-button" disabled={busy || !snapshot?.document.items.length} onClick={() => { setMenu(false); setPresenting(true); }}><Play/>{uiText(language)('canvasPresentation.start')}</button>}
       <button disabled={busy || !snapshot} onClick={() => void newDocument()}><FilePlus2 size={16}/>{uiText(language)('creationCanvasApp.newDocument')}</button>
       <button disabled={busy || !snapshot} onClick={() => void add()}><Plus size={16}/>{uiText(language)('creationCanvasApp.addFiles')}</button>
-      <div className="canvas-menu-wrap"><button aria-label={uiText(language)('creationCanvasApp.moreActions')} aria-expanded={menu} onClick={() => setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu && <><button className="canvas-menu-dismiss" aria-label={uiText(language)('creationCanvasApp.closeMenu')} onClick={() => setMenu(false)}/><div className="canvas-menu" role="menu">
+      <CanvasFileMenu language={language} open={menu} setOpen={setMenu} busy={busy} path={snapshot?.path}
+        onNew={() => void fileAction(() => { createCanvas(); })} onOpen={() => void fileAction(() => openCanvasFile())}
+        onClose={() => void fileAction(() => closeCanvas(entry.id))} onDelete={() => void fileAction(removeFile)}>
         <button role="menuitem" disabled={busy} onClick={() => void makeDesktop()}><LayoutTemplate size={16}/>{uiText(language)('creationCanvasApp.cardbushDevelopmentDesk')}</button>
         <label className="canvas-team-choice">{uiText(language)('creationCanvasApp.team')}<select aria-label={uiText(language)('teamGraphWorkspace.workflow')} disabled={busy || !snapshot || teamChoices.loading} value={snapshot?.document.team?.id || ''} onChange={event => {
           const id = event.target.value; void action(async () => { const value = current.current; if (value) await commit({ ...value.document, team: id ? { id } : undefined }, value.revision); });
@@ -198,11 +218,17 @@ function CanvasSpace({ entry, language, composerPortalTarget, externalComposerCo
         <button role="menuitem" disabled={busy || !snapshot} onClick={() => void action(async () => { const value = current.current!; const result = await window.cardbushDesktop!.creationCanvas({ action: 'export', path: value.path, expectedRevision: value.revision }); if (result) setNotice(`${uiText(language)('creationCanvasApp.savedTo')} ${result.path}`); })}><FolderDown size={16}/>{uiText(language)('creationCanvasApp.saveToFolder')}</button>
         <button role="menuitem" disabled={busy || !selectedId} onClick={() => void extract(false)}><Copy size={16}/>{uiText(language)('creationCanvasApp.extractSelectionAsAComponent')}</button>
         <button role="menuitem" disabled={busy || !snapshot?.document.items.length} onClick={() => void extract(true)}><LayoutTemplate size={16}/>{uiText(language)('homeComponents.placeCanvas')}</button>
-      </div></>}</div>
+      </CanvasFileMenu>
     </div>
     <div className="canvas-workspace">
       {(error || readError || notice) && <div className={`canvas-notice${error || readError ? ' error' : ''}`} role={error || readError ? 'alert' : 'status'}><span>{error || readError ? canvasErrorMessage(error || readError, language) : notice}</span><button aria-label={uiText(language)('creationCanvasApp.dismiss')} onClick={() => { setError(''); setReadError(''); setNotice(''); }}><X size={13}/></button></div>}
-      <div className="canvas-stage-view" hidden={!!editor}><HtmlComponentContext.Provider value={null}>{snapshot ? <CanvasStage snapshot={snapshot} language={language} selectedId={selectedId} onSelect={setSelectedId} onChange={commit} onAdd={() => void add()} onChat={startChat} onDiscuss={discuss} onVersion={item => void version(item)} onDesktop={() => void makeDesktop()} busy={busy} suspended={presenting || !!editor} onViewport={setViewport} onError={setError} onEditMarkdown={item => void editDocument(item)} onOpenFile={(item, region) => { if (item.kind === 'file') { setChatRegion(item.id); setFileView({ target: canvasFileTarget(item.source, snapshot.path), title: item.title, region }); } }}/>
+      <div className="canvas-stage-view" hidden={!!editor}><HtmlComponentContext.Provider value={null}>{snapshot ? <CanvasStage snapshot={snapshot} language={language} selectedId={selectedId} onSelect={setSelectedId} onChange={commit} onAdd={() => void add()} onChat={startChat} onDiscuss={discuss} onVersion={item => void version(item)} onDesktop={() => void makeDesktop()} busy={busy} suspended={presenting || !!editor} onViewport={setViewport} onError={setError} onEditMarkdown={item => void editDocument(item)} onOpenFile={(item, region) => {
+        if (item.kind !== 'file') return;
+        const target = canvasFileTarget(item.source, snapshot.path);
+        const canvas = localCanvasFilePath(target);
+        if (canvas) { void fileAction(() => openCanvasFile(canvas)); return; }
+        setChatRegion(item.id); setFileView({ target, title: item.title, region });
+      }}/>
         : <div className="canvas-loading" role="status">{uiText(language)('creationCanvasApp.openingCanvas')}</div>}</HtmlComponentContext.Provider>
       </div>
       {snapshot && editor && <CanvasMarkdownWorkspace snapshot={snapshot} {...editor} language={language} sessionId={entry.sessionId} root={entry.root || ''}

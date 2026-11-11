@@ -178,7 +178,7 @@ module.exports = async ({ run, until, pause, theme = 'theme-dark' }) => {
   const submittedOffset = await run("document.querySelector('[data-message-id=scroll-submitted-user]').getBoundingClientRect().top - scrollList().getBoundingClientRect().top");
   const desiredOffset = await run("parseFloat(scrollList().style.getPropertyValue('--submitted-user-reading-anchor'))");
   assert.ok(desiredOffset > 80 && Math.abs(submittedOffset - desiredOffset) < 2,
-    'new requests settle below the top edge with room for previous context');
+    'new requests settle below the top edge with room for previous context: ' + JSON.stringify({ submittedOffset, desiredOffset }));
   assert.ok(submittedOffset >= 0 && submittedOffset < await run("document.querySelector('.composer-dock').getBoundingClientRect().top - scrollList().getBoundingClientRect().top"),
     'new requests remain visible above the composer');
   await assertRestored('b', bTop);

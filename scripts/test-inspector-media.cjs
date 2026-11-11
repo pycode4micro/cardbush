@@ -1,17 +1,16 @@
 const { readSourceFile } = require('./helpers/read-source-file.cjs');
 // Real React + Chromium media decoding with the production local resource handler.
-// Isolated window/profile; optional argv[2] is a read-only real-world video fixture.
+// Isolated window/profile; optional argv[3] is a read-only real-world video fixture.
 const { app, BrowserWindow, protocol } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
-fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
-const scratch = fs.mkdtempSync(path.join(root, 'tmp', 'inspector-media-'));
+const scratch = process.argv[2];
 app.setPath('userData', path.join(scratch, 'profile'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'cardbush-file', privileges: {
-  standard: true, secure: true, supportFetchAPI: true, stream: true,
+  standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true,
 } }]);
 const compile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -40,7 +39,7 @@ app.whenReady().then(async () => {
     ...load('electron/localResourcePath.ts', { './localFileProtocol': load('electron/localFileProtocol.ts') }) };
   new Function(...Object.keys(deps), compile(funcs) + '\nregisterLocalFileProtocol();')(...Object.values(deps));
   const window = new BrowserWindow({ show: false, width: 600, height: 720,
-    webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false, offscreen: true, webviewTag: true } });
+    webPreferences: { nodeIntegration: false, contextIsolation: true, backgroundThrottling: false, offscreen: true, webviewTag: true } });
   window.webContents.on('console-message', event => {
     if (event.level === 'error') console.error(event.message);
   });
@@ -50,66 +49,7 @@ app.whenReady().then(async () => {
     throw new Error('Timed out: ' + label);
   };
   try {
-    await window.loadURL('data:text/html,<html><body style="margin:0"><div class="app theme-dark" id="root" style="height:100vh;--surface:%23111517;--text:%23eeeeee;--muted:%23999999;--border:%23444444"></div></body></html>');
-    await window.webContents.insertCSS(readSourceFile(path.join(root, 'src/styles/app.css'), 'utf8'));
-    const modules = Object.fromEntries([
-      'src/shared/localPaths.ts', 'src/shared/textPreview.ts',
-      'src/features/conversationHost.ts',
-      'src/shared/showUiError.ts',
-      'src/shared/recoverableLazy.tsx',
-      'src/shared/fileContextMenu.ts',
-      'src/features/inspector/inspectorTargets.ts', 'src/features/inspector/InspectorWebview.tsx',
-      'src/features/inspector/MediaInspectorPreview.tsx',
-      'src/features/tools/PlainSourceLines.tsx',
-      'src/features/tools/VirtualSourceLines.tsx', 'src/features/tools/sourcePreviewBlocks.ts',
-      'src/features/inspector/DeferredResizePreview.tsx',
-      'src/features/browser/BrowserPageTools.tsx',
-      'src/features/inspector/InspectorErrorBoundary.tsx', 'src/features/inspector/FilePreviewFallback.tsx',
-      'src/features/inspector/TextInspectorPreview.tsx', 'src/features/inspector/filePreviewRegistry.ts',
-      'src/features/inspector/inspectorFilePreviewRenderers.tsx',
-    ].map(file => [path.join(root, file), compile(readSourceFile(path.join(root, file), 'utf8'))]));
-    await run(`
-      const React = require(${JSON.stringify(require.resolve('react'))});
-      const {createRoot} = require(${JSON.stringify(require.resolve('react-dom/client'))});
-      const path = require('node:path');
-      const nativeRequire = require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))});
-      const sources = ${JSON.stringify(modules)};
-      const cache = {};
-      function load(file) {
-        if(cache[file]) return cache[file].exports;
-        const module = cache[file] = {exports:{}};
-        function resolve(name) {
-          if(name.endsWith('.css')) return {};
-          if(name === '../chatMessages') return {}; // unrelated Markdown renderer
-          // The real gallery and its image navigation are exercised by test:image-gallery.
-          if(name === '../chatMessages/ImagePreviewDialog') return {ImagePreviewDialog:()=>null};
-          if(!name.startsWith('.')) return nativeRequire(name);
-          const base = path.resolve(path.dirname(file), name);
-          const key = [base, base+'.ts', base+'.tsx'].find(key => sources[key]);
-          if(!key) throw new Error('Unresolved '+name);
-          return load(key);
-        }
-        new Function('require','module','exports',sources[file])(resolve,module,module.exports);
-        return module.exports;
-      }
-      window.cardbushDesktop = {};
-      window.nav = {loading: true};
-      const {InspectorWebview} = load(${JSON.stringify(path.join(root, 'src/features/inspector/InspectorWebview.tsx'))});
-      const targets = load(${JSON.stringify(path.join(root, 'src/features/inspector/inspectorTargets.ts'))});
-      window.targets = targets;
-      const h = React.createElement;
-      const handle = React.createRef();
-      const onNavigation = (_, state) => { window.nav = state; };
-      const onOpen = () => {};
-      function Harness() {
-        const [target, setTarget] = React.useState('');
-        window.openMedia = setTarget;
-        return target ? h(InspectorWebview, {ref: handle, identity: 'fixture', target,
-          source: targets.inspectorSource(target), language: 'zh',
-          onNavigationStateChange: onNavigation, onOpenTarget: onOpen}) : null;
-      }
-      createRoot(document.getElementById('root')).render(h(React.StrictMode, null, h(Harness)));
-    `);
+    await window.loadFile(path.join(scratch, 'app/index.html'));
     await waitFor('Boolean(window.openMedia)', 'mount');
     assert.equal(await run('targets.inspectorMediaTarget("https://example.com/video.mp4")'), null, 'web URLs retain browser navigation');
     for (const target of ['C:/fixture/test.mov', 'file:///C:/fixture/test.mov', 'cardbush-file:///C:/fixture/test.mov', 'cardbush-file://c/fixture/test.mov']) {
@@ -190,8 +130,8 @@ app.whenReady().then(async () => {
     await run(`openMedia(${JSON.stringify(videoFile)})`);
     await waitFor('document.querySelector("[role=alert]")?.textContent.includes("超时") && nav.loading === false', 'bounded loading');
     await run(`document.removeEventListener('loadedmetadata',blockReady,true);window.setTimeout=realTimeout;void 0;`);
-    if (process.argv[2]) {
-      await open(path.resolve(process.argv[2]), 'video');
+    if (process.argv[3]) {
+      await open(path.resolve(process.argv[3]), 'video');
       assert.ok(await run('document.querySelector("video").videoWidth > 0 && !document.querySelector("[role=alert]")'));
       await run('window.clip=document.querySelector("video");clip.muted=true;clip.play()');
       await waitFor('clip.currentTime > 0.1', 'real MP4 playback');
@@ -212,23 +152,42 @@ app.whenReady().then(async () => {
     fs.writeFileSync(missingHtml, '<!doctype html><h1>Retry ready</h1>');
     await run('document.querySelector(".inspector-preview-error button").click()');
     await waitFor('!document.querySelector(".inspector-preview-error") && !nav.loading && document.querySelector("webview")?.getURL()?.includes("missing.html")', 'retry remounts failed guest');
-    // Minimal valid one-page PDF; exercise Electron's native PDF document.
-    let pdf = '%PDF-1.4\n'; const offsets = [0];
-    const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R >>', '<< /Length 0 >>\nstream\n\nendstream'];
-    objects.forEach((object, i) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${i + 1} 0 obj\n${object}\nendobj\n`; });
-    const xref = Buffer.byteLength(pdf);
-    pdf += 'xref\n0 5\n0000000000 65535 f \n' + offsets.slice(1).map(offset => String(offset).padStart(10, '0') + ' 00000 n \n').join('');
-    pdf += `trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-    const pdfFile = path.join(scratch, 'PDF #1.pdf'); fs.writeFileSync(pdfFile, pdf);
-    await run(`openMedia(${JSON.stringify(pdfFile)})`);
-    await waitFor('!nav.loading && nav.url?.includes(".pdf") && !document.querySelector(".inspector-preview-error")', 'PDF readiness');
-    await pause(1500);
+    const { PDFDocument } = require('pdf-lib');
+    const pdf = await PDFDocument.create();
+    pdf.addPage([300, 200]).drawText('Inspector PDF fixture', { x: 20, y: 150, size: 16 });
+    pdf.addPage([300, 400]);
+    const pdfFile = path.join(scratch, 'PDF #1.pdf');
+    fs.writeFileSync(pdfFile, await pdf.save());
+    const pdfPage = '[data-region-page="1"]:not([data-region-loading])';
+    await open(pdfFile, pdfPage + ' canvas');
+    assert.ok(await run(`document.querySelector('${pdfPage} canvas').width > 0`));
+    assert.match(await run(`document.querySelector('${pdfPage} .pdf-region-text').textContent`), /Inspector PDF fixture/);
+    const pdfLayout = () => run(`(() => {
+      const preview = document.querySelector('.inspector-pdf-preview');
+      const page = preview.querySelector('[data-region-page="1"]').getBoundingClientRect();
+      const left = page.left - preview.getBoundingClientRect().left - preview.clientLeft;
+      return { left, right: preview.clientWidth - left - page.width, overflow: preview.scrollWidth - preview.clientWidth,
+        background: getComputedStyle(preview).backgroundColor,
+        surface: getComputedStyle(preview.closest('.right-inspector-preview')).backgroundColor };
+    })()`);
+    for (const theme of ['theme-bright', 'theme-dark']) {
+      await run(`document.querySelector('.app').className = 'app ${theme}'`);
+      const layout = await pdfLayout();
+      assert.equal(layout.background, layout.surface, `${theme} PDF margins use the inspector surface`);
+      assert.ok(Math.abs(layout.left) < 1 && Math.abs(layout.right) < 1 && layout.overflow === 0,
+        `fit-width PDF reaches both edges: ${JSON.stringify(layout)}`);
+    }
+    window.setContentSize(410, 460);
+    await waitFor(`(() => {
+      const scroller = document.querySelector('.inspector-pdf-preview');
+      const page = scroller.querySelector('${pdfPage}');
+      return scroller.clientWidth < 410 && page && Math.abs(page.getBoundingClientRect().width - scroller.clientWidth) < 1;
+    })()`, 'fit-width PDF resizes to a narrow inspector with a scrollbar');
+    await run("document.querySelector('.inspector-pdf-toolbar button:last-of-type').click()");
+    await waitFor("document.querySelector('.inspector-pdf-preview').scrollWidth > document.querySelector('.inspector-pdf-preview').clientWidth", 'zoomed pages can scroll horizontally');
+    await run("document.querySelector('.inspector-pdf-toolbar button:nth-of-type(2)').click()");
+    await waitFor("document.querySelector('.inspector-pdf-preview').scrollWidth === document.querySelector('.inspector-pdf-preview').clientWidth", 'fit width removes horizontal overflow');
     fs.writeFileSync(path.join(root, 'tmp/inspector-pdf-preview.png'), (await window.webContents.capturePage()).toPNG());
-    const guest = require('electron').webContents.fromId(await run('document.querySelector("webview").getWebContentsId()'));
-    const pdfFrame = guest.mainFrame.framesInSubtree.find(frame => frame.url.startsWith('chrome-extension:'));
-    assert.ok(pdfFrame, 'PDF viewer frame exists');
-    assert.equal(await pdfFrame.executeJavaScript('Boolean(document.querySelector("pdf-viewer"))'), true);
     // A server that never sends headers reproduces a missing load-completion event.
     let servePage = false;
     const server = require('node:http').createServer((_request, response) => {
@@ -244,7 +203,7 @@ app.whenReady().then(async () => {
       await waitFor('!document.querySelector(".inspector-preview-error") && nav.loading === false && nav.url?.includes("/hang")', 'webview timeout retry');
       assert.equal(await run('document.querySelector("webview").executeJavaScript("document.querySelector(\'h1\').textContent")'), 'Recovered');
     } finally { server.closeAllConnections(); server.close(); }
-    console.log('File routing matrix, HTML load/failure/retry and native PDF passed.');
+    console.log('File routing matrix, HTML load/failure/retry and PDF.js canvas/text preview passed.');
     console.log('Inspector media: image/audio/video, Chinese paths, reload, play, switch, missing/corrupt file, retry and timeout passed.');
   } finally { window.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

@@ -1,6 +1,7 @@
 import { uiText } from '../../i18n';
 import { ArrowDown, ArrowUp, RotateCw, X } from 'lucide-react';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type RefObject } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState, type RefObject } from 'react';
+import { InspectorPageVisible } from '../inspector/inspectorPageVisibility';
 import type { AppLanguage } from '../../types';
 import './browserTools.css';
 
@@ -17,6 +18,7 @@ export const BrowserPageTools = forwardRef<BrowserPageToolsHandle, { webviewRef:
   const [device, setDevice] = useState(false), [width, setWidth] = useState('390'), [height, setHeight] = useState('844');
   const [error, setError] = useState(''), input = useRef<HTMLInputElement>(null), request = useRef(0);
   const emulated = useRef<number | null>(null);
+  const visible = useContext(InspectorPageVisible);
   const search = useCallback((forward = true, next = false) => {
     const guest = webviewRef.current;
     try {
@@ -28,6 +30,7 @@ export const BrowserPageTools = forwardRef<BrowserPageToolsHandle, { webviewRef:
   const showFind = useCallback(() => { setFindOpen(true); requestAnimationFrame(() => { input.current?.focus(); input.current?.select(); }); }, []);
   useImperativeHandle(ref, () => ({ find: showFind, toggleDevice: () => setDevice(value => !value) }), [showFind]);
   useEffect(() => {
+    if (!visible) return;
     const guest = webviewRef.current;
     const found = (event: Event) => {
       const result = (event as Event & { result: { requestId: number; activeMatchOrdinal: number; matches: number } }).result;
@@ -36,16 +39,16 @@ export const BrowserPageTools = forwardRef<BrowserPageToolsHandle, { webviewRef:
     guest?.addEventListener('found-in-page', found);
     const stop = window.cardbushDesktop?.browser?.onFind(id => { try { if (guest?.getWebContentsId?.() === id) showFind(); } catch { /* Guest not ready. */ } });
     return () => { guest?.removeEventListener('found-in-page', found); stop?.(); };
-  }, [webviewRef, revision, showFind]);
+  }, [webviewRef, revision, showFind, visible]);
   useEffect(() => {
-    if (!findOpen) return;
+    if (!visible || !findOpen) return;
     setMatches({ current: 0, total: 0 });
     const timer = window.setTimeout(() => search(), 120);
     return () => window.clearTimeout(timer);
-  }, [findOpen, search]);
+  }, [visible, findOpen, search]);
   useEffect(() => {
     const guest = webviewRef.current, api = window.cardbushDesktop?.browser;
-    if (!guest || !api || !device && emulated.current === null) return;
+    if (!visible || !guest || !api || !device && emulated.current === null) return;
     let active = true, timer = 0;
     const apply = () => {
       try {
@@ -65,7 +68,7 @@ export const BrowserPageTools = forwardRef<BrowserPageToolsHandle, { webviewRef:
     guest.addEventListener('dom-ready', schedule);
     schedule();
     return () => { active = false; window.clearTimeout(timer); observer.disconnect(); guest.removeEventListener('dom-ready', schedule); };
-  }, [webviewRef, revision, device, width, height]);
+  }, [visible, webviewRef, revision, device, width, height]);
   return <>
     {findOpen && <div className="browser-find-bar" role="search" aria-label={uiText(language)('browserMenu.findInPage')}>
       <input ref={input} autoFocus value={query} aria-label={uiText(language)('browserPageTools.findText')} placeholder={uiText(language)('browserMenu.findInPage')} onChange={event => setQuery(event.target.value)}

@@ -39,11 +39,12 @@
 .capsule-reply-scroll article + article { border-top:1px solid var(--border); }
 
 @media (prefers-reduced-motion: no-preference) {
+  .capsule-replies { transition:opacity 140ms ease-out, translate 140ms ease-out; }
+  .capsule-replies[data-visible=false] { opacity:0; translate:0 3px; }
   .floating-capsule:is([data-surface=compose],[data-surface=voice]) { animation:capsule-open 160ms ease-out; }
   .floating-assistant-surface button > svg { transition:transform 100ms ease-out; }
   .floating-assistant-surface button:enabled:active > svg { transform:scale(.86); }
-  .floating-capsule > :is(button, .capsule-form, .voice-composer-call),
-  .capsule-replies { animation:capsule-reveal 150ms cubic-bezier(.2,.8,.2,1); }
+  .floating-capsule > :is(button, .capsule-form, .voice-composer-call) { animation:capsule-reveal 150ms cubic-bezier(.2,.8,.2,1); }
   .floating-capsule [data-action=replies][aria-expanded=true] > svg { animation:capsule-bell 220ms ease-out; }
 }
 @keyframes capsule-open { from { opacity:.78; } }

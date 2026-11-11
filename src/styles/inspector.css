@@ -30,6 +30,16 @@
     visibility 0s;
 }
 
+.right-inspector[data-restore-layout] { transition: none; }
+
+@starting-style {
+  .right-inspector.soft-panel-visible:not([data-restore-layout]) {
+    flex-basis: 0;
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+
 .right-inspector-viewport {
   --side-panel-width: inherit;
   width: 100%;
@@ -522,6 +532,12 @@ body.right-inspector-resizing .right-inspector-resizer {
 .right-inspector-tab-page.active {
   visibility: visible;
   pointer-events: auto;
+}
+
+/* Keep inactive documents mounted, but skip their descendant layout and paint.
+   Live guest surfaces keep their viewport for automation and media playback. */
+.right-inspector-tab-page[data-page-visible="false"]:not(:has(webview, iframe)) {
+  content-visibility: hidden;
 }
 
 .work-summary-inspector {
@@ -1126,26 +1142,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-}
-
-@media (max-width: 980px) {
-  .right-inspector {
-    --side-panel-width: min(var(--right-inspector-width), calc(100cqw - 2px - 48px));
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 24;
-    width: var(--side-panel-width);
-    max-width: calc(100% - 48px);
-    flex-basis: auto;
-    box-shadow: -12px 0 30px color-mix(in srgb, var(--shadow) 46%, transparent);
-    transition:
-      width var(--panel-motion-duration) var(--panel-motion-ease),
-      opacity 180ms ease,
-      transform var(--panel-motion-duration) var(--panel-motion-ease),
-      visibility 0s;
-  }
 }
 
 .right-inspector-start {

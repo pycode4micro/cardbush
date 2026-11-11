@@ -37,7 +37,7 @@
 .compact-sidebar-backdrop[data-visible="true"] { opacity: 1; }
 .compact-sidebar-backdrop[aria-hidden="true"] { pointer-events: none; }
 
-/* Small desktop windows keep one usable content pane; sidebars become drawers. */
+/* The navigation becomes a drawer. Inspector tabs still share the content area. */
 @media (max-width: 760px) {
   .desktop-shell {
     --layout-sidebar-space: 0px;
@@ -55,11 +55,6 @@
 
   .desktop-shell > .sidebar-resizer,
   .right-inspector-resizer { display: none; }
-
-  .right-inspector {
-    --side-panel-width: calc(100cqw - 2px);
-    max-width: 100%;
-  }
 
   .main-stage { --chat-inline-gutter: 12px; border-radius: 0; }
   .settings-content { min-width: 0; padding: 20px 16px 28px; border-radius: 0; }

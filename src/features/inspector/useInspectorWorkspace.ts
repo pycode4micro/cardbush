@@ -1,7 +1,7 @@
 import { uiText } from '../../i18n';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AppLanguage, AppSection } from '../../types';
-import { inspectorMaximum, minimumConversationWidth, minimumInspectorWidth } from '../../components/rightInspectorSizing';
+import { fitInspectorSplit, inspectorMaximum, minimumConversationWidth, minimumInspectorWidth } from '../../components/rightInspectorSizing';
 import { useInspectorRecovery } from './useInspectorRecovery';
 import type { InspectorTab, InspectorResourceTab } from './inspectorTabs';
 import { addPanel, panelIds, retainPanels, type PanelLayout } from './panelLayout';
@@ -56,7 +56,8 @@ export function useInspectorWorkspace({
   const [quickInputOpen, setQuickInputOpen] = useInspectorSessionState(workspaceId, false);
   const standalone = Boolean(exitPage);
   const inspectorCover = !standalone && splitCover;
-  const { mainStageRef, conversationCovered, splitWidthRef } = useInspectorRecovery({ workspaceId: geometryId, open: inspectorOpen, covered: standalone || inspectorCover, width: inspectorWidth });
+  const { mainStageRef, conversationCovered, splitWidthRef } = useInspectorRecovery({ workspaceId: geometryId, open: inspectorOpen,
+    covered: standalone || inspectorCover, width: inspectorWidth, coverRequested: conversationCoverRequested });
   const inspectorControlsVisible = inspectorOpen && (standalone || inspectorCover || conversationCovered);
   const multiPageRestore = useInspectorSessionRef<{ width: number; sidebar: boolean } | null>(geometryId, null);
   const coverRestore = useInspectorSessionRef<{ section: AppSection; sidebar: boolean; width: number; open: boolean } | null>(geometryId, null);
@@ -82,7 +83,7 @@ export function useInspectorWorkspace({
           - sidebarSpace(shell, context.sidebarCollapsed, context.sidebarWidth);
         windowResize.current = {
           startWidth: gesture.startWidth,
-          inspectorWidth: Math.min(preferredWidthRef.current, Math.max(minimumInspectorWidth, available - minimumConversationWidth)),
+          inspectorWidth: fitInspectorSplit(preferredWidthRef.current, available),
           preferredWidth: preferredWidthRef.current,
         };
         shell.classList.add('inspector-window-resizing');
@@ -109,7 +110,8 @@ export function useInspectorWorkspace({
     const available = (shell?.clientWidth ?? window.innerWidth) - sidebarSpace(shell, sidebarCollapsed, sidebarWidth);
     // Only an explicit oversized pane choice may hide the conversation. A
     // viewport change must never turn an ordinary split into a cover by itself.
-    conversationCoverRequested.current = !keepConversationVisible && !compactLayout && next > available - minimumConversationWidth;
+    conversationCoverRequested.current = !keepConversationVisible && !compactLayout &&
+      available >= minimumConversationWidth + minimumInspectorWidth && next > available - minimumConversationWidth;
     preferredWidthRef.current = next;
     inspectorWidthRef.current = next;
     setInspectorWidthState(next);
@@ -153,10 +155,9 @@ export function useInspectorWorkspace({
     if (inspectorControlsVisible) {
       leaveInspectorCover();
     } else if (inspectorOpen) {
-      const panel = mainStageRef.current?.parentElement?.querySelector(':scope > .right-inspector');
-      // In a narrow window the inspector overlays the conversation. Navigation
-      // must reveal the destination, while a usable docked split can stay open.
-      if (compactLayout || panel && getComputedStyle(panel).position === 'absolute') {
+      const shell = mainStageRef.current?.parentElement;
+      const available = (shell?.clientWidth ?? window.innerWidth) - sidebarSpace(shell, sidebarCollapsed, sidebarWidth);
+      if (compactLayout || available < minimumConversationWidth + minimumInspectorWidth) {
         setInspectorOpen(false);
       }
     }
@@ -165,7 +166,7 @@ export function useInspectorWorkspace({
     // Its status opens that current conversation, not the previous app section.
     setSection(section);
   }, [inspectorControlsVisible, leaveInspectorCover, inspectorOpen, mainStageRef,
-    compactLayout, setInspectorOpen, setSidebarCollapsed, section, setSection, standalone]);
+    compactLayout, sidebarCollapsed, sidebarWidth, setInspectorOpen, setSidebarCollapsed, section, setSection, standalone]);
   const enterInspectorCover = useCallback(() => {
     coverRestore.current ??= { section, open: inspectorOpen, sidebar: sidebarCollapsed, width: conversationCovered ? splitWidthRef.current ?? 620 : inspectorWidthRef.current };
     setInspectorCover(true); setSidebarCollapsed(true); setInspectorOpen(true);
@@ -229,7 +230,6 @@ export function useInspectorWorkspace({
       if (document.body.classList.contains('right-inspector-resizing') ||
         document.body.classList.contains('sidebar-resizing')) return;
       const panel = shell.querySelector(':scope > .right-inspector');
-      const overlay = compactLayout || panel && getComputedStyle(panel).position === 'absolute';
       const available = shell.clientWidth - sidebarSpace(shell, sidebarCollapsed, sidebarWidth);
       const resize = windowResize.current;
       if (resize) {
@@ -238,9 +238,8 @@ export function useInspectorWorkspace({
         preferredWidthRef.current = Math.abs(window.innerWidth - resize.startWidth) < 1 ? resize.preferredWidth
           : Math.max(minimumInspectorWidth, Math.round(resize.inspectorWidth + window.innerWidth - resize.startWidth));
       }
-      const next = overlay ? preferredWidthRef.current
-        : conversationCoverRequested.current ? available
-        : Math.min(preferredWidthRef.current, Math.max(minimumInspectorWidth, available - minimumConversationWidth));
+      const next = conversationCoverRequested.current && available >= minimumInspectorWidth + minimumConversationWidth
+        ? available : fitInspectorSplit(preferredWidthRef.current, available);
       // Ordinary viewport changes (including maximize/restore) only fit the
       // preferred width. A native right-edge gesture explicitly adjusts it.
       inspectorWidthRef.current = next;

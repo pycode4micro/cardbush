@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ComponentType } from 'react';
+import { lazy, memo, Suspense, type ComponentType } from 'react';
 import { fileUrl } from '../../shared/localPaths';
 import type { AppLanguage } from '../../types';
 import { FilePreviewFallback } from './FilePreviewFallback';
@@ -23,13 +23,13 @@ function mediaRenderer(kind: 'image' | 'video' | 'audio'): ComponentType<Inspect
 
 /** Add a renderer here, then register its supported formats in filePreviewRegistry.ts. */
 export const inspectorFilePreviewRenderers = {
-  markdown: MarkdownInspectorPreview,
-  text: SourceInspectorPreview,
-  image: mediaRenderer('image'),
-  video: mediaRenderer('video'),
-  audio: mediaRenderer('audio'),
-  pdf: pdfRenderer,
-  fallback: FilePreviewFallback,
+  markdown: memo(MarkdownInspectorPreview),
+  text: memo(SourceInspectorPreview),
+  image: memo(mediaRenderer('image')),
+  video: memo(mediaRenderer('video')),
+  audio: memo(mediaRenderer('audio')),
+  pdf: memo(pdfRenderer),
+  fallback: memo(FilePreviewFallback),
 } satisfies Record<string, ComponentType<InspectorFilePreviewProps>>;
 
 export type InspectorFilePreviewRenderer = Exclude<keyof typeof inspectorFilePreviewRenderers, 'fallback'>;

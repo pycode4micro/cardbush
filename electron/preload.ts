@@ -214,8 +214,8 @@ const desktopApi = {
   },
   dragAssistantSurface: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => ipcRenderer.send('assistant:drag-surface', action, dx, dy),
   assistantSurface: (surface: 'read' | import('./assistantSurface').AssistantSurface) => ipcRenderer.invoke('assistant:surface', surface),
-  onAssistantSurface: (listener: (surface: import('./assistantSurface').AssistantSurface) => void) => {
-    const handle = (_event: Electron.IpcRendererEvent, surface: import('./assistantSurface').AssistantSurface) => listener(surface);
+  onAssistantSurface: (listener: (state: import('./assistantSurface').AssistantSurfaceState) => void) => {
+    const handle = (_event: Electron.IpcRendererEvent, state: import('./assistantSurface').AssistantSurfaceState) => listener(state);
     ipcRenderer.on('assistant:surface-changed', handle);
     return () => { ipcRenderer.removeListener('assistant:surface-changed', handle); };
   },

@@ -10,13 +10,13 @@ import './floatingAssistantCapsule.css';
 
 type Props = CapsuleInput & {
   language: string; unread: number; calling: boolean; voiceBlocked: boolean;
-  replies: ConversationEntry[]; error: string;
+  replies: ConversationEntry[]; replyWidth?: number; error: string;
   compose(): void; open(): void; openVoice(): void;
 };
 export function FloatingAssistantCapsule(p: Props) {
   const t = uiText(p.language);
   const voice = useVoiceComposer();
-  const {input, toolbar, sheet, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach} = useCapsuleControls(p);
+  const {input, toolbar, sheet, renderReplies, revealReplies, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach} = useCapsuleControls(p);
   const bell = t('capsule.replies', { count: p.unread });
   const replyScroll = useRef<HTMLDivElement>(null);
   const followingLatest = useRef(true);
@@ -53,7 +53,8 @@ export function FloatingAssistantCapsule(p: Props) {
       <button type="button" data-action="replies" aria-expanded={p.repliesOpen} onClick={p.repliesOpen ? p.collapse : p.open} aria-label={bell} title={bell}><Bell/>{p.unread > 0 && <span className="capsule-badge" aria-hidden="true">{p.unread > 99 ? '99+' : p.unread}</span>}</button>
     </>}
     </div>
-    {p.repliesOpen && <section ref={sheet} className="capsule-replies" aria-label={t('capsule.replyList')}>
+    {renderReplies && <section ref={sheet} className="capsule-replies" data-visible={revealReplies}
+      inert={!p.repliesOpen} aria-hidden={!p.repliesOpen} style={{width:p.replyWidth}} aria-label={t('capsule.replyList')}>
       <header><strong>{t('capsule.replyList')}</strong><button type="button" aria-label={t('capsule.collapseReplies')}
         title={t('capsule.collapseReplies')} onClick={p.collapse}><X/></button></header>
       <div ref={replyScroll} className="capsule-reply-scroll" tabIndex={0}

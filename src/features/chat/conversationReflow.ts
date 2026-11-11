@@ -1,4 +1,5 @@
 import { suspendScrollAnchoring } from '../scrollAnchoring';
+import { firstMessageBelow } from './conversationScrollPosition';
 
 type ReadingAnchor = {
   element: HTMLElement;
@@ -19,13 +20,7 @@ function captureReadingAnchor(scroller: HTMLElement, items: HTMLElement[], preci
   const y = viewport.top + 20;
   // Transcript rows are in vertical order. Find the first visible row without
   // forcing a geometry read for every earlier message on each scroll frame.
-  let low = 0, high = items.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (items[middle].getBoundingClientRect().bottom <= y) low = middle + 1;
-    else high = middle;
-  }
-  const item = items[low];
+  const item = firstMessageBelow(items, y);
   if (!item) return null;
   // During motion only retain the row box. Walking paragraphs and hit-testing
   // text can synchronously lay out lazy descendants on every wheel packet.

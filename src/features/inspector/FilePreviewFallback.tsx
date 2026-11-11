@@ -4,6 +4,8 @@ import { File } from 'lucide-react';
 import { basename, resourceTargetKind } from '../../shared/localPaths';
 import { showUiError } from '../../shared/showUiError';
 import type { AppLanguage } from '../../types';
+import { openInspector } from './inspectorEvents';
+import { localCanvasFilePath } from './inspectorTargets';
 
 /** Unknown formats are a normal display state; no content read or external launch on mount. */
 export function FilePreviewFallback({ path, language, message, onLoadingChange }: {
@@ -15,6 +17,7 @@ export function FilePreviewFallback({ path, language, message, onLoadingChange }
   const [opening, setOpening] = useState(false);
   const resourceKind = resourceTargetKind(path);
   const fileTarget = resourceKind === 'local-file' || resourceKind === 'ssh-file';
+  const canvas = localCanvasFilePath(path);
   useEffect(() => { onLoadingChange?.(false); }, [path, onLoadingChange]);
 
   const openExternally = async () => {
@@ -36,11 +39,12 @@ export function FilePreviewFallback({ path, language, message, onLoadingChange }
     <File size={36} strokeWidth={1.25} aria-hidden="true" />
     <strong className="inspector-file-fallback-name">{basename(path)}</strong>
     <div className="inspector-file-fallback-path">{path}</div>
-    <div role={message ? 'alert' : undefined}>
+    {!canvas && <div role={message ? 'alert' : undefined}>
       <p>{!fileTarget ? (uiText(language)('filePreviewFallback.resourceAddressUnavailable'))
         : message || (uiText(language)('filePreviewFallback.noBuiltInPreviewIsAvailableFor'))}</p>
-    </div>
-    {fileTarget && <button className="inspector-open-external" type="button" disabled={opening} onClick={() => void openExternally()}>
+    </div>}
+    {canvas ? <button className="inspector-open-external" type="button" onClick={() => openInspector(canvas)}>{uiText(language)('canvasSidebar.openCanvas')}</button>
+    : fileTarget && <button className="inspector-open-external" type="button" disabled={opening} onClick={() => void openExternally()}>
       {uiText(language)('filePreviewFallback.openInDefaultApplication')}
     </button>}
   </section>;

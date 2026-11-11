@@ -1,7 +1,7 @@
 /* Native caption hit targets stay above the workspace. The rail paints continuously behind them. */
 .app[data-desktop-workspace] {
   --rail-divider: color-mix(in srgb,var(--text) 11%,transparent);
-  --workspace-bar-height: max(60px, var(--window-frame-height));
+  --workspace-bar-height: var(--window-frame-height);
   --header-rail-width: var(--sidebar-width);
   --chrome-grain: url('../../styles/workspace-grain.png');
   --header-glass: color-mix(in srgb, var(--surface) 62%, transparent);
@@ -65,12 +65,9 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
   }
 }
 @media (max-width: 700px) {
-  .app[data-desktop-workspace] { --workspace-bar-height: max(50px, var(--window-frame-height)); }
   .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .window-navigation {
     flex:0 1 min(100%, calc(var(--header-rail-width) - 10px));
   }
-  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)) .recent-bar > :is(.recent-bar-chat, .recent-bar-actions) { display: none; }
-  .app[data-desktop-workspace]:has(> .desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)):has(.stage-call-slot) .window-navigation { flex-basis:48px; }
 }
 .app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
 .app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }
@@ -103,6 +100,10 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .desktop-search:hover { background:var(--chrome-control-hover,var(--menu-hover)); }
 .desktop-shell:not(.sidebar-is-collapsed) .desktop-search svg { order:1; margin-inline-start:auto; width:14px; height:14px; }
 .desktop-library { height:100%; min-height:0; overflow:auto; container-type:inline-size; --library-inset:clamp(20px,3.5vw,54px); padding:var(--library-inset); box-sizing:border-box; color:var(--text); background:var(--surface); scrollbar-gutter:stable; }
+/* Scroll artwork behind the glass, but keep the native thumb below the caption controls. */
+.app .desktop-library { scrollbar-color:auto; }
+.app .desktop-library::-webkit-scrollbar-track { margin-top:var(--workspace-bar-height); }
+.app .desktop-library::-webkit-scrollbar-button { display:none; }
 .desktop-library *, .desktop-library *::before { box-sizing:border-box; }
 .desktop-library h1,.desktop-library h2,.desktop-library p { margin:0; }
 .desktop-library h1 { font-size:clamp(30px,3vw,45px); line-height:1.12; letter-spacing:-.045em; font-weight:740; overflow-wrap:anywhere; }

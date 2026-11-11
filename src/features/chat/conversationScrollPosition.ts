@@ -19,6 +19,16 @@ export function saveConversationScrollPosition(key: string, value: ConversationS
   if (conversationScrollPositions.size > 128) conversationScrollPositions.delete(conversationScrollPositions.keys().next().value!);
 }
 
+export function firstMessageBelow(rows: ArrayLike<HTMLElement>, y: number) {
+  let low = 0, high = rows.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (rows[middle].getBoundingClientRect().bottom <= y) low = middle + 1;
+    else high = middle;
+  }
+  return rows[low];
+}
+
 // Capture while the old list is still attached. A message anchor survives
 // changes above the viewport; the pixel position is a fallback if it was removed.
 export function captureConversationScrollPosition(
@@ -26,15 +36,9 @@ export function captureConversationScrollPosition(
   followLatest: boolean,
 ): ConversationScrollPosition {
   const viewportTop = scroller.getBoundingClientRect().top;
-  let anchor: ConversationScrollPosition['anchor'] = null;
-  for (const item of scroller.querySelectorAll<HTMLElement>('.message-list-item')) {
-    const bounds = item.getBoundingClientRect();
-    if (bounds.bottom <= viewportTop) continue;
-    if (item.dataset.messageId) {
-      anchor = { messageId: item.dataset.messageId, offset: bounds.top - viewportTop };
-    }
-    break;
-  }
+  const item = firstMessageBelow(scroller.querySelectorAll<HTMLElement>('.message-list-item'), viewportTop);
+  const anchor = item?.dataset.messageId
+    ? { messageId: item.dataset.messageId, offset: item.getBoundingClientRect().top - viewportTop } : null;
   return {
     scrollTop: scroller.scrollTop,
     followLatest,

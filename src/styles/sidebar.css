@@ -787,6 +787,7 @@ body.sidebar-resizing .right-inspector {
 
 .sidebar-footer {
   display: flex;
+  flex-direction: column;
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
@@ -794,6 +795,20 @@ body.sidebar-resizing .right-inspector {
   padding: 7px 0;
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
+
+.sidebar-assistant {
+  position: relative; display:flex; align-items:center; width:100%; height:38px; min-width:0;
+  gap:8px; padding:0 10px; box-sizing:border-box; border:0; border-radius:6px;
+  background:transparent; color:var(--text); font:inherit; cursor:pointer;
+}
+.sidebar-assistant:is(:hover,[aria-current=page]) { background:var(--menu-hover); }
+.sidebar-assistant:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.sidebar-assistant .assistant-stage { position:relative; inset:auto; flex:0 0 34px; height:100%; }
+.sidebar-assistant .assistant-stage-actor { --assistant-character-size:26px; }
+.sidebar-assistant .assistant-stage-cue { left:72%; scale:.65; transform-origin:left center; }
+.sidebar-assistant-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sidebar-is-collapsed .sidebar-assistant { justify-content:center; padding:0; }
+.sidebar-is-collapsed .sidebar-assistant-name { display:none; }
 
 .sidebar-footer .settings-dock {
   flex: 1;

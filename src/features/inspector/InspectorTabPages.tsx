@@ -4,10 +4,12 @@ import { useEffect, useRef, type CSSProperties, type PointerEvent as ReactPointe
 import type { InspectorTab } from './inspectorTabs';
 import type { AppLanguage } from '../../types';
 import { panelDividers, panelRects, type PanelLayout } from './panelLayout';
+import { InspectorPageVisible } from './inspectorPageVisibility';
 import './inspectorWorkspace.css';
 
 /** Switching tabs preserves each page's local state and its underlying guest. */
-export function InspectorTabPages({ tabs, activeId, children, layout = null, onResize, renderFrame, onActivate, language: selectedLanguage, workspaceId = 'shared' }: {
+export function InspectorTabPages({ tabs, activeId, visible = true, children, layout = null, onResize, renderFrame, onActivate, language: selectedLanguage, workspaceId = 'shared' }: {
+  visible?: boolean;
   workspaceId?: string;
   language?: AppLanguage;
   tabs: InspectorTab[];
@@ -74,14 +76,16 @@ export function InspectorTabPages({ tabs, activeId, children, layout = null, onR
   return <div ref={ref} className={`right-inspector-tab-pages${layout ? ' tiled' : ''}`}>
     {tabs.map(tab => {
       const active = layout ? Boolean(rects[tab.id]) : tab.id === activeId, rect = rects[tab.id];
-      return <section key={tab.id} data-inspector-page-id={tab.id}
+      return <section key={tab.id} data-inspector-page-id={tab.id} data-page-visible={visible && active}
         className={`right-inspector-tab-page${active ? ' active' : ''}`}
         style={layout && rect ? { left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%` } as CSSProperties : undefined}
         role="tabpanel" aria-hidden={!active} inert={!active}
         onFocusCapture={() => { if (layout && tab.id !== activeId) onActivate?.(tab.id); }}
         onPointerDown={() => { if (layout && tab.id !== activeId) onActivate?.(tab.id); }}>
         {layout && active && renderFrame?.(tab)}
-        <div className="inspector-page-content">{children(tab, active)}</div>
+        <InspectorPageVisible.Provider value={visible && active}>
+          <div className="inspector-page-content">{children(tab, visible && active)}</div>
+        </InspectorPageVisible.Provider>
       </section>;
     })}
     {layout && panelDividers(layout).map(divider => <div key={divider.path} role="separator" tabIndex={0}

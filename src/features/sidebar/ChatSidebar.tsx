@@ -5,7 +5,7 @@ import type { RecentListOutlet } from '../desktop/RecentConversationBar';
 import { ConversationRowContent } from '../desktop/RecentConversationBarView';
 import { ProfileMenu } from '../profile/ProfileMenu';
 import { SidebarApplications } from './SidebarApplications';
-import { setConversationsArchived, useConversationArchives } from './conversationArchives';
+import { recentVisibleConversations, setConversationsArchived, useConversationArchives } from './conversationArchives';
 import { showUiError } from '../../shared/showUiError';
 import { ConversationExtractionContext, CONVERSATION_DRAG_TYPE, ExtractionMenuIcon } from '../chat/ConversationExtraction';
 import { useContext } from 'react';
@@ -199,12 +199,14 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenSettings,
   onOpenArchives,
   onOpenSearch,
-  projectsHost, onOpenProject, onOpenTabWorkspace, workspaceNavigation,
+  projectsHost, onOpenProject, onOpenTabWorkspace, workspaceNavigation, quickNavigation, assistantEntry,
   softVisible = true, showRail = true, recentList,
 }: {
   language: AppLanguage;
   section: AppSection | 'settings' | 'tabs' | 'projects';
   workspaceNavigation?: React.ReactNode;
+  quickNavigation?: React.ReactNode;
+  assistantEntry?: React.ReactNode;
   activeConversationId: string;
   runningConversationIds?: Set<string>;
   attentionByConversation?: Record<string, SessionAttentionState>;
@@ -302,10 +304,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     [projectItems],
   );
   const visibleConversations = useMemo(
-    () =>
-      conversationItems.filter(
-        (conversation) => !conversation.metadata?.hidden && !archivedConversationIds.has(conversation.id),
-      ),
+    () => recentVisibleConversations(conversationItems, archivedConversationIds),
     [archivedConversationIds, conversationItems],
   );
   const pinnedProjects = useMemo(
@@ -316,9 +315,13 @@ export const ChatSidebar = memo(function ChatSidebar({
     () => visibleConversations.filter((conversation) => pinnedConversationIds.has(conversation.id)),
     [pinnedConversationIds, visibleConversations],
   );
-  const recentConversations = useMemo(() => recentList && recentList.tab !== 'pinned'
-    ? [...visibleConversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, recentList.limit) : [],
-    [visibleConversations, recentList]);
+  const recentOpen = Boolean(recentList);
+  const recentConversations = useMemo(() => {
+    if (!recentOpen) return [];
+    const expanded = pinnedProjects.filter(project => expandedProjectIds.has(project.id));
+    return visibleConversations.filter(item => !pinnedConversationIds.has(item.id) && !expanded.some(project =>
+      conversationMatchesScope(item, { mode: 'project', projectId: project.id, projectDir: project.rootPath })));
+  }, [recentOpen, visibleConversations, pinnedConversationIds, pinnedProjects, expandedProjectIds]);
   const unreadConversationIds = useMemo(() => {
     if (!conversationReadState.initialized) return new Set<string>();
     return new Set(
@@ -710,6 +713,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           <Search aria-hidden="true"/><span>{uiText(language)('desktop.search')}</span>
         </button>
         <SidebarNavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
+        {quickNavigation}
         <SidebarNavRow navSection="explore" shortcut="openAppCenter" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
         {workspaceNavigation}
         <SidebarNavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={section === 'tabs'} onClick={onOpenTabWorkspace}/>
@@ -717,6 +721,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       </nav>
 
       <div className="sidebar-footer">
+        {assistantEntry}
         <ProfileMenu language={language}/>
       </div>
       </div>
@@ -728,18 +733,18 @@ export const ChatSidebar = memo(function ChatSidebar({
         <button type="button" onClick={onOpenArchives ?? onOpenSettings}><Archive/>{uiText(language)('chatSidebar.manageArchives')}</button>
       </div>
     </div>, projectsHost)}
-    {recentList && createPortal(<div className={workspaceDropTarget === 'recent' ? 'recent-session-rows workspace-drop-active' : 'recent-session-rows'}
-      data-workspace-drop={recentList.tab === 'pinned' ? undefined : 'recent'}
-      onDragStart={trackDrag} onDragEnd={endDrag} {...(recentList.tab === 'pinned' ? {} : workspaceDropHandlers(null))}>
-      {recentList.tab === 'pinned' ? <>
+    {recentList && createPortal(<div className="recent-session-rows" onDragStart={trackDrag} onDragEnd={endDrag}>
+      {(pinnedProjects.length > 0 || pinnedConversations.length > 0) && <section data-recent-group="pinned">
+        <h3>{uiText(language)('chatSidebar.pinned')}</h3>
         {pinnedProjects.map(project => renderProjectBlock(project, true))}
         {pinnedConversations.map(renderDrawerConversation)}
-        {!pinnedProjects.length && !pinnedConversations.length && <p>{uiText(language)('chatSidebar.rightClickAProjectOrChatTo')}</p>}
-      </> : <>
-        {recentConversations.map(renderDrawerConversation)}
-        {!recentConversations.length && recentList.selectedId !== PERSONAL_ASSISTANT_SESSION && <p>{uiText(language)('conversationSearchDialog.noChatsYet')}</p>}
-        {visibleConversations.length > recentList.limit && <button className="recent-turn-more" type="button" onClick={recentList.more}>{uiText(language)('recentBar.moreChats')}</button>}
-      </>}
+      </section>}
+      <section data-workspace-drop="recent" className={workspaceDropTarget === 'recent' ? 'workspace-drop-active' : undefined} {...workspaceDropHandlers(null)}>
+        {recentConversations.length > 0 && <h3>{uiText(language)('recentBar.sessions')}</h3>}
+        {recentConversations.slice(0, recentList.limit).map(renderDrawerConversation)}
+        {!visibleConversations.length && !pinnedProjects.length && recentList.selectedId !== PERSONAL_ASSISTANT_SESSION && <p>{uiText(language)('conversationSearchDialog.noChatsYet')}</p>}
+        {recentConversations.length > recentList.limit && <button className="recent-turn-more" type="button" onClick={recentList.more}>{uiText(language)('recentBar.moreChats')}</button>}
+      </section>
     </div>, recentList.element)}
       {menu}
   </>;

@@ -1,5 +1,5 @@
 const { app, BrowserWindow, protocol, ipcMain, webContents, net, nativeImage } = require('electron');
-const { readFile, writeFile, mkdir } = require('node:fs/promises');
+const { readFile, writeFile, rename, mkdir } = require('node:fs/promises');
 const { join, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const assert = require('node:assert/strict');
@@ -32,7 +32,9 @@ app.whenReady().then(async () => {
   const registry = new ToolRegistry(); registerWorkspaceTools(registry, new WorkspaceObservationStore()); registerDesignTool(registry);
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('Unexpected permission prompt'); } } });
   let ordinal = 0;
-  const service = new CreationCanvasFiles(async () => directory);
+  let pickedCanvas;
+  const service = new CreationCanvasFiles(async action => action === 'open' ? pickedCanvas : directory,
+    () => 'en', path => rename(path, join(directory, 'recycled.canvas')));
   ipcMain.handle('canvas:command', (_, input) => service.command(input));
   ipcMain.handle('canvas:workspace', async (_, id) => { const root = join(directory, id); await mkdir(root, { recursive: true }); return root; });
   ipcMain.handle('canvas:pick', () => [join(directory, 'sample.md'), join(directory, 'sample.html')]);
@@ -302,7 +304,7 @@ app.whenReady().then(async () => {
     await run('document.querySelector("[data-canvas-item=interactive]").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
     await run('canvasSend("Make the selected part concise")');
     const prompt = await run('lastCanvasPrompt'); assert.equal(prompt.text, 'Make the selected part concise'); assert.match(prompt.context[0].content, /design\(action=inspect/); assert.match(prompt.context[0].content, /selectedId.*interactive/); assert.match(prompt.context[0].content, /viewport/);
-    await run('document.querySelector("[aria-label=更多操作]").click()'); await clickText('提取所选内容为组件'); await until('document.body.textContent.includes("已保存到组件")');
+    await run('document.querySelector(".canvas-menu-wrap > button[aria-haspopup=menu]").click()'); await clickText('提取所选内容为组件'); await until('document.body.textContent.includes("已保存到组件")');
     const components = await run('JSON.parse(localStorage.getItem("cardbush.html_components.v1"))'); assert.ok(components.items.some(item => item.html?.includes('Canvas interaction')));
     const md = (await readCanvas(entry.path)).document.items.find(item => item.kind === 'file' && item.source.endsWith('.md'));
     await run(`document.querySelector('[data-canvas-item="${md.id}"] [aria-label="引用局部"]').click()`); await until('!!document.querySelector(".canvas-file-backdrop .inspector-region-hit-area")');
@@ -311,8 +313,8 @@ app.whenReady().then(async () => {
     await clickText('引用到画板'); await until('document.querySelectorAll("[data-canvas-item]").length===4 && !document.querySelector(".canvas-file-backdrop")');
     const excerpt = (await readCanvas(entry.path)).document.items.find(item => item.reference); assert.equal(excerpt.reference.source, md.source); assert.match(excerpt.reference.text, /Select this paragraph/); assert.equal(excerpt.reference.mode, 'snapshot');
     const png = nativeImage.createFromBuffer(await readFile(excerpt.source)); assert.ok(!png.isEmpty());
-    await run('document.querySelector("[aria-label=更多操作]").click()'); await clickText('保存到文件夹'); await until('document.querySelector(".canvas-notice")?.textContent.includes("已保存到")');
-    const exported = (await run('document.querySelector(".canvas-notice").textContent')).replace(/^已保存到 /, ''); assert.ok((await readCanvas(join(exported, 'space.canvas.json'))).document.items.find(item => item.reference).source.startsWith('assets/'));
+    await run('document.querySelector(".canvas-menu-wrap > button[aria-haspopup=menu]").click()'); await clickText('保存到文件夹'); await until('document.querySelector(".canvas-notice")?.textContent.includes("已保存到")');
+    const exported = (await run('document.querySelector(".canvas-notice").textContent')).replace(/^已保存到 /, ''); assert.ok((await readCanvas(join(exported, 'space.canvas'))).document.items.find(item => item.reference).source.startsWith('assets/'));
     await delay(300); await writeFile(resolve('tmp/creation-canvas-populated.png'), (await win.webContents.capturePage()).toPNG());
     await writeFile(join(directory, 'sample.md'), '# Updated by an agent\n\nThe same referenced file refreshes in place.');
     await until('document.querySelector(".canvas-stage").textContent.includes("Updated by an agent")');
@@ -340,12 +342,42 @@ app.whenReady().then(async () => {
     assert.equal((await selected()).path, entry.path);
     await run(`canvasStore.createCanvas(${JSON.stringify({ format: 'cardbush-canvas', version: 1, title: 'Home component', width: 1440, height: 960, background: '#181818', items: [html] })})`);
     await until('document.querySelector("[data-canvas-item=interactive]") && document.querySelector("[aria-label=画板名称]").value==="Home component"');
-    await run('document.querySelector("[aria-label=更多操作]").click()'); await clickText('添加到主页'); await until('document.body.textContent.includes("已添加到主页")');
+    await run('document.querySelector(".canvas-menu-wrap > button[aria-haspopup=menu]").click()'); await clickText('添加到主页'); await until('document.body.textContent.includes("已添加到主页")');
     const library = await run('JSON.parse(localStorage.getItem("cardbush.html_components.v1"))');
     assert.equal(library.items.length, components.items.length + 1);
     assert.deepEqual(library.items.filter(item => item.home).map(item => item.html), [html.html]);
     await require('./helpers/canvas-markdown-workspace.cjs')({ run, until, clickText, selected, win, teams, directory });
     await require('./helpers/canvas-development-desk.cjs')({ run, until, clickText, selected, win, teams, directory, design });
+    const openFileMenu = () => run('document.querySelector(".canvas-menu-wrap > button[aria-haspopup=menu]").click()');
+    const fileCommand = async label => {
+      await openFileMenu();
+      await run(`Array.from(document.querySelectorAll(".canvas-menu [role=menuitem]")).find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
+    };
+    await fileCommand('新建画板');
+    await until('!!canvasStore.getCanvases().canvases.find(c=>c.id===canvasStore.getCanvases().selectedId)?.path && !!document.querySelector(".canvas-empty")');
+    const created = await selected();
+    assert.match(created.path, /\.canvas$/i);
+    await fileCommand('关闭画板');
+    await until('!!document.querySelector(".canvas-library") && !canvasStore.getCanvases().selectedId');
+    const original = await readFile(created.path, 'utf8');
+    await run(`Array.from(document.querySelectorAll(".canvas-library-entry")).find(button => button.title === ${JSON.stringify(created.path)}).click()`);
+    await until('!!document.querySelector(".canvas-stage")');
+    assert.equal((await selected()).id, created.id);
+    pickedCanvas = join(directory, '外部画板.canvas');
+    await writeFile(pickedCanvas, JSON.stringify({ ...JSON.parse(original), title: '外部画板' }));
+    await fileCommand('打开画板');
+    await until('document.querySelector(".canvas-toolbar input")?.value==="外部画板"');
+    await fileCommand('删除画板');
+    await until('document.querySelector("dialog[open]")?.textContent.includes("外部画板.canvas")');
+    await run('document.querySelector("dialog[open] .secondary-button").click()');
+    assert.equal((await readCanvas(pickedCanvas)).document.title, '外部画板');
+    await fileCommand('删除画板');
+    await until('!!document.querySelector("dialog[open] .danger")');
+    await run('document.querySelector("dialog[open] .danger").click()');
+    await until('!!document.querySelector(".canvas-library") && !Array.from(document.querySelectorAll(".canvas-library-entry")).some(b=>b.textContent==="外部画板")');
+    assert.equal(await readFile(created.path, 'utf8'), original);
+    assert.equal((await readCanvas(join(directory, 'recycled.canvas'))).document.title, '外部画板');
+    console.log('PASS: toolbar creates, opens, closes, reopens and deletes only the confirmed canvas file.');
     console.log('PASS: canvas previews and geometry; shared Markdown editing, autosave, line context, document switching, conflicts and Team round trip');
   } catch (error) { await writeFile(resolve('tmp/creation-canvas-failure.png'), (await win.webContents.capturePage()).toPNG()); console.error('Pointer diagnostic', await run('window.pointerLog?.slice(-8)')); console.error('Wheel diagnostic', await run('window.canvasWheelLog')); console.error('Resize diagnostic', await run('window.canvasResizeLog')); throw error; } finally { win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

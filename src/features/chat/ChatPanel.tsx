@@ -12,6 +12,7 @@ import { QueueActionsMenu } from '../composer/QueueActionsMenu';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { ExtractionSelector } from './ConversationExtraction';
 import { ConversationHostContext } from '../conversationHost';
+import { InspectorPageVisible } from '../inspector/inspectorPageVisibility';
 import { remapProjectPath } from '../conversationScope';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { resolveChangedFilePath } from '../../shared/localPaths';
@@ -367,6 +368,7 @@ export function ChatPanel({
 }) {
   const host = useContext(ConversationHostContext);
   const quickInputTarget = useContext(ComposerPortalContext);
+  const pageVisible = useContext(InspectorPageVisible);
   const composerMount = useConversationComposerMount(activeConversationId, host?.id);
   const runtimeSessionId = host?.sessionId ?? activeConversationId;
   const [draftContext, setDraftContext] = useConversationViewState<PromptContext[]>(
@@ -660,10 +662,13 @@ export function ChatPanel({
     };
   }, []);
 
+  const geometryContext = useRef({ activeConversationId, composerDockHeight, sending });
+  geometryContext.current = { activeConversationId, composerDockHeight, sending };
   const captureScrollGeometry = useCallback(
     (label: string, extra: Record<string, unknown> = {}) => {
       // Disabled diagnostics must not force layout just to discard the result.
       if (!scrollDebugEnabled() && !windowScrollDiagnosticsActive()) return;
+      const { activeConversationId, composerDockHeight, sending } = geometryContext.current;
       const scroller = listScrollerRef.current;
       const chatBody = chatBodyRef.current;
       const frame = chatBody?.querySelector('.chat-content-frame');
@@ -715,7 +720,7 @@ export function ChatPanel({
         ...extra,
       });
     },
-    [activeConversationId, composerDockHeight, readBottomMetrics, sending],
+    [readBottomMetrics],
   );
 
   const isLatestMessageTailVisible = useCallback(
@@ -1395,6 +1400,20 @@ export function ChatPanel({
     ],
   );
 
+  const prependAnchor = useRef<{ sessionId: string; firstId?: string; position: ReturnType<typeof captureConversationScrollPosition> } | undefined>(undefined);
+  const capturePrependAnchor = useCallback(() => {
+    const scroller = listScrollerRef.current;
+    if (!scroller) return;
+    markUserDetachedFromBottom('load-earlier');
+    cancelScheduledStreamFollow();
+    prependAnchor.current = { sessionId: activeConversationId, firstId: renderMessages[0]?.id,
+      position: captureConversationScrollPosition(scroller, false) };
+  }, [markUserDetachedFromBottom, cancelScheduledStreamFollow, activeConversationId, renderMessages[0]?.id]);
+  const registerPrependAnchor = historyPages?.registerPrependAnchor;
+  useLayoutEffect(() => registerPrependAnchor?.(activeConversationId, capturePrependAnchor),
+    [registerPrependAnchor, activeConversationId, capturePrependAnchor]);
+  const loadEarlier = useCallback(() => historyPages?.loadOlder(capturePrependAnchor), [historyPages?.loadOlder, capturePrependAnchor]);
+
   const handleListScrollCapture = useCallback(
     (event: UIEvent<HTMLElement>) => {
       if (!(event.currentTarget instanceof HTMLElement)) {
@@ -1419,6 +1438,12 @@ export function ChatPanel({
       const previousScrollTop = lastScrollTopRef.current;
       const scrollDelta = scroller.scrollTop - previousScrollTop;
       lastScrollTopRef.current = scroller.scrollTop;
+      if (scrollDelta < 0 && userDetachedFromBottomRef.current && scroller.scrollTop < scroller.clientHeight / 2
+        && historyPages?.hasMore && !historyPages.loadingOlder && !historyPages.historyError) {
+        void historyPages.loadOlder(() => {
+          if (userDetachedFromBottomRef.current) capturePrependAnchor();
+        });
+      }
       const metrics = readBottomMetrics(scroller);
       atBottomRef.current = metrics.visualAtBottom;
       const now = Date.now();
@@ -1540,6 +1565,7 @@ export function ChatPanel({
       maybeLockStreamFollowFromScroll(scroller, 'scroll', scrollDelta);
     },
     [
+      historyPages?.hasMore, historyPages?.loadingOlder, historyPages?.historyError, historyPages?.loadOlder, capturePrependAnchor,
       maybeLockStreamFollowFromScroll,
       cancelScheduledStreamFollow,
       captureScrollGeometry,
@@ -1555,26 +1581,13 @@ export function ChatPanel({
 
   useLayoutEffect(() => {
     const chatBody = chatBodyRef.current;
-    if (loading || showWelcome) {
-      setComposerDockHeight(0);
-      setQuickContextBottomInset(0);
-      chatBody?.style.removeProperty('--composer-surface-top');
-      chatBody?.style.removeProperty('--composer-content-top');
-      chatBody?.style.removeProperty('--composer-surface-center-x');
-      chatBody?.style.removeProperty('--message-list-scrollbar-inset');
-      chatBody?.style.removeProperty('--message-list-viewport-height');
-      return undefined;
-    }
+    if (!pageVisible && !quickInputTarget) return;
     const dock = composerDockRef.current;
-    if (!dock) {
+    const button = scrollBottomButtonRef.current;
+    if (loading || showWelcome || !dock) {
       setComposerDockHeight(0);
       setQuickContextBottomInset(0);
-      chatBody?.style.removeProperty('--composer-surface-top');
-      chatBody?.style.removeProperty('--composer-content-top');
-      chatBody?.style.removeProperty('--composer-surface-center-x');
-      chatBody?.style.removeProperty('--message-list-scrollbar-inset');
-      chatBody?.style.removeProperty('--message-list-viewport-height');
-      return undefined;
+      return;
     }
     let lastMeasurement = '';
     let measurementFrame: number | null = null;
@@ -1587,39 +1600,27 @@ export function ChatPanel({
         : dockRect.top;
       const nextDockHeight = Math.ceil(dockRect.height);
       const nextBottomInset = Math.ceil(Math.max(0, dockRect.top + dockRect.height - visibleTop));
-      if (chatBody) {
-        chatBody.style.setProperty(
-          '--composer-content-top',
-          `${Math.max(0, visibleTop)}px`,
-        );
-      }
       const composerSurface = dock.querySelector<HTMLElement>(
         '.composer-surface, .interaction-card, .composer-stack',
       );
-      if (chatBody && composerSurface) {
-        const surfaceRect = composerLayoutBox(composerSurface, chatBody);
-        chatBody.style.setProperty(
-          '--composer-surface-top',
-          `${Math.max(0, surfaceRect.top)}px`,
-        );
-        chatBody.style.setProperty(
-          '--composer-surface-center-x',
-          `${surfaceRect.left + surfaceRect.width / 2}px`,
-        );
-      }
+      const surfaceRect = composerSurface ? composerLayoutBox(composerSurface, chatBody) : undefined;
       const scroller = listScrollerRef.current;
-      if (chatBody && scroller) {
-        const scrollbarInset = Math.max(0, scroller.offsetWidth - scroller.clientWidth);
-        chatBody.style.setProperty(
-          '--message-list-scrollbar-inset',
-          `${scrollbarInset}px`,
-        );
-        chatBody.style.setProperty(
-          '--message-list-viewport-height',
-          `${Math.max(0, scroller.clientHeight)}px`,
-        );
+      const scrollbarInset = scroller ? Math.max(0, scroller.offsetWidth - scroller.clientWidth) : 0;
+      const viewportHeight = scroller?.clientHeight ?? 0;
+      // Publish geometry only to its consumers. Inheriting these variables
+      // through the transcript restyles historical messages on every resize.
+      button?.style.setProperty('--composer-content-top', `${Math.max(0, visibleTop)}px`);
+      if (surfaceRect) {
+        button?.style.setProperty('--composer-surface-top', `${Math.max(0, surfaceRect.top)}px`);
+        button?.style.setProperty('--composer-surface-center-x', `${surfaceRect.left + surfaceRect.width / 2}px`);
       }
-      const measurement = `${nextDockHeight}:${nextBottomInset}:${Math.round(dockRect.width)}:${listScrollerRef.current?.clientHeight ?? 0}`;
+      // Both the transcript and the dock consume the end gutter. Publish it
+      // on their common parent only when the scrollbar actually changes.
+      const inset = scrollbarInset ? `${scrollbarInset}px` : '';
+      if (chatBody.style.getPropertyValue('--message-list-scrollbar-inset') !== inset) {
+        chatBody.style.setProperty('--message-list-scrollbar-inset', inset);
+      }
+      const measurement = `${nextDockHeight}:${nextBottomInset}:${Math.round(dockRect.width)}:${viewportHeight}`;
       if (measurement !== lastMeasurement) {
         lastMeasurement = measurement;
         captureScrollGeometry('trace-composer-measure', {
@@ -1664,16 +1665,15 @@ export function ChatPanel({
       if (measurementFrame != null) {
         window.cancelAnimationFrame(measurementFrame);
       }
-      chatBody?.style.removeProperty('--composer-surface-top');
-      chatBody?.style.removeProperty('--composer-content-top');
-      chatBody?.style.removeProperty('--composer-surface-center-x');
+      button?.style.removeProperty('--composer-surface-top');
+      button?.style.removeProperty('--composer-content-top');
+      button?.style.removeProperty('--composer-surface-center-x');
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
-      chatBody?.style.removeProperty('--message-list-viewport-height');
     };
-  }, [captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome]);
+  }, [activeConversationId, pageVisible, quickInputTarget, captureScrollGeometry, loading, pendingInteraction, hasInteraction, showWelcome]);
 
   useLayoutEffect(() => {
-    if (loading || showWelcome) return undefined;
+    if (!pageVisible || loading || showWelcome) return undefined;
     const chatBody = chatBodyRef.current;
     const chatPanel = chatBody?.closest('.chat-panel');
     const mainStage = chatBody?.closest('.main-stage');
@@ -1746,6 +1746,7 @@ export function ChatPanel({
     scrollMountRevision,
     activeConversationId,
     showWelcome,
+    pageVisible,
   ]);
 
   useEffect(() => {
@@ -1993,19 +1994,6 @@ export function ChatPanel({
     };
   }, [activeConversationId, scrollPositionKey, cancelScheduledStreamFollow, setScrollBottomVisible]);
 
-  const prependAnchor = useRef<{ sessionId: string; firstId?: string; position: ReturnType<typeof captureConversationScrollPosition> } | undefined>(undefined);
-  const capturePrependAnchor = useCallback(() => {
-    const scroller = listScrollerRef.current;
-    if (!scroller) return;
-    markUserDetachedFromBottom('load-earlier');
-    cancelScheduledStreamFollow();
-    prependAnchor.current = { sessionId: activeConversationId, firstId: renderMessages[0]?.id,
-      position: captureConversationScrollPosition(scroller, false) };
-  }, [markUserDetachedFromBottom, cancelScheduledStreamFollow, activeConversationId, renderMessages[0]?.id]);
-  const registerPrependAnchor = historyPages?.registerPrependAnchor;
-  useLayoutEffect(() => registerPrependAnchor?.(activeConversationId, capturePrependAnchor),
-    [registerPrependAnchor, activeConversationId, capturePrependAnchor]);
-  const loadEarlier = useCallback(() => historyPages?.loadOlder(capturePrependAnchor), [historyPages?.loadOlder, capturePrependAnchor]);
   useLayoutEffect(() => {
     const anchor = prependAnchor.current, scroller = listScrollerRef.current;
     if (!anchor || !scroller) return;
@@ -2080,7 +2068,10 @@ export function ChatPanel({
     if (!scroller) return;
     // A live prompt can acquire its persisted message ID while the chat opens.
     const message = renderMessages.find(item => item.turnId === requestedTurn.turnId && item.role === 'user' && !isTurnGuidanceMessage(item));
-    if (!message) return;
+    if (!message) {
+      if (historyPages?.hasMore && !historyPages.loadingOlder && !historyPages.historyError) void loadEarlier();
+      return;
+    }
     const target = scroller.querySelector<HTMLElement>(`[data-message-id="${cssEscape(message.id)}"]`);
     if (!target) return;
     markUserDetachedFromBottom('turn-navigation');
@@ -2089,7 +2080,8 @@ export function ChatPanel({
     scroller.focus({ preventScroll: true });
     lastScrollTopRef.current = scroller.scrollTop;
     onTurnLocated?.();
-  }, [activeConversationId, loading, scrollMountRevision, renderMessages, requestedTurn, onTurnLocated, markUserDetachedFromBottom]);
+  }, [activeConversationId, loading, scrollMountRevision, renderMessages, requestedTurn, onTurnLocated,
+    markUserDetachedFromBottom, historyPages?.hasMore, historyPages?.loadingOlder, historyPages?.historyError, loadEarlier]);
 
   const reflowOptions = {
     paused: () => Boolean(scrollActivationRef.current?.restoring || scrollbarDragActiveRef.current ||
@@ -2263,7 +2255,7 @@ export function ChatPanel({
     ],
   );
 
-  const { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence,
+  const { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence, previewHost,
     toggleWorkSummary, workSummaryHoverProps, workSummaryPanelProps, keepWorkSummaryOpenUntil } =
     useConversationWorkSummary(chatBodyRef, activeConversationId, inspectorOpen);
   const openChangeReview = useCallback((filePath?: string) => {
@@ -2529,6 +2521,7 @@ export function ChatPanel({
             running={sending}
             activeTurnId={activeTurnId}
             hoverProps={workSummaryPanelProps}
+            previewHost={previewHost}
             keepOpenUntil={keepWorkSummaryOpenUntil}
           />
         )}

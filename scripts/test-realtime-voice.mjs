@@ -80,8 +80,11 @@ test('realtime settings are independent, encrypted, redacted and explicit; no cr
   await assert.rejects(f.service.start(1,{id:'test',voice:'female',context:[]},()=>{}),/API Key/);
   assert.throws(()=>f.service.save({...defaults,provider:'arbitrary'}));
 });
-test('Seeduplex handshake, PCM formats, delegation tools, mute controls and graceful close follow the protocol',async()=>{
+test('Seeduplex handshake, PCM formats, delegation tools, mute controls and graceful close follow the protocol',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
   const f=fixture();await f.start();
+  t.mock.timers.tick(1000);
+  assert.ok(!f.socket.sent.some(frame=>['response.create','speech_text_buffer.commit'].includes(frame.type)));
   assert.equal(f.headers['X-Api-Key'],'fixture-not-a-real-credential');
   const event=f.socket.sent[0];assert.equal(event.type,'session.create');assert.equal(event.session.model,'1.2.6.1');
   assert.deepEqual(event.session.tools.map(t=>t.name),['subagent','tasks','hang_up','recall_conversation']);assert.equal(event.session.audio.input.format.rate,16000);
@@ -115,7 +118,8 @@ test('provider profiles isolate keys, migrate legacy settings and remove credent
   }
 });
 
-test('CardBush compatible provider negotiates the version and preserves live model/voice settings when saved provider changes',async()=>{
+test('CardBush compatible provider negotiates the version and preserves live model/voice settings when saved provider changes',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
   const socket=new Socket();let connected;
   const f=fixture(async(url,headers)=>{connected={url,headers};return{socket,dispose(){}};});
   f.service.save({...defaults,provider:'cardbush',model:'voice/demo',endpoint:'ws://127.0.0.1:8765/realtime',femaleVoice:'calm-female',maleVoice:'calm-male'});
@@ -127,6 +131,8 @@ test('CardBush compatible provider negotiates the version and preserves live mod
   assert.match(create.session.instructions,/Keep tables and evidence in the file/);
   assert.deepEqual(connected,{url:'ws://127.0.0.1:8765/realtime',headers:{}});
   socket.event({type:'session.created',protocol:CARDBUSH_REALTIME_PROTOCOL});await pending;
+  t.mock.timers.tick(1000);
+  assert.ok(!socket.sent.some(frame=>['response.create','speech_text_buffer.commit'].includes(frame.type)));
   f.service.save({...defaults,model:'another-model'});
   f.service.setVoice(1,'bridge-call','male');
   assert.equal(socket.sent.at(-1).session.model,'voice/demo');assert.equal(socket.sent.at(-1).session.audio.output.voice,'calm-male');
@@ -136,6 +142,35 @@ test('CardBush compatible provider negotiates the version and preserves live mod
   socket.event({type:'response.function_call_arguments.done',items:[{type:'function_call',call_id:'child',name:'subagent',arguments:'{"prompt":"inspect"}'}]});
   assert.ok(f.events.some(e=>e.type==='tools'));
   f.service.results(1,'bridge-call',[{id:'child',output:'{"status":"running"}'}]);assert.equal(socket.sent.at(-1).items[0].call_id,'child');
+  f.service.close(1);socket.event({type:'session.closed'});
+});
+
+test('opted-in bridge opens once after history restoration and can decline the opening without ending the call',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const socket=new Socket();
+  const f=fixture(async()=>({socket,dispose(){}}));
+  f.service.save({...defaults,provider:'cardbush',model:'voice/demo',endpoint:'ws://127.0.0.1:8765/realtime',instructions:'Speak in Italian.'});
+  const pending=f.service.start(1,{id:'opening',voice:'female',sessionId:'personal-assistant',assistant:{name:'Nova',persona:'Calm'},
+    context:[{role:'user',text:'Previous question'},{role:'assistant',text:'Previous answer'}]},event=>f.events.push(event));
+  await pause();socket.open();
+  const ready={type:'session.created',protocol:CARDBUSH_REALTIME_PROTOCOL,capabilities:['response.create']};
+  socket.event(ready);
+  t.mock.timers.tick(1000);
+  assert.equal(socket.sent.some(frame=>frame.type==='response.create'),false);
+  const history=socket.sent.at(-1);assert.equal(history.type,'conversation.item.create');
+  socket.event({type:'conversation.item.added',event_id:history.event_id,items:history.items});
+  await pending;
+  socket.event(ready);
+  t.mock.timers.tick(1000);
+  const openings=socket.sent.filter(frame=>frame.type==='response.create');
+  assert.equal(openings.length,1);
+  assert.match(openings[0].response.instructions,/Nova/);
+  assert.match(openings[0].response.instructions,/Speak in Italian/);
+  assert.equal(socket.sent.filter(frame=>frame.type==='conversation.item.create').length,1,'only restored history');
+  socket.event({type:'error',event_id:openings[0].event_id,status_code:400});
+  f.service.audio(1,'opening',new ArrayBuffer(640));
+  assert.equal(socket.sent.at(-1).type,'input_audio_buffer.append');
+  assert.equal(f.events.some(event=>event.type==='error'||event.type==='closed'),false);
   f.service.close(1);socket.event({type:'session.closed'});
 });
 

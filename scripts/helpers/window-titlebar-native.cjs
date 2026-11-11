@@ -32,17 +32,15 @@ module.exports = async ({ win, run, until, pause, root }) => {
       const area = navigator.windowControlsOverlay?.getTitlebarAreaRect();
       if (!area || area.width <= 0 || area.right >= innerWidth) throw Error('Native titlebar safe area is unavailable');
       const width = (innerWidth - area.right) / 3;
-      const bar = document.querySelector('.recent-bar').getBoundingClientRect();
-      const chat = document.querySelector('.recent-bar-chat').getBoundingClientRect();
-      const list = document.querySelector('.recent-bar-list').getBoundingClientRect();
+      const bar = document.querySelector('.window-spacer').getBoundingClientRect();
       const y = bar.y + bar.height / 2;
-      return [{name:'drag-left', x:chat.left + chat.width * .32, y}, {name:'drag-right', x:(chat.right + list.left) / 2, y},
+      return [.1,.5,.9].map(fraction => ({name:'drag-' + fraction, x:bar.left + bar.width * fraction, y})).concat([
         center('[data-nav-section=chat]', 'new-chat'), center('[data-nav-section=projects]', 'projects'),
-        center('.recent-bar-chat .assistant-stage-actor', 'assistant'), center('.recent-bar-list', 'turn-list-button'), center('.window-sidebar-toggle', 'sidebar-button'),
+        center('.sidebar-assistant', 'assistant'), center('.recent-bar-list', 'quick-access'), center('.window-sidebar-toggle', 'sidebar-button'),
         center('.frame-chip', 'menu-button'),
         ...['minimize', 'maximize', 'close'].map((name, index) => ({
           name: 'caption-' + name, x: area.right + width * (index + .5), y: area.y + area.height / 2,
-        }))];
+        }))]);
     })()`);
     const before = systemMenuEvents;
     const result = await nativeProbe(points);

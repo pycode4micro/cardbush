@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type UIEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type UIEvent } from 'react';
 import { ArrowUpRight, Blocks, ChevronLeft, ChevronRight, Folder, MessageSquare, Plus, Search, Waves } from 'lucide-react';
 import type { EventPresentation, FriendsSnapshot, FriendsWorkEvent } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
@@ -13,6 +13,7 @@ import { HtmlComponentContext } from '../components/HtmlComponentContext';
 import type { HtmlComponent } from '../components/componentModel';
 import { conversationMatchesScope } from '../conversationScope';
 import type { HomePage } from '../navigation/appPage';
+import type { SidebarMenuEvent } from '../sidebar/SidebarContextMenu';
 
 function trackHeaderUnderlap(event: UIEvent<HTMLElement>) {
   const page = event.currentTarget;
@@ -22,10 +23,17 @@ function trackHeaderUnderlap(event: UIEvent<HTMLElement>) {
 }
 
 type Cover = EventPresentation['cover'];
-type Card = {art: Cover; title: string; caption: string; summary?: string; open(): void};
+type MenuHandler = (trigger: SidebarMenuEvent) => void;
+function menuTriggerProps(openMenu?: MenuHandler) {
+  if (!openMenu) return;
+  return { 'aria-haspopup': 'menu' as const, onContextMenu: openMenu, onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openMenu(event);
+  }};
+}
+type Card = {art: Cover; title: string; caption: string; summary?: string; open(): void; openMenu?: MenuHandler};
 function CoverCard({card}: {card?: Card}) {
   if (!card) return <div className="desktop-cover desktop-cover-pending" aria-hidden="true"/>;
-  return <button type="button" className="desktop-cover" data-cover={card.art} onClick={card.open}>
+  return <button type="button" className="desktop-cover" data-cover={card.art} onClick={card.open} {...menuTriggerProps(card.openMenu)}>
     <span className="desktop-cover-copy"><small>{card.caption}</small><strong>{card.title}</strong>{card.summary && <span>{card.summary}</span>}</span>
     <ArrowUpRight aria-hidden="true"/>
   </button>;
@@ -62,8 +70,8 @@ function FeaturedShelf({ language, busy, children }: { language: AppLanguage; bu
 function Shelf({title, open, children}: {title: string; open?: () => void; children: ReactNode}) {
   return <section className="desktop-shelf"><h2>{open ? <button type="button" onClick={open}>{title}<ChevronRight/></button> : title}</h2>{children}</section>;
 }
-function Row({title, detail, icon, open}: {title: string; detail?: string; icon: ReactNode; open(): void}) {
-  return <button className="desktop-row" type="button" onClick={open}><span className="desktop-row-icon">{icon}</span>
+function Row({title, detail, icon, open, openMenu}: {title: string; detail?: string; icon: ReactNode; open(): void; openMenu?: MenuHandler}) {
+  return <button className="desktop-row" type="button" onClick={open} {...menuTriggerProps(openMenu)}><span className="desktop-row-icon">{icon}</span>
     <span><strong>{title}</strong>{detail && <small>{detail}</small>}</span><ChevronRight className="desktop-row-arrow"/></button>;
 }
 function ComponentPage({item, page}: {item: HtmlComponent; page?: EventPresentation['pages'][number]}) {
@@ -74,6 +82,7 @@ type HomeProps = {
   projectsRef: (element: HTMLDivElement | null) => void;
   language: AppLanguage; page: HomePage; conversationsLoading: boolean; projects: ProjectItem[]; conversations: ConversationSummary[]; assistantName: string;
   events: FriendsWorkEvent[]; snapshot?: FriendsSnapshot; components: HtmlComponent[]; error: boolean; retry(): Promise<void>;
+  onEventMenu(trigger: SidebarMenuEvent, event: FriendsWorkEvent): void;
   onPage(page: HomePage): void; onProject(project: ProjectItem): void; onConversation(id: string): void;
   onAssistant(): void; onExplore(): void; onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void;
 };
@@ -104,11 +113,12 @@ export function DesktopHomeView(p: HomeProps) {
   const recentRows = (items: ConversationSummary[]) => items.map(item => <Row key={item.id} title={item.title} detail={item.preview}
     icon={<MessageSquare/>} open={() => p.onConversation(item.id)}/>);
   const eventRows = (items: FriendsWorkEvent[]) => items.map(item => <Row key={item.id} title={item.title} detail={t(`yourFriends.status.${item.status}`)}
-    icon={<Waves/>} open={() => onPage({kind:'event', id:item.id})}/>);
+    icon={<Waves/>} open={() => onPage({kind:'event', id:item.id})} openMenu={trigger => p.onEventMenu(trigger, item)}/>);
   const addProject = <Row title={t('agentDataSettings.addProject')} icon={<Plus/>} open={p.onAddProject}/>;
   const newChat = <Row title={t('chatSidebar.newChat')} icon={<Plus/>} open={p.onNew}/>;
   const eventCards: Card[] = events.slice(0, 2).map((item, index) => ({art:item.presentation?.cover ?? (index ? 'fern' : 'tide'),
-    title:item.title, caption:t(`yourFriends.status.${item.status}`), summary:item.presentation?.summary, open:() => onPage({kind:'event', id:item.id})}));
+    title:item.title, caption:t(`yourFriends.status.${item.status}`), summary:item.presentation?.summary, open:() => onPage({kind:'event', id:item.id}),
+    openMenu:trigger => p.onEventMenu(trigger, item)}));
   // Keep the two local shortcuts in place while the runtime supplies event cards.
   const waitingForEvents = !p.snapshot && !p.error;
   const pendingRow = <div className="desktop-row" role="status">{t('common.loading')}</div>;

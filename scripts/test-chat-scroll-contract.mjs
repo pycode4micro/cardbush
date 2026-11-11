@@ -50,7 +50,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /const surfaceRect = composerLayoutBox\(composerSurface, chatBody\)[\s\S]*?--composer-surface-center-x[\s\S]*?surfaceRect\.left \+ surfaceRect\.width \/ 2/,
+  /const surfaceRect = composerSurface \? composerLayoutBox\(composerSurface, chatBody\)[\s\S]*?--composer-surface-center-x[\s\S]*?surfaceRect\.left \+ surfaceRect\.width \/ 2/,
   'The bottom button must use the measured composer center instead of viewport-centered pixels',
 );
 assert.match(
@@ -181,7 +181,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /scrollbarInset = Math\.max\(0, scroller\.offsetWidth - scroller\.clientWidth\)[\s\S]*?--message-list-scrollbar-inset/,
+  /scrollbarInset = scroller \? Math\.max\(0, scroller\.offsetWidth - scroller\.clientWidth\)[\s\S]*?--message-list-scrollbar-inset/,
   'Composer alignment must account for the native scrollbar width reported by the actual message viewport',
 );
 assert.match(

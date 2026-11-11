@@ -1,4 +1,5 @@
 import { codeLanguageForPath } from '../../shared/codeLanguages';
+import type { Root } from 'mdast';
 
 const shellFenceLanguages = new Set([
   'powershell',
@@ -96,6 +97,39 @@ type MarkdownNode = {
 };
 
 type MarkdownParser = (content: string) => MarkdownNode;
+
+/** A bold section label is a paragraph. CommonMark only lets 1. interrupt it,
+ * so a list continuing with 4. needs a blank line to keep its numbering. */
+export function remarkSectionLists(this: { parse: MarkdownParser }) {
+  return (tree: Root, file: { value: unknown }) => {
+    const source = String(file.value);
+    const parts: string[] = [];
+    let cursor = 0;
+    for (const [index, block] of tree.children.entries()) {
+      if (block.type !== 'paragraph') continue;
+      const label = block.children[0];
+      const end = label?.position?.end.offset;
+      if (label?.type !== 'strong' || end === undefined || end === block.position?.end.offset) continue;
+      const tail = source.slice(end, block.position?.end.offset);
+      const marker = /^[ \t]*(?:\r\n?|\n) {0,3}(\d{1,9})([.)])[ \t]+/.exec(tail);
+      if (!marker) continue;
+
+      const start = Number(marker[1]);
+      const previous = tree.children[index - 1];
+      const continuesPrevious = previous?.type === 'list' && previous.ordered &&
+        start === (previous.start ?? 1) + previous.children.length;
+      // A lone number after a label can also be prose, e.g. a year.
+      const nextMarker = new RegExp(`(?:\\r\\n?|\\n) {0,3}${start + 1}\\${marker[2]}[ \\t]+`);
+      if (!continuesPrevious && !nextMarker.test(tail)) continue;
+      parts.push(source.slice(cursor, end), '\n');
+      cursor = end;
+    }
+    if (!parts.length) return;
+    const separated = parts.join('') + source.slice(cursor);
+    file.value = separated;
+    return this.parse(separated);
+  };
+}
 
 /** Apply prose boundaries only to implicit GFM links, after native Markdown parsing. */
 export function remarkAutolinkBoundaries(this: { parse: MarkdownParser }) {

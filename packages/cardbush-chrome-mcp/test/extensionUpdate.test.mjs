@@ -9,7 +9,7 @@ import { buildBrowserExtension, extensionBuildSource, extensionRoot } from '../.
 const popupSource = fs.readFileSync(path.join(extensionRoot, 'i18n.js'), 'utf8') + '\n' + fs.readFileSync(path.join(extensionRoot, 'popup.js'), 'utf8');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-async function popup(initialState) {
+async function popup(initialState, build = 'current-build') {
   const nodes = new Map();
   const element = id => {
     if (!nodes.has(id)) nodes.set(id, {
@@ -29,7 +29,7 @@ async function popup(initialState) {
   let state = initialState, reloads = 0, tick;
   const messages = [];
   const context = vm.createContext({
-    CARDBUSH_CONNECTOR_BUILD: 'current-build',
+    CARDBUSH_CONNECTOR_BUILD: build,
     document: { documentElement: { lang: 'zh-CN' }, querySelector: element, querySelectorAll: () => buttons },
     chrome: { runtime: {
       sendMessage: async message => { messages.push(message); return typeof state === 'function' ? state(message) : state; },
@@ -81,13 +81,36 @@ test('matching builds retain normal reconnect and saved authorization display', 
   assert.match(f.element('#connection-help').textContent, /saved connections retry every 30 seconds/);
 });
 
+test('the two published 1.5.2 popup designs recognize the same worker and retain tab copying', async () => {
+  const workerBuild = '307e351a1cab7a55ff6498be5eb6c5614ac9ffa5983347ce6baa6a9411be18a8';
+  for (const runtimeBuild of [
+    'f42287e7b305968d75b24dd074669afc7f93d3f8d29092016ed8a9fdfcba3892',
+    'a9c3fcd125d6a678a92a101012db86fe52b84e28974a7c735c5fcdfc6c906b64',
+  ]) {
+    const state = { ...offline, runtimeBuild, nativeConnected: true, controlledTabCount: 1,
+      activeScope: { id: 'current' }, origin: 'https://example.org' };
+    const f = await popup(state, workerBuild);
+    assert.match(f.element('#connection').textContent, /正在控制 1 个标签页/);
+    assert.equal(f.element('#extension-update').hidden, true);
+    assert.equal(f.element('copy_tab').disabled, false);
+    await f.reload();
+    assert.equal(f.reloads, 0);
+    const newer = await popup(state, 'changed-worker');
+    assert.equal(newer.element('#extension-update').hidden, false);
+    assert.equal(newer.element('copy_tab').disabled, true);
+    assert.match(newer.element('#connection').textContent, /正在控制 1 个标签页/);
+  }
+});
+
 test('reload rechecks live connection state instead of interrupting a newly established connection', async () => {
   const f = await popup({ ...offline, runtimeBuild: 'old-build' });
   f.setState({ ...offline, nativeConnected: true });
   await f.reload();
   assert.equal(f.reloads, 0);
   assert.equal(f.element('#reload-extension').disabled, true);
-  assert.match(f.element('#connection').textContent, /连接或控制仍在进行/);
+  assert.match(f.element('#connection').textContent, /已连接 CardBush/);
+  assert.equal(f.element('#extension-update').hidden, false);
+  assert.match(f.element('#extension-update-message').textContent, /更新/);
   f.setState({ ...offline, controlledTabCount: 1 });
   await f.refresh();
   assert.equal(f.element('#reload-extension').disabled, true);
@@ -131,12 +154,27 @@ test('background identity is a loaded-code snapshot, not a fresh manifest versio
 test('content build IDs are deterministic across line endings and regenerate for source changes', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cardbush-extension-build-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.cpSync(extensionRoot, directory, { recursive: true });
   fs.writeFileSync(path.join(directory, 'background.js'), 'const a = 1;\n');
   buildBrowserExtension(directory);
   const first = extensionBuildSource(directory);
   buildBrowserExtension(directory, true);
   fs.writeFileSync(path.join(directory, 'background.js'), 'const a = 1;\r\n');
   assert.equal(extensionBuildSource(directory), first);
+  for (const name of ['popup.css', 'popup.html', 'popup.js', 'connection.js', 'i18n.js']) {
+    fs.appendFileSync(path.join(directory, name), '\n/* updated view */\n');
+    assert.equal(extensionBuildSource(directory), first, name);
+  }
+  const worker = fs.readFileSync(path.join(extensionRoot, 'background.js'), 'utf8');
+  const imports = [...worker.matchAll(/importScripts\(([^)]*)\)/g)].flatMap(match =>
+    [...match[1].matchAll(/['"]([^'"]+)['"]/g)].map(file => file[1]));
+  for (const name of ['manifest.json', ...imports.filter(name => !['build-info.js', 'i18n.js'].includes(name))]) {
+    const file = path.join(directory, name), original = fs.readFileSync(file);
+    fs.appendFileSync(file, '\n ');
+    assert.notEqual(extensionBuildSource(directory), first, name);
+    fs.writeFileSync(file, original);
+  }
+  buildBrowserExtension(directory);
   fs.writeFileSync(path.join(directory, 'background.js'), 'const a = 2;\n');
   assert.throws(() => buildBrowserExtension(directory, true), /stale/);
   buildBrowserExtension(directory);

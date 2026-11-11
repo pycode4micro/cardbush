@@ -36,6 +36,9 @@ export function voiceCallActivity(state: VoiceState): AssistantCallPhase | null 
   if (state.speaking && !state.outputMuted) return 'speaking';
   return state.muted ? 'muted' : 'listening';
 }
+export function useAssistantWorkActivity(): AssistantWorkActivity {
+  return useSyncExternalStore(subscribe, () => work);
+}
 export function useAssistantActivity(): AssistantActivity {
   const voice = applicationVoiceSession();
   const call = useSyncExternalStore(voice.subscribe, () => assistantVoiceActivity(voice.snapshot()));

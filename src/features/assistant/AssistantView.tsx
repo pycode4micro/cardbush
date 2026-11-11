@@ -357,7 +357,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
         ready={ready} sending={submitting} calling={callHere} voiceOpen={capsule.surface === 'voice'} voiceBlocked={voiceInUse && !callHere} draft={draft} changeDraft={setDraft}
         files={capsuleFiles} changeFiles={setCapsuleFiles} compose={() => void capsule.show('compose')}
         collapse={() => void capsule.show('capsule')} open={() => void capsule.show('replies')} send={send}
-        repliesOpen={capsule.surface === 'replies'} replies={capsule.replies} error={error || runtimeError ? assistantErrorText(error || runtimeError, language) : ''}
+        repliesOpen={capsule.surface === 'replies'} replyWidth={capsule.replyWidth} replies={capsule.replies} error={error || runtimeError ? assistantErrorText(error || runtimeError, language) : ''}
         openVoice={() => {
           if (!callHere) { voice.update(target); void voice.start('call'); }
           void capsule.show('voice');
@@ -390,7 +390,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       {summary.workSummaryPresence.mounted && <ConversationWorkSummary language={language} sessionId={sessionId} messages={pageMessages} changeReports={[]}
         taskPlan={taskPlan}
         onOpenChangeReview={() => {}} subagentObservabilityAvailable={subagentObservabilityAvailable}
-        hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil}
+        hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil} previewHost={summary.previewHost}
         running={busy} softVisible={summary.workSummaryPresence.visible}/>}
       <div className="chat-content-frame">
       <div className="assistant-messages message-list" ref={scroller} tabIndex={-1} role="log" aria-label={uiText(language)('assistantView.assistantConversation')}>

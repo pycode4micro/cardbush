@@ -1,9 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const fixedBacking = process.platform === 'win32';
 module.exports = async ({current, read, click, visible, wait, project, holdAudioSettings}) => {
   const edit = '.floating-capsule [data-action=compose]', bell='.floating-capsule [data-action=replies]';
-  assert.ok(current.getSize()[0]<200 && current.getSize()[1]<100, 'the actual native window fits the pill');
+  assert.ok(await read("document.querySelector('.floating-capsule').offsetWidth < 200 && document.querySelector('.floating-capsule').offsetHeight < 100"), 'the visible toolbar fits the pill');
   assert.deepEqual(await read("Array.from(document.querySelectorAll('.floating-capsule button'), b => b.dataset.action)"), ['compose','voice','replies']);
   const image = await current.webContents.capturePage();
   const {width,height} = image.getSize(1);
@@ -45,6 +46,7 @@ try {
   if (![CapsuleWindowRegion]::PtInRegion($region,($box.Left+$box.Right)/2,($box.Top+$box.Bottom)/2)) { exit 3 }
   $client = New-Object CapsuleWindowRegion+Rect
   [void][CapsuleWindowRegion]::GetClientRect([IntPtr]::new([long]${hwnd}),[ref]$client)
+  if ($box.Left -lt $client.Right/2 -or $box.Top -lt $client.Bottom/2) { exit 5 }
   $edges = @(${edges.join(',')})
   for ($i=0;$i -lt $edges.Length;$i+=2) {
     $x = [Math]::Floor(($edges[$i]+0.5)*$client.Right/${width})
@@ -87,7 +89,7 @@ try {
     assert.ok(await read("['.floating-capsule','.capsule-form'].every(s=>getComputedStyle(document.querySelector(s)).animationName==='none')"), 'reduced motion opens the same editor without animating');
   } finally { current.webContents.debugger.detach(); }
   await wait(()=>read("document.activeElement.matches('.capsule-form input')"),'editor takes keyboard focus');
-  assert.ok(current.getSize()[0]>=300 && current.getSize()[1]<100,'compose expands horizontally');
+  assert.ok(await read("document.querySelector('.floating-capsule').offsetWidth >= 300 && document.querySelector('.floating-capsule').offsetHeight < 100"),'compose expands horizontally');
   assert.equal(right(current.getBounds()),right(dragged),'the editor expands left from the dragged anchor');
   assert.equal(bottom(current.getBounds()),bottom(dragged));
   assert.equal(await read("!!document.querySelector('[data-action=workspace]')"),false,'the expanded editor only has editing controls');
@@ -175,7 +177,7 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
     assert.ok(await read("!!document.querySelector('.capsule-form')"), 'committing an IME candidate does not send');
     await read("document.querySelector('.capsule-form input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await visible(bell);
-    assert.ok(current.getSize()[0]<200, 'acceptance collapses before the reply arrives');
+    assert.ok(await read("document.querySelector('.floating-capsule').offsetWidth < 200"), 'acceptance collapses before the reply arrives');
     release();
     await wait(()=>read("document.querySelector('.capsule-badge')?.textContent==='1'"),'one real unread reply');
     fs.writeFileSync(path.join(__dirname,'../../tmp/floating-capsule-unread.png'),(await current.webContents.capturePage()).toPNG());
@@ -183,10 +185,19 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
     assert.ok(journal.ok && journal.result.entries.some(entry => entry.role==='user' &&
       entry.content.includes('Capsule attachment test') && entry.attachments?.some(item=>item.name==='capsule-fixture.txt')), 'the Assistant journal received the text and attachment together');
     const anchor = current.getBounds();
+    const resized = [];
+    const onResize = () => {
+      const bounds = current.getBounds();
+      if (resized.at(-1)?.height !== bounds.height || resized.at(-1)?.width !== bounds.width) resized.push(bounds);
+    };
+    current.on('resize', onResize);
     current.focus(); await click(bell); await visible('.capsule-replies article');
     await wait(()=>read("document.querySelector('.capsule-replies').textContent.includes('Capsule reply received') && !document.querySelector('.capsule-badge')"),'reading clears the badge');
-    await wait(()=>current.getSize()[1]<200,'a short reply uses only the height it needs');
+    await wait(()=>read("document.querySelector('.capsule-replies[data-visible=true]')?.offsetHeight < 150"),'a short reply uses only the height it needs');
     const expanded = current.getBounds();
+    await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    current.removeListener('resize', onResize);
+    assert.deepEqual(resized, fixedBacking ? [] : [expanded], 'opening the bell preserves the Windows backing surface and sizes other windows directly to the content');
     assert.equal(expanded.y + expanded.height, anchor.y + anchor.height, 'resizing the reply list keeps the toolbar anchored');
     assert.ok(await read("document.querySelector('.capsule-replies').getBoundingClientRect().bottom < document.querySelector('.floating-capsule').getBoundingClientRect().top"));
     assert.equal(await read("!!document.querySelector('[data-action=workspace]')"),false);
@@ -201,12 +212,28 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
       const request = {protocol:'bush.runtime_ipc.v1', type:'command', operationId:crypto.randomUUID(), command};
       return workspace.webContents.executeJavaScript(`window.cardbushDesktop.runtime.command(${JSON.stringify(request)})`);
     };
-    assert.ok((await append('Previous reply')).ok);
+    assert.ok((await append('Previous reply\n'.repeat(35))).ok);
     assert.ok((await append('Latest reply from Assistant')).ok);
     await click(bell);
     await wait(() => read("document.querySelector('.capsule-replies article:first-of-type p')?.textContent==='Latest reply from Assistant' && document.querySelector('.capsule-reply-scroll').scrollTop===0"), 'opening reads the latest Assistant reply before polling resumes');
     await click('.capsule-replies article:first-of-type p');
     assert.ok(await read("!!document.querySelector('.capsule-replies')"), 'reading a reply keeps the list open');
+    await wait(()=>read("document.querySelector('.capsule-replies').getBoundingClientRect().top >= 0 && document.querySelector('.capsule-reply-scroll').scrollHeight > document.querySelector('.capsule-reply-scroll').clientHeight"),'long replies scroll inside the sheet');
+    const openBounds = current.getBounds();
+    await click(bell);
+    await wait(async()=>!await read("!!document.querySelector('.capsule-replies')") && current.getBounds().height===anchor.height,'bell closes the full reply sheet');
+    resized.length = 0;
+    current.on('resize', onResize);
+    const bellBounds = await read("document.querySelector('[data-action=replies]').getBoundingClientRect().toJSON()");
+    const point = {x:Math.round(bellBounds.x+bellBounds.width/2),y:Math.round(bellBounds.y+bellBounds.height/2)};
+    for (const type of ['mouseDown','mouseUp']) current.webContents.sendInputEvent({type,button:'left',clickCount:1,...point});
+    await wait(()=>read("document.querySelector('[data-action=replies]').getAttribute('aria-expanded')==='true'"), 'a pointer click reopens the bell');
+    await wait(()=>read("document.querySelector('.capsule-replies[data-visible=true]')?.offsetHeight >= 200"),'a long reply returns to its measured height');
+    await click('.capsule-reply-scroll article p');
+    await read("document.querySelector('.capsule-reply-scroll').scrollTop=50;void 0");
+    await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    current.removeListener('resize',onResize);
+    assert.deepEqual(resized,fixedBacking ? [] : [openBounds],'opening, reading and scrolling a long reply keep one stable window size and anchor');
     const gap = await read(`(() => {
       const rect=document.querySelector('.floating-capsule').getBoundingClientRect();
       const x=Math.round(rect.left+3), y=Math.round(rect.top+rect.height/2);
@@ -220,8 +247,12 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
     assert.ok(!await read("!!document.querySelector('.capsule-replies')"), 'one click goes directly from replies to writing');
     await read("document.querySelector('.capsule-form input').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await click(bell); await visible('.capsule-replies');
+    await click(bell); await visible(bell+'[aria-expanded=false]');
+    await click(bell);
+    await wait(()=>read("document.querySelector('.capsule-replies[data-visible=true]')?.ariaHidden==='false'"), 'reopening during exit preserves the active sheet');
     await read('window.holdJournalPoll=false; void 0');
     workspace.focus(); await wait(()=>read("!document.querySelector('.capsule-replies')"),'outside focus closes replies');
+    assert.ok(current.isVisible() && !current.isDestroyed(), 'outside focus leaves the capsule on the desktop');
     current.focus();
     const releaseAudio=holdAudioSettings();
     try {
@@ -229,7 +260,7 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
       await click(voice);
       const controls = '.floating-capsule[data-surface=voice] .voice-composer-call';
       await visible(controls);
-      const workPhase = () => workspace.webContents.executeJavaScript("document.querySelector('.recent-bar-chat .assistant-stage')?.dataset.state");
+      const workPhase = () => workspace.webContents.executeJavaScript("document.querySelector('.sidebar-footer .assistant-stage')?.dataset.state");
       await wait(async()=>await workPhase()==='connecting', 'the workspace character sees the capsule connecting');
       assert.ok(await read(`(() => { const row=document.querySelector('.floating-capsule').getBoundingClientRect();return !document.querySelector('.voice-call-undocked,[data-action=workspace]') && [...document.querySelectorAll('.voice-composer-call button')].every(b=>{const r=b.getBoundingClientRect();return r.left>=row.left && r.right<=row.right && r.top>=row.top && r.bottom<=row.bottom && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}); })()`),'the capsule hosts one unclipped row of call controls');
       const mic = controls + ' .voice-audio-toggle';

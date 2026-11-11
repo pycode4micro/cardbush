@@ -20,11 +20,14 @@ tools 的真实值是宿主提供的函数声明（type、name、description、p
 
 ## 音频、说话轮次和文本
 
+桥若能让当前实时模型主动生成语音，可在 `session.created` 的顶层声明 `"capabilities":["response.create"]`。用户拨通后，宿主等历史恢复并开始收音，若用户尚未开口，会发送一次 `response.create`。桥将 `response.instructions` 作为本轮指令，沿用当前会话和音色，并按常规事件返回字幕和音频。用户开口时应优先处理用户输入并支持打断。重连不重复开场。未声明此能力的桥继续等用户先说。
+
 | 方向 | type | 字段/语义 |
 |---|---|---|
 | 客户端 → 服务 | input_audio_buffer.append | audio：base64 PCM16LE，16 kHz、单声道，20 ms / 640 bytes |
 | 客户端 → 服务 | input_audio_mute.commit / input_audio_unmute.commit | 静音/恢复输入；保留上下文 |
 | 客户端 → 服务 | input_audio_buffer.commit | 提交当前输入 |
+| 客户端 → 服务 | response.create | 可选。response 含 instructions 和 modalities（text、audio），请求模型自行生成一轮语音，不写入用户消息 |
 | 客户端 → 服务 | response.cancel | 停止当前回复；不能取消已派发子任务 |
 | 服务 → 客户端 | conversation.item.input_audio_transcription.started | 用户开始讲话，item_id 为稳定历史条目 ID |
 | 服务 → 客户端 | conversation.item.input_audio_transcription.delta | delta 为增量文本；同一 item_id |

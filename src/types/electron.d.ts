@@ -71,10 +71,10 @@ declare global {
       assistantMode?: (action: 'read' | 'float' | 'startup', enabled?: boolean) => Promise<{ floating: boolean; nextLaunch: boolean; hasWorkspace: boolean }>;
       measureAssistantReplies?: (height: number) => void;
       dragAssistantSurface?: (action: 'start' | 'move' | 'end', dx?: number, dy?: number) => void;
-      assistantSurface?: (surface: 'read' | import('../../electron/assistantSurface').AssistantSurface) => Promise<import('../../electron/assistantSurface').AssistantSurface>;
+      assistantSurface?: (surface: 'read' | import('../../electron/assistantSurface').AssistantSurface) => Promise<import('../../electron/assistantSurface').AssistantSurfaceState>;
       setCapsuleCallPhase?: (phase: import('../../electron/assistantSurface').AssistantCallPhase | null) => void;
       onCapsuleCallPhase?: (listener: (phase: import('../../electron/assistantSurface').AssistantCallPhase | null) => void) => () => void;
-      onAssistantSurface?: (listener: (surface: import('../../electron/assistantSurface').AssistantSurface) => void) => () => void;
+      onAssistantSurface?: (listener: (state: import('../../electron/assistantSurface').AssistantSurfaceState) => void) => () => void;
       retainAssistantWindow?: (retained: boolean) => Promise<void>;
       ensureTaskWorkspace: (sessionId: string) => Promise<string>;
       runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;

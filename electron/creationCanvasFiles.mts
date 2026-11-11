@@ -4,13 +4,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { assertCanvasVersionsUnchanged, CANVAS_FILE_NAME, CANVAS_MAX_BYTES, creationCanvasSchema, emptyCanvas, serializeCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
+import { assertCanvasVersionsUnchanged, CANVAS_FILE_NAME, CANVAS_MAX_BYTES, creationCanvasSchema, emptyCanvas, isCanvasFilePath, serializeCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
 import { captureCanvasVersion, releaseCanvasVersion, resourceFormat, rewriteCanvasResources as rewriteResources, withCanvasFileLock } from '@cardbush/bush-runtime';
 import { replaceFileWithRetry } from './atomicJsonFile.mjs';
 
 export type CanvasFileRequest =
   | { action: 'create'; root: string; document?: CreationCanvas }
   | { action: 'read'; path: string }
+  | { action: 'delete'; path: string; expectedRevision: string }
   | { action: 'save'; path: string; expectedRevision: string; document: CreationCanvas }
   | { action: 'freeze' | 'unfreeze'; path: string; expectedRevision: string; itemId: string }
   | { action: 'image'; path: string; data: string }
@@ -23,10 +24,12 @@ const serialize = serializeCanvas;
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
 
 export async function readCanvas(file: string): Promise<CanvasSnapshot> {
-  if (!path.isAbsolute(file) || !file.endsWith('.canvas.json')) throw Error('Choose a .canvas.json file.');
+  if (!path.isAbsolute(file) || !isCanvasFilePath(file)) throw Error('CANVAS_INVALID_FILE');
   if ((await fs.stat(file)).size > CANVAS_MAX_BYTES) throw Error('Canvas exceeds the 8 MiB limit.');
   const raw = await fs.readFile(file, 'utf8');
-  const document = creationCanvasSchema.parse(JSON.parse(raw));
+  let document: CreationCanvas;
+  try { document = creationCanvasSchema.parse(JSON.parse(raw.replace(/^\uFEFF/, ''))); }
+  catch { throw Error('CANVAS_INVALID_FILE'); }
   const versions = await Promise.all(document.items.map(async item => {
     if (item.kind !== 'file' || /^(?:https?:|ssh:|data:)/i.test(item.source)) return [];
     try {
@@ -38,7 +41,7 @@ export async function readCanvas(file: string): Promise<CanvasSnapshot> {
 }
 
 export class CreationCanvasFiles {
-  constructor(private choose: (action: 'open' | 'export' | 'repository') => Promise<string | undefined>, private language: () => string = () => 'en') {}
+  constructor(private choose: (action: 'open' | 'export' | 'repository') => Promise<string | undefined>, private language: () => string = () => 'en', private trashFile?: (file: string) => Promise<void>) {}
   async command(input: CanvasFileRequest): Promise<CanvasFileResponse> {
     if (!input || typeof input !== 'object') throw Error('Invalid canvas request.');
     if (input.action === 'open') { const selected = await this.choose('open'); return selected ? readCanvas(selected) : null; }
@@ -46,11 +49,26 @@ export class CreationCanvasFiles {
     if (input.action === 'create') {
       if (!path.isAbsolute(input.root) || !(await fs.stat(input.root)).isDirectory()) throw Error('Canvas workspace is unavailable.');
       const target = path.join(input.root, CANVAS_FILE_NAME);
+      // A library entry saved before its first read can still refer to the old default name.
+      for (const existing of [target, target + '.json']) {
+        try { await fs.access(existing); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+        return readCanvas(existing);
+      }
       try { await fs.writeFile(target, serialize(input.document ?? emptyCanvas()), { flag: 'wx' }); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
       return readCanvas(target);
     }
     if (input.action === 'read') return readCanvas(input.path);
+    if (input.action === 'delete') {
+      return withCanvasFileLock(input.path, async () => {
+        const current = await readCanvas(input.path);
+        if (current.revision !== input.expectedRevision) throw Error('CANVAS_REVISION_CONFLICT: ' + uiText(this.language())('template.canvasChanged'));
+        if (!this.trashFile) throw Error(uiText(this.language())('canvasStore.restart_the_updated_cardbush_app'));
+        await this.trashFile(current.path);
+        return { path: current.path };
+      });
+    }
     if (input.action === 'save' || input.action === 'freeze' || input.action === 'unfreeze') {
       return withCanvasFileLock(input.path, async () => {
         const current = await readCanvas(input.path);
@@ -143,7 +161,7 @@ export async function exportCanvas(snapshot: CanvasSnapshot, parent: string, lan
     }
     await fs.writeFile(path.join(folder, CANVAS_FILE_NAME), serialize(document));
     await fs.writeFile(path.join(folder, 'index.html'), canvasExportHtml(document, language));
-    await fs.writeFile(path.join(folder, 'README.txt'), uiText(language)('template.canvasReadme'));
+    await fs.writeFile(path.join(folder, 'README.txt'), uiText(language)('template.canvasReadme', { filename: CANVAS_FILE_NAME }));
     return folder;
   } catch (error) { await fs.rm(folder, { recursive: true, force: true }); throw error; }
 }

@@ -83,6 +83,15 @@ export class IncrementalCheckpoint {
   }
 
   get complete(): boolean { return this.#accepted.size === this.#requested.size; }
+  /** The receipt already counted this failed submission, including after restart. */
+  get rejection(): string | undefined {
+    const receipt = this.history.at(-1);
+    if (!this.failures || receipt?.role !== 'tool') return undefined;
+    const { accepted, rejected } = JSON.parse(receipt.content);
+    if (accepted.length || !rejected.length) return undefined;
+    const { source, reason } = rejected[0];
+    return Number.isInteger(source) ? `Source ${source}: ${reason}` : reason;
+  }
   hasAccepted(source: number): boolean { return this.#accepted.has(source); }
   get value(): { summaries: string[] } {
     if (!this.complete || this.scope) throw new Error('Pending or staged sources cannot be applied as a complete checkpoint.');
@@ -93,6 +102,33 @@ export class IncrementalCheckpoint {
   /** Earlier candidates remain durable facts. A budget rejection starts a new
    * bounded attempt against the same sources, without replaying oversized drafts. */
   get attemptHistory(): ModelMessage[] { return [this.history[0]!, ...this.history.slice(this.#attemptStart)]; }
+
+  /** Isolated jobs need accepted background and the current repair exchange.
+   * Rejected drafts for an earlier source stay in the journal for recovery. */
+  get isolatedHistory(): ModelMessage[] {
+    const accepted: ModelMessage[] = [], pending: ModelMessage[] = [];
+    const entries = this.attemptHistory.slice(1);
+    for (let i = 0; i < entries.length; i++) {
+      const call = entries[i]!;
+      if (isContextMaintenanceNotice(call, 'context_compaction_progress')) {
+        accepted.push(call);
+        continue;
+      }
+      if (call.role !== 'assistant') {
+        pending.push(call);
+        continue;
+      }
+      const receipt = entries[++i]!;
+      const outcome = JSON.parse(receipt.content);
+      if (outcome.accepted.length) {
+        accepted.push(call, receipt);
+        pending.length = 0;
+      } else {
+        pending.push(call, receipt);
+      }
+    }
+    return [...accepted, ...pending];
+  }
   refine(message: string): boolean {
     if (this.scope || !this.complete || this.#refinements >= 2) return false;
     this.#refinements++;

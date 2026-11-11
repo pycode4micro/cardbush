@@ -96,11 +96,14 @@ assert.match(
   /\.error-banner,[\s\S]*?\.notice-banner\s*\{[\s\S]*?width:\s*min\(calc\(100% - 2 \* var\(--chat-inline-gutter\)\), var\(--chat-track-width\)\)/,
   'Conversation notices must align with the shared chat track instead of using an independent width',
 );
-assert.match(
-  css,
-  /@media \(max-width:\s*980px\)[\s\S]*?\.right-inspector\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?max-width:\s*calc\(100% - 48px\)/,
-  'Narrow windows must overlay the inspector instead of squeezing the chat stage',
-);
+const sizingModule = ts.transpileModule(rightInspectorSizing, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText;
+const { fitInspectorSplit } = await import(`data:text/javascript;base64,${Buffer.from(sizingModule).toString('base64')}`);
+for (const available of [440, 692, 729, 1200]) {
+  const width = fitInspectorSplit(620, available);
+  assert.equal(width, Math.min(620, available - Math.min(340, Math.ceil(available / 2))),
+    'A restored split must leave a usable conversation track even in a narrow window');
+}
+assert.match(css, /\.right-inspector\[data-restore-layout\]\s*\{\s*transition:\s*none/);
 assert.match(css, /\.right-inspector\.soft-panel-hidden\s*\{[^}]*width:\s*0;[^}]*visibility:\s*hidden/);
 assert.doesNotMatch(css, /\.right-inspector\.soft-panel-hidden\s*\{[^}]*display:\s*none/);
 
@@ -193,7 +196,7 @@ assert.match(app, /data-work-summary-toggle/);
 assert.match(app, /data-inspector-toggle/);
 assert.match(
   app,
-  /data-work-summary-toggle[\s\S]*?<NotebookText[\s\S]*?data-inspector-toggle[\s\S]*?<PanelRightOpen/,
+  /data-work-summary-toggle[\s\S]*?onClick=\{\(event\) => onToggleWorkSummary\(event\.currentTarget\)\}[\s\S]*?data-inspector-toggle[\s\S]*?onClick=\{\(\) => onToggleInspector\(\)\}/,
   'The compact toolbar must place the summary before the far-right sidebar action',
 );
 assert.doesNotMatch(

@@ -159,7 +159,7 @@ async function buildViews() {
       'src/features/agents/useAgentConversationHost.tsx', 'src/features/agents/agentConversationBackend.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal' ? [
-      'src/features/chatMessages/InlineMedia.tsx', 'src/features/chat/chatScrollMotion.ts',
+      'src/features/chatMessages/InlineMedia.tsx',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'loop-previews' ? [
       'src/backend/runtimeSessionMessageProjection.ts', 'src/features/chatMessages/transcript/messageProjection.ts',
@@ -414,12 +414,6 @@ app.whenReady().then(async () => {
       assert.deepEqual(errors, []);
       return;
     }
-    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal') {
-      await require('./helpers/media-reveal.cjs')({ run, until, pause, window, root });
-      assert.deepEqual(await run('failures'), [], 'no media reveal renderer errors');
-      assert.deepEqual(errors, []);
-      return;
-    }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'html-lifecycle') {
       await require('./helpers/html-preview-lifecycle.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no HTML lifecycle renderer errors');
@@ -528,7 +522,7 @@ app.whenReady().then(async () => {
       await require('./helpers/quick-context-visual.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []); return;
     }
-    if (!['user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-permissions', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'stream-follow', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['media-reveal', 'user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-permissions', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'stream-follow', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     for (const [input, expected] of [
@@ -736,6 +730,12 @@ app.whenReady().then(async () => {
       };
       updateChat({});
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal') {
+      await require('./helpers/media-reveal.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no media reveal renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'attachment-layout') {
       await require('./helpers/chat-attachment-layout.cjs')({ run, until, pause, window, root });
       if (process.env.CARDBUSH_APP_VIEWS_CASE) {

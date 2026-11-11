@@ -28,7 +28,9 @@ export function useConversationHistoryPages(input: {
   const advance = (id: string) => { const next = ++sequence.current; epochs.current.set(id, next); return next; };
   const read = useCallback(async (id: string, options: Parameters<typeof fetchSessionMessages>[1] = {}): Promise<SessionMessagesResult> => {
     const epoch = advance(id), baseline = current.current.messages[id], previous = pages.current.get(id);
-    const result = await current.current.read(id, { ...options, page: options.page ?? {} });
+    // Reopening the transcript also refreshes its tail. Keep both reads small;
+    // merge retains the already loaded turns, and scrolling fetches a full page.
+    const result = await current.current.read(id, { ...options, page: options.page ?? { limit: 4 } });
     if (epochs.current.get(id) !== epoch || current.current.messages[id] !== baseline) return result;
     const merged = mergeConversationHistoryPage(baseline ?? [], result, previous);
     if (merged.historyPage) pages.current.set(id, merged.historyPage); else pages.current.delete(id);

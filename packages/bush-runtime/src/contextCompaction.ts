@@ -597,6 +597,8 @@ export function contextPressureNotice(
 ): ModelMessage {
   const slots = contextCheckpointSlots(state, format);
   const activeSlot = slots.find(slot => slot.active);
+  const firstSupplied = sources.find(source => source.target !== 'not_requested');
+  const exampleSource = slots.findIndex(slot => slot.turnId === firstSupplied?.turnId);
   const inheritedGuidance = 'A source with history is inherited conversation memory, not merely the carrier Turn or its userRequest excerpt. ' +
     'Read every summary inside its checkpoint calls and receipts (summary_from_call references the paired native call) and retain still-applicable earlier facts, user corrections and pending work. ' +
     'A pause/acknowledgment does not cancel the history it carries. A merged_history source combines the indexed older Turns into ONE concise chronological handoff, not one recap per Turn. ' +
@@ -609,8 +611,8 @@ export function contextPressureNotice(
   if (format === 'incremental') return {
     role: 'developer', name: 'context_pressure', content: [
       '<context_pressure mode="required">',
-      'Context compaction is required before normal work can continue. Call checkpoint_context alone. Choose any pending source(s) to summarize now; one per call is enough. Continue calling until the Tool returns complete: true.',
-      'Submit {"updates":[{"source":0,"summary":"..."}]} using the source number(s) you chose. Each call must advance at least one pending source. Valid entries are kept even when other entries are rejected. Follow the receipt’s accepted, remaining and rejected lists; do not rewrite accepted summaries.',
+      'Context compaction is required before normal work can continue. Call checkpoint_context alone. Choose only pending sources supplied in the current index; one per call is enough.',
+      `Submit {"updates":[{"source":${Math.max(0, exampleSource)},"summary":"..."}]} using the actual indexed source number. Valid entries are kept even when other entries are rejected. Correct rejected entries; never rewrite accepted summaries.`,
       'Each summary has a hard limit of 6000 characters (not tokens). Aim for at most 4000 characters per source, including Skill constraints and evidence references. Prefer one source per call when several would exceed the output budget. Preserve findings and exact locators instead of copying code, logs or full Skill instructions.',
       'Source numbers stay fixed throughout this loop. Message ranges below are zero-based in this dispatched conversation before this notice; endMessageExclusive is excluded. Oversized requests may contain only indexed sources or complete fragments. Summarize only the indexed content; never infer unseen portions.',
       'Only the indexed old ranges are being replaced. Ranges marked not_requested remain verbatim and need no summary. A selected range may cover only the beginning of a Turn; do not claim its retained recent work is covered or completed.',

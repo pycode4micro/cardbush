@@ -99,6 +99,9 @@ async function run() {
         assert.match(nextTrigger, /9:00/);
         assert.match(nextTrigger, /Asia\/Shanghai/);
         await read('document.querySelector(".event-actions [data-action=delete]").click();void 0');
+        await until('document.querySelector(".confirm-action-dialog[open]")?.textContent.includes("Reminder first")');
+        assert.deepEqual(await read('eventActions'), []);
+        await read('document.querySelector(".confirm-action-dialog .danger").click();void 0');
         await until('!document.querySelector(".event-overview") && eventActions.length===1');
         assert.deepEqual(await read('eventActions'), [{ action: 'delete', eventId: 'first' }]);
         assert.deepEqual(await read('testEvents.map(event=>event.id)'), ['second']);

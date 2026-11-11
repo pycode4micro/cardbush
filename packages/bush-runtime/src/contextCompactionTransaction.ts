@@ -149,6 +149,7 @@ export class ContextCompactionTransaction {
 
   get originalState(): ContextCompactionState { return structuredClone(this.#state); }
   get isRoot(): boolean { return this.#current === this.#root; }
+  get currentLedger() { return this.#current.loop; }
   /** Durable history always retains the original sources plus real maintenance
    * facts. A smaller dispatch projection must never replace this journal. */
   get canonicalMessages(): ModelMessage[] { return [...this.#messages, ...(this.incremental?.history ?? [])]; }
@@ -462,7 +463,9 @@ export class ContextCompactionTransaction {
         notice.content += '\nOnly the indexed source is supplied in this request. Previously accepted summaries are background; submit only this source number. The next source will receive its own input after acceptance. ' +
           'Use the message positions in THIS final notice. Earlier receipts retain positions in the original frozen conversation and must not be used to index this isolated request.';
         if (!fragment.active && this.#currentInput.length) notice.content += '\nCurrent user input outside the source range is background only; it is not owned by the historical source.';
-        messages.push(...this.incremental!.attemptHistory.slice(1), notice);
+        const correction = node.loop!.rejection;
+        if (correction) notice.content += '\nLast submission for this source was rejected: ' + correction;
+        messages.push(...this.incremental!.isolatedHistory, notice);
         return { id: node.id, state: this.originalState, messages, outputTokens: node.outputTokens,
           failures: node.loop!.failures, sourceRanges: this.#ranges({ fragments: [fragment] } as Node) };
       }

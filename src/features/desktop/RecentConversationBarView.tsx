@@ -1,32 +1,43 @@
 import { useId, useState, type ReactNode, type Ref } from 'react';
-import { Bell, CircleAlert, CircleCheck, List, MessageCircleQuestion } from 'lucide-react';
+import { Bell, X, Zap, CircleAlert, CircleCheck, MessageCircleQuestion } from 'lucide-react';
 import { EventReadButton } from '../automations/ConversationEventInbox';
 import { sessionAttentionLabel } from '../sessionAttention';
 import type { WorkspaceNotice } from './workspaceNotifications';
 import type { AppLanguage, ConversationSummary } from '../../types';
 import { uiText } from '../../i18n';
 
-export type RecentTab = 'pinned' | 'sessions' | 'notifications';
+export type RecentTab = 'sessions' | 'notifications';
 
-export function RecentConversationBarView({ actions, language, assistant, panelId, panelRef, expanded, unread, tab, onTab, onToggle, children }: {
-  language: AppLanguage; assistant: ReactNode; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
+export function RecentConversationBarView({ actions, language, panelId, panelRef, expanded, unread, tab, onTab, onToggle, onActivate, onBrowse, children }: {
+  language: AppLanguage; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
   actions?: ReactNode;
   unread: number;
+  onActivate(): void; onBrowse(): void;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; children: ReactNode;
 }) {
   const t = uiText(language), tabId = useId();
-  const tabs = [{ id: 'pinned', label: t('chatSidebar.pinned') }, { id: 'sessions', label: t('recentBar.sessions') }, { id: 'notifications', label: t('recentBar.notifications') }] as const;
+  const tabs = [{ id: 'sessions', label: t('conversationSearchDialog.chats') }, { id: 'notifications', label: t('recentBar.notifications') }] as const;
   const listLabel = unread ? t('recentBar.navigatorUnread', { count: unread }) : t('recentBar.navigator');
-  return <div className="recent-bar window-drag">
-    {assistant}
-    <div className="recent-bar-actions">
-      {actions}
-      <button className="recent-bar-list no-drag" type="button" popoverTarget={panelId}
-        data-unread={unread > 0 || undefined} aria-controls={panelId} aria-expanded={expanded} aria-label={listLabel} title={listLabel}>
-        <List aria-hidden="true"/>{unread > 0 && <span className="recent-unread-dot" aria-hidden="true"/>}</button>
-    </div>
-    <aside className="recent-turn-drawer no-drag" ref={panelRef} id={panelId} popover="auto"
-      aria-label={t('recentBar.navigator')} onToggle={event => onToggle(event.newState === 'open')}>
+  return <div className="recent-bar">
+    <button className="nav-row recent-bar-list" type="button" {...{ interestfor: panelId }}
+      aria-description={t('recentBar.quickHint')} aria-keyshortcuts="ArrowDown" onClick={onActivate}
+      onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); onBrowse(); } }}
+      data-unread={unread > 0 || undefined} aria-haspopup="dialog" aria-controls={panelId} aria-expanded={expanded} aria-label={listLabel}>
+      <span className="nav-row-icon" aria-hidden="true"><Zap/>{unread > 0 && <i className="recent-unread-dot"/>}</span>
+      <span>{t('recentBar.navigator')}</span>
+    </button>
+    <aside className="recent-turn-drawer" ref={panelRef} id={panelId} popover="auto" role="dialog"
+      aria-label={t('recentBar.navigator')} onToggle={event => {
+        if (event.target === event.currentTarget) onToggle(event.newState === 'open');
+      }}>
+      <div className="recent-panel-header">
+        <div className="recent-bar-actions">
+          {actions}
+          <button className="recent-panel-close" type="button" popoverTarget={panelId} popoverTargetAction="hide"
+            aria-label={t('common.close')} title={t('common.close')}><X aria-hidden="true"/></button>
+        </div>
+      </div>
+      <div className="recent-summary-preview"/>
       <div className="recent-tabs" role="tablist" aria-label={t('recentBar.navigator')} onKeyDown={event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();

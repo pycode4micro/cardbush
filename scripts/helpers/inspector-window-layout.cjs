@@ -12,6 +12,26 @@ module.exports = async ({run,until,pause,window,root}) => {
     chat:chat.width,browser:browser.width,boundary:chat.right,minimum:getComputedStyle(document.querySelector('.desktop-shell')).getPropertyValue('--conversation-pane-min-width').trim(),
     preferred:localStorage.getItem('cardbush.inspector_width')};})()`);
   try {
+    await run('coverWorkspace.setSidebarCollapsed(true);coverWorkspace.setInspectorWidth(620,true)');
+    await until("document.querySelector('.sidebar').getBoundingClientRect().width < 2 && coverWorkspace.inspectorWidth === 620", 'initial split is settled');
+    for (const width of [777, 740, 640]) {
+      window.setContentSize(width, 800);
+      await until(`(() => {
+        const shell = document.querySelector('.desktop-shell');
+        const inspector = document.querySelector('.right-inspector').getBoundingClientRect().width;
+        const expected = shell.clientWidth - Math.min(340, Math.ceil(shell.clientWidth / 2));
+        return innerWidth === ${width} && !coverWorkspace.conversationCovered
+          && Math.abs(inspector - expected) < 1;
+      })()`, `readable split after resizing to ${width}px`);
+      const split = await layout();
+      assert.ok(split.chat >= Math.min(340, Math.floor((split.chat + split.browser) / 2)) - 2,
+        `a ${width}px window retains usable conversation space: ${JSON.stringify(split)}`);
+      assert.ok(split.browser > 200 && !await run('document.querySelector(".main-stage").inert'),
+        'the inspector and the conversation remain usable together');
+      const left = await run('document.querySelector(".right-inspector").getBoundingClientRect().left');
+      assert.ok(Math.abs(left - split.boundary) < 2, 'the inspector sits beside the conversation');
+      assert.equal(split.preferred, '620', 'fitting the window preserves the preferred split');
+    }
     window.setBounds({x:0,y:0,width:1920,height:1000});
     await run('coverWorkspace.setWindowMaximized(true);coverWorkspace.setSidebarCollapsed(false)');await pause(350);
     await run('coverWorkspace.setInspectorWidth(720)');await readable();await pause(300);

@@ -6,6 +6,18 @@ export type SoftPanelPresence = {
   visible: boolean;
 };
 
+/** A restored split is part of the destination's first layout. Only an
+ * explicit toggle in the same destination should animate its width. */
+export function useInspectorPresence(open: boolean, destination: string) {
+  const [last, setLast] = useState({
+    destination, visible: open, mounted: open, animate: false,
+  });
+  if (last.destination === destination && last.visible === open) return last;
+  const next = { destination, visible: open, mounted: last.mounted || open, animate: last.destination === destination };
+  setLast(next);
+  return next;
+}
+
 export function useSoftPanelPresence(
   open: boolean,
   exitDurationMs = 240,

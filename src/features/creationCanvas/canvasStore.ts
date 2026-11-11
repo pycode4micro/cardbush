@@ -2,6 +2,7 @@ import { uiText } from '../../i18n';
 import { useSyncExternalStore } from 'react';
 import { emptyCanvas, type CanvasSnapshot, type CreationCanvas } from '@cardbush/bush-protocol';
 import { bushItPageName, getBushItPages, type BushItPage } from '../mdPresentation/bushItPageStore';
+import { inspectorTargetIdentity } from '../inspector/inspectorTargets';
 
 export type CanvasEntry = { id: string; title: string; sessionId: string; sessionCreated?: boolean; root?: string; path?: string; seed?: CreationCanvas; legacyPageId?: string; archived?: boolean; updatedAt: number; editingId?: string; team?: { id: string; revision: number } };
 type Library = { canvases: CanvasEntry[]; selectedId: string; error: string };
@@ -40,15 +41,40 @@ export function useCanvases() { return useSyncExternalStore(subscribe, getCanvas
 export function useCanvasSessionId() { const library = useCanvases(); return library.canvases.find(item => item.id === library.selectedId && !item.archived)?.sessionId || ''; }
 export function createCanvas(seed?: CreationCanvas) { const item = entry(seed); publish({ ...getCanvases(), canvases: [...getCanvases().canvases, item], selectedId: item.id }); return item.id; }
 export function selectCanvas(id: string) { if (getCanvases().canvases.some(item => item.id === id && !item.archived)) publish({ ...getCanvases(), selectedId: id }); }
+export function closeCanvas(id: string) {
+  const library = getCanvases();
+  if (library.selectedId === id) publish({ ...library, selectedId: '' });
+}
+export async function deleteCanvas(id: string, snapshot: CanvasSnapshot) {
+  const result = await window.cardbushDesktop!.creationCanvas({ action: 'delete', path: snapshot.path, expectedRevision: snapshot.revision });
+  if (!result) return;
+  const library = getCanvases();
+  publish({ ...library, canvases: library.canvases.filter(item => item.id !== id),
+    selectedId: library.selectedId === id ? '' : library.selectedId });
+}
+export async function openCanvasFile(path?: string) {
+  const desktop = window.cardbushDesktop;
+  if (!desktop?.creationCanvas) throw Error(uiText()('canvasStore.restart_the_updated_cardbush_app'));
+  const result = await desktop.creationCanvas(path ? { action: 'read', path } : { action: 'open' });
+  if (!result || !('document' in result)) return false;
+  acceptCanvas(result);
+  return true;
+}
 export function updateCanvasEntry(id: string, change: Partial<CanvasEntry>) { publish({ ...getCanvases(), canvases: getCanvases().canvases.map(item => item.id === id ? { ...item, ...change } : item) }); }
 export function archiveCanvas(id: string, archived: boolean) {
   const canvases = getCanvases().canvases.map(item => item.id === id ? { ...item, archived } : item);
-  const selectedId = canvases.some(item => item.id === getCanvases().selectedId && !item.archived) ? getCanvases().selectedId : canvases.find(item => !item.archived)?.id || '';
+  const active = getCanvases().selectedId;
+  const selectedId = archived && id === active ? canvases.find(item => !item.archived)?.id || '' : active;
   publish({ ...getCanvases(), canvases, selectedId });
 }
 export function acceptCanvas(snapshot: CanvasSnapshot) {
-  const old = getCanvases().canvases.find(item => item.path === snapshot.path);
-  if (old) { updateCanvasEntry(old.id, { archived: false, title: snapshot.document.title }); selectCanvas(old.id); return; }
+  const library = getCanvases();
+  const old = library.canvases.find(item => item.path && inspectorTargetIdentity(item.path) === inspectorTargetIdentity(snapshot.path));
+  if (old) {
+    publish({ ...library, selectedId: old.id, canvases: library.canvases.map(item => item === old
+      ? { ...item, archived: false, title: snapshot.document.title, updatedAt: Date.now() } : item) });
+    return;
+  }
   const item = entry(); item.path = snapshot.path; item.seed = undefined; item.title = snapshot.document.title;
   publish({ ...getCanvases(), canvases: [...getCanvases().canvases, item], selectedId: item.id });
 }

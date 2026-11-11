@@ -466,9 +466,11 @@ function RuntimeContextCompactionDetail({
         </span>
       </header>}
       <p>
-        {scope
+        {execution.state === 'completed' && scope
           ? uiText(language)('toolExecutionBlock.convertedIntoResumableFactsTheOriginalConversation', { scope })
-          : uiText(language)('toolExecutionBlock.convertingCompletedContextIntoResumableFacts')}
+          : failed || cancelled
+            ? uiText(language)('toolExecutionBlock.checkpointNotApplied')
+            : uiText(language)('toolExecutionBlock.convertingCompletedContextIntoResumableFacts')}
       </p>
       {(pressure || tokenUsage) && (
         <p className="runtime-context-compaction-metrics" title={exactUsage}>

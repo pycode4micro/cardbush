@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 
-module.exports = async ({win, read, wait, visible, click, row}) => {
+module.exports = async ({win, read, wait, visible, click, showQuickPanel, row}) => {
   const drawer = '.recent-turn-drawer:popover-open', menu = '.sidebar-context-menu[role=menu]';
   const pin = row + ' .conversation-pin', archive = row + ' .conversation-archive';
   const item = key => '[data-sidebar-menu-item="' + key + '"]';
@@ -19,17 +19,20 @@ module.exports = async ({win, read, wait, visible, click, row}) => {
       return {x,y};
     })()`);
     win.webContents.sendInputEvent({type:'mouseMove', ...point});
-    await wait(() => read(`document.querySelector(${JSON.stringify(selector)})?.contains(document.elementFromPoint(${point.x},${point.y}))`), 'pointer reaches ' + selector);
+    await wait(() => read(`document.querySelector(${JSON.stringify(selector)})?.matches(':hover') && document.querySelector(${JSON.stringify(selector)}).contains(document.elementFromPoint(${point.x},${point.y}))`), 'pointer reaches ' + selector);
     if (button) for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type, button, clickCount:1, ...point});
   };
+  win.focus(); win.webContents.focus();
   for (const width of [1400, 680]) {
     win.setContentSize(width, 740);
     await wait(() => read(`innerWidth === ${width}`), 'updated viewport');
+    const layout = width === 1400 ? 'docked' : 'drawer';
+    await wait(() => read(`document.querySelector('.desktop-shell').dataset.sidebarLayout === '${layout}' && !document.querySelector('.sidebar').getAnimations().length`), 'sidebar anchor settles at the new width');
     // Changing between docked and overlay modes can finish a previous light-dismiss.
-    if (!await read(`!!document.querySelector('${drawer}')`)) await click('.recent-bar-list');
+    await showQuickPanel();
     await click('[data-recent-tab=sessions]');
     await visible(row);
-    await wait(() => read(`document.querySelector('${drawer}').getAnimations().every(a => a.playState !== 'running') && Math.abs(document.querySelector('${drawer}').getBoundingClientRect().right-innerWidth)<0.1`), 'drawer has settled');
+    await wait(() => read(`document.querySelector('${drawer}').getAnimations().every(a => a.playState !== 'running') && document.querySelector('${drawer}').getBoundingClientRect().right<=innerWidth`), 'drawer has settled');
     const original = await rects();
     await pointer(row);
     const target = width === 1400 ? row : pin;

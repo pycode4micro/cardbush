@@ -7,6 +7,18 @@
 .canvas-team-choice{display:flex;align-items:center;gap:12px;padding:10px;font-size:12px;color:var(--text-mid)}
 .canvas-team-choice select{min-width:0;flex:1;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px}
 .canvas-menu>small{display:block;padding:8px;white-space:normal}
+.canvas-menu-wrap .canvas-menu{max-height:min(68vh,520px);overflow-y:auto}
+.canvas-menu hr{margin:4px 8px;border:0;border-top:1px solid var(--border)}
+.canvas-menu-wrap>button svg{width:14px;height:14px}
+.canvas-menu>small.canvas-menu-filename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-mid)}
+.canvas-menu button svg,.canvas-library-actions svg{width:16px;height:16px;flex:none}
+.canvas-library{box-sizing:border-box;width:min(100%,480px);margin:auto;padding:24px;max-height:100%;overflow:auto}
+.canvas-library-actions{display:flex;gap:10px;flex-wrap:wrap}
+.canvas-library button{color:var(--text);cursor:pointer;font:inherit}
+.canvas-library-actions button{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface-raised);border:1px solid var(--border);border-radius:8px}
+.canvas-library h2{margin:24px 0 8px;color:var(--text-mid);font-size:13px}
+.canvas-library-entry{display:block;width:100%;padding:9px;text-align:start;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;background:transparent;border:0;border-radius:6px}
+.canvas-library-entry:hover,.canvas-library-actions button:hover{background:color-mix(in srgb,var(--text) 8%,var(--surface))}
 .canvas-empty .canvas-desktop-starter{margin-top:24px;background:transparent;font-size:13px;color:var(--text-mid)}
 .canvas-chat-region{position:absolute;left:var(--canvas-inset);bottom:64px;max-width:calc(100% - 2 * var(--canvas-inset));display:flex;align-items:center;gap:10px;z-index:6;padding:7px 10px;border:1px solid var(--border);border-radius:20px;background:var(--surface-raised);font-size:12px;color:var(--text-mid)}
 .canvas-chat-region span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.canvas-chat-region button{display:flex;flex-shrink:0;border:0;background:transparent;color:inherit;cursor:pointer}

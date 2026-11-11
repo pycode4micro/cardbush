@@ -1,5 +1,6 @@
 import { uiText } from '../../i18n';
 import { ConversationHostContext } from '../conversationHost';
+import { localCanvasFilePath } from '../inspector/inspectorTargets';
 import {
   CheckCircle2,
   ChevronDown,
@@ -10,6 +11,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useMemo, useState, type HTMLAttributes } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   fetchSubagentTask,
@@ -60,6 +62,7 @@ export function ConversationWorkSummary({
   taskPlan,
   hoverProps,
   keepOpenUntil,
+  previewHost,
 }: {
   language: AppLanguage;
   sessionId: string;
@@ -75,6 +78,7 @@ export function ConversationWorkSummary({
   taskPlan?: TaskPlanSnapshot;
   hoverProps?: HTMLAttributes<HTMLElement>;
   keepOpenUntil?: (completion: Promise<unknown>) => void;
+  previewHost?: HTMLElement | null;
 }) {
   const host = useContext(ConversationHostContext);
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
@@ -105,7 +109,7 @@ export function ConversationWorkSummary({
     setOutputsExpanded(false);
   }, [sessionId]);
 
-  return (
+  const panel = (
     <aside
       {...hoverProps}
       className={`conversation-work-summary soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
@@ -149,7 +153,7 @@ export function ConversationWorkSummary({
                       onClick={() => {
                         if (host) { if (output.change && output.type === 'document') onOpenChangeReview(output.change.path); else host.openFile(output.path); return; }
                         if (output.type !== 'document') openMediaInspector(output.path, output.type, output.name);
-                        else if (output.change) onOpenChangeReview(output.change.path);
+                        else if (output.change && !localCanvasFilePath(output.path)) onOpenChangeReview(output.change.path);
                         else openInspector(output.path, output.name);
                       }}
                     >
@@ -257,6 +261,7 @@ export function ConversationWorkSummary({
       </div>
     </aside>
   );
+  return previewHost ? createPortal(panel, previewHost) : panel;
 }
 
 function useSubagentTaskFeed(sessionId: string, available: boolean) {

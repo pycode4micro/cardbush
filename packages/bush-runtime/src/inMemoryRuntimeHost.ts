@@ -2604,6 +2604,7 @@ export class InMemoryRuntimeHost {
       if (activeContextCompaction) return;
       const hooks = await runHook('PreCompact', { signal: input.signal, trigger: 'auto' });
       if (hooks.stopTurn !== undefined) return hooks.stopTurn;
+      usage.conversationInputTokens = pressure.estimatedPromptTokens;
       contextCompactionOrdinal += 1;
       const assistantAnchor = latestAssistantAnchor();
       activeContextCompaction = {
@@ -2699,6 +2700,7 @@ export class InMemoryRuntimeHost {
       admissionTargetInputTokens?: number,
     ) => {
       if (!activeContextCompaction) return;
+      if (pressure) usage.conversationInputTokens = pressure.estimatedPromptTokens;
       this.#eventLog.append(identity, {
         kind: "context_compaction_completed",
         payload: {
@@ -3120,6 +3122,7 @@ export class InMemoryRuntimeHost {
             const saved = savedStart?.kind === 'context_compaction_started' ? savedStart.payload : undefined;
             isolateCheckpointSources = !saved || saved.isolateSources === true;
             compactionInputTokensBefore = saved?.estimatedInputTokens ?? pressure.estimatedPromptTokens;
+            if (saved) usage.conversationInputTokens = compactionInputTokensBefore;
             compactionScope = selectContextCompactionScope({ messages: sourceMessages, sources: allSources,
               state, format: checkpointFormat, pressure, activeTurnId: request.turnId,
               activeInputCount: input.sessionCommit.inputMessages.length, messageIds: sourceIds,
@@ -3224,7 +3227,7 @@ export class InMemoryRuntimeHost {
         if (compactionTransaction && compactionJob) {
           saveIncrementalMessages();
           if (compactionJob.failures >= 3) return await finalize({ status: 'failed', reason: 'context_compaction_failed',
-            details: { message: 'The checkpoint retry budget was exhausted before recovery.', jobId: compactionJob.id } });
+            details: { message: compactionTransaction.currentLedger?.rejection ?? 'The checkpoint retry budget was exhausted before recovery.', jobId: compactionJob.id } });
           this.#contextCompactionAuthorizations.set(turnKey, { state: compactionJob.state, format: checkpointFormat });
           dispatchMessages = compactionJob.messages;
           dispatchOutputTokens = compactionJob.outputTokens;
@@ -3456,8 +3459,10 @@ export class InMemoryRuntimeHost {
               // Keep only provider-reported usage; cancellation does not imply
               // that the discarded request was free or consumed zero tokens.
               mergeUsage(usage, observedUsage);
+              if (observedUsage.inputTokens !== undefined) usage.conversationInputTokens = observedUsage.inputTokens;
               if (observedUsage.inputTokens !== undefined) this.#eventLog.append(identity, {
                 kind: 'model_request_usage', payload: { round, attempt, model: request.model,
+                  conversationInputTokens: observedUsage.inputTokens,
                   contextWindowTokens: usage.contextWindowTokens, maxOutputTokens: roundRequest.maxOutputTokens,
                   ...(providerInputSequence !== undefined ? { providerInputSequence } : {}),
                   inputTokens: observedUsage.inputTokens,
@@ -3496,6 +3501,9 @@ export class InMemoryRuntimeHost {
           projector.finishFileEdits(result.status === 'completed' ? result.toolCalls : []);
           mergeUsage(usage, result.usage);
           replaceLastRequestUsage(usage, result.usage);
+          if (!contextCompactionRequired && !isMaintenanceResponse && result.usage.inputTokens !== undefined) {
+            usage.conversationInputTokens = result.usage.inputTokens;
+          }
           if (result.usage.inputTokens !== undefined) {
             // Bind usage to the actual dispatch attempt, including any native
             // tool-search fallback. Never bind it to a different preflight view.
@@ -3517,6 +3525,7 @@ export class InMemoryRuntimeHost {
                 attempt,
                 model: request.model,
                 ...(providerInputSequence !== undefined ? { providerInputSequence } : {}),
+                ...(usage.conversationInputTokens !== undefined ? { conversationInputTokens: usage.conversationInputTokens } : {}),
                 ...(usage.contextWindowTokens !== undefined
                   ? { contextWindowTokens: usage.contextWindowTokens }
                   : {}),
@@ -3781,10 +3790,17 @@ export class InMemoryRuntimeHost {
             continue;
           }
           try {
+            const ledger = compactionTransaction?.currentLedger;
             if (compactionTransaction && !compactionTransaction.accept(completedRound)) {
-              // Retain accepted entries and structural errors as genuine Tool
-              // receipts, so the next loop can choose any remaining source.
               saveIncrementalMessages();
+              const rejection = ledger?.rejection;
+              if (ledger && rejection && compactionJob) {
+                const diagnostics = { jobId: compactionJob.id, failures: ledger.failures,
+                  outputTokens: compactionJob.outputTokens, sourceRanges: compactionJob.sourceRanges };
+                if (diagnostics.failures >= 3) return await finalize({ status: 'failed', reason: 'context_compaction_failed',
+                  details: { message: rejection, checkpointDiagnostics: diagnostics } });
+                retryContextCompaction('checkpoint_rejected', rejection, diagnostics);
+              }
               this.#recovery.save({ request, messages, nextRound: round + 1,
                 cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
               continue;

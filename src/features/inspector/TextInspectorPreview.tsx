@@ -89,7 +89,7 @@ export function MarkdownInspectorPreview({
             {shouldUsePlainTextPreview(content) ? <Suspense fallback={<PlainSourceLines content={content} />}>
               <SourceSyntaxLines content={content} path={path} language={language} />
             </Suspense> : <MessageFileReferenceScope workspaceRoot={parentDirectory(path)}>
-              <MarkdownContent content={content} language={language} compactImages={false} />
+              <MarkdownContent content={content} language={language} compactImages={false} imageLoading="lazy" />
             </MessageFileReferenceScope>}
           </>
         )}

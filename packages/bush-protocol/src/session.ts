@@ -58,6 +58,8 @@ export const sessionUsageSchema = z.object({
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   cachedInputTokens: z.number().int().nonnegative().optional(),
+  // Occupancy of the foreground conversation. A maintenance dispatch measures a different input.
+  conversationInputTokens: z.number().int().nonnegative().optional(),
   lastRequestInputTokens: z.number().int().nonnegative().optional(),
   lastRequestOutputTokens: z.number().int().nonnegative().optional(),
   lastRequestCachedInputTokens: z.number().int().nonnegative().optional(),

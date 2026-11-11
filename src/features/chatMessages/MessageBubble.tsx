@@ -75,6 +75,7 @@ import {
   normalizeExecutionNarrationForDisplay,
   normalizeMarkdownContentForDisplay,
   remarkAutolinkBoundaries,
+  remarkSectionLists,
 } from './markdownFormat';
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
 import { MessageImageGallery } from './MessageImageGallery';
@@ -337,6 +338,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     language: AppLanguage;
     referenceMode: 'local' | 'remote';
     compactImages: boolean;
+    imageLoading?: 'lazy' | 'eager';
     streaming?: boolean;
     skillCommands?: PluginCommandSummary[];
   };
@@ -425,7 +427,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       const host = useContext(ConversationHostContext);
       const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
       const [failedSource, setFailedSource] = useState('');
-      const { workspaceRoot, pathAliases, language, referenceMode } = useContext(MarkdownRenderContext);
+      const { workspaceRoot, pathAliases, language, referenceMode, imageLoading } = useContext(MarkdownRenderContext);
       const presentedMedia = useContext(PresentedMediaContext);
       const finalAnswerMedia = useContext(FinalAnswerMediaContext);
       const richFileReferences = useContext(RichFileReferencesContext);
@@ -478,6 +480,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
         <>
         <MessageContentImage
           {...props}
+          loading={imageLoading}
           src={resolvedSource}
           alt={alt ?? ''}
           onError={() => setFailedSource(resolvedSource)}
@@ -548,6 +551,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     language,
     referenceMode,
     compactImages,
+    imageLoading,
     streaming,
     skillCommands,
   }: MarkdownRenderSettings & { content: string }) {
@@ -556,9 +560,10 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     const presentedMedia = useContext(PresentedMediaContext);
     const sourceReferences = useSourceMemoReferences(content);
     const markdown = useMemo(() => skillMarkdownPresentation(normalizeMarkdownContentForDisplay(content), skillCommands), [content, skillCommands]);
-    const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages }), [workspaceRoot, pathAliases, language, referenceMode, compactImages]);
+    const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages, imageLoading }),
+      [workspaceRoot, pathAliases, language, referenceMode, compactImages, imageLoading]);
     const remarkPlugins = useMemo(() => {
-      const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkCjkFriendly];
+      const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkCjkFriendly, remarkSectionLists];
       if (streaming) plugins.push(remarkStreamingTables);
       plugins.push(remarkAutolinkBoundaries, remarkTableBreaks);
       // URL boundary repair can reparse the document. Enrich references only
@@ -2876,6 +2881,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   language,
   referenceMode,
   compactImages = true,
+  imageLoading,
   streaming = false,
   skillCommands,
 }: {
@@ -2883,6 +2889,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   language: AppLanguage;
   referenceMode?: 'local' | 'remote';
   compactImages?: boolean;
+  imageLoading?: 'lazy' | 'eager';
   streaming?: boolean;
   skillCommands?: PluginCommandSummary[];
 }) {
@@ -2899,6 +2906,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           language={language}
           referenceMode={referenceMode ?? (host ? 'remote' : 'local')}
           compactImages={compactImages}
+          imageLoading={imageLoading}
           streaming={streaming}
           skillCommands={skillCommands}
         />

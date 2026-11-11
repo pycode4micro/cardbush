@@ -1,5 +1,5 @@
 import { uiText } from '../../i18n';
-import { Suspense } from 'react';
+import { memo, Suspense } from 'react';
 import type { AppLanguage, ChatMessage } from '../../types';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import type { WorkSummaryInspectorDetail } from '../subagents/subagentObservabilityEvents';
@@ -17,9 +17,11 @@ const AgentDefinitionInspector = recoverableLazy('agent-definition',
   async () => ({ default: (await import('../team/AgentDefinitionInspector')).AgentDefinitionInspector }),
   (props, retry) => <DeferredModuleNotice language={props.language} retry={retry}/>);
 
-export function WorkSummaryInspector({ detail, messages, language, active = true, conversationOptions }: {
+const emptyMessages: ChatMessage[] = [];
+
+export const WorkSummaryInspector = memo(function WorkSummaryInspector({ detail, messages = emptyMessages, language, active = true, conversationOptions }: {
   detail: WorkSummaryInspectorDetail;
-  messages: ChatMessage[];
+  messages?: ChatMessage[];
   language: AppLanguage;
   active?: boolean;
   conversationOptions?: SubagentConversationOptions;
@@ -31,4 +33,4 @@ export function WorkSummaryInspector({ detail, messages, language, active = true
         ? <AgentDefinitionInspector detail={detail} language={language} active={active}/>
         : <SubagentTaskInspector detail={detail} language={language} active={active} conversationOptions={conversationOptions}/>}
   </Suspense>;
-}
+});

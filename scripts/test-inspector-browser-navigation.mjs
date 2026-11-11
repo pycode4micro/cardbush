@@ -127,7 +127,7 @@ function Harness() {
         <BrowserInstallButton language={language} navigation={active}/>
         <BrowserBookmarkButton address={active?.url||''} title={active?.title||''} language={language}/>
       </form></div>
-      <div className="right-inspector-body"><InspectorTabPages tabs={tabs.allTabs} activeId={tabs.activeId} layout={layout} language="zh"
+      <div className="right-inspector-body"><InspectorTabPages tabs={tabs.allTabs} activeId={tabs.activeId} layout={layout} language="zh" visible={inspectorOpen}
         onActivate={tabs.activateTab}
         onResize={(path,ratio)=>setLayout(current=>resizePanelSplit(current,path,ratio))}
         renderFrame={tab=><InspectorTileFrame tab={tab} language={language} navigation={navigation[tab.id]} handle={refs.current[tab.id]} onSwap={(from,x,y)=>{

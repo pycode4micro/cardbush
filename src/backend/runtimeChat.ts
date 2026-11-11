@@ -337,7 +337,7 @@ export async function streamRuntimeChat(
       source: 'electron_runtime_latest_request',
       raw: {
         usage: committed?.usage ?? {},
-        measurement: 'last_request_input_tokens',
+        measurement: committed?.usage?.conversationInputTokens !== undefined ? 'conversation_input_tokens' : 'last_request_input_tokens',
       },
     });
     request.onDone?.(terminalSnapshot(terminal));
@@ -581,6 +581,7 @@ async function consumeRuntimeEvents(
       }
       case 'model_request_usage': {
         const contextMetrics = contextWindowMetrics({
+          conversationInputTokens: event.payload.conversationInputTokens,
           lastRequestInputTokens: event.payload.inputTokens,
           contextWindowTokens: event.payload.contextWindowTokens,
           maxOutputTokens: event.payload.maxOutputTokens,
@@ -596,6 +597,7 @@ async function consumeRuntimeEvents(
             round: event.payload.round,
             attempt: event.payload.attempt,
             inputTokens: event.payload.inputTokens,
+            conversationInputTokens: event.payload.conversationInputTokens,
             outputTokens: event.payload.outputTokens,
             cachedInputTokens: event.payload.cachedInputTokens,
             providerResponseId: event.payload.providerResponseId,

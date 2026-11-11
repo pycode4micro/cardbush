@@ -353,6 +353,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("model_request_usage"),
     payload: z.object({
+      conversationInputTokens: z.number().int().nonnegative().optional(),
       round: z.number().int().positive(),
       attempt: z.number().int().positive(),
       // Exact dispatch observation in this turn, including adapter fallbacks.

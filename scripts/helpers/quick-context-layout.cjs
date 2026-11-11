@@ -36,7 +36,7 @@ module.exports = async function testQuickContextLayout({ run, until, pause, wind
       const body = document.querySelector('.chat-body');
       const region = document.querySelector('.quick-context-popovers');
       const rect = element => element?.getBoundingClientRect().toJSON();
-      const contentTop = Number.parseFloat(getComputedStyle(body).getPropertyValue('--composer-content-top'));
+      const contentTop = Number.parseFloat(getComputedStyle(document.querySelector('.scroll-bottom')).getPropertyValue('--composer-content-top'));
       const buttons = [...(popup?.querySelectorAll('header button, footer button') ?? [])].map(button => {
         const bounds = button.getBoundingClientRect();
         const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);

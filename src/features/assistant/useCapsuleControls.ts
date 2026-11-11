@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
+import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 
 export type CapsuleInput = {
   composing: boolean; voiceOpen: boolean; repliesOpen: boolean; ready: boolean; sending: boolean;
@@ -12,6 +13,8 @@ export function useCapsuleControls(p: CapsuleInput) {
   const previous = useRef<'compose' | 'voice' | undefined>(undefined);
   const sheet = useRef<HTMLElement>(null);
   const { repliesOpen, collapse } = p;
+  const presence = useSoftPanelPresence(repliesOpen, 140);
+  const renderReplies = (repliesOpen || presence.mounted) && !p.composing && !p.voiceOpen;
   useEffect(() => {
     if (!repliesOpen) return;
     // A completed click lets the toolbar's drag handler suppress a drag first.
@@ -28,12 +31,17 @@ export function useCapsuleControls(p: CapsuleInput) {
   const [limit, setLimit] = useState(30);
   useLayoutEffect(() => {
     const node = sheet.current;
-    if (!node) { setLimit(30); return; }
+    if (!node) {
+      setLimit(30);
+      window.cardbushDesktop?.measureAssistantReplies?.(0);
+      return;
+    }
+    if (!repliesOpen) return;
     const measure = () => window.cardbushDesktop?.measureAssistantReplies?.(node.getBoundingClientRect().height);
     measure();
     const observer = new ResizeObserver(measure); observer.observe(node);
     return () => observer.disconnect();
-  }, [p.repliesOpen]);
+  }, [renderReplies, repliesOpen]);
   const [failed, setFailed] = useState(false);
   const drag = useRef<{id:number; x:number; y:number; moved:boolean} | undefined>(undefined);
   const suppressClick = useRef(false);
@@ -84,5 +92,5 @@ export function useCapsuleControls(p: CapsuleInput) {
     } catch { setFailed(true); }
     input.current?.focus();
   };
-  return {input, toolbar, sheet, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach};
+  return {input, toolbar, sheet, renderReplies, revealReplies: repliesOpen && presence.visible, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach};
 }

@@ -9,7 +9,7 @@ import { realtimeVoiceId, validRealtimeVoiceId } from './realtimeVoiceOptions';
 import { realtimeVoiceProviders as providers } from './realtimeVoiceRegistry';
 import { realtimeVoiceCatalog } from './realtimeVoiceCatalog';
 import { RealtimeVoiceConfiguration } from './realtimeVoiceConfiguration';
-import { realtimeConversationInstructions, type RealtimeVoiceProvider } from './realtimeVoiceProvider';
+import { realtimeConversationInstructions, realtimeConversationStyle, type RealtimeVoiceProvider } from './realtimeVoiceProvider';
 import { realtimeVoiceNotification } from './realtimeVoiceNotification';
 import { RealtimeVoiceHistory, type VoiceContextMessage } from './realtimeVoiceHistory';
 import { RealtimeVoiceContext } from './realtimeVoiceContext';
@@ -56,6 +56,8 @@ interface LiveCall {
   batches: Map<string, Set<string>>; seen: Set<string>;
   transientTools?: Set<string>;
   inputSpeaking?: boolean; outputSpeaking?: boolean; notificationTimer?: NodeJS.Timeout;
+  opening?: { timer?: NodeJS.Timeout };
+  openingRequestId?: string;
   notifications: ReturnType<typeof realtimeVoiceNotification>[]; notified: Set<string>;
   availableTasks?: { taskId:string; status:string }[];
   contextReceipts?: Map<string, VoiceContextMessage[]>;
@@ -225,7 +227,10 @@ export class RealtimeVoiceService {
             }
             if (raw.type === 'conversation.item.input_audio_transcription.started' || raw.type === 'input_audio_buffer.speech_started' || raw.type === 'conversation.item.input_audio_transcription.delta') call.inputSpeaking = true;
             if (raw.type === 'conversation.item.input_audio_transcription.completed' || raw.type === 'conversation.item.input_audio_transcription.failed') call.inputSpeaking = false;
-            if (raw.type === 'response.created' || raw.type === 'response.output_audio.started' || raw.type === 'response.output_text.delta') call.outputSpeaking = true;
+            if (raw.type === 'response.created' || raw.type === 'response.output_audio.started' || raw.type === 'response.output_text.delta') {
+              call.outputSpeaking = true;
+              this.clearOpening(call);
+            }
             if ((raw.type === 'response.done' || raw.type === 'response.canceled') && !raw.ack_only) {
               call.memory?.observeTokens((raw.usage as {total_tokens?:unknown} | undefined)?.total_tokens);
               call.outputSpeaking = false;
@@ -235,9 +240,18 @@ export class RealtimeVoiceService {
             for (const parsed of call.provider.parse(raw)) {
               if (parsed.type === 'closed') { if(call.closing)this.finish(call);else this.connectionLost(call,'语音服务关闭了连接。','provider_session_closed'); return; }
               if (call.closing) continue;
-              if (parsed.type === 'error') { this.fail(call, parsed.message); return; }
+              if (parsed.type === 'error') {
+                if (call.openingRequestId && raw.event_id === call.openingRequestId) {
+                  call.openingRequestId = undefined;
+                  this.diagnostic(call,'opening_declined');
+                  continue;
+                }
+                this.fail(call, parsed.message);
+                return;
+              }
               if (parsed.type === 'ready') {
                 if (call.ready || call.restoring) continue;
+                if (!call.everReady && call.provider.supportsOpening?.(raw)) call.opening ??= {};
                 // The provider requires mute keepalive while context ACKs are pending.
                 this.send(call,call.provider.control('mute'));
                 if (context.length && call.provider.contextMode!=='instructions') {
@@ -247,6 +261,8 @@ export class RealtimeVoiceService {
                 }
                 this.restoreOrReady(call);
               }
+              if (parsed.type === 'input-start' || parsed.type === 'audio' || parsed.type === 'tools' ||
+                  (parsed.type === 'transcript' && parsed.text.trim())) this.clearOpening(call);
               if (!call.ready) continue;
               if (parsed.type==='input-discarded') call.partials.delete('user:'+parsed.itemId);
               if (parsed.type==='transcript' && call.history) {
@@ -351,6 +367,7 @@ export class RealtimeVoiceService {
     const finish=()=>{
       call.audioDrainTimer=undefined;call.capturePaused=false;
       call.emit({id:call.id,type:'connection-state',state:'connected',message:discarded?'已恢复原来的上下文，请重说断线期间那一句。':''});
+      this.scheduleOpening(call);
       call.memory?.resumed();this.scheduleNotification(call);
     };
     if(!call.bufferedFrames.length){finish();return;}
@@ -365,6 +382,29 @@ export class RealtimeVoiceService {
       call.audioDrainTimer=setTimeout(drain,20);
     };
     call.audioDrainTimer=setTimeout(drain,20);
+  }
+  private clearOpening(call: LiveCall) {
+    if (!call.opening) return;
+    clearTimeout(call.opening.timer);
+    call.opening = undefined;
+  }
+  private scheduleOpening(call: LiveCall) {
+    const opening = call.opening;
+    if (!opening) return;
+    // Let the newly enabled microphone reach VAD before requesting the first turn.
+    opening.timer = setTimeout(() => {
+      if (call.opening !== opening) return;
+      call.opening = undefined;
+      try {
+        const instructions = realtimeConversationStyle(call.settings, call.assistant);
+        const openingIntent = renderPromptTemplate('realtime-call-opening', { language: this.deps.uiLanguage?.() || 'en' });
+        call.openingRequestId = this.send(call, { type: 'response.create', response: {
+          modalities: ['text', 'audio'], instructions: instructions + '\n\n' + openingIntent,
+        } });
+      } catch {
+        this.diagnostic(call,'opening_unavailable');
+      }
+    }, 400);
   }
   private send(call: LiveCall, event: object) {
     const socket=call.connection?.socket;
@@ -422,6 +462,7 @@ export class RealtimeVoiceService {
     if (!['mute','unmute','interrupt','commit'].includes(action)) throw Error('Invalid voice control.');
     const call=this.owned(owner,id);
     if (action === 'mute') call.muted = true;
+    if (action === 'interrupt' || action === 'commit') this.clearOpening(call);
     if (action === 'unmute') call.muted = false;
     if (action === 'interrupt' && call.provider.archiveOnResponseDone) this.archive(call,true);
     if (call.transitioning) { if (action==='mute') call.bufferedFrames=[]; return; }
@@ -500,6 +541,8 @@ export class RealtimeVoiceService {
     void this.recover(call).catch(()=>{});
   }
   private recover(call:LiveCall):Promise<void> {
+    this.clearOpening(call);
+    call.openingRequestId = undefined;
     const old=call.connection;call.connection=undefined;call.generation++;
     clearTimeout(call.timeout);clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer);
     old?.socket.close();old?.dispose();call.restoring=undefined;call.contextReceipts?.clear();
@@ -577,6 +620,7 @@ export class RealtimeVoiceService {
   }
   close(owner:number | string,id?:string) {
     const call=this.calls.get(owner); if (!call || id && call.id!==id || call.closing) return;
+    this.clearOpening(call);
     call.closing=true; clearTimeout(call.timeout); clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer); call.reject(Error('语音通话已取消。'));
     call.memory?.close();
     if (!call.connection || call.connection.socket.readyState!==1) { this.finish(call); return; }
@@ -598,6 +642,7 @@ export class RealtimeVoiceService {
   }
   private finish(call:LiveCall, status: 'stopped' | 'failed' = 'stopped') {
     if (this.calls.get(call.owner)!==call) return;
+    this.clearOpening(call);
     this.observe(call, status);
     this.diagnostic(call,'closed');
     call.memory?.close();

@@ -7,6 +7,7 @@ export const CARDBUSH_REALTIME_PROTOCOL = 'cardbush.realtime.v1';
 export const cardbushRealtimeVoice: RealtimeVoiceProvider = {
   ...realtimeVoiceMessages,
   endpoint: settings => settings.endpoint!,
+  supportsOpening: ready => Array.isArray(ready.capabilities) && ready.capabilities.includes('response.create'),
   headers: (key): Record<string, string> => key ? { Authorization: `Bearer ${key}` } : {},
   start: (settings, voice, assistant) => ({ type: 'session.create', protocol: CARDBUSH_REALTIME_PROTOCOL, session: {
     model: settings.model, ...realtimeSessionContent(settings, assistant),

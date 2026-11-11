@@ -77,7 +77,7 @@ import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { isVisibleConversationSession } from './runtimeSessionVisibility';
 import { ASSISTANT_CONVERSATION_COMMAND } from '@cardbush/bush-protocol';
 import { journalMessages, type ConversationJournalSnapshot } from './conversationJournal';
-import { contextWindowMetrics } from './contextWindowUsage';
+import { contextWindowMetrics, failedCompactionInputTokens } from './contextWindowUsage';
 import { contextCompactionPresentationExecutions } from './contextCompactionPresentation';
 import { coverWorkspaceToolExecution, markRevertedWorkspaceToolExecution, workspaceCheckpointExecutions } from './workspaceReview';
 import {
@@ -1894,7 +1894,12 @@ export async function fetchSessionContextWindowUsage(
   try {
     const snapshot = await runtime.client.getSession(normalizedSessionId, signal);
     const latest = snapshot?.turns.at(-1);
-    const contextMetrics = contextWindowMetrics(latest?.usage);
+    let usage = latest?.usage;
+    if (latest?.reason === 'context_compaction_failed' && usage?.conversationInputTokens === undefined) {
+      const events = await runtime.client.listTurnContextCompactions({ sessionId: normalizedSessionId, turnId: latest.turnId }, signal);
+      usage = { ...usage, conversationInputTokens: failedCompactionInputTokens(events), lastRequestInputTokens: undefined };
+    }
+    const contextMetrics = contextWindowMetrics(usage);
     return {
       sessionId: normalizedSessionId,
       turnId: latest?.turnId ?? '',
@@ -1905,7 +1910,7 @@ export async function fetchSessionContextWindowUsage(
       source: 'electron_runtime_latest_request',
       raw: {
         usage: latest?.usage ?? {},
-        measurement: 'last_request_input_tokens',
+        measurement: usage?.conversationInputTokens !== undefined ? 'conversation_input_tokens' : 'last_request_input_tokens',
       },
     };
   } finally {

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { minimumConversationWidth, minimumInspectorWidth } from '../../components/rightInspectorSizing';
 import { useInspectorSessionRef, useInspectorSessionState } from './useInspectorSessionState';
 
@@ -7,7 +7,9 @@ const coveredConversationWidth = 320;
 const usableConversationWidth = minimumConversationWidth;
 
 /** Keep a readable split, including restored widths and live resize previews. */
-export function useInspectorRecovery({ workspaceId = 'shared', open, covered, width }: { workspaceId?: string; open: boolean; covered: boolean; width: number }) {
+export function useInspectorRecovery({ workspaceId = 'shared', open, covered, width, coverRequested }: {
+  workspaceId?: string; open: boolean; covered: boolean; width: number; coverRequested: RefObject<boolean>;
+}) {
   const mainStageRef = useRef<HTMLElement | null>(null);
   const [conversationCovered, setConversationCovered] = useInspectorSessionState(workspaceId, false);
   const coveredRef = useInspectorSessionRef(workspaceId, false);
@@ -48,10 +50,12 @@ export function useInspectorRecovery({ workspaceId = 'shared', open, covered, wi
       const available = stage.offsetWidth + panel.offsetWidth;
       const requested = Number.parseFloat(style.getPropertyValue('--side-panel-width')) || width;
       const remaining = available - requested;
-      updateCovered(remaining < (coveredRef.current ? usableConversationWidth : coveredConversationWidth));
+      const draggingDivider = document.body.classList.contains('right-inspector-resizing');
+      updateCovered((coverRequested.current || draggingDivider) && available >= minimumInspectorWidth + minimumConversationWidth &&
+        remaining < (coveredRef.current ? usableConversationWidth : coveredConversationWidth));
       // Do not remember animation frames, clamped oversized widths, or live drags.
       if (stage.clientWidth >= usableConversationWidth && Math.abs(panel.offsetWidth - width) < 2 &&
-        !document.body.classList.contains('right-inspector-resizing') &&
+        !draggingDivider &&
         !document.body.classList.contains('sidebar-resizing')) {
         splitWidthRef.current = width;
         window.localStorage.setItem(splitWidthKey, String(width));
@@ -72,7 +76,7 @@ export function useInspectorRecovery({ workspaceId = 'shared', open, covered, wi
     if (shell) previews.observe(shell, { childList: true });
     schedule();
     return () => { observer.disconnect(); previews.disconnect(); cancelAnimationFrame(frame); };
-  }, [open, covered, width, coveredRef, setConversationCovered]);
+  }, [open, covered, width, coveredRef, coverRequested, setConversationCovered]);
 
   return { mainStageRef, conversationCovered, splitWidthRef };
 }

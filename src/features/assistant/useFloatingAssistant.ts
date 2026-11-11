@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { isAssistantPageMessage, type ConversationEntry } from '@cardbush/bush-protocol';
-import type { AssistantSurface } from '../../../electron/assistantSurface';
+import type { AssistantSurface, AssistantSurfaceState } from '../../../electron/assistantSurface';
 
 const readKey = 'cardbush_assistant_read_receipt';
 type Receipt = { generation: number; id: string; at: string };
@@ -12,7 +12,8 @@ function readReceipt(): Receipt | undefined {
 }
 
 export function useFloatingAssistant(floating: boolean, active: boolean, entries: ConversationEntry[], generation?: number) {
-  const [surface, setSurface] = useState<AssistantSurface>('capsule');
+  const [layout, setLayout] = useState<AssistantSurfaceState>({surface: 'capsule'});
+  const { surface } = layout;
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [focused, setFocused] = useState(() => document.hasFocus() && !document.hidden);
   const [receipt, setReceipt] = useState(readReceipt);
@@ -22,12 +23,12 @@ export function useFloatingAssistant(floating: boolean, active: boolean, entries
     return () => window.removeEventListener('storage', sync);
   }, []);
   useLayoutEffect(() => {
-    if (!floating) { setSurface('capsule'); setHost(null); return; }
+    if (!floating) { setLayout({surface: 'capsule'}); setHost(null); return; }
     let live = true, changed = false;
     setHost(document.querySelector('.app'));
     const api = window.cardbushDesktop;
-    const off = api?.onAssistantSurface?.(value => { changed = true; setSurface(value); });
-    void api?.assistantSurface?.('read').then(value => { if (live && !changed) setSurface(value); });
+    const off = api?.onAssistantSurface?.(value => { changed = true; setLayout(value); });
+    void api?.assistantSurface?.('read').then(value => { if (live && !changed) setLayout(value); });
     return () => { live = false; off?.(); };
   }, [floating]);
   useEffect(() => {
@@ -53,5 +54,5 @@ export function useFloatingAssistant(floating: boolean, active: boolean, entries
     const index = replies.findIndex(entry => entry.id === receipt.id);
     return index < 0 ? replies.filter(entry => entry.createdAt > receipt.at).length : replies.length - index - 1;
   }, [generation, receipt, replies]);
-  return { surface, host, unread, replies, show: (next: AssistantSurface) => window.cardbushDesktop?.assistantSurface?.(next) };
+  return { ...layout, host, unread, replies, show: (next: AssistantSurface) => window.cardbushDesktop?.assistantSurface?.(next) };
 }

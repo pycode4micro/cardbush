@@ -29,11 +29,9 @@ return { uiText: language => (key, variables) => catalog.text(language, key, var
 
 export function extensionBuildSource(directory = extensionRoot) {
   const hash = createHash('sha256');
-  // Hash executable/UI sources, not timestamps, checkout paths or this output.
-  // Normalize checkout line endings so identical releases have identical IDs.
-  const files = fs.readdirSync(directory).filter(name =>
-    name !== outputName && /\.(?:js|html|css|json)$/.test(name)).sort();
-  for (const name of files) {
+  // The ID identifies installed permissions and the code handling connector
+  // commands. Popup documents, styles and translations refresh independently.
+  for (const name of ['background.js', 'connector-transport.js', 'consent-window.js', 'downloads.js', 'manifest.json']) {
     hash.update(name + '\0');
     hash.update(fs.readFileSync(path.join(directory, name), 'utf8').replace(/\r\n/g, '\n'));
     hash.update('\0');

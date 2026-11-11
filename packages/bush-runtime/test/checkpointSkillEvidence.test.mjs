@@ -104,6 +104,32 @@ test('file versions, line coverage and source membership are checked without cla
   assert.deepEqual(validateCheckpointSkillEvidence(block('none: User ended the workflow; no future execution remains.'), contract), { excerpts: [] });
 });
 
+test('isolated repair identifies uncited paragraphs and keeps accepted Skill references separate from ordinary facts', () => {
+  const item = recorded.cases[0];
+  const input = { ...setup([[user('Earlier exchange.')], [user(item.request), ...read(item)], [user('Next exchange.')]]), isolateSources: true };
+  const tx = new ContextCompactionTransaction(input);
+  tx.accept(result('first', [{ source: 0, summary: 'Earlier work.' }]));
+  const link = checkpointSkillSourceLink(rangeFor(item, item.rubric[0].quote));
+  const skill = `- Apply the scoped requirement. ${link}`;
+  const notes = 'The tool used a dated snapshot.';
+  const bad = result('mixed', [{ source: 1, summary: block(skill + '\n- ' + notes) }]);
+  assert.equal(tx.accept(bad), false);
+  const retry = tx.job();
+  assert.match(retry.messages.at(-1).content, /"updates":\[\{"source":1/);
+  assert.match(retry.messages.at(-1).content, /paragraph\(s\) 2 lack a source line link/);
+  assert.match(retry.messages.at(-1).content, /outside <\/skill_constraints>/);
+  const restored = new ContextCompactionTransaction({ ...input, continuation: structuredClone(tx.incremental.history) });
+  assert.deepEqual(restored.job().messages, retry.messages);
+  const fixedSummary = notes + '\n' + block(skill);
+  assert.equal(restored.accept(result('corrected', [{ source: 1, summary: fixedSummary }])), false);
+  const next = restored.job().messages;
+  assert.ok(next.some(m => m.toolCallId === 'corrected'));
+  assert.ok(!next.some(m => m.toolCallId === 'mixed'));
+  assert.equal(restored.accept(result('last', [{ source: 2, summary: 'Next work.' }])), true);
+  assert.equal(receipt(restored).summaries[1].summary, fixedSummary);
+  assert.ok(restored.incremental.history.some(m => m.toolCallId === 'mixed'));
+});
+
 test('native/forwarded reads, partial text archives and reference reads in reverse order track only delivered lines', () => {
   const item = recorded.cases[1];
   assert.deepEqual(collectCheckpointSkillExcerpts(read(item, 'read', 'text')), collectCheckpointSkillExcerpts(read(item, 'read')));

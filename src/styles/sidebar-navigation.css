@@ -69,9 +69,6 @@
   border-inline-start: 0; box-shadow: none;
 }
 .desktop-shell[data-page="tabs"] > .right-inspector .right-inspector-content { width: 100%; }
-@media (max-width: 760px) {
-  .desktop-shell[data-sidebar-layout="drawer"] > .right-inspector { --side-panel-width: calc(100vw - var(--sidebar-rail-width)); }
-}
 html .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar {
   background:var(--chrome-grain) repeat var(--drawer-glass);
   -webkit-backdrop-filter:var(--sidebar-glass-filter);

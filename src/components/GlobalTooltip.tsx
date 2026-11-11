@@ -5,6 +5,14 @@ import { observeExplicitInteraction } from '../shared/explicitInteraction';
 import { observeNativeTooltipTitles } from '../shared/nativeTooltipTitles';
 import './global-tooltip.css';
 
+function sidebarForTooltip(anchor: Element) {
+  const scope = anchor.closest('.sidebar, .window-sidebar-toggle, .window-navigation, [popover], dialog, [role="dialog"], [role="menu"]');
+  if (scope?.matches('.sidebar')) return scope;
+  if (scope?.matches('.window-sidebar-toggle, .window-navigation')) {
+    return scope.closest('.app')?.querySelector('.desktop-shell > .sidebar');
+  }
+}
+
 /** Show explicitly authored help; accessible names alone are not tooltips. */
 export function GlobalTooltip() {
   const shortcuts = useKeyboardShortcuts(), id = useId(), node = useRef<HTMLDivElement>(null);
@@ -106,6 +114,23 @@ export function GlobalTooltip() {
   useLayoutEffect(() => {
     const element = node.current; if (!tip || !element) return;
     if (!element.matches(':popover-open')) element.showPopover?.();
+    const sidebar = sidebarForTooltip(tip.anchor);
+    if (sidebar) {
+      const position = () => {
+        const anchor = tip.anchor.getBoundingClientRect();
+        const edge = sidebar.getBoundingClientRect().right;
+        element.style.setProperty('--tooltip-sidebar-edge', `${edge}px`);
+        element.style.left = `${edge + 8}px`;
+        const height = element.offsetHeight;
+        element.style.top = `${Math.max(8, Math.min(innerHeight - height - 8, anchor.top + (anchor.height - height) / 2))}px`;
+      };
+      position();
+      const observer = new ResizeObserver(position);
+      observer.observe(sidebar);
+      observer.observe(tip.anchor);
+      return () => observer.disconnect();
+    }
+    element.style.removeProperty('--tooltip-sidebar-edge');
     const anchor = tip.anchor.getBoundingClientRect(), rect = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(innerWidth - rect.width - 8, anchor.left + (anchor.width - rect.width) / 2))}px`;
     const above = anchor.top - rect.height - 8;

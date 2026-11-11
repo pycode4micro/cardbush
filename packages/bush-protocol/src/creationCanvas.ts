@@ -1,7 +1,8 @@
 import { uiText } from '@cardbush/platform/i18n';
 import { z } from 'zod';
 
-export const CANVAS_FILE_NAME = 'space.canvas.json';
+export const CANVAS_FILE_NAME = 'space.canvas';
+export const isCanvasFilePath = (path: string) => /\.canvas(?:\.json)?$/i.test(path);
 export const CANVAS_MAX_BYTES = 8 * 1024 * 1024;
 export const canvasFrameSchema = z.object({
   x: z.number().finite().min(0).max(50000), y: z.number().finite().min(0).max(50000),

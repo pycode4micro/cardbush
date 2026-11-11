@@ -3,6 +3,7 @@ import { uiText } from '../../i18n';
 export function canvasErrorMessage(error: unknown, language: string) {
   const message = String(error instanceof Error ? error.message : error)
     .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').replace(/^Error:\s*/, '');
+  if (message === 'CANVAS_INVALID_FILE') return uiText(language)('canvasFiles.invalid');
   if (/\b(?:ENOENT|ENOTDIR)\b/.test(message)) {
     const path = message.match(/\b(?:stat|open|lstat|realpath|scandir)\s+['"](.+?)['"]/)?.[1];
     const name = path?.split(/[\\/]/).pop();

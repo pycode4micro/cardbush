@@ -1,4 +1,3 @@
-import { uiText } from '../../i18n';
 import { PREVIEW_SELECTION_INSTRUCTIONS } from '@cardbush/bush-protocol';
 export type RegionRect = { x: number; y: number; width: number; height: number };
 export type RegionPoint = { x: number; y: number };
@@ -85,7 +84,6 @@ export function queryPreviewRegion(input: RegionQuery, root: Document | HTMLElem
     const candidates = elements('[data-region-block],.pdf-region-text span,p,li,h1,h2,h3,h4,h5,h6,pre,blockquote,td,th,text,.block');
     const picked = candidates.filter(el => !el.closest(excluded) && intersects(clip(el.getBoundingClientRect()), rect) && el.textContent?.trim());
     text = picked.filter(el => !picked.some(other => other !== el && other.contains(el))).slice(0, 160).map(el => el.textContent?.trim()).join('\n');
-    label = uiText()('inspectorRegionSelection.customRegion');
   } else if (target) {
     text = target.textContent?.trim() || target.getAttribute('alt') || target.getAttribute('aria-label') || '';
     label = target.getAttribute('data-region-label') || target.getAttribute('aria-label') || target.tagName.toLowerCase();

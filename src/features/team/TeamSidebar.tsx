@@ -7,7 +7,7 @@ import { requestTeamDocument, showTeamWorkspaceTab, useTeamWorkspaceNavigation }
 import { ProfileMenu } from '../profile/ProfileMenu';
 import './team-workspace.css';
 
-export function NativeTeamSidebar({ language, onSelect, softVisible = true, workspaceNavigation }: { language: AppLanguage; onSelect?: () => void; onOpenSettings?: () => void; softVisible?: boolean; workspaceNavigation?: ReactNode }) {
+export function NativeTeamSidebar({ language, onSelect, softVisible = true, workspaceNavigation, assistantEntry }: { language: AppLanguage; onSelect?: () => void; onOpenSettings?: () => void; softVisible?: boolean; workspaceNavigation?: ReactNode; assistantEntry?: ReactNode }) {
   const state = useTeamWorkspace(), navigation = useTeamWorkspaceNavigation();
   const [searchOpen, setSearchOpen] = useState(false), [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -44,7 +44,7 @@ export function NativeTeamSidebar({ language, onSelect, softVisible = true, work
         <button type="button" aria-current={navigation.tab === 'agents' ? 'page' : undefined} onClick={() => { showTeamWorkspaceTab('agents'); onSelect?.(); }}><UsersRound size={16}/>{uiText(language)('teamSidebar.manageAgents')}</button>
         <button type="button" disabled={navigation.busy} onClick={() => { setQuery(''); requestTeamDocument({ kind: 'open' }); onSelect?.(); }}><FolderOpen size={16}/>{uiText(language)('teamSidebar.importMarkdown')}</button>
       </details>
-      <div className="sidebar-footer"><ProfileMenu language={language}/></div>
+      <div className="sidebar-footer">{assistantEntry}<ProfileMenu language={language}/></div>
     </div>
   </aside>;
 }

@@ -26,7 +26,8 @@ export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement
     const maximumRight = Math.max(12, bodyBounds.width - 24);
     setWorkSummaryAnchorRight(Math.min(
       maximumRight,
-      Math.max(12, Math.round(bodyBounds.right - toggleBounds.right)),
+      toggleBounds.width && !toggle.closest('.recent-turn-drawer')
+        ? Math.max(12, Math.round(bodyBounds.right - toggleBounds.right)) : 12,
     ));
   }, [chatBodyRef]);
   useLayoutEffect(() => {
@@ -50,6 +51,7 @@ export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement
       }
       if (
         target.closest('.conversation-work-summary') ||
+        target.closest('.recent-bar-list, .recent-panel-header') ||
         target.closest('[data-work-summary-toggle]') ||
         target.closest('[data-inspector-toggle]') ||
         target.closest('.right-inspector')
@@ -82,15 +84,21 @@ export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement
   }, [hover.anchor]);
   useEffect(() => {
     if (!hover.anchor) return;
+    const drawer = hover.anchor.closest<HTMLElement>('.recent-turn-drawer');
+    const onDrawerToggle = (event: ToggleEvent) => { if (event.newState === 'closed') hover.close(); };
+    drawer?.addEventListener('beforetoggle', onDrawerToggle);
     window.addEventListener('blur', hover.dismiss);
     document.addEventListener('visibilitychange', hover.dismiss);
     return () => {
+      drawer?.removeEventListener('beforetoggle', onDrawerToggle);
       window.removeEventListener('blur', hover.dismiss);
       document.removeEventListener('visibilitychange', hover.dismiss);
     };
-  }, [hover.anchor, hover.dismiss]);
+  }, [hover.anchor, hover.close, hover.dismiss]);
 
   return { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence,
+    previewHost: workSummaryPresence.mounted && !pinnedLayout
+      ? toggleRef.current?.closest('.recent-turn-drawer')?.querySelector<HTMLElement>('.recent-summary-preview') : null,
     toggleWorkSummary: (anchor: HTMLElement) => {
       updateWorkSummaryLayout(anchor);
       hover.close();

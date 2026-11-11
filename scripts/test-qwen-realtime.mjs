@@ -169,10 +169,64 @@ test('Qwen connection state is isolated between owners and resets on reconnect w
 test('Qwen background results update instructions quietly and retain the restored history',async t=>{
   t.mock.timers.enable({apis:['setTimeout']});
   const f=fixture(t),{pending,socket}=await f.start(1,[{role:'user',text:'earlier request'},{role:'assistant',text:'earlier response'}]);socket.ack();await pending;
+  t.mock.timers.tick(500);
+  response(socket,'opening');
   const n=socket.sent.length;f.service.notify(1,'call-1',JSON.stringify({taskId:'task',status:'completed',finalResponse:'资料已就绪'}));
   t.mock.timers.tick(800);assert.deepEqual(socket.sent.slice(n).map(event=>event.type),['session.update']);
   assert.match(socket.sent.at(-1).session.instructions,/earlier request/);assert.match(socket.sent.at(-1).session.instructions,/task/);
   socket.ack();assert.equal(f.events.some(event=>event.type==='error'),false);
+});
+
+test('the caller gets the floor first, hangup cancels a pending opening and redial gets a fresh one',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const f=fixture(t);
+  for (const first of ['speech-start','transcription','hangup','silence']) {
+    const {pending,socket}=await f.start();
+    t.mock.timers.tick(600);
+    assert.equal(socket.sent.some(frame=>frame.type==='response.create'),false,'wait for session configuration');
+    socket.ack();
+    await pending;
+    if (first==='speech-start') socket.event({type:'input_audio_buffer.speech_started',item_id:'caller'});
+    if (first==='transcription') socket.event({type:'conversation.item.input_audio_transcription.completed',item_id:'caller',transcript:'One question'});
+    if (first==='hangup') f.service.close(1,'call-1');
+    t.mock.timers.tick(600);
+    const requests=socket.sent.filter(frame=>frame.type==='response.create');
+    assert.equal(requests.length,first==='silence'?1:0,first);
+    if (first==='silence') {
+      socket.event({type:'response.created',response:{id:'opening'}});
+      socket.event({type:'input_audio_buffer.speech_started',item_id:'interruption'});
+      socket.event({type:'response.audio.delta',response_id:'opening',delta:'AAAA'});
+      assert.ok(f.events.some(event=>event.type==='interrupted' && event.responseId==='1:opening'));
+      assert.ok(!f.events.some(event=>event.type==='audio' && event.responseId==='1:opening'));
+    }
+    f.service.close(1,'call-1');
+  }
+});
+
+test('reconnecting during the opening grace period does not greet on either socket',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const f=fixture(t), {pending,socket}=await f.start();
+  socket.ack(); await pending;
+  socket.close(); t.mock.timers.tick(1); await pause();
+  const next=f.sockets.at(-1);assert.notEqual(next,socket);
+  next.open();next.event({type:'session.created'});next.ack();
+  t.mock.timers.tick(1000);
+  assert.equal(f.events.filter(event=>event.type==='connection-state'&&event.state==='connected').length,2);
+  assert.equal([...socket.sent,...next.sent].some(frame=>frame.type==='response.create'),false);
+});
+
+test('a rejected Qwen opening yields to the caller without hiding other provider errors',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const f=fixture(t);f.setLanguage('zh');
+  const {pending,socket}=await f.start();socket.ack();await pending;
+  t.mock.timers.tick(600);
+  const opening=socket.sent.at(-1);assert.equal(opening.type,'response.create');
+  assert.match(opening.response.instructions,/using zh if it is unknown/);
+  socket.event({type:'input_audio_buffer.speech_started',item_id:'caller'});
+  socket.event({type:'error',error:{event_id:opening.event_id}});
+  assert.ok(!f.events.some(event=>event.type==='error'||event.type==='closed'));
+  socket.event({type:'error',error:{event_id:'another-request'}});
+  assert.ok(f.events.some(event=>event.type==='error'));
 });
 
 test('providers without item maintenance checkpoint and reconnect without sending retrieve or delete',async t=>{
@@ -230,6 +284,16 @@ test('Qwen protocol runs over a real local WebSocket with native audio and tool 
         send({type:'response.done',response:{id:'tool-response',status:'completed',output:[call('read-file')]}});
       }else if(event.type==='conversation.item.create')assert.equal(event.item.type,'function_call_output');
       else if(event.type==='response.create'){
+        if (event.response) {
+          assert.deepEqual(event.response.modalities,['text','audio']);
+          assert.equal(frames.some(frame=>frame.type==='input_audio_buffer.append'||frame.type==='conversation.item.create'),false);
+          send({type:'response.created',response:{id:'opening'}});
+          send({type:'response.audio.delta',response_id:'opening',delta:Buffer.alloc(960).toString('base64')});
+          send({type:'response.audio_transcript.done',response_id:'opening',item_id:'opening-item',transcript:'Listening.'});
+          send({type:'response.audio.done',response_id:'opening'});
+          send({type:'response.done',response:{id:'opening',status:'completed',output:[]}});
+          return;
+        }
         send({type:'response.created',response:{id:'answer'}});
         send({type:'response.audio_transcript.delta',response_id:'answer',item_id:'answer-item',delta:'The task has started.'});
         send({type:'response.audio.delta',response_id:'answer',delta:Buffer.alloc(960).toString('base64')});
@@ -241,9 +305,14 @@ test('Qwen protocol runs over a real local WebSocket with native audio and tool 
   const f=fixture(t,async(url,headers)=>{assert.match(url,/model=qwen3\.8-omni-flash-realtime$/);return connectRealtimeVoice('',`ws://127.0.0.1:${server.address().port}/realtime`,headers);});
   await f.service.start(1,{id:'real-socket',voice:'female',context:[]},event=>{f.events.push(event);
     if(event.type==='tools')f.service.results(1,'real-socket',event.calls.map(call=>({id:call.id,output:'{"status":"running","taskId":"file-task"}'})));});
+  const heard=id=>f.events.some(event=>event.type==='audio-end' && event.responseId==='1:'+id);
+  for(let i=0;i<200&&!heard('opening');i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.deepEqual(errors,[]);assert.ok(heard('opening'));
+  assert.ok(f.events.some(event=>event.type==='transcript' && event.role==='assistant' && event.text==='Listening.'));
+  assert.ok(!f.events.some(event=>event.type==='transcript' && event.role==='user'));
   f.service.audio(1,'real-socket',new ArrayBuffer(640));
-  for(let i=0;i<200&&!f.events.some(event=>event.type==='audio-end');i++)await new Promise(resolve=>setTimeout(resolve,10));
-  assert.deepEqual(errors,[]);assert.ok(f.events.some(event=>event.type==='audio-end'));
-  assert.equal(frames.filter(event=>event.type==='response.create').length,1);assert.equal(f.events.filter(event=>event.type==='tools').length,1);
+  for(let i=0;i<200&&!heard('answer');i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.deepEqual(errors,[]);assert.ok(heard('answer'));
+  assert.equal(frames.filter(event=>event.type==='response.create').length,2);assert.equal(f.events.filter(event=>event.type==='tools').length,1);
   f.service.close(1,'real-socket');await once(peer,'close');
 });

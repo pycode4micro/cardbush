@@ -4,7 +4,7 @@
 
 [中文](PERSONAL_ASSISTANT.en.md) | [Documentation](README.md)
 
-Click the pixel scene in the center of the title bar to open your personal Assistant, initially named `assistant`. The robot responds to messages, background work, requests for input and voice calls. You can change its name and portrait in Assistant settings. Background tasks use the existing Agent's model, tools and permissions.
+Click the pixel robot above your profile in the left sidebar to open your personal Assistant, initially named `assistant`. The robot responds to messages, background work, requests for input and voice calls. You can change its name and portrait in Assistant settings. Background tasks use the existing Agent's model, tools and permissions.
 
 ## Getting started
 
@@ -18,12 +18,12 @@ Background startup creates no workspace window. Runtime starts with the app and 
 
 Verbatim local reminders can deliver a system notification directly. The desktop and local CLI load built-in tools asynchronously at startup. Chat accepts messages during loading. Optional plugins advertise their MCP servers and connect when a search targets the server or the user connects it in settings. Connections stay available for the lifetime of the Runtime and refresh when configuration changes.
 
-1. Configure a text model in Settings → Models, then click the robot in the title bar. Text conversation needs no realtime voice service.
+1. Configure a text model in Settings → Models, then click the robot in the sidebar. Text conversation needs no realtime voice service.
 2. Assistant settings in the profile menu change name, role, communication style or avatar. PNG/JPG/WebP avatars up to 8 MB stay local; restore the default pixel robot at any time. Role changes affect subsequent text requests and the next call; an active call retains its initial persona.
 3. Execution defaults to Local. Connect a deployed service through Connect SSH / Manage hosts following [Agent services](AGENT_SERVICES.en.md), then select it as execution host. Saving an SSH project alone does not create an independent Agent service.
 4. Model selection, attachments, drag/drop, pasted images and browser references reuse the ordinary composer. See [Realtime voice](REALTIME_VOICE.en.md) and [Local voice](LOCAL_VOICE_MODELS.en.md).
 
-The assistant reuses the conversation title bar, Inspector, work summary and return-to-bottom control. Compact input aligns with the conversation. Returning from Inspector input preserves drafts/attachments. The scene reflects connection, listening, speech, mute, background execution and errors, respecting reduced motion.
+The assistant reuses the conversation title bar, Inspector, work summary and return-to-bottom control. Compact input aligns with the conversation. Returning from Inspector input preserves drafts/attachments. Hover over the Quick access lightning bolt below Home in the left sidebar to see pinned items and recent chats together. The Messages tab shows notifications. Click Quick access to open the most recently updated chat, or focus it and press Down Arrow to browse. The panel groups the Inspector and work summary controls. The title bar shows the current conversation title, with its status on the right while working. Call controls share this row. From another page, click the active task title to return to the conversation. The sidebar robot reflects connection, listening, speech, mute, background execution and errors, respecting reduced motion.
 
 Browser `@` references display clickable tab titles in the composer, sent messages and floating conversation, retaining tab identity rather than encoded long URLs. Existing messages use the same presentation. Floating reply bubbles have distinct backgrounds/borders in both themes.
 

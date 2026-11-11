@@ -8,7 +8,7 @@ module.exports = async ({ run, until, clickText, selected, win, teams, directory
   const entry = await selected(), initial = await design({ action: 'inspect', path: entry.path });
   assert.equal(initial.document.desktop.repository, directory);
   assert.equal(await run('document.querySelector(".creation-canvas-app").textContent.includes("项目")'), false);
-  await run('document.querySelector("[aria-label=更多操作]").click()');
+  await run('document.querySelector(".canvas-menu-wrap > button[aria-haspopup=menu]").click()');
   await until('document.querySelector("[aria-label=协作流程]")?.options.length>1');
   const teamId = teams[0].definition.id;
   await run(`(()=>{const select=document.querySelector('[aria-label=协作流程]');select.value=${JSON.stringify(teamId)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);

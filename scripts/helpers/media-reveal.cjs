@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 module.exports = async ({ run, until, pause, window, root }) => {
   const parent = path.join(root, 'tmp');
@@ -88,21 +89,46 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await fs.writeFile(fallback, `<meta name="cardbush:preview" content="visualization"><p>Loaded document</p>
       <script>Object.defineProperty(window,'__cardbushInlinePresentation',{get:()=>({read:()=>null,dispose:()=>{}}),set:()=>{}})</script>`);
     await run(`renderView(h(views.MessageBubble,{key:'fallback',message:{...mediaMessage,content:'![页面](<${fallback}>)'},language:'zh',sending:false,activeTurnId:'',activeAssistantMessageId:''}));`);
-    await until("document.querySelector('.inline-html-viewport.is-ready')!==null", 'unavailable presentation bridge falls back');
+    const readySource = file => `document.querySelector('.inline-html-viewport.is-ready webview')?.getAttribute('src') === ${JSON.stringify(pathToFileURL(file).href)}`;
+    await until(readySource(fallback), 'the replacement document is ready with its own fallback');
     assert.equal(await run("document.querySelector('.inline-html-preview').classList.contains('is-visualization')"), false);
 
-    // A passive follow target that shrinks must not reverse an active scroll.
-    await run(`renderView(h('div',{id:'motion-fixture',style:{height:220,width:600,overflowY:'auto'}},h('div',{style:{height:2400}},'test')));`);
-    await until("document.querySelector('#motion-fixture')!==null", 'follow fixture');
-    await run(`window.motion=views.createChatScrollMotion();window.motionList=document.querySelector('#motion-fixture');motionList.scrollTop=300;
-      window.followTarget=900;window.followSamples=[];window.followSample=()=>{followSamples.push(motionList.scrollTop);window.followFrame=requestAnimationFrame(followSample)};followSample();motion.move(motionList,()=>followTarget,'follow');`);
-    await pause(65);
-    await run("followTarget=200;motion.move(motionList,()=>followTarget,'follow')");
-    await pause(220);
-    const samples = await run('cancelAnimationFrame(followFrame);followSamples');
-    assert.ok(samples.slice(1).every((value, i) => value >= samples[i] - 1), 'metadata correction cannot animate backward');
-    await run("motion.move(motionList,100,'jump')"); await pause(400);
-    assert.ok(Math.abs(await run('motionList.scrollTop') - 100) < 1, 'explicit upward navigation still works');
+    // Exercise the transcript that owns passive following while a real embed changes height.
+    await run(`updateChat({activeConversationId:'media', loading:false, sending:true, activeTurnId:'active',
+      messages:[
+        {id:'history-user',role:'user',turnId:'media',content:'Show the chart'},
+        {...mediaMessage,content:'History paragraph.\\n\\n'.repeat(40) + mediaMessage.content},
+        {id:'active-user',role:'user',turnId:'active',content:'Continue'},
+        {id:'active-output',role:'assistant',turnId:'active',content:'Checking the chart.'}
+      ]})`);
+    await until(readySource(chart), 'chart mounted in the conversation');
+    await run(`window.list=document.querySelector('.message-list');
+      window.bottomGap=()=>list.scrollHeight-list.clientHeight-list.scrollTop;
+      window.viewport=document.querySelector('.inline-html-viewport');
+      window.chartGuest=viewport.querySelector('webview');void 0;`);
+    await until('list.scrollTop > 0 && Math.abs(bottomGap()) < 2', 'transcript following the latest output');
+    const resizeChart = async height => {
+      await run(`chartGuest.executeJavaScript("document.querySelector('section').style.height='${height}px'")`);
+      await until(`viewport.clientHeight === ${height}`, 'embed resize reached the host');
+    };
+    await run(`window.followSamples=[];window.sampleFollow=()=>{
+      followSamples.push(list.dataset.scrollAnimating || '');
+      window.followFrame=requestAnimationFrame(sampleFollow)
+    };sampleFollow()`);
+    for (const height of [440, 300]) {
+      await resizeChart(height);
+      await until('Math.abs(bottomGap()) < 2', 'resized transcript remains at the bottom');
+    }
+    assert.ok((await run('cancelAnimationFrame(followFrame);followSamples')).every(motion => !motion),
+      'growing and shrinking embeds never start a reverse scroll animation');
+    await run(`list.dispatchEvent(new WheelEvent('wheel',{deltaY:-220,bubbles:true}));
+      list.scrollTop-=220;window.readingTop=list.scrollTop`);
+    await until('bottomGap() >= 210', 'upward navigation leaves the bottom');
+    await resizeChart(390);
+    await resizeChart(310);
+    assert.ok(Math.abs(await run('list.scrollTop - readingTop')) < 2, 'resizing preserves the manual reading position');
+    await run("document.querySelector('.scroll-bottom').click()");
+    await until('Math.abs(bottomGap()) < 2', 'explicit navigation returns to the latest output');
 
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
@@ -110,9 +136,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await until("document.querySelector('.inline-media-frame.is-ready')!==null", 'reduced-motion media ready');
     assert.equal(await run("getComputedStyle(document.querySelector('video')).animationName"), 'none');
     window.webContents.debugger.detach();
-    console.log('Media reveal passed: real portrait video/audio, stable loading geometry, paint-only reveal, no remount on rerender, Markdown embeds, atomic HTML readiness, unavailable bridge fallback, 3 themes, no reversed passive follow, reduced motion.');
+    console.log('Media reveal passed: real portrait video/audio, stable geometry, Markdown embeds, HTML readiness and fallback, light/dark themes, transcript follow and manual reading, reduced motion.');
   } finally {
-    await run('window.motion?.cancel();window.previewObserver?.disconnect();cancelAnimationFrame(window.mediaSampleFrame);cancelAnimationFrame(window.followFrame);renderView(null);if(window.mediaSavedDesktop)window.cardbushDesktop=window.mediaSavedDesktop;void 0');
+    await run('window.previewObserver?.disconnect();cancelAnimationFrame(window.mediaSampleFrame);cancelAnimationFrame(window.followFrame);renderView(null);if(window.mediaSavedDesktop)window.cardbushDesktop=window.mediaSavedDesktop;void 0');
     await pause(120);
     assert.equal(path.dirname(path.resolve(directory)), path.resolve(parent));
     assert.ok(path.basename(directory).startsWith('media-reveal-'));

@@ -8,7 +8,9 @@ Creation is a multi-file workspace assembled through an Agent. The sidebar manag
 
 ## Content and layout
 
-`space.canvas.json` is the source of truth, using `cardbush-canvas` v1. It stores the board dimensions, background, stable item IDs and CSS-pixel coordinates. Items render from back to front in array order.
+`space.canvas` is the source of truth, using `cardbush-canvas` v1. It stores the board dimensions, background, stable item IDs and CSS-pixel coordinates. Items render from back to front in array order.
+
+Opening a local `.canvas` or legacy `.canvas.json` file in CardBush takes you to the canvas editor. Use the File menu to create, open, close or delete a canvas. A closed canvas can be reopened from the recent list. Deleting a canvas moves its file to the system trash after confirmation and preserves referenced assets.
 
 - `html`: the existing isolated component sandbox, with self-contained CSS, JavaScript and data images; no host privileges or network access.
 - `markdown`: inline Markdown, with file references resolved relative to the canvas directory.
@@ -39,7 +41,7 @@ Use the file's region-reference action to hover over a block or drag a custom re
 
 The More menu extracts selected content into a component, uses the canvas as a new conversation layout, or saves it to a folder. HTML components retain interaction. File-to-component conversion uses the current visible snapshot and existing component size/count limits. Conversation layouts retain the system composer.
 
-Export creates a new independent directory containing the manifest and referenced local files. It recursively copies explicit HTML/CSS/JS/Markdown dependencies and rewrites relative paths. External pages still require network access; dynamically computed asset paths must be supplied by the content author. `index.html` displays HTML, images, PDF, audio and video. Open `space.canvas.json` in CardBush for Office files and the full canvas. Existing target files are not overwritten.
+Export creates a new independent directory containing the manifest and referenced local files. It recursively copies explicit HTML/CSS/JS/Markdown dependencies and rewrites relative paths. External pages still require network access; dynamically computed asset paths must be supplied by the content author. `index.html` displays HTML, images, PDF, audio and video. Open `space.canvas` in CardBush for Office files and the full canvas. Existing target files are not overwritten.
 
 Legacy Creation documents migrate to file or Markdown items while retaining their original storage. Team's document editor continues to use its existing implementation.
 

@@ -18,8 +18,9 @@ module.exports = async ({win, read, wait, visible, project}) => {
     for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type,button:'left',clickCount:1,...point});
   };
   const motion = () => read(`(() => {
-    document.querySelector('.recent-bar-list').click();
     const drawer=document.querySelector('.recent-turn-drawer');
+    if (drawer.matches(':popover-open')) document.querySelector('.recent-panel-close').click();
+    else document.querySelector('.recent-bar-list').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
     const slide=drawer.getAnimations().find(a=>a.transitionProperty==='translate');
     return {sliding:!!slide, contents:!!drawer.querySelector('.recent-session-rows')};
   })()`);
@@ -32,32 +33,20 @@ module.exports = async ({win, read, wait, visible, project}) => {
     await preference('no-preference');
     assert.ok((await motion()).sliding,'opening the drawer starts a slide');
     await visible('.recent-session-rows');
-    await wait(async () => {
-      const g=await shelf(); return g.count===3 && g.rows===1 && Math.abs(g.left)<2 && Math.abs(g.right)<2 &&
-        await read("!document.querySelector('.desktop-shell').getAnimations().length");
-    },'three cards fill one row beside the list at 1180px');
-    fs.writeFileSync(path.join(project,'tmp','featured-shelf-docked.png'),(await win.webContents.capturePage()).toPNG());
-    const cover = '.desktop-covers > button:first-child';
+    await wait(async () => {const g=await shelf();return g.count===4 && g.rows===1 && Math.abs(g.left)<2 && Math.abs(g.right)<2;},
+      'the floating list leaves all four featured cards in place');
+    const cover = '.desktop-covers > button:last-child';
     const hoveredCovers = () => read("Array.from(document.querySelectorAll('.desktop-covers > button'), card => Number(getComputedStyle(card, '::after').opacity))");
-    win.webContents.sendInputEvent({ type:'mouseMove', ...await center(cover) });
-    await wait(async () => {
-      const [first, ...rest] = await hoveredCovers();
-      return first === 1 && rest.every(opacity => opacity === 0);
-    }, 'only the cover under the pointer is shaded');
-    fs.writeFileSync(path.join(project,'tmp','featured-cover-hover.png'),(await win.webContents.capturePage()).toPNG());
-    win.webContents.sendInputEvent({ type:'mouseMove', ...await center('.recent-bar-list') });
-    await wait(async () => (await hoveredCovers()).every(opacity => opacity === 0), 'leaving restores the cover');
-    await read("document.querySelector('.featured-step[data-step=next]').click()");
-    await wait(async () => (await shelf()).last,'next reveals the fourth card');
-    await read("document.querySelector('.featured-step[data-step=previous]').addEventListener('click', e => window.shelfReceivedClick=e.isTrusted, {once:true})");
-    await moveTo('.featured-step[data-step=previous]');
-    await wait(() => read(`window.shelfReceivedClick && !document.querySelector('${open}')`),'one click activates the shelf button and dismisses the wide list');
-    await wait(async () => (await shelf()).count===4 && await read("document.querySelector('.desktop-covers').scrollLeft<1"),'all four cards fit starting with the first');
+    win.webContents.sendInputEvent({type:'mouseMove', ...await center(cover)});
+    await wait(async () => {const states=await hoveredCovers(); return states.at(-1)===1 && states.slice(0,-1).every(v=>v===0);},
+      'only the cover under the pointer is shaded');
+    await moveTo('.desktop-library h1');
+    await wait(()=>read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'a page click dismisses the flyout');
     await motion(); await visible('.recent-session-rows');
     await wait(() => read("!document.querySelector('.recent-turn-drawer').getAnimations().length"),'reopened list has settled');
     // Reopening a partially dismissed popover must not let the old exit clear the new list.
     await read(`(() => {
-      document.querySelector('.recent-bar-list').click();
+      document.querySelector('.recent-panel-close').click();
       const slide=document.querySelector('.recent-turn-drawer').getAnimations().find(a=>a.transitionProperty==='translate');
       if (!slide) return;
       slide.pause(); slide.currentTime=slide.effect.getTiming().duration/2;
@@ -79,7 +68,12 @@ module.exports = async ({win, read, wait, visible, project}) => {
     win.setContentSize(590, 700);
     await wait(async () => (await shelf()).count===2 &&
       await read("document.querySelector('.recent-turn-drawer:popover-open')?.popover==='auto'"),'narrow overlay keeps the shelf at two cards');
-    for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type,button:'left',clickCount:1,x:120,y:115});
+    await read("document.querySelector('.featured-step[data-step=next]').click()");
+    await wait(async ()=>(await shelf()).last,'next reveals the last card on a narrow shelf');
+    await wait(() => read("document.querySelector('.featured-step[data-step=next]').disabled && !document.querySelector('.featured-step[data-step=previous]').disabled"), 'the last page has settled');
+    await read("document.querySelector('.featured-step[data-step=previous]').click()");
+    await wait(()=>read("document.querySelector('.desktop-covers').scrollLeft<1"),'previous returns to the first card');
+    for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type,button:'left',clickCount:1,x:570,y:115});
     await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"),'clicking the narrow page dismisses its overlay');
     win.setContentSize(480,700);
     await wait(async () => (await shelf()).count===1,'a single card fits the smallest shelf');

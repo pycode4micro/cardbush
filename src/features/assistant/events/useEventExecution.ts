@@ -11,6 +11,11 @@ export function useEventExecution(enabled: boolean, refreshInterval = 1500) {
       if (mounted.current) { setSnapshot(previous => JSON.stringify(previous) === JSON.stringify(value) ? previous : value); setError(false); }
     }, () => { if (mounted.current) setError(true); }).finally(() => { refreshTask.current = undefined; });
   }, []);
+  // A poll started before a command can still return its old snapshot.
+  const refreshAfterChange = useCallback(async () => {
+    await refreshTask.current;
+    await refresh();
+  }, [refresh]);
   useEffect(() => {
     mounted.current = true;
     if (!enabled) return () => { mounted.current = false; };
@@ -33,5 +38,5 @@ export function useEventExecution(enabled: boolean, refreshInterval = 1500) {
     return () => { disposed = true; mounted.current = false; clearTimeout(timer); clearTimeout(changedTimer);
       unsubscribe?.(); document.removeEventListener('visibilitychange', onVisible); };
   }, [enabled, refresh, refreshInterval]);
-  return { snapshot, setSnapshot, error, refresh };
+  return { snapshot, error, refresh, refreshAfterChange };
 }

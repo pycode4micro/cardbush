@@ -4,10 +4,14 @@ import type { AppLanguage, ChatMessage, RuntimeConnectionUpdate } from '../../ty
 export type QuickInputState = { label: string; state: 'error' | 'waiting' | 'working' | 'idle'; icon: 'alert' | 'working' | 'complete' | 'chat'; hasActivity: boolean };
 export function quickInputState({ language, messages, sending, stopping, submitting, waiting, error, recovery, queued = 0 }: {
   language: AppLanguage; messages: ChatMessage[]; sending: boolean; stopping?: boolean; submitting?: boolean;
-  waiting?: boolean; error?: string | null; recovery?: RuntimeConnectionUpdate | null; queued?: number;
+  waiting?: boolean; error?: string | boolean | null; recovery?: RuntimeConnectionUpdate | null; queued?: number;
 }): QuickInputState {
 
-  const latest = [...messages].reverse().find(message => message.role === 'assistant' || message.role === 'user');
+  let latest: ChatMessage | undefined;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === 'assistant' || message.role === 'user') { latest = message; break; }
+  }
   const recovering = recovery && ['retrying', 'syncing'].includes(recovery.state);
   const failed = Boolean(error || recovery?.state === 'failed' || (!sending && latest?.status === 'failed'));
   const busy = !failed && !waiting && Boolean(sending || submitting || stopping || recovering);

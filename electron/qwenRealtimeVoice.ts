@@ -16,6 +16,7 @@ class QwenRealtimeVoice implements RealtimeVoiceProvider {
   constructor(private language: () => string = () => 'en') {}
   createConnection = (language: () => string) => new QwenRealtimeVoice(language);
   serverInitiatedSession = true;
+  supportsOpening = () => true;
   closeWithSocket = true;
   archiveOnResponseDone = true;
   contextMode = 'instructions' as const;
@@ -93,6 +94,7 @@ class QwenRealtimeVoice implements RealtimeVoiceProvider {
         if (!this.activeResponse && !this.inputPending) frames.push({ type: 'response.create', event_id: `${event.event_id}_continue` });
         return frames;
       }
+      case 'response.create':
       case 'input_audio_buffer.append': return event;
       default: throw Error('Unsupported Qwen realtime operation.');
     }
@@ -183,7 +185,7 @@ class QwenRealtimeVoice implements RealtimeVoiceProvider {
         if (this.cancelEvent && error.event_id === this.cancelEvent && error.code === 'response_cancel_not_active') {
           this.cancelEvent = ''; return [];
         }
-        return this.error();
+        return { ...this.error(), event_id: str(error.event_id) || str(event.event_id) };
       }
       case 'conversation.item.input_audio_transcription.completed':
       case 'input_audio_buffer.speech_stopped': return event;

@@ -4,7 +4,7 @@
 
 [中文](CREATION_DESK.en.md) | [Documentation](README.md)
 
-Persistent desks reuse `space.canvas.json`, file previews, region conversations and Team. They do not introduce another project type or execution system.
+Persistent desks reuse `space.canvas`, file previews, region conversations and Team. They do not introduce another project type or execution system.
 
 ## Using a desk
 

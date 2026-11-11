@@ -20,6 +20,33 @@ test('canvas persists independently of a project and uses revision-checked atomi
   assert.equal((await readCanvas(f.snapshot.path)).document.title, results.find(result => result.status === 'fulfilled').value.document.title);
 });
 
+test('opens canvas files in place, preserves legacy files and trashes only the confirmed revision', async t => {
+  const f = await fixture(t);
+  assert.equal(f.snapshot.path, join(f.root, 'space.canvas'));
+  const legacy = join(f.root, 'space.canvas.json');
+  await fs.rename(f.snapshot.path, legacy);
+  assert.equal((await f.service.command({ action: 'create', root: f.root })).path, legacy);
+  const file = join(f.root, '外部方案.CANVAS'), bin = join(f.root, 'recycled');
+  const doc = emptyCanvas('外部方案');
+  doc.items.push({ id: 'asset', kind: 'file', source: 'image.png', title: 'Image', frame: { x: 0, y: 0, width: 100, height: 80 } });
+  await writeFile(join(f.root, 'image.png'), 'asset');
+  await writeFile(file, serializeCanvas(doc));
+  const service = new CreationCanvasFiles(async () => file, () => 'en', path => fs.rename(path, bin));
+  const opened = await service.command({ action: 'open' });
+  assert.equal(opened.path, file);
+  assert.ok(opened.resources.asset);
+  await writeFile(file, serializeCanvas({ ...doc, title: 'Edited' }));
+  await assert.rejects(service.command({ action: 'delete', path: file, expectedRevision: opened.revision }), /REVISION_CONFLICT/);
+  const latest = await readCanvas(file);
+  await service.command({ action: 'delete', path: file, expectedRevision: latest.revision });
+  await assert.rejects(fs.stat(file), { code: 'ENOENT' });
+  assert.equal(JSON.parse(await readFile(bin, 'utf8')).title, 'Edited');
+  assert.equal(await readFile(join(f.root, 'image.png'), 'utf8'), 'asset');
+  assert.equal((await readCanvas(legacy)).revision, f.snapshot.revision);
+  await writeFile(file, '{}');
+  await assert.rejects(service.command({ action: 'open' }), /CANVAS_INVALID_FILE/);
+});
+
 test('canvas retries a transient Windows rename without overwriting a concurrent edit', async t => {
   const f = await fixture(t), original = fs.rename;
   let attempts = 0, changeWhileLocked = false;

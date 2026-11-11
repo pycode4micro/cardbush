@@ -1,0 +1,1 @@
+The caller has just connected. In your own words, acknowledge picking up in one short, natural spoken sentence, then give the caller the floor. Keep your configured personality and follow the caller's established language, using {{value:language}} if it is unknown. Leave the topic to the caller. Do not recap earlier work or call tools during this opening.
