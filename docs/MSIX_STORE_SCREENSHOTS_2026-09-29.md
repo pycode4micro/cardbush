@@ -27,7 +27,7 @@
 
 ## 重新生成
 
-在仓库根目录运行：
+复现此历史版本时，在 1.0.5.0 对应源码的仓库根目录运行。当前版本的素材见[商店介绍](../packaging/msix/listing-update.zh-CN.md)。
 
 ```powershell
 node scripts/capture-store-screenshots.mjs

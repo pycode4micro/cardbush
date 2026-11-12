@@ -22,11 +22,13 @@ export function SettingsDirectory({ language, page, active, version, navigate, r
   const scroll = useRef<HTMLElement>(null), heading = useRef<HTMLHeadingElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const positions = useRef(new Map<SettingsPage, number>());
+  const [expandedSections, setExpandedSections] = useState<Partial<Record<SettingsPage, VisibleSettingsSection | null>>>({});
+  const expanded = expandedSections[page];
   const lastChoice = useRef<SettingsPage | null>(null);
   const lastPage = useRef<SettingsPage | null>(null);
   const choose = (next: SettingsPage) => { lastChoice.current = next; navigate(next); };
   useLayoutEffect(() => {
-    if (!active) { setQuery(''); lastPage.current = null; lastChoice.current = null; return; }
+    if (!active) return;
     const previous = lastPage.current;
     lastPage.current = page;
     const scroller = scroll.current;
@@ -41,7 +43,7 @@ export function SettingsDirectory({ language, page, active, version, navigate, r
     }
   }, [page, active, section]);
   usePageEntrance(track, page, active);
-  return <section className="settings-content" ref={scroll} onScroll={event => positions.current.set(page, event.currentTarget.scrollTop)}
+  return <section className="settings-content" ref={scroll} onScroll={event => { if (active) positions.current.set(page, event.currentTarget.scrollTop); }}
     aria-label={t('common.settings')}>
     <div className="settings-track" ref={track}>
       <header className="settings-page-header">
@@ -56,7 +58,8 @@ export function SettingsDirectory({ language, page, active, version, navigate, r
           {query && <button type="button" aria-label={t('settingsView.clearSearch')} onClick={() => setQuery('')}><X/></button>}
         </label>}
       </header>
-      {category ? <CategoryPanel key={page} category={category} initial={section ?? category.sections[0]}
+      {category ? <CategoryPanel key={page} category={category} initial={section ?? (expanded === undefined ? category.sections[0] : expanded)}
+        onExpand={value => { if (!section) setExpandedSections(prior => ({ ...prior, [page]: value })); }}
         language={language} active={active} renderSection={renderSection}/>
         : <Overview language={language} query={query} choose={choose} version={version}/>}
     </div>
@@ -93,13 +96,13 @@ function Overview({language, query, choose, version}: {language: AppLanguage; qu
   </>;
 }
 
-function CategoryPanel({ category, initial, language, active, renderSection }: {
-  category: SettingsCategory; initial: VisibleSettingsSection; language: AppLanguage;
+function CategoryPanel({ category, initial, onExpand, language, active, renderSection }: {
+  category: SettingsCategory; initial: VisibleSettingsSection | null; onExpand(value: VisibleSettingsSection | null): void; language: AppLanguage;
   active: boolean; renderSection: Props['renderSection'];
 }) {
   const [expanded, setExpanded] = useState<VisibleSettingsSection | null>(initial);
   return <div className="settings-category">{category.sections.map(id => <Disclosure key={id} id={id}
-    open={id === expanded} toggle={() => setExpanded(current => current === id ? null : id)} language={language} active={active} renderSection={renderSection}/>)}</div>;
+    open={id === expanded} toggle={() => { const next = expanded === id ? null : id; setExpanded(next); onExpand(next); }} language={language} active={active} renderSection={renderSection}/>)}</div>;
 }
 
 function Disclosure({ id, open, toggle, language, active, renderSection }: {

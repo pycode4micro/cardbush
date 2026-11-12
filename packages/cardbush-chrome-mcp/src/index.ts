@@ -280,7 +280,7 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
 
   server.registerTool('new_page', toolDefinition(
     'Open browser page',
-    'Open and select an Agent tab in the background, scoped to this conversation, preserving the user’s active tab and window. Pass background:false only when the user wants it shown. For web research, pass a search-engine URL with the query and read take_snapshot. CardBush reports visible separately; Chrome/Edge uses the session group. Omit url for a blank tab; otherwise pass an HTTP(S) URL.',
+    'Open and select an Agent tab in the background, scoped to this conversation, preserving the user’s active tab and window. Pass background:false only when the user wants it shown. To search the web for current news or articles, pass a search-engine URL with the query and read take_snapshot. CardBush reports visible separately; Chrome/Edge uses the session group. Omit url for a blank tab; otherwise pass an HTTP(S) URL.',
     z.object({ url: z.string().url().optional(), background: z.boolean().default(true) }),
     false,
   ), async (input, context) => withToolResult(async () => {

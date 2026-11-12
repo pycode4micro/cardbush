@@ -84,7 +84,7 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
       }));
       const context = observations.at(-1).context, source = context.source ?? context.targets[0];
       const name = source.plugins[0].tools[0];
-      if (round === 1) call = ['mcp_search', { query: name }];
+      if (round === 1) call = ['search_plugins', { query: name }];
       if (round === 2) call = ['get_tool_schema', { name }];
       if (round === 3) call = ['call_tool', { name, arguments: { text: event.id === 'local-notice' ? 'From desktop.' : 'Your scheduled notice.' } }];
       if (round === 4) call = decision('completed');
@@ -194,17 +194,16 @@ for (const phase of ['reasoning', 'tool']) {
     const entered = Promise.withResolvers(), release = Promise.withResolvers();
     const requests = [], delivered = [], registry = new ToolRegistry();
     let gateway, toolCalls = 0, cancelled = false;
-    const name = 'search_skills';
-    registry.register({ definition: { name, description: 'Wait for a controlled fixture observation.', inputSchema: { type: 'object', properties: {} } },
-      manifest: { effect_kind: 'observation', operation: name, risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
-      decodeInput: value => value, execute: async ({ signal }) => {
-        toolCalls++; entered.resolve(); await release.promise; assert.ok(!signal?.aborted);
-        return { evidence: 'completed observation' };
-      } });
+    const name = 'search_plugins';
     const receiver = createServer(async (req, res) => { let raw = ''; for await (const chunk of req) raw += chunk;
       delivered.push(JSON.parse(raw)); res.end('{}'); });
     receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
     const runtime = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry, sessionStore: new SessionStore(),
+      loadPluginPackages: async () => {
+        toolCalls++; entered.resolve(); await release.promise;
+        return { packages: [{ name: 'fixture', displayName: 'Fixture', source: 'bundled', description: 'completed observation',
+          version: '1.0.0', installed: true, enabled: true }] };
+      },
       provider: { async *stream(request, { signal }) {
         requests.push(request);
         if (requests.length === 1 && phase === 'reasoning') {
@@ -213,7 +212,7 @@ for (const phase of ['reasoning', 'tool']) {
         }
         if (requests.length === 1 && phase === 'tool') {
           const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
-          yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'slow-observation', nameDelta: name, argumentsDelta: '{}' };
+          yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'slow-observation', nameDelta: name, argumentsDelta: JSON.stringify({ mode: 'plugins', query: '*' }) };
           yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
         }
         yield* answer(request, request.turnId === requests[0].turnId ? 'Only the first two pages.' : 'A separate reply.');

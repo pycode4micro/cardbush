@@ -377,7 +377,10 @@ declare global {
       }>;
       pastedTextAttachments: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
       assembleHomeComponent?: (files: {name: string; text: string}[]) => Promise<string>;
+      assistantHomeComponentCatalog?: () => Promise<{id: string; title: string}[]>;
+      onAssistantFloatingChanged?: (listener: (visible: boolean) => void) => () => void;
       homeComponentLibrary?: (action: 'read' | 'save' | 'migrate', revision?: number, items?: import('../features/components/componentModel').HtmlComponent[]) => Promise<import('../features/components/componentModel').ComponentCollection | null>;
+      managePluginRuntime?: (action: import('@cardbush/platform/contracts').PluginRuntimeAction, kind?: import('@cardbush/platform/contracts').PluginRuntime, version?: string) => Promise<import('@cardbush/platform/contracts').PluginRuntimeStatus[]>;
       onHomeComponentsChanged?: (listener: () => void) => () => void;
       captureInspectorRegion: (input: import('../../electron/inspectorRegionCapture').InspectorRegionCapture) => Promise<string>;
       saveImageDataUrl: (

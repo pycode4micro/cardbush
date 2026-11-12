@@ -1,4 +1,8 @@
-# 本次商店介绍同步内容
+# 1.0.16 商店介绍
+
+完整的产品介绍、功能亮点、更新说明和五张 1920 × 1080 展示图分别见[简体中文](listing/zh-CN/listing.md)和[English](listing/en-US/listing.md)。配图使用独立的演示资料。
+
+在仓库根目录运行 `npm run build` 后执行 `node scripts/capture-store-screenshots.mjs`，会在 `release-msix/store-screenshots/<版本>/` 生成两种语言的 PNG、配图说明、可离线浏览的介绍页及 ZIP。向 Partner Center 的桌面截图栏逐张上传对应语言的 PNG。
 
 供发布者更新 Partner Center 已有介绍和隐私说明的对应段落。保留真实的支持联系方式和隐私政策 URL；这些材料不会自动修改商店页面。以下系统要求用于新版兼容包，须在对应 MSIX 完成验证并发布后同步；不是对当前线上包的兼容声明。
 

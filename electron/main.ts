@@ -301,6 +301,7 @@ let assistantResident = false;
 let assistantNextLaunch = false;
 let assistantWindow: BrowserWindow | null = null;
 let assistantWindowReady = false;
+let assistantFloating = false;
 let openHomeOnReady = false;
 let assistantSurface: AssistantSurface = 'capsule';
 let capsuleCallPhase: AssistantCallPhase | null = null;
@@ -1278,6 +1279,8 @@ function createTray() {
   tray.setToolTip('cardbush');
   updateTrayMenu();
   tray.on('click', showWorkspaceHome);
+  nativeTheme.on('updated', updateTrayMenu);
+  app.once('will-quit', () => nativeTheme.removeListener('updated', updateTrayMenu));
 }
 
 let nativeUiLanguage: string | undefined;
@@ -1288,10 +1291,13 @@ function nativeText(language = nativeUiLanguage ?? (app.isReady() ? app.getLocal
 function updateTrayMenu() {
   if (!tray) return;
   const t = nativeText();
+  const icons = path.join(app.getAppPath(), 'assets', 'tray', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+  // The native checkmark shares the action icon column. An icon on the checkbox would indent its label twice.
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: t('resident.openHome'), click: showWorkspaceHome },
-    { label: t('resident.openAssistant'), click: showFloatingAssistant },
-    { label: t('main.quit'), click: requestAppQuit },
+    { label: t('resident.openHome'), icon: path.join(icons, 'home.png'), click: showWorkspaceHome },
+    { label: t('capsule.label'), type: 'checkbox', checked: assistantFloating, click: () => setFloatingAssistant(!assistantFloating) },
+    { type: 'separator' },
+    { label: t('main.quit'), icon: path.join(icons, 'quit.png'), click: requestAppQuit },
   ]));
 }
 
@@ -1712,10 +1718,24 @@ function showWorkspaceHome() {
   if (ready && mainWindow) sendToLiveRenderer(mainWindow, 'workspace:open-home');
 }
 
+function publishFloatingAssistant(visible: boolean) {
+  if (assistantFloating === visible) return;
+  assistantFloating = visible;
+  updateTrayMenu();
+  sendToLiveRenderer(mainWindow, 'assistant:floating-changed', visible);
+}
+
+function setFloatingAssistant(visible: boolean) {
+  if (visible) { showFloatingAssistant(); return; }
+  publishFloatingAssistant(false);
+  assistantWindow?.close();
+}
+
 function showFloatingAssistant() {
   if (isQuitting) return;
   void startRuntimeServices().catch(() => undefined);
   if (assistantWindow && !assistantWindow.isDestroyed()) {
+    publishFloatingAssistant(true);
     if (assistantWindowReady) { assistantWindow.show(); assistantWindow.focus(); }
     return;
   }
@@ -1728,9 +1748,27 @@ function showFloatingAssistant() {
       sandbox: true, nodeIntegration: false, webviewTag: false, backgroundThrottling: true },
   });
   assistantWindow = window;
+  publishFloatingAssistant(true);
   assistantSurface = 'capsule'; assistantReplyHeight = undefined;
   assistantWindowReady = false; retainAssistantWindow = false;
   window.setMenu(null);
+  window.webContents.on('context-menu', (event, params) => {
+    if (params.frame !== window.webContents.mainFrame) return;
+    event.preventDefault();
+    const t = nativeText();
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    if (params.isEditable) items.push(
+      { role: 'cut', label: t('applicationMenus.cut'), enabled: params.editFlags.canCut },
+      { role: 'copy', label: t('messageBubble.copy'), enabled: params.editFlags.canCopy },
+      { role: 'paste', label: t('applicationMenus.paste'), enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+    );
+    items.push(
+      { label: t('resident.openHome'), click: showWorkspaceHome },
+      { id: 'close-floating-assistant', label: t('resident.closeAssistant'), click: () => setFloatingAssistant(false) },
+    );
+    void showWindowPopupMenu(window, Menu.buildFromTemplate(items));
+  });
   window.contentView.setBackgroundColor('#00000000');
   installAppSessionPermissions(window);
   installMainWindowNavigationGuard(window);
@@ -1755,7 +1793,8 @@ function showFloatingAssistant() {
   window.on('blur', () => collapse('blur'));
   window.webContents.on('render-process-gone', () => setCapsuleCallPhase(null));
   window.webContents.on('did-start-loading', () => setCapsuleCallPhase(null));
-  window.on('hide', () => collapse('hide'));
+  window.on('show', () => publishFloatingAssistant(true));
+  window.on('hide', () => { publishFloatingAssistant(false); collapse('hide'); });
   window.on('close', event => {
     if (!isQuitting && (retainAssistantWindow || desktopVoiceHost.hasActiveCall(window.webContents.id))) {
       event.preventDefault();
@@ -1766,6 +1805,7 @@ function showFloatingAssistant() {
     if (window !== assistantWindow) return;
     setCapsuleCallPhase(null);
     assistantWindow = null; assistantWindowReady = false; retainAssistantWindow = false;
+    publishFloatingAssistant(false);
 
   });
   loadRenderer(window, 'assistant');
@@ -1824,11 +1864,11 @@ ipcMain.handle('window:close-to-tray', event => {
   if (owner === assistantWindow) owner.close(); else owner.hide();
 });
 ipcMain.handle('assistant:mode', async (event, action: unknown, enabled: unknown) => {
-  const owner = requireAppFrame(event);
+  requireAppFrame(event);
   if (action === 'startup' && typeof enabled === 'boolean') await saveResidentPreference(enabled);
-  else if (action === 'float') showFloatingAssistant();
+  else if (action === 'float' && (enabled === undefined || typeof enabled === 'boolean')) setFloatingAssistant(enabled !== false);
   else if (action !== 'read') throw Error('invalid_assistant_mode');
-  return { floating: owner === assistantWindow, nextLaunch: assistantNextLaunch, hasWorkspace: Boolean(mainWindow) };
+  return { floating: assistantFloating, nextLaunch: assistantNextLaunch, hasWorkspace: Boolean(mainWindow) };
 });
 ipcMain.on('assistant:reply-height', (event, height: unknown) => {
   if (!assistantWindow || event.sender !== assistantWindow.webContents || event.senderFrame !== event.sender.mainFrame ||
@@ -2045,7 +2085,7 @@ ipcMain.handle('app:renderer-ready', (event) => {
   if (assistantWindow?.webContents === event.sender && event.senderFrame === event.sender.mainFrame) {
     if (!assistantWindowReady) {
       assistantWindowReady = true;
-      assistantWindow.show();
+      if (assistantFloating) assistantWindow.show();
     }
     return;
   }
@@ -3223,16 +3263,29 @@ function desktopHomeLibrary(): HomeLibrary {
   const watcher = fs.watch(profile, {persistent: false}, (_event, file) => {
     if (file && !String(file).startsWith('home-components.sqlite')) return;
     clearTimeout(timer);
-    timer = setTimeout(() => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('home-components:changed'); }, 100);
+    timer = setTimeout(() => {
+      sendToLiveRenderer(mainWindow, 'home-components:changed');
+      sendToLiveRenderer(assistantWindow, 'home-components:changed');
+    }, 100);
   });
   app.once('will-quit', () => { clearTimeout(timer); watcher.close(); db.close(); });
   return db;
 }
+ipcMain.handle('plugin-runtimes:manage', async (event, action, kind, version) => {
+  assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
+  const { managePluginRuntime } = await import('./pluginRuntimeManager.mjs');
+  return managePluginRuntime(action, kind, version, undefined, pluginFetch);
+});
 ipcMain.handle('home-components:assemble', (event, files) => {
   assertMainWindowSender(event.sender.id);
   if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
   const {assembleComponent} = require(path.join(bundledProductSkillRoot(), 'cardbush-docs', 'scripts', 'component-files.cjs'));
   return assembleComponent(files);
+});
+ipcMain.handle('assistant:home-component-catalog', event => {
+  requireAppFrame(event);
+  return desktopHomeLibrary().snapshot()?.items.slice(0, 40).map(({id, title}) => ({id, title})) ?? [];
 });
 ipcMain.handle('home-components:library', (event, action, revision, items) => {
   assertMainWindowSender(event.sender.id);

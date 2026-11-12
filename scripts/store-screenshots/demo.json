@@ -1,0 +1,32 @@
+{
+  "zh-CN": {
+    "project": "潮汐图册",
+    "titles": [
+      "海岸步道 · 周末行程",
+      "潮汐与天气提醒",
+      "整理沿途的拍摄点"
+    ],
+    "summary": "从灯塔出发，沿海边木栈道步行到旧港。在观景台停下来拍日落。",
+    "request": "我们周六下午从灯塔出发，想在旧港看日落。能把散步路线和需要带的东西整理一下吗？",
+    "answer": "可以。把观景台安排在最后一段，拍完日落后到旧港吃晚饭。\n\n| 时间 | 地点 | 安排 |\n| --- | --- | --- |\n| 15:30 | 灯塔广场 | 集合，补满水壶 |\n| 16:00 | 海边木栈道 | 沿途拍照，在长椅休息 |\n| 17:10 | 旧港观景台 | 架好相机，等日落 |\n\n带上防风外套、水和备用电池。出发前再看一次天气预报。",
+    "page": "行程安排",
+    "detail": "周六下午 · 灯塔至旧港",
+    "note": "出发清单",
+    "gear": "防风外套、饮用水、相机和备用电池。"
+  },
+  "en-US": {
+    "project": "Tide Atlas",
+    "titles": [
+      "Weekend on the coastal trail",
+      "Tide and weather reminder",
+      "Photo stops along the trail"
+    ],
+    "summary": "Walk from the lighthouse to the old harbor along the boardwalk. Stop at the lookout in time for sunset.",
+    "request": "We’re leaving from the lighthouse on Saturday afternoon and want to catch sunset at the old harbor. Can you put together a route and a packing list?",
+    "answer": "Save the lookout for the last stop, then head down to the old harbor for dinner.\n\n| Time | Stop | Plan |\n| --- | --- | --- |\n| 3:30 PM | Lighthouse square | Meet up and fill water bottles |\n| 4:00 PM | Coastal boardwalk | Take photos and stop at the benches |\n| 5:10 PM | Harbor lookout | Set up the camera before sunset |\n\nBring a windbreaker, water and a spare battery. Check the forecast again before leaving.",
+    "page": "Walking itinerary",
+    "detail": "Saturday afternoon · Lighthouse to old harbor",
+    "note": "What to bring",
+    "gear": "A windbreaker, drinking water, a camera and a spare battery."
+  }
+}

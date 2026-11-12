@@ -14,3 +14,6 @@ export function platformFeatures(platform: string, arch: string) {
     chromeNativeConnector: platform === 'win32', // Compatibility with older desktop clients.
     nativeProcessLimits: platform === 'win32' && arch === 'x64' };
 }
+export type PluginRuntime = 'node' | 'python';
+export type PluginRuntimeStatus = {kind: PluginRuntime; active?: string; versions: string[]};
+export type PluginRuntimeAction = 'list' | 'install' | 'update' | 'use';

@@ -1,13 +1,14 @@
 import { runResourceManagedCommand } from './managedProcessCommand.js';
-import { commandInvocation, createPlatformContext, gitBashExecutable } from '@cardbush/platform';
+import { commandInvocation, createPlatformContext, gitBashExecutable, pluginRuntimeCommand, pluginRuntimeEnvironment } from '@cardbush/platform';
 import type { PluginHook } from './pluginExtensions.js';
 
 /** Shared bounded process execution; event parsing remains in the Hook/Command caller. */
 export async function executePluginProcess(hook: Pick<PluginHook, 'command' | 'args' | 'shell' | 'timeout'>, input: string, cwd: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, maxOutputBytes = 256 * 1024) {
   signal?.throwIfAborted();
+  env = pluginRuntimeEnvironment(env);
   const expand = (value: string) => value.replace(/\$\{(PLUGIN_ROOT|PLUGIN_DATA|CLAUDE_PLUGIN_ROOT|CODEX_PLUGIN_ROOT|CARDBUSH_PLUGIN_ROOT|CLAUDE_PROJECT_DIR|CLAUDE_PLUGIN_DATA)\}/g, (_, key) => env[key] ?? '');
   let command: string, args: string[];
-  if (hook.args) { command = expand(hook.command); args = hook.args.map(expand); }
+  if (hook.args) { ({command, args} = pluginRuntimeCommand(expand(hook.command), hook.args.map(expand))); }
   else if (hook.shell === 'powershell') {
     const invocation = commandInvocation('powershell', hook.command.replace(/\$\{(PLUGIN_ROOT|PLUGIN_DATA|CLAUDE_PLUGIN_ROOT|CODEX_PLUGIN_ROOT|CARDBUSH_PLUGIN_ROOT|CLAUDE_PROJECT_DIR|CLAUDE_PLUGIN_DATA)\}/g, '$env:$1'), createPlatformContext({ env }));
     command = invocation.executable; args = invocation.args;

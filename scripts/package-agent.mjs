@@ -7,6 +7,7 @@ import { verifyAgentBundledAssets, verifyAgentBundledMcp } from '../dist-electro
 
 const sourceRoot = resolve(import.meta.dirname, '..');
 const required = ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/cardbush-agent.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentServiceProcess.mjs',
+  'dist-electron/pluginRuntimeCli.mjs', 'dist-electron/pluginRuntimeManager.mjs', 'dist-electron/pluginRuntimeCatalog.mjs', 'dist-electron/fileLock.mjs',
   'deploy/bots/README.md', 'deploy/bots/desktop.md',
   'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
   'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',

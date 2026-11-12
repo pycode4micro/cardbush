@@ -1,3 +1,4 @@
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -25,7 +26,7 @@ function assertDisplayProjection(parameters, native) {
 const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const request = overrides => modelRequestSchema.parse({
   protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model,
-  tools: registry.definitions(), messages: [{ role: 'user', content: 'Find project documentation.' }],
+  tools: legacySearchCatalog(registry), messages: [{ role: 'user', content: 'Find project documentation.' }],
   metadata: { mcpToolDiscovery: true }, ...overrides,
 });
 const textItem = (text = 'Done.') => ({ type: 'message', id: 'msg', role: 'assistant', status: 'completed',
@@ -298,7 +299,7 @@ test('auth, transient and ordinary validation failures do not select a different
   ]) {
     await t.test(`${failure.status} ${failure.error.param ?? ''}`, async t => {
       const f = await fixture(t, () => failure);
-      assert.equal((await executeModelRound(f.provider, request({ tools: [...registry.definitions(), tool] }))).status, 'failed');
+      assert.equal((await executeModelRound(f.provider, request({ tools: [...legacySearchCatalog(registry), tool] }))).status, 'failed');
       assert.equal(f.calls.length, 1); assert.equal(f.store.read(capability).status, 'unknown');
       assert.deepEqual(f.calls.map(call => isNative(call.body)), [true]);
       assert.equal(f.store.read(compatibility).status, 'unknown');
@@ -415,7 +416,7 @@ test('native calls use the authoritative execution pipeline and survive durable 
     const host = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: tools, registerDefaultWorkspaceTools: false,
       sessionStore: new SessionStore({ persistence }), provider: new OpenAIResponsesProvider({ ...f.config, capabilityStore: new InMemoryProviderCapabilityStore() }) });
     const turn = id => host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: `r-${id}`,
-      sessionId: 's', turnId: id, model, tools: tools.definitions(), prefixMessages: [],
+      sessionId: 's', turnId: id, model, tools: legacySearchCatalog(tools), prefixMessages: [],
       inputMessages: [{ messageId: `u-${id}`, message: { role: 'user', content: 'Read docs' } }] });
     const close = async () => { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); persistence.close(); };
     t.after(close);
@@ -465,7 +466,7 @@ test('overlapping parallel searches pass a strict provider and execute the disco
     mcpHook: { server: 'docs', tool: 'read', call: async () => ({}) } });
   const host = await isolatedRuntimeHost(t, { toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
   const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'overlap',
-    sessionId: 's', turnId: 'overlap', model, tools: tools.definitions(), prefixMessages: [],
+    sessionId: 's', turnId: 'overlap', model, tools: legacySearchCatalog(tools), prefixMessages: [],
     inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read docs' } }] });
   assert.equal(terminal.payload.status, 'completed');
   assert.equal(round, 3);
@@ -524,7 +525,7 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
     mcpHook: { server: 'docs', tool: 'document_lookup', call: async () => ({}) } });
   const host = await isolatedRuntimeHost(t, { toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
   const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'progressive',
-    sessionId: 's', turnId: 'progressive', model, tools: tools.definitions(), prefixMessages: [],
+    sessionId: 's', turnId: 'progressive', model, tools: legacySearchCatalog(tools), prefixMessages: [],
     inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read project documents' } }] });
   assert.equal(terminal.payload.status, 'completed', JSON.stringify({ terminal: terminal.payload,
     failures: host.events('s', 'progressive').filter(event => /failed|error/.test(event.kind)) }));
@@ -634,7 +635,7 @@ test('direct exposure, long aliases and portable results retain their own declar
   const long = { ...tool, name: `mcp__${'plugin'.repeat(15)}__read` };
   const matches = [{ ...long, server: 'docs', tool: 'read', revision: 'v1' }];
   const messages = [...searchMessages('one', matches), ...searchMessages('two', matches)];
-  const req = request({ messages, tools: [...registry.definitions(), long, { ...long }] });
+  const req = request({ messages, tools: [...legacySearchCatalog(registry), long, { ...long }] });
   const native = toResponsesCreateParams(req, { toolSearchMode: 'native' });
   const names = declaredNames(native);
   assert.equal(names.length, new Set(names).size);
@@ -679,4 +680,13 @@ test('archive and direct rediscovery share declarations without breaking pending
   assert.equal(reversed.input.filter(item => item.type === 'additional_tools').length, 1);
   assert.equal(declaredNames(reversed).filter(name => name === tool.name).length, 1);
   assertClosedToolBatches(reversed.input);
+});
+
+test('a new Responses catalog exposes search_plugins as one named function with all four modes', () => {
+  const current = request({ tools: registry.definitions() });
+  const params = toResponsesCreateParams(current);
+  const search = params.tools.find(item => item.name === 'search_plugins');
+  assert.equal(search.type, 'function');
+  assert.deepEqual(search.parameters.properties.mode.enum, ['mcp', 'skill', 'plugins', 'all']);
+  assert.ok(params.tools.every(item => item.type !== 'tool_search' && !['search_skills', 'mcp_search'].includes(item.name)));
 });

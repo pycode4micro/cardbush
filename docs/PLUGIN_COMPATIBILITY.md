@@ -45,7 +45,7 @@ CardBush 支持 OpenAI 公开插件包与自定义市场，并直接解析 Claud
 | Skills | 标准与旧包发现、YAML frontmatter、OpenAI `agents/openai.yaml` 展示与调用策略、MCP 依赖声明、命名空间、原生 `run_skill` | 依赖先连接再执行；`model` / `effort` 沿用 CardBush 配置，不自动选择其他平台模型 |
 | Hooks | OpenAI 公开的 12 类事件及 PostToolUseFailure、command / mcp_tool、后台 command、并发合并、定义信任；Claude 增加 HTTP / prompt / agent | OpenAI prompt / agent 仍按其规范跳过；Claude Agent Hook 当前只允许文件读取、搜索；宿主生命周期边界见下文 |
 | Agents / Commands | 命名空间、动态上下文、调用策略、maxTurns、Skills 预加载、局部 Hooks、后台运行、worktree 隔离、局部 MCP 和权限模式 | 两种包共用运行模块；平台模型别名继承 CardBush 模型，权限不能超过父任务授权 |
-| MCP 按需发现 | 原生客户端 `tool_search` 与通用 `mcp_search` / `get_tool_schema` / `call_tool` 共用发现和执行系统 | 按实际服务能力协商；不把完整 MCP schema 目录注入模型；搜索只覆盖当前任务范围，不授予执行权限 |
+| MCP 按需发现 | 原生客户端 `tool_search` 与通用 `search_plugins` / `get_tool_schema` / `call_tool` 共用发现和执行系统 | 按实际服务能力协商；不把完整 MCP schema 目录注入模型；搜索只覆盖当前任务范围，不授予执行权限 |
 | LSP | 安装时明确标记跳过，其余兼容组件可以安装 | 不启动语言服务；市场拒绝没有兼容组件的包；显式依赖 LSP 工具的 Agent 不冒充可执行 |
 
 ## MCP 连接启动与超时
@@ -57,7 +57,7 @@ Windows 的 stdio 启动器需要维持被宿主跟踪的进程及标准输入�
 ## Skills 与 Agents
 
 - OpenAI `interface` 的显示名、图标、建议提示词用于技能页面；模型发现使用 SKILL.md 的描述。`policy.allow_implicit_invocation: false` 与 Claude `disable-model-invocation: true` 均阻止模型自动调用，但仍允许用户按声明手动调用。`user-invocable: false` 隐藏手动入口，模型入口另按策略判断。
-- 插件技能使用 `plugin:skill` 标识，避免不同插件的同名技能互相覆盖。桌面端和 CLI 使用 `@plugin:skill` 引用技能，或从 `/skill` 列表选择。引用带有宿主上的技能文件路径。历史兼容的 `$plugin:skill 参数` 仍受显式调用策略约束；`/plugin:command` 执行插件命令。模型通过 `search_skills` 发现，再用 `run_skill` 执行。命令和技能保留各自的目录与身份；重名入口在安装检查时拒绝。
+- 插件技能使用 `plugin:skill` 标识，避免不同插件的同名技能互相覆盖。桌面端和 CLI 使用 `@plugin:skill` 引用技能，或从 `/skill` 列表选择。引用带有宿主上的技能文件路径。历史兼容的 `$plugin:skill 参数` 仍受显式调用策略约束；`/plugin:command` 执行插件命令。模型通过 `search_plugins` 发现，再用 `run_skill` 执行。命令和技能保留各自的目录与身份；重名入口在安装检查时拒绝。
 - OpenAI `dependencies.tools` 中带地址的 MCP 声明进入现有连接管理；包内同名 MCP 可复用，地址冲突会报告。依赖不会在预览时连接，也不会自动打开登录页。依赖工具未连接、未暴露或技能被任务禁用时，运行明确失败。
 - Claude `context: fork` 支持 general-purpose、Explore、Plan 和同插件 Agent。按当前 Claude Skills 语义默认后台运行，`background: false` 等待完成；Agent 自身的 `background: true` 和 `subagent.run_in_background` 也可显式开启后台。沿用配置的子模型和权限，Agent 声明可收窄工具范围，子任务禁用项在调用时检查。子 agent 不可再次派发，包括通过 Skill/Command 的 `context: fork` 派发；普通内联技能仍可使用。Explore / Plan 限制为标记为只读的工具。
 - Agent 的 `skills` 直接预加载同插件静态技能正文，缺失、被禁用、禁止模型调用或依赖工具不在子任务范围内时拒绝执行。需要动态上下文或再次 fork 的技能不能作为静态预加载项。局部 MCP 连接完成后才检查这些依赖。
@@ -66,10 +66,10 @@ Windows 的 stdio 启动器需要维持被宿主跟踪的进程及标准输入�
 各能力由独立模块接入：`pluginHookScopes` 负责作用域，`pluginAgentEnvironment` 管理资源生命周期，`pluginBackgroundTasks` 管理后台任务，桌面 `pluginAgentMcp` 只负责 MCP 传输适配。
 
 - Skill / Command 局部 Hooks 在实际调用后激活，并保留到该会话结束；fork 只激活子会话的局部 Hooks。Agent Hooks 仅在对应子任务期间生效，局部 `Stop` 对应 `SubagentStop`。持久化只存激活标识，每次执行重新读取当前定义与信任，停用或修改插件不能沿用旧执行内容。
-- `mcp_search` 只返回名称、简短描述、加载状态及分页信息，不返回或暗中加载 schema。需要使用时用 `get_tool_schema({name})` 获取完整定义，或用 `get_tool_schema({names})` 一次加载最多 16 个准确名称；不接受模糊名称或旧 `reload` 参数。批量结果保留成功项，逐项报告错误，超出展示预算的项放入 `deferred`，不标记为已加载。完整结果携带定义 revision，并以普通工具消息保存在会话历史。每次模型请求按实际可见上下文恢复已加载定义，因此跨 turn 和重启可以用 `call_tool` 复用这些定义；当前定义、会话归属、工具可见范围和执行权限仍实时检查。搜索结果中的 `loaded: true` 仅表示完整定义仍可从上下文恢复。排序分数只用于内部检索。压缩摘要、归档预览及单独的引用不算完整 schema；大型归档结果只有在通过 `read_archived_tool_result` 完整读取、所有分片仍在上下文中时才可复用。旧加载协议不再恢复定义。最终模型请求省略 `protocol`、`sessionId`、`next_step` 等样板字段，原始历史仍保存身份信息用于校验，归档正文及偏移不变。schema 变化后追加新定义，旧结果保持不变。模型工具列表在 turn 内冻结，并保留请求中已有的发现入口，避免连接增减或恢复改变顶层 schema。详细参数与恢复方式见 [工具交互与结果定位](TOOL_INTERACTION.md)。
-- `search_skills` 返回名称、简短描述和 `mainResource` 中的 SKILL.md 路径；通过既有文件读取工具获取正文，不增加 Skill load 动作。插件技能保留 `invocation`，执行时仍需通过 `run_skill` 应用调用策略、参数和依赖。
+- `search_plugins` 只返回名称、简短描述、加载状态及分页信息，不返回或暗中加载 schema。需要使用时用 `get_tool_schema({name})` 获取完整定义，或用 `get_tool_schema({names})` 一次加载最多 16 个准确名称；不接受模糊名称或旧 `reload` 参数。批量结果保留成功项，逐项报告错误，超出展示预算的项放入 `deferred`，不标记为已加载。完整结果携带定义 revision，并以普通工具消息保存在会话历史。每次模型请求按实际可见上下文恢复已加载定义，因此跨 turn 和重启可以用 `call_tool` 复用这些定义；当前定义、会话归属、工具可见范围和执行权限仍实时检查。搜索结果中的 `loaded: true` 仅表示完整定义仍可从上下文恢复。排序分数只用于内部检索。压缩摘要、归档预览及单独的引用不算完整 schema；大型归档结果只有在通过 `read_archived_tool_result` 完整读取、所有分片仍在上下文中时才可复用。旧加载协议不再恢复定义。最终模型请求省略 `protocol`、`sessionId`、`next_step` 等样板字段，原始历史仍保存身份信息用于校验，归档正文及偏移不变。schema 变化后追加新定义，旧结果保持不变。模型工具列表在 turn 内冻结，并保留请求中已有的发现入口，避免连接增减或恢复改变顶层 schema。详细参数与恢复方式见 [工具交互与结果定位](TOOL_INTERACTION.md)。
+- `search_plugins` 返回名称、简短描述和 `mainResource` 中的 SKILL.md 路径；通过既有文件读取工具获取正文，不增加 Skill load 动作。插件技能保留 `invocation`，执行时仍需通过 `run_skill` 应用调用策略、参数和依赖。
 - Skill 与 MCP 搜索共用全局默认返回数量，初始 Top 8；在插件页的“设置 → 默认搜索结果数”中修改（1–50 的整数）。单次搜索的 `limit` 优先于默认值，MCP 分页按实际返回数量推进；该搜索数量设置不限制 `get_tool_schema` 的准确名称批量加载。默认值存于已有 `apps.json`，工具执行时读取；修改无需重连 MCP，也不改变工具 schema、提示词或既有历史。未包含该字段的旧配置使用 8，非法值拒绝保存。回归入口：`npm run test:plugin-search-settings`。
-- Responses 适配层支持原生客户端 `tool_search`：将搜索调用映射到同一个 `mcp_search` 执行记录，并将其结果投影为 `tool_search_output`。模型随后直接调用已加载的函数，仍经过原工具的作用域、定义 revision、准入、Hooks、超时和取消检查。超过函数名长度限制的工具使用确定性的传输别名，执行与日志继续使用原始名称；别名从实际请求和已读取的 schema 推导，不另存映射表。完整 `get_tool_schema` 回执或归档结果读取完成后通过 `additional_tools` 加载定义；分片不全或摘要中的工具名称不能代替完整定义。并行批次先提交全部调用结果，再追加标有调用 ID 的搜索说明及归档工具定义，避免中途插入消息令服务端误判结果缺失；增量请求也按完整历史确定批次边界。通用路径继续使用 `mcp_search` / `get_tool_schema` / `call_tool`；两种传输共用同一个目录、历史结果和分片解析器，不保存第二份加载目录。
+- 旧会话的 Responses 适配层支持原生客户端 `tool_search`：将搜索调用映射到同一个 `mcp_search` 执行记录，并将其结果投影为 `tool_search_output`。模型随后直接调用已加载的函数，仍经过原工具的作用域、定义 revision、准入、Hooks、超时和取消检查。超过函数名长度限制的工具使用确定性的传输别名，执行与日志继续使用原始名称；别名从实际请求和已读取的 schema 推导，不另存映射表。完整 `get_tool_schema` 回执或归档结果读取完成后通过 `additional_tools` 加载定义；分片不全或摘要中的工具名称不能代替完整定义。并行批次先提交全部调用结果，再追加标有调用 ID 的搜索说明及归档工具定义，避免中途插入消息令服务端误判结果缺失；增量请求也按完整历史确定批次边界。新会话使用通用函数 `search_plugins` / `get_tool_schema` / `call_tool`；两种传输共用同一个目录、历史结果和分片解析器，不保存第二份加载目录。
 - 能力协商不按供应商品牌、模型名称前缀或白名单分支。新上下文中，未知能力随正常请求尝试原生协议；只有生成请求在流开始前明确拒绝 `tool_search` 类型，才记录不支持并回退一次。认证失败、限流、网络错误、服务故障及参数 schema 错误不触发该回退。能力观察复用现有按服务配置和模型标识隔离、带有效期的记录；模型标识仅用于隔离观察，不用于推断能力。计数接口是否接受原生工具与生成接口是否支持原生搜索分别记录，计数失败不会关闭生成能力。
 - 当前上下文的协议从绑定原始消息的 provider 回放信息恢复，能力记录过期不会中途切换。旧的通用上下文继续使用通用协议，原生流已经开始或原生历史已经建立后不会静默降级、重放执行或改写旧链。这里只保证协议投影和历史连续性；实际服务端缓存命中仍以 provider 返回的 usage 为准。`toolSearch.test.mjs` 使用本地协议服务覆盖能力协商、回退、计数隔离、取消、原生历史回放、混合并行批次、归档读取、重启后复用、权限撤销和实际请求前缀；`pluginContextCache.test.mjs` 覆盖通用路径的会话恢复、schema 更新、权限变更与压缩。
 - 流式恢复以共享的输出项索引绑定正文、推理与工具身份；`done` 和最终快照可补齐缺失增量，重复生命周期事件不会重复拼接，矛盾身份或参数在执行前显式失败。取消在每个交付事件前检查，终止事件交付后结束流读取；输出上限仍交给 Runtime 的既有续写流程，截断批次不执行。长函数名在两种协议下都使用相同传输别名；归档分片检查重叠文本一致性，首次完整读取只加载一次定义。对抗用例和验收结果见 [Responses 对抗性测试](RESPONSES_ADVERSARIAL_TESTING.md)。
@@ -118,7 +118,7 @@ MCP 返回 `isError: true` 时，结果区显示工具返回错误及可展开�
 
 `mcp_app_status` 返回当前会话内的声明、活动实例，以及 `resource_loading`、`resource_loaded`、`frame_loaded`、`initialized`、`failed`、`closed` 观察。资源加载与 iframe 加载不等于协议握手，更不等于任务完成；历史观察不会伪装成重启后的活动实例。每个会话保留最近 128 条事件，带序号、时间和截断标记。新观察在模型轮次边界追加为内部消息；不修改已有消息、系统提示或工具定义，不因界面状态强制继续一轮模型请求。界面调用仍经过原有权限与 Hooks。
 
-`get_tool_schema` 的加载结果把服务声明的 schema / UI 与 `hostCapabilities` 分开返回，宿主能力只说明已提供的界面和本地文件展示入口；`mcp_search` 不重复附带这些完整元数据。上传、导入及文件引用的使用方式保留各工具的原始说明和返回结果；不额外注入上传限制提示、改写调用参数或实现应用专用上传逻辑。
+`get_tool_schema` 的加载结果把服务声明的 schema / UI 与 `hostCapabilities` 分开返回，宿主能力只说明已提供的界面和本地文件展示入口；`search_plugins` 不重复附带这些完整元数据。上传、导入及文件引用的使用方式保留各工具的原始说明和返回结果；不额外注入上传限制提示、改写调用参数或实现应用专用上传逻辑。
 
 插件通过 `ui/update-model-context` 上报的数据也在当前任务的下一次模型请求前追加并记入会话；未变化的内容不重复追加。它与宿主观察分开标明来源，不能当作宿主确认的结果或用户指令。任务已经结束时，数据留给后续对话；不自动唤醒模型。
 

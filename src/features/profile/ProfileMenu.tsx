@@ -5,7 +5,7 @@ import './profileMenu.css';
 
 export type ProfileAction = 'edit' | 'webhook' | 'events' | 'assistant' | 'settings' | 'float' | 'startup';
 export const ProfileMenuContext = createContext<{
-  name: string; avatar?: string; startup?: boolean; windowAvailable: boolean; webhookAvailable: boolean;
+  name: string; avatar?: string; startup?: boolean; floating?: boolean; webhookAvailable: boolean;
   open(): void; select(action: ProfileAction): void;
 } | null>(null);
 
@@ -33,7 +33,9 @@ export function ProfileMenu({ language, compact = false }: { language: string; c
         <button type="button" data-profile-action="assistant" onClick={() => select('assistant')}><Settings2/>{t('assistantSettingsDialog.assistantSettings')}</button>
       </div>
       <div className="profile-menu-group">
-        <button type="button" disabled={!model?.windowAvailable} data-profile-action="float" onClick={() => select('float')}><PanelTop/>{t('resident.openAssistant')}</button>
+        <button type="button" disabled={model?.floating === undefined} role="switch" aria-checked={model?.floating ?? false} data-profile-action="float" onClick={() => select('float')}>
+          <PanelTop/>{t('capsule.label')}<span className="profile-switch" aria-hidden="true"/>
+        </button>
         <button type="button" disabled={model?.startup === undefined} title={t('resident.nextLaunch')} role="switch" aria-checked={model?.startup ?? false} data-profile-action="startup" onClick={() => select('startup')}>
           <Monitor/>{t('profile.startInTray')}<span className="profile-switch" aria-hidden="true"/>
         </button>

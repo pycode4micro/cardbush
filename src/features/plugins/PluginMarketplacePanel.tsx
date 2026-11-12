@@ -13,11 +13,12 @@ import { SettingsFormDialog } from '../settings/SettingsFormDialog';
 import { SettingsDropdown } from '../settings/SettingsDropdown';
 import { SettingsInput } from '../settings/SettingsControls';
 
-export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInstalled, onNotify, onOpenNetwork }: {
+export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInstalled, onInstallingChange, onNotify, onOpenNetwork }: {
   language: AppLanguage;
   onBack: () => void;
   onOpenBundled: (id: string) => void;
   onInstalled: (id: string, enabled: boolean) => Promise<void>;
+  onInstallingChange: (installing: boolean) => void;
   onNotify: (message: string) => void;
   onOpenNetwork?: () => void;
 }) {
@@ -140,6 +141,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const navigateBack = () => { if (previewTarget) returnToPreview(null); else onBack(); };
   const install = async () => {
     if (!bridge || !preview || busy || preview.issues.length) return;
+    onInstallingChange(true);
     setBusy('install'); setError(''); setInstallProgress(null); setCancelling(false);
     let id = installedId;
     let configurationNeeded = needsConfiguration;
@@ -159,7 +161,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     } catch (caught) {
       if (message(caught).includes('[market-cancelled]')) onNotify(uiText(language)('pluginMarketplacePanel.installationCancelled'));
       else setError(`${id ? (configurationNeeded ? (uiText(language)('pluginMarketplacePanel.pluginFilesInstalledSavingStateIncomplete')) : (uiText(language)('pluginMarketplacePanel.pluginFilesInstalledActivationIncomplete'))) : ''}${message(caught)}`);
-    } finally { setBusy(''); setCancelling(false); }
+    } finally { setBusy(''); setCancelling(false); onInstallingChange(false); }
   };
   const cancelInstall = async () => {
     if (!preview || !bridge?.cancelMarketPluginInstall || cancelling) return;

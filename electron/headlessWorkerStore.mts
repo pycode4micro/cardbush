@@ -3,7 +3,7 @@ import { readFile, rm, lstat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { AgentConnectionManager } from './agentConnections.mjs';
 import { assertPrivateConfigFile, readProtectedJson, secureConfigDirectory, writeProtectedJson } from '@cardbush/platform/credentials';
-import { withWorkerStoreLock } from './workerStoreLock.mjs';
+import { withFileLock as withWorkerStoreLock } from './fileLock.mjs';
 
 export async function discardLegacyWorkerCache(directory: string) {
   const present = await lstat(directory).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });

@@ -47,7 +47,7 @@ export const CLEAN_AGENT_SETTINGS_SCHEMA = {
     permission_mode: { type: 'string', enum: ['task_free', 'user_free', 'all_free'], description: 'Must not exceed the displayed child permission ceiling.' },
     permission_routing: { type: 'string', enum: ['user', 'parent'], description: 'Default when the user has not selected a per-turn routing mode. user shares the parent permission scope; parent uses a separate child scope. This does not raise the permission ceiling.' },
     disabled_tools: { ...names, description: 'Additional runtime-denied tools; declarations need not be removed.' },
-    allowed_skills: { ...names, description: 'Optional exact Skill names/ids from search_skills within the displayed host scope; [] allows none. When the host provides an allowlist, select from those exact values.' },
+    allowed_skills: { ...names, description: 'Optional exact Skill names/ids from search_plugins within the displayed host scope; [] allows none. When the host provides an allowlist, select from those exact values.' },
     disabled_skills: { ...names, description: 'Additional disabled Skill names/ids.' },
   },
 };

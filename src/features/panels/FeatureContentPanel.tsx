@@ -35,6 +35,7 @@ export function FeatureContentPanel({
   language,
   backendCapabilities,
   onOpenPluginPrompt,
+  onEditHomeLayout,
   section,
   skills,
   disabledSkillNames,
@@ -47,6 +48,7 @@ export function FeatureContentPanel({
   language: AppLanguage;
   backendCapabilities: BackendCapabilities;
   onOpenPluginPrompt: (prompt: string) => void;
+  onEditHomeLayout: () => void;
   section: AppSection;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
@@ -58,7 +60,7 @@ export function FeatureContentPanel({
   onOpenConversation: (conversationId: string) => void;
   creationChatOptions?: CreationChatOptions;
 }) {
-  if (section === 'components') return <ComponentsApp language={language} onCreate={onOpenPluginPrompt}/>;
+  if (section === 'components') return <ComponentsApp language={language} onCreate={onOpenPluginPrompt} onEditHomeLayout={onEditHomeLayout}/>;
   if (section === 'md-presentation') return <Suspense fallback={<FeaturePanelLoading language={language}/>}><CreationCanvasApp {...creationChatOptions} language={language}/></Suspense>;
   if (section === 'plugins') return <PluginWorkspace language={language} capabilities={backendCapabilities}
     skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}

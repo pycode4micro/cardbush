@@ -1,3 +1,4 @@
+import { configurePluginSearch, type PluginPackageSource } from './pluginSearch.js';
 import { toolSchemaReceipts, TOOL_SCHEMA_PROTOCOL } from './toolSchemaReceipts.js';
 import { createHash } from 'node:crypto';
 import { withToolDisplayTitle } from './toolDisplay.js';
@@ -160,7 +161,7 @@ export function mcpInvocationTarget(registry: ToolRegistry, turn: ToolHandlerCon
   if (!turn || !turn.request.tools.some(tool => tool.name === name) || registration.mcpHook?.modelVisible === false ||
     registration.modelAvailable?.(turn.request) === false ||
     registration.sessionScope && registration.sessionScope !== turn.request.sessionId) {
-    throw withToolFailureFacts(Object.assign(new Error('This MCP tool is not available to this turn. Use mcp_search to check the current catalog; loading a schema cannot restore an unavailable tool.'), { code: 'tool_not_exposed' }), { effects: 'none', result: 'known' });
+    throw withToolFailureFacts(Object.assign(new Error('This MCP tool is not available to this turn. Use search_plugins to check the current catalog; loading a schema cannot restore an unavailable tool.'), { code: 'tool_not_exposed' }), { effects: 'none', result: 'known' });
   }
   if (!registration.mcpHook) throw wrongToolRouteError(name, 'native');
   if (readOnly && !registration.mcpHook.readOnly) throw withToolFailureFacts(Object.assign(
@@ -248,7 +249,7 @@ export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequ
     protocol: 'bush.plugin_catalog_update.v1',
     added: added.slice(0, 32), updated: updated.slice(0, 32), removed: removed.slice(0, 32),
     counts: { added: added.length, updated: updated.length, removed: removed.length },
-    message: 'Plugin capabilities changed during this conversation. Load new or changed tool definitions with get_tool_schema, then use call_tool with the target name. Find MCP names with mcp_search; batch-load definitions with get_tool_schema names. Top-level declarations stay unchanged; removed tools are unavailable. Already dispatched operations are not replayed.',
+    message: 'Plugin capabilities changed during this conversation. Load new or changed tool definitions with get_tool_schema, then use call_tool with the target name. Find MCP names with search_plugins in mcp mode; batch-load definitions with get_tool_schema names. Top-level declarations stay unchanged; removed tools are unavailable. Already dispatched operations are not replayed.',
   }) };
 }
 
@@ -271,10 +272,42 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
   return projected;
 }
 
-export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLimit?: SearchResultLimitProvider, preparePluginSearch?: PreparePluginSearch): void {
+export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLimit?: SearchResultLimitProvider, preparePluginSearch?: PreparePluginSearch, packages?: PluginPackageSource): void {
+  async function searchMcp(request: ModelRequest, query: string, server?: string, signal?: AbortSignal) {
+    let standby: Awaited<ReturnType<PreparePluginSearch>> = [];
+    if (preparePluginSearch && canOpenPluginServer(request)) {
+      standby = await preparePluginSearch(server, signal);
+      if (server) {
+        const opened = Array.isArray(request.metadata.openedPluginServers) ? request.metadata.openedPluginServers : [];
+        request.metadata.openedPluginServers = [...new Set([...opened, server])];
+      }
+      synchronizeMcpCatalog(registry, request);
+      const visibleServers = new Set(request.tools.map(tool => registry.resolve(tool.name)?.mcpHook?.server));
+      standby = standby.filter(item => !visibleServers.has(item.server));
+    }
+    const visible = new Set(request.tools.map(tool => tool.name));
+    const catalog = request.tools.flatMap(tool => {
+      const definition = available(registry, request, tool.name, visible);
+      if (!definition || childAgentToolDenial(request, registry.resolve(tool.name)!)) return [];
+      const mcp = registry.resolve(tool.name)!.mcpHook!;
+      return server && mcp.server !== server ? [] : [{ definition, server: mcp.server, tool: mcp.tool }];
+    });
+    return { candidates: rankMcpTools(catalog, query), standby };
+  }
+  function mcpCard(candidate: ReturnType<typeof rankMcpTools>[number], loaded: LoadedTools) {
+    const description = discoveryDescription(candidate.definition.description);
+    return { name: candidate.definition.name, description, ...(description !== candidate.definition.description ? { descriptionTruncated: true } : {}),
+      server: candidate.server, tool: candidate.tool, loaded: loaded.has(candidate.definition.name) && loaded.get(candidate.definition.name) === revision(registry, candidate.definition) };
+  }
+  configurePluginSearch(registry, { loadSearchResultLimit, packages, mcp: async (request, query, server, signal) => {
+    const { candidates, standby } = await searchMcp(request, query, server, signal);
+    const loaded = loadedTools(registry, request);
+    return { standby, matches: candidates.map(candidate => ({ score: query === '*' ? 1 : candidate.score, card: { kind: 'mcp', ...mcpCard(candidate, loaded) } })) };
+  } });
   const manifest = { effect_kind: 'observation' as const, operation: 'mcp.search', risk: 'low' as const, owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
   registry.register<{ query: string; server?: string; limit?: number; cursor?: McpSearchCursor }>({
     directInvocation: true,
+    supersededBy: 'search_plugins',
     definition: { name: 'mcp_search', description: 'Find MCP tool names and short summaries, not schemas. Start with query (keywords or *); use an ID from available_servers as server to connect that plugin and search its tools. Continue with next_cursor as cursor, without query/server. A changed query starts a new search. Partial or empty matches do not prove a capability unavailable: try alternate keywords or its server. Use get_tool_schema with an exact name or names batch before invoking. Discovery executes no target and grants no permission.',
       inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 1, maxLength: MCP_SEARCH_QUERY_LIMIT }, server: { type: 'string', maxLength: 512 }, limit: { ...searchLimitParameter }, cursor: { type: 'string', minLength: 1, maxLength: MCP_SEARCH_CURSOR_LIMIT } }, additionalProperties: false } },
     manifest, parallelSafe: true,
@@ -295,35 +328,12 @@ export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLim
     execute: async context => {
       if (!context.turn) throw new Error('MCP discovery requires a task.');
       const request = context.turn.request, limit = await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
-      let standby: Awaited<ReturnType<PreparePluginSearch>> = [];
-      if (preparePluginSearch && canOpenPluginServer(request)) {
-        const server = context.input.server;
-        standby = await preparePluginSearch(server, context.signal);
-        if (server) {
-          const opened = Array.isArray(request.metadata.openedPluginServers) ? request.metadata.openedPluginServers : [];
-          request.metadata.openedPluginServers = [...new Set([...opened, server])];
-        }
-        synchronizeMcpCatalog(registry, request);
-        const visibleServers = new Set(request.tools.map(tool => registry.resolve(tool.name)?.mcpHook?.server));
-        standby = standby.filter(item => !visibleServers.has(item.server));
-      }
-      const visible = new Set(request.tools.map(tool => tool.name));
-      const catalog = request.tools.flatMap(tool => {
-        const definition = available(registry, request, tool.name, visible);
-        if (!definition) return [];
-        const mcp = registry.resolve(tool.name)!.mcpHook!;
-        return context.input.server && mcp.server !== context.input.server ? [] : [{ definition, server: mcp.server, tool: mcp.tool }];
-      });
-      const candidates = rankMcpTools(catalog, context.input.query);
+      const { candidates, standby } = await searchMcp(request, context.input.query, context.input.server, context.signal);
       const fingerprint = mcpSearchFingerprint(request.sessionId, context.input.query, context.input.server, candidates);
       if (context.input.cursor && context.input.cursor.fingerprint !== fingerprint) throw Object.assign(new Error('This MCP search cursor belongs to another conversation or its results changed. Start a new search; no page was skipped.'), { code: 'mcp_search_cursor_stale' });
       const loaded = loadedTools(registry, request), offset = context.input.cursor?.offset ?? 0;
       if (context.input.cursor && offset >= candidates.length) throw new Error('Invalid MCP search cursor position.');
-      const matches = candidates.slice(offset, offset + limit).map(candidate => {
-        const description = discoveryDescription(candidate.definition.description);
-        return { name: candidate.definition.name, description, ...(description !== candidate.definition.description ? { descriptionTruncated: true } : {}),
-          server: candidate.server, tool: candidate.tool, loaded: loaded.get(candidate.definition.name) === revision(registry, candidate.definition) };
-      });
+      const matches = candidates.slice(offset, offset + limit).map(candidate => mcpCard(candidate, loaded));
       remember(registry, request, loaded);
       const next = offset + matches.length;
       return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, action: 'search', matches, total: candidates.length,

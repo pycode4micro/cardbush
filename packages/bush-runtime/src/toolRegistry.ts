@@ -65,6 +65,8 @@ export interface ToolHandlerContext<TInput = unknown>
 }
 
 export interface ToolRegistration<TInput = unknown> {
+  /** Old declarations remain callable in already bound conversations. */
+  supersededBy?: string;
   /** New-catalog presentation only. Frozen declarations are never passed here. */
   projectModelDefinition?: ToolDefinitionProjector;
   /** Capability availability for discovery, independent of argument validation and permission. */
@@ -148,7 +150,7 @@ export class ToolRegistry {
   }
 
   #catalogVisible(registration: AnyToolRegistration): boolean {
-    return !registration.sessionScope && !this.#hiddenOwners.has(registration.registrationOwner ?? '');
+    return !(registration.supersededBy && this.#registrations.has(registration.supersededBy)) && !registration.sessionScope && !this.#hiddenOwners.has(registration.registrationOwner ?? '');
   }
 
   register<TInput>(candidate: ToolRegistration<TInput>): this {
@@ -274,6 +276,7 @@ export class ToolRegistry {
 
 function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): AnyToolRegistration {
   return {
+    supersededBy: candidate.supersededBy,
     projectModelDefinition: candidate.projectModelDefinition,
     modelAvailable: candidate.modelAvailable,
     directInvocation: candidate.directInvocation,

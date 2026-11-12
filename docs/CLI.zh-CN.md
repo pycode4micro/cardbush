@@ -6,6 +6,20 @@
 
 本页描述当前源码。worker 命令与远程聊天入口移除需要新构建，尚未包含在已发布的 npm 1.0.13 中。
 
+## 按需安装插件运行环境
+
+桌面「设置 → 运行环境 → 插件运行环境」和 CLI 共用当前用户的 `~/.cardbush/runtimes/<平台>-<架构>`。打开设置和查看本地版本可以离线进行，点击安装或执行安装命令才会下载并校验解释器。通过 npm 安装的 CLI 本身仍需要受支持的 Node 启动。
+
+```sh
+cardbush runtime install python 3.12
+cardbush runtime install node 24
+cardbush runtime update python
+cardbush runtime list
+cardbush runtime path node
+```
+
+更新沿用已选 Python 次版本或 Node 主版本。可通过 `install` 改换系列，通过 `use <node|python> <已安装版本>` 离线切回。Python 可下载的版本以 Astral 当前发布的独立构建为准。新启动的 MCP stdio 和插件 Hook 使用所选版本，运行中的 MCP 服务可在重连后采用新版本。显式指定的解释器路径继续有效。第三方依赖应安装在插件自己的环境中。
+
 ## 模型与本机执行
 
 本机连接不需要令牌。CLI 共用应用支持的模型、插件、MCP、网络及沙箱 JSON 配置，但会话单独保存在 `~/.cardbush/cli-agent`。多个本机 CLI 窗口共享一个私有 Runtime，新窗口通常创建独立会话。

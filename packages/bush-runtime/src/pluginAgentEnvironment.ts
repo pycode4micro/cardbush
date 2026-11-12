@@ -1,6 +1,6 @@
 import type { RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import type { PluginAgent } from './pluginExtensions.js';
-import { pluginAgentTools, validateAgentSkills } from './pluginExtensions.js';
+import { pluginAgentSearchModes, pluginAgentTools, validateAgentSkills } from './pluginExtensions.js';
 import type { TaskWorkspaceManager } from './taskWorkspace.js';
 import type { ToolRegistration, ToolRegistry } from './toolRegistry.js';
 
@@ -48,7 +48,11 @@ export class PluginAgentEnvironment {
       if (agent.mcpServers) for (const reference of agent.mcpServers.filter((value): value is string => typeof value === 'string')) {
         if (!request.tools.some(tool => { const server = this.registry.resolve(tool.name)?.mcpHook?.server; return server === reference || server === `plugin_${agent.pluginId.replace(/\./g, '_')}_${reference}`; })) throw new Error(`Agent MCP reference ${reference} is not connected in the parent task.`);
       }
-      const allowed = new Set(pluginAgentTools(agent, request.tools.map(tool => tool.name)));
+      // Preserve the discovery domains actually granted by older Skill/MCP profiles.
+      const allowed = new Set(pluginAgentTools(agent, [...request.tools.map(tool => tool.name), 'mcp_search', 'search_skills']));
+      const inherited = request.metadata.pluginSearchModes;
+      request.metadata.pluginSearchModes = pluginAgentSearchModes(agent, allowed)
+        .filter(mode => !Array.isArray(inherited) || inherited.includes(mode));
       request.tools = request.tools.filter(tool => allowed.has(tool.name));
       if (agent.tools?.length && !request.tools.length) throw new Error(`Agent ${agent.id} has no available tools matching its declaration.`);
       if (agent.permissionMode === 'plan') request.tools = request.tools.filter(tool => this.registry.resolve(tool.name)?.manifest.mutating === false);

@@ -137,7 +137,7 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
           disabled_tools: disabledTools, allowed_skills: request.metadata.allowedSkills, disabled_skills: request.metadata.disabledSkills ?? [],
         },
         hooks: hooks.filter(hook => hook.trusted === true).map(({ id, event, matcher }) => ({ id, event, matcher })),
-        skill_discovery: 'Use search_skills for installed Skills, within defaults.allowed_skills when present.',
+        skill_discovery: 'Use search_plugins for installed Skills, within defaults.allowed_skills when present.',
       }));
     },
   });

@@ -8,13 +8,13 @@ These capabilities live in shared Runtime. Local/cloud Agents use the same proto
 
 ## Unified invocation
 
-Built-in and MCP business tools use `call_tool({name, arguments})`. With an exact name, first read `get_tool_schema({name})`, wait for/read its result, then invoke. Reuse definitions still in actual context. Discover unknown MCP tools with `mcp_search({query})`; batch-load known names through `get_tool_schema({names})`. Discovery, archive and maintenance tools follow their returned `invocation` directly, without nested dispatch wrappers.
+Built-in and MCP business tools use `call_tool({name, arguments})`. With an exact name, first read `get_tool_schema({name})`, wait for/read its result, then invoke. Reuse definitions still in actual context. Discover unknown MCP tools with `search_plugins({mode: "mcp", query})`; batch-load known names through `get_tool_schema({names})`. Discovery, archive and maintenance tools follow their returned `invocation` directly, without nested dispatch wrappers.
 
 Old `mcp_call`, `parallel_tools`, separate task-management tools, synchronous questions and preauthorization entries were removed, without aliases or legacy-result adapters. `tasks` observes/waits/stops/reads children; `team` defines/starts/resumes workflows; questions use `request_user_input_async({questions})`. Actual target scope, revision, approval, Hooks, locks and cancellation are still checked. Loading a schema grants no permission. Scripts use `tools.call(target,args)`. Product policy v9 rejects obsolete tool contracts: clear old history/start a new session instead of migrating/replaying old calls.
 
 ## MCP discovery
 
-`mcp_search` returns short summaries, loaded state and pagination. Fixed instructions belong to definitions rather than repeated protocol/session/server/underlying-name/next_step fields. Native execution records retain full facts.
+`search_plugins` returns short summaries, loaded state and pagination. Fixed instructions belong to definitions rather than repeated protocol/session/server/underlying-name/next_step fields. Native execution records retain full facts.
 
 Search matches whole terms, ignores common English stop words and prioritizes exact tool names, useful-term coverage and tool/server names, avoiding matches such as `web` inside `webp`. Browser Use descriptions include current-information/news searches through search-engine pages. Only visible session tools are searched; partial/no matches do not establish that browser capability is unavailable.
 

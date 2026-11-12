@@ -683,6 +683,7 @@ app.whenReady().then(async()=>{
   await until('document.querySelector(".plugin-market-install-progress")?.textContent.includes("36.0 MiB / 60.0 MiB")');
   assert.equal(await read('document.querySelector("progress").getAttribute("value")'),String(36*1024*1024));
   assert.equal(await read('document.querySelector("[data-history-action=back]").disabled'),true,'installation keeps the active details page in place');
+  assert.equal(await read('document.querySelector(".plugin-hub-tabs button").disabled'),true,'the shared toolbar respects an installation in progress');
   win.setSize(430,820);await until('window.innerWidth<450');
   await read('document.querySelector(".plugin-market-install-progress").scrollIntoView({block:"center"})');
   assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'download progress fits narrow windows');
@@ -693,6 +694,7 @@ app.whenReady().then(async()=>{
   await click('取消安装');await until('!document.querySelector(".plugin-market-install-progress")');
   assert.equal(await read('marketInstalls'),0,'cancelled downloads never install or activate files');
   assert.equal(await read('document.querySelector(".plugin-detail-primary").disabled'),false,'cancellation leaves the pinned preview available for a retry');
+  assert.equal(await read('document.querySelector(".plugin-hub-tabs button").disabled'),false,'cancelling restores toolbar navigation');
   assert.equal(await read('!!document.querySelector(".plugin-market-error")'),false,'cancellation is not reported as a failure');
   await read('marketInstallSlow=false');win.setSize(1000,820);await until('window.innerWidth>900');
   await read('marketSaveFails=true');await click('安装并启用');

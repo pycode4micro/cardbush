@@ -56,6 +56,7 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
     search_file_content: 'toolExecutionState.search_file_contents' as const, list_directory: 'toolExecutionState.list_directory' as const,
     apply_patch: 'toolExecutionState.edit_files' as const, edit_file: 'toolExecutionState.edit_file' as const, write_file: 'toolExecutionState.write_file' as const,
     terminal_stop: 'toolExecutionState.stop_command' as const, terminal_list: 'toolExecutionState.list_terminal_tasks' as const,
+    search_plugins: 'toolExecutionState.search_plugins' as const,
     search_skills: 'toolExecutionState.find_relevant_skills' as const, run_skill: 'toolExecutionState.use_skill' as const,
     mcp_search: 'toolExecutionState.find_available_tools' as const, call_tool: 'toolExecutionState.call_tool' as const,
     run_tools: 'toolExecutionState.run_tasks' as const, start_mcp_tool: 'toolExecutionState.start_background_task' as const,

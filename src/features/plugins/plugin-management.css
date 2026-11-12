@@ -19,6 +19,11 @@
 }
 
 .plugin-hub-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: var(--text);
+  background: var(--surface);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -26,6 +31,9 @@
   flex-wrap: wrap;
   margin-bottom: 34px;
 }
+
+.plugin-hub-toolbar svg { width: 1.1em; height: 1.1em; flex-shrink: 0; }
+.plugin-hub-toolbar button:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
 
 .plugin-hub-tabs,
 .plugin-hub-actions,
@@ -53,7 +61,7 @@
   font-size: 14px;
 }
 
-.plugin-hub-tabs button.active {
+.plugin-hub-toolbar button[aria-current="location"] {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
   font-weight: 700;

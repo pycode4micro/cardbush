@@ -25,6 +25,7 @@ export function FeaturePanel({
   language,
   backendCapabilities,
   onOpenPluginPrompt,
+  onEditHomeLayout,
   section,
   activeProjectDir,
   workflowValidationAvailable,
@@ -42,6 +43,7 @@ export function FeaturePanel({
   language: AppLanguage;
   backendCapabilities: BackendCapabilities;
   onOpenPluginPrompt: (prompt: string) => void;
+  onEditHomeLayout: () => void;
   section: AppSection;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
@@ -72,6 +74,7 @@ export function FeaturePanel({
           language={language}
           backendCapabilities={backendCapabilities}
           onOpenPluginPrompt={onOpenPluginPrompt}
+          onEditHomeLayout={onEditHomeLayout}
           section={section}
           activeProjectDir={activeProjectDir}
           workflowValidationAvailable={workflowValidationAvailable}

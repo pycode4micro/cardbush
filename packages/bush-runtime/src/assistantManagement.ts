@@ -49,8 +49,15 @@ export class AssistantManagement {
   definitions(parent: RuntimeSessionTurnRequest) {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' || parent.metadata.toolExecutionPolicy === 'none') return [];
     const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [] };
-    return this.options.registry.definitions().filter(tool => allowed.has(tool.name) && parent.tools.some(item => item.name === tool.name)
-      && this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
+    const unified = parent.tools.some(tool => tool.name === 'search_plugins');
+    const catalog = this.options.registry.definitions().filter(tool => allowed.has(tool.name));
+    if (!unified) for (const name of ['mcp_search', 'search_skills']) {
+      const previous = this.options.registry.resolve(name);
+      if (previous) catalog.push(previous.definition);
+    }
+    return catalog.filter(tool => parent.tools.some(item => item.name === tool.name) &&
+      this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
+        if (tool.name === 'search_plugins') return { ...tool, description: 'Discover MCP tools, Skills and local packages (bundled or user-installed) on this Runtime before delegation. Start with query, default mode=all. Narrow with mcp, skill or plugins. Use * to browse; pass a standby server ID in mcp mode or continue with cursor alone. Give the child the matched Skill mainResource or exact tool/package identity. The child reads instructions and executes on its own host.' };
         if (tool.name === 'mcp_search') return { ...tool, description: 'Discover MCP tool names and summaries available on this Runtime for delegation. Start with query keywords or *; pass an ID from available_servers as server to load that plugin on demand. Continue with next_cursor as cursor without query/server. Try alternate queries before concluding a capability is unavailable. This query executes no target and grants no permission. Delegate actual execution to a child; schema loading and generic invocation are not available in this assistant scope. Local results do not establish remote worker capabilities.' };
         if (tool.name === 'search_skills') return { ...tool, description: 'Discover installed Skills on this Runtime by capability or name; query=* lists visible Skills. Results include descriptions, mainResource and optional plugin invocation IDs. Continue with next_offset as offset and the same query. Use these facts to choose a child for execution; reading instructions and invoking Skills belong to that child. Local results do not establish remote worker capabilities.' };
         return presentExistingScheduleActions(tool);
@@ -76,7 +83,7 @@ export class AssistantManagement {
         signal.throwIfAborted();
       }
     }
-    if (call.name === 'mcp_search') executionRequest.metadata = { ...executionRequest.metadata, mcpToolDiscovery: true };
+    if (call.name === 'search_plugins' || call.name === 'mcp_search') executionRequest.metadata = { ...executionRequest.metadata, mcpToolDiscovery: true };
     const identity = { requestId: request.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: round + 1, ordinal };
     this.identities.set(call.id, identity);
     if (typeof parent.metadata.environmentExecutionId === 'string') this.executions.set(call.id, parent.metadata.environmentExecutionId);
@@ -89,7 +96,7 @@ export class AssistantManagement {
       if (outcome.hookStopTurn) throw Object.assign(Error(outcome.hookStopTurn), { code: 'assistant_management_stopped' });
       if (outcome.rejectToolResult) throw Object.assign(Error(`The tool ran, but its result was withheld by policy. Do not repeat the action. ${outcome.hookFeedback ?? ''}`), { code: 'plugin_hook_result_blocked' });
       if (outcome.kind !== 'returned') throw Object.assign(Error(outcome.error.message), { code: outcome.error.code });
-      if (call.name === 'mcp_search') {
+      if (call.name === 'search_plugins' || call.name === 'mcp_search') {
         const localTools = new Set(parent.tools.filter(tool => !this.options.registry.resolve(tool.name)?.mcpHook).map(tool => tool.name));
         parent.tools = executionRequest.tools.filter(tool => localTools.has(tool.name) || this.options.registry.resolve(tool.name)?.mcpHook);
       }

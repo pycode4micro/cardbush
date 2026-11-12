@@ -10,7 +10,7 @@ if (typeof electron === 'string') {
   const env = {...process.env, APPDATA:root, LOCALAPPDATA:root, USERPROFILE:root, HOME:root,
     CARDBUSH_DEVELOPMENT_RUNTIME:'1', CARDBUSH_ELECTRON_DEV_SERVER_URL:''};
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
-  const run = require('node:child_process').spawnSync(electron,[__filename,root],{cwd:project,env,windowsHide:true,stdio:'inherit',timeout:100000});
+  const run = require('node:child_process').spawnSync(electron,[__filename,root,...process.argv.slice(2)],{cwd:project,env,windowsHide:true,stdio:'inherit',timeout:120000});
   if (run.error) throw run.error;
   assert.equal(run.status,0); console.log(root);
 } else verify().catch(error => { console.error(error); electron.app.exit(1); });
@@ -23,7 +23,9 @@ async function verify() {
     archived:false,revision:1,createdAt:at,updatedAt:at,inputs:[],result:{text:'发布准备完成。',turnId:'report',createdAt:at},
     presentation:{summary:'本周完成了桌面端回归验证。',cover:'tide',pages:[{id:'checks',title:'验证结果',layout:'facts',items:[{label:'桌面',text:'已通过'}]},{id:'renderer',parentId:'checks',componentId:'local-check',title:'渲染进程',layout:'article',items:[{label:'回归',text:'完成'}]}]}};
   const watch = {...event, id:'watch', logicalKey:'watch', title:'待回查的事件', status:'watching', updatedAt:'2024-02-01T00:00:00Z'};
-  fs.writeFileSync(path.join(friends,'events.json'),JSON.stringify({version:1,events:[event,watch,{...event,id:'archived',archived:true,title:'Archived fixture'}],
+  const olderEvents = Array.from({length: 30}, (_, index) => ({...event, id: 'older-' + index, logicalKey: 'older-' + index,
+    title: '历史事件 ' + index, updatedAt: '2020-01-01T00:00:00Z'}));
+  fs.writeFileSync(path.join(friends,'events.json'),JSON.stringify({version:1,events:[event,watch,...olderEvents,{...event,id:'archived',archived:true,title:'Archived fixture'}],
     signals:[],detections:[{id:'watch-timer',eventId:'watch',at:'2099-02-01T00:00:00Z'}]}));
   const scheduler = path.join(root, 'runtime-state', 'scheduler');
   fs.mkdirSync(scheduler, {recursive:true});
@@ -55,11 +57,37 @@ async function verify() {
   await js("window.cardbushDesktop.homeComponentLibrary('read').then(state=>window.cardbushDesktop.homeComponentLibrary('save',state.revision,[{id:'local-check',width:4,height:200,order:1,title:'回归结果',html:'<output></output>',allowActions:true}]))");
   const reload = () => new Promise(resolve => {win.webContents.once('did-finish-load',resolve);win.webContents.reload();});
   await reload(); await active('overview');
+  const checkBoard = () => require('./helpers/editable-home.cjs')({win,js,wait,click,reload,capture});
+  if (process.argv.includes('--board-only')) { await checkBoard(); app.quit(); return; }
   await wait("document.querySelector('.desktop-cover')?.innerText.includes('版本发布周报')");
   assert.equal(await js("document.querySelector('.desktop-library').innerText.includes('Archived fixture')"),false);
   assert.equal(await js("!!document.querySelector('[data-history-action=forward]')"),false);
   const rail = await js("(()=>{const r=document.querySelector('.desktop-shell>.sidebar').getBoundingClientRect();return [r.top,innerHeight-r.bottom]})()");
   assert.ok(rail.every(n => Math.abs(n)<=1),'full-height sidebar: '+rail);
+  assert.equal(await js("!!document.querySelector('.main-stage .feature-panel, .desktop-explore')"), false, 'unvisited pages stay unmounted');
+  win.setMinimumSize(550,380); win.setSize(1000,500);
+  await wait('innerHeight < 600');
+  const scroller = "document.querySelector('.desktop-library')";
+  const scrollTo = async value => {
+    const position = await js(`(()=>{const el=${scroller};el.scrollTop=${value};return el.scrollTop})()`);
+    assert.ok(position > 0, 'the fixture must really scroll');
+    return position;
+  };
+  const atScroll = position => wait(`Math.abs(${scroller}.scrollTop-${position}) < 1`);
+  const homeOffset = await scrollTo(160);
+  await js("Array.from(document.querySelectorAll('.desktop-shelf h2 button')).find(b=>b.textContent==='事件').click()");
+  await active('events'); await atScroll(0);
+  const listOffset = await scrollTo(420);
+  await click('[data-nav-section=explore]'); await active('explore');
+  const exploreOffset = await scrollTo(85);
+  await click('[data-nav-section=home]'); await active('events'); await atScroll(listOffset);
+  await click('.desktop-crumbs button'); await active('overview'); await atScroll(homeOffset);
+  await click('[data-history-action=back]'); await active('events'); await atScroll(listOffset);
+  await click('[data-nav-section=explore]'); await active('explore'); await atScroll(exploreOffset);
+  await click('[data-nav-section=home]'); await active('events');
+  await click('.desktop-crumbs button'); await active('overview'); await atScroll(homeOffset);
+  win.setSize(1340,850);
+  console.log('Home, event list and Explore restore independent scroll positions across sidebar, breadcrumb and window Back.');
   await capture('home-light'); await click('.desktop-cover'); await active('event');
   await click('.desktop-list .desktop-row'); await wait("document.querySelector('.desktop-authored[data-layout=facts]')?.innerText.includes('已通过')");
   await click('.desktop-list .desktop-row'); await wait("document.querySelector('.desktop-authored[data-layout=article]')?.innerText.includes('回归')");
@@ -87,14 +115,23 @@ async function verify() {
   await click('[data-history-action=back]'); await active('overview');
   await js("Array.from(document.querySelectorAll('.desktop-shelf h2 button')).find(b=>b.textContent==='事件').click()");
   await active('events');
+  assert.equal(await js("!!document.querySelector('.desktop-list .calendar-surface')"), false);
+  await click('.desktop-list > details > summary');
+  await wait("!!document.querySelector('.desktop-list .calendar-surface')");
+  await click('.desktop-list .calendar-month-heading button:nth-child(3)');
+  const calendarDate = await js("document.querySelector('.desktop-list .calendar-day-button[data-selected=true]').dataset.date");
   await js("Array.from(document.querySelectorAll('.desktop-row')).find(b=>b.textContent.includes('已保存的项目检查')).click()");
   await wait("document.querySelector('.friends-event-details')?.innerText.includes('原执行摘要')");
   await click('.friends-event-details .event-history summary');
   await click('.friends-event-details .event-result-disclosure > summary');
   await wait("document.querySelector('.event-result-disclosure[open]')?.innerText.includes('原始执行结果')");
+  await click('[data-nav-section=explore]'); await active('explore');
+  await click('[data-history-action=back]'); await active('event');
+  await wait("document.querySelector('.event-history[open] .event-result-disclosure[open]')?.innerText.includes('原始执行结果')");
   assert.equal(await js("document.querySelector('.desktop-library').innerText.includes('检查项目')"), false, 'history does not expose the scheduler prompt');
   assert.equal(await js("document.querySelector('#right-inspector')?.checkVisibility() ?? false"), false, 'reading history stays on the event page');
   await click('[data-history-action=back]'); await active('events');
+  await wait(`document.querySelector('.desktop-list details[open] .calendar-day-button[data-selected=true]')?.dataset.date === ${JSON.stringify(calendarDate)}`);
   const savedRow = eventButton('.desktop-list .desktop-row', savedCheck);
   const watchRow = eventButton('.desktop-list .desktop-row', watch.title);
   await openEventMenu(watchRow);
@@ -157,10 +194,19 @@ async function verify() {
   assert.ok(await js(`!!document.querySelector('${flyout}')`),'the pointer can cross from the rail into the list');
   await click('[data-sidebar-app="builtin:components"]');
   await wait("!document.querySelector('.desktop-explore,.sidebar-app-flyout:popover-open') && !!document.querySelector('.components-app')");
+  await wait("!!document.querySelector('.feature-panel .html-component-frame')");
+  await js("window.previousComponentsPage = document.querySelector('.feature-panel .components-app'); void 0");
+  await click('[data-nav-section=explore]'); await active('explore');
+  await wait("!previousComponentsPage.checkVisibility() && !previousComponentsPage.querySelector('iframe')");
+  await click('[data-history-action=back]');
+  await wait("previousComponentsPage.checkVisibility() && !!previousComponentsPage.querySelector('iframe')");
   await click('[data-nav-section=explore]'); await active('explore');
   assert.equal(await js("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"), true, 'search immediately follows the Explore title');
   await js(`(()=>{const n=document.querySelector('.desktop-filter input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'xyz-no-match');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await wait("!document.querySelector('.desktop-explore .desktop-row')");
+  await click('[data-nav-section=home]'); await active('overview');
+  await click('[data-nav-section=explore]'); await active('explore');
+  assert.equal(await js("document.querySelector('.desktop-filter input').value"), 'xyz-no-match', 'returning retains the Explore filter');
   await click('[data-nav-section=home]'); await active('overview');
   await js("Array.from(document.querySelectorAll('.desktop-shelf h2 button')).find(b=>b.textContent==='项目').click()");
   await active('projects');
@@ -186,5 +232,6 @@ async function verify() {
   await capture('sidebar-apps');
   press('Escape'); await wait("!document.querySelector('.sidebar-app-flyout:popover-open') && document.activeElement.matches('.sidebar-more-apps')");
   console.log('Desktop Home passed: event card, authored detail and history, Explore search, project drill-down, flat rail, dark/narrow layout.');
+  await checkBoard();
   app.quit();
 }

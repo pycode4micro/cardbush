@@ -112,7 +112,7 @@ inspect one employee or plugin role only when needed.
 When configuration needs inspection, `section: "settings"` supplies configured
 model IDs, limits, Skill scope, permission ceiling and trusted hooks;
 `section: "tools"` searches and pages through child tool availability. Model
-credentials are never included. Skills can be discovered with `search_skills`
+credentials are never included. Skills can be discovered with `search_plugins`
 within the displayed scope.
 
 The required `system_prompt` becomes the actual system message; `prompt` becomes

@@ -55,15 +55,21 @@ module.exports = async ({win,BrowserWindow,openHome,openAssistant,wait,root,proj
   current=await wait(findCapsule,'reopen capsule from tray');
   await visible(bell); win.hide(); openHome();
   await wait(()=>win.isVisible() && current.isVisible(),'one tray click opens Home alongside the capsule');
-  const capsule=current;
   assert.deepEqual(win.getBounds(),workspaceBounds);
   current=win;
   await visible('[data-nav-section=chat]'); await click('[data-nav-section=chat]');
   const composer = '.main-stage .chat-panel:not(.assistant-view) textarea[data-composer-input]';
   await visible(composer);
   await read(`window.profileWorkspaceDraft=document.querySelector(${JSON.stringify(composer)});Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(profileWorkspaceDraft,'Retain this workspace draft');profileWorkspaceDraft.dispatchEvent(new Event('input',{bubbles:true}));void 0`);
-  await action('float');
-  assert.equal(findCapsule(),capsule,'reopening reuses the existing capsule');
+  const floatSwitch = '[data-profile-action=float][role=switch]';
+  await menu(); await visible(floatSwitch + '[aria-checked=true]');
+  await click(floatSwitch);
+  await wait(()=>!findCapsule()?.isVisible(), 'profile switch turns off an open capsule');
+  await menu(); await visible(floatSwitch + '[aria-checked=false]');
+  await read("document.querySelector('.profile-popover').hidePopover();void 0");
+  await read("document.querySelector('[data-nav-section=assistant]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2,clientX:40,clientY:120}));void 0");
+  await click('[data-sidebar-menu-item=assistant-floating]');
+  const capsule = await wait(() => { const w=findCapsule(); return w?.isVisible() && w; }, 'Assistant context menu restores capsule');
   assert.ok(capsule.isAlwaysOnTop() && capsule.isVisible() && win.isVisible());
   await read('window.cardbushDesktop.voice.setCallActive(true)');
   try {

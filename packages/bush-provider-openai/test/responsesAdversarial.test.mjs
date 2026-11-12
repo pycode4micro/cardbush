@@ -1,3 +1,4 @@
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -12,7 +13,7 @@ import { normalizeResponseStreamEvent, OpenAIResponsesProvider, toResponsesCreat
 
 const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const request = overrides => modelRequestSchema.parse({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't',
-  model: 'protocol-fixture', messages: [{ role: 'user', content: 'Inspect fixture' }], tools: registry.definitions(), metadata: { mcpToolDiscovery: true }, ...overrides });
+  model: 'protocol-fixture', messages: [{ role: 'user', content: 'Inspect fixture' }], tools: legacySearchCatalog(registry), metadata: { mcpToolDiscovery: true }, ...overrides });
 const fn = (overrides = {}) => ({ type: 'function_call', id: 'item_read', call_id: 'call_read', name: 'read_file', arguments: '{"path":"safe.txt"}', status: 'completed', ...overrides });
 const search = (overrides = {}) => ({ type: 'tool_search_call', id: 'item_search', call_id: 'call_search', execution: 'client', arguments: { query: 'docs' }, status: 'completed', ...overrides });
 const itemEvent = (item, type = 'done', output_index = 0) => ({ type: `response.output_item.${type}`, output_index, item });
@@ -218,7 +219,7 @@ test('real SDK and Runtime execute a recovered call once and execute nothing aft
     const host = new InMemoryRuntimeHost({ dataRoot: root, provider: endpoint.provider, toolRegistry: tools, registerDefaultWorkspaceTools: false, maxAttempts: 1 });
     t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
     const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
-      tools: tools.definitions(), prefixMessages: [], inputMessages: [{ messageId: 'u', message: { role: 'user', content: 'Inspect fixture' } }] });
+      tools: legacySearchCatalog(tools), prefixMessages: [], inputMessages: [{ messageId: 'u', message: { role: 'user', content: 'Inspect fixture' } }] });
     assert.equal(executed, expected);
     assert.equal(result.payload.status, completed ? 'completed' : 'failed');
     assert.equal(endpoint.requests.length, completed ? 2 : 1);
@@ -264,7 +265,7 @@ for (const compatible of [false, true]) test(`real SDK truncation preserves exec
   const host = new InMemoryRuntimeHost({ provider: endpoint.provider, toolRegistry: tools, registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 's', turnId: 't',
-    model: 'fixture', maxOutputTokens: 8192, permissionMode: 'all_free', tools: tools.definitions(),
+    model: 'fixture', maxOutputTokens: 8192, permissionMode: 'all_free', tools: legacySearchCatalog(tools),
     prefixMessages: [{ role: 'system', content: 'Stable rules' }], inputMessages: [{ messageId: 'u', message: { role: 'user', content: 'Write the parts' } }] });
   assert.equal(result.payload.status, 'completed');
   assert.deepEqual(writes, ['saved-call']);

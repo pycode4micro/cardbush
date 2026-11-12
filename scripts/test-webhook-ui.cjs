@@ -51,7 +51,7 @@ async function build(directory) {
         function Fixture(){const [language,setLanguage]=useState('zh'),[theme,setTheme]=useState('dark'),[sessionId,setSession]=useState('existing-chat');
           fixture.language=setLanguage;fixture.theme=setTheme;fixture.session=setSession;
           const prepare=async()=>({sessionId:'personal-assistant',model:'configured-model',userInput:''});
-          return <div className={'app theme-'+theme} data-current-page={sessionId}><ProfileCenter language={language} ready={false} floating={false} prepare={prepare} settings={()=>{}} switchWindow={async()=>{}}><ProfileMenu language={language}/></ProfileCenter></div>;
+          return <div className={'app theme-'+theme} data-current-page={sessionId}><ProfileCenter language={language} ready={false} prepare={prepare} settings={()=>{}}><ProfileMenu language={language}/></ProfileCenter></div>;
         }createRoot(document.getElementById('root')).render(<Fixture/>);`;
     },
   }], build: { write: false, minify: false, lib: { entry: path.resolve('src/__webhook_fixture__.tsx'), name: 'WebhookFixture', formats: ['iife'] } } });

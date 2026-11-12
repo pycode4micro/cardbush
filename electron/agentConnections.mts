@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { AgentHttpClient, AgentHttpError, AgentIdentityError, AgentNetworkError, agentBaseUrl, isAgentBusyError } from './agentHttpClient.mjs';
 import { AgentBusyError } from './agentErrors.mjs';
-import { withWorkerStoreLock } from './workerStoreLock.mjs';
+import { withFileLock as withWorkerStoreLock } from './fileLock.mjs';
 import { assertConnectorFile } from './browserConnectorFiles.js';
 import type { AgentInfo, AgentJob, AgentOperation, AgentConnection, AgentConnectionInput, AgentDesktopApi, AgentEventRequest } from './agentTypes.js';
 import type { SshConnectionManager } from './sshConnections.mjs';

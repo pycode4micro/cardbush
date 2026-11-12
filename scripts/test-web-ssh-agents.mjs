@@ -156,7 +156,7 @@ test('built-in slicing skill is discoverable while local execution and unrelated
   const registry = new ToolRegistry(); registerSkillTools(registry, [resolve('assets/skills')]);
   const request = { protocol: 'bush.model_request.v1', requestId: 'req', sessionId: 's', turnId: 't', model: 'fixture', messages: [], tools: registry.definitions(), permissionMode: 'task_free', metadata: { toolExecutionPolicy: 'web_restricted', allowedSkills: ['auto-video-slicing'], webReadRoots: [resolve('assets/skills/auto-video-slicing')] } };
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: () => assert.fail('No permission needed') } });
-  const result = await coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'search', name: 'search_skills', argumentsText: JSON.stringify({ query: 'auto-video-slicing' }) }, { requestId: 'req', sessionId: 's', turnId: 't', round: 1, ordinal: 0 }, undefined, { request });
+  const result = await coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'search', name: 'search_plugins', argumentsText: JSON.stringify({ query: 'auto-video-slicing' }) }, { requestId: 'req', sessionId: 's', turnId: 't', round: 1, ordinal: 0 }, undefined, { request });
   assert.equal(result.kind, 'returned'); assert.equal(result.result.matches.length, 1);
   assert.equal(result.result.matches[0].name, 'auto-video-slicing');
   assert.equal(await webToolDenial(request, 'read_file', { path: result.result.matches[0].mainResource }), undefined);

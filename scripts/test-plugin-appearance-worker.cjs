@@ -94,6 +94,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('active().querySelector(".plugin-search input").value'), 'chrome');
     assert.equal(await read('document.querySelector(".settings-content").scrollTop===marketScroll'), true, 'restores marketplace scroll');
     assert.equal(await read('document.activeElement===active().querySelector(".plugin-featured-main")'), true, 'restores keyboard focus');
+    await read("active().querySelector('.plugin-featured-main').click()"); await page('plugin');
+    await click('市场'); await page('marketplace');
+    assert.equal(await read('active()===marketBefore && active().querySelector(".plugin-search input").value==="chrome"'), true, 'the toolbar returns to the same filtered marketplace');
     await read('document.querySelector("[data-history-action=back]").click();void 0'); await page('catalog');
 
     await click('管理'); await page('manage');
@@ -144,6 +147,17 @@ app.whenReady().then(async () => {
     win.setSize(650, 750);
     await until('document.documentElement.clientWidth < 700');
     assert.equal(await read('document.querySelector(".settings-content").scrollWidth <= document.querySelector(".settings-content").clientWidth+1'), true, 'marketplace fits a narrow window');
+    await read(`const source=active().querySelector('.plugin-market-controls select');source.value='builtin';source.dispatchEvent(new Event('change',{bubbles:true}));`);
+    await until('active().querySelectorAll(".plugin-market-grid article").length === 19');
+    await read(`const scroll=document.querySelector('.settings-content');scroll.scrollTop=scroll.scrollHeight;`);
+    await until('document.querySelector(".settings-content").scrollTop > 150');
+    const homeHit = await read(`(() => {
+      const home=document.querySelector('.plugin-hub-tabs button'), bounds=home.getBoundingClientRect();
+      return document.elementFromPoint(bounds.left+bounds.width/2,bounds.top+bounds.height/2)?.closest('button')===home;
+    })()`);
+    assert.equal(homeHit, true, 'Plugins remains visible and clickable with a long marketplace scrolled to the bottom');
+    await click('插件'); await page('catalog');
+    assert.equal(await read("active().querySelector('.plugin-added-card')?.checkVisibility()"), true, 'the pinned toolbar opens the initial plugin catalog');
     assert.deepEqual(errors, []);
     console.log('Plugin appearance/navigation passed: light/dark contrast, retained filters/tabs/scroll/focus, nested accounts/MCP, cancelled previews and narrow layout.');
   } finally { win.destroy(); }

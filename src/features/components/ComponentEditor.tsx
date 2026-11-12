@@ -7,6 +7,7 @@ import { componentId } from './componentId';
 import { componentProtocol, maxComponentBytes, type HtmlComponent } from './componentModel';
 import { componentOrigins } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
 import { approvedOrigins } from './componentNetwork';
+import './components.css';
 
 export function componentError(language: AppLanguage, cause: unknown) {
   const t = uiText(language);

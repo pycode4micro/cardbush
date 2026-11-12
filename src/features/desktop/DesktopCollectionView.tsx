@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type UIEvent } from 'react';
+import { Suspense, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type UIEvent } from 'react';
 import { ArrowUpRight, Blocks, ChevronLeft, ChevronRight, Folder, MessageSquare, Plus, Search, Waves } from 'lucide-react';
 import type { EventPresentation, FriendsSnapshot, FriendsWorkEvent } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
@@ -6,14 +6,31 @@ import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types'
 import { ApplicationIcon } from '../appCenter/AppCenter';
 import type { ApplicationEntry } from '../appCenter/appCenterModel';
 import { FriendsEventDetails, FriendsExecutionRequests } from '../assistant/events/EventDetails';
-import { AutomationCalendar } from '../automations/AutomationCalendar';
-import { ComponentsApp } from '../components/ComponentsApp';
+import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
+import { useDisclosureState } from '../navigation/useDisclosureState';
+import { HomeBoard } from './HomeBoard';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
 import { HtmlComponentContext } from '../components/HtmlComponentContext';
 import type { HtmlComponent } from '../components/componentModel';
 import { conversationMatchesScope } from '../conversationScope';
 import type { HomePage } from '../navigation/appPage';
+import { usePageScroll, type PageOffsets } from '../navigation/usePageScroll';
 import type { SidebarMenuEvent } from '../sidebar/SidebarContextMenu';
+
+const AutomationCalendar = recoverableLazy('desktop-calendar', async () => {
+  const module = await import('../automations/AutomationCalendar');
+  return { default: module.AutomationCalendar };
+}, (props, retry) => <DeferredModuleNotice language={props.language} retry={retry}/>);
+
+export type LibraryReadingState = { offsets: PageOffsets; detailOffsets: PageOffsets; expanded: Set<string>; calendarDay?: Date };
+function EventCalendar({language, reading, snapshot}: {language: AppLanguage; reading: LibraryReadingState; snapshot?: FriendsSnapshot}) {
+  const disclosure = useDisclosureState('calendar', reading.expanded);
+  return <details {...disclosure}><summary>{uiText(language)('automationPanel.calendarView')}</summary>
+    {disclosure.open && <Suspense fallback={<p role="status">{uiText(language)('common.loading')}</p>}>
+      <AutomationCalendar language={language} snapshot={snapshot} initialDay={reading.calendarDay} onSelectDay={day => { reading.calendarDay = day; }}/>
+    </Suspense>}
+  </details>;
+}
 
 function trackHeaderUnderlap(event: UIEvent<HTMLElement>) {
   const page = event.currentTarget;
@@ -38,12 +55,14 @@ function CoverCard({card}: {card?: Card}) {
     <ArrowUpRight aria-hidden="true"/>
   </button>;
 }
-function FeaturedShelf({ language, busy, children }: { language: AppLanguage; busy: boolean; children: ReactNode }) {
+function FeaturedShelf({ language, busy, children, offsets }: { language: AppLanguage; busy: boolean; children: ReactNode; offsets: PageOffsets }) {
   const t = uiText(language);
   const track = useRef<HTMLDivElement>(null);
+  const restoreTrack = usePageScroll(offsets, 'featured', 'scrollLeft');
   const [edges, setEdges] = useState({ previous: false, next: false });
   useLayoutEffect(() => {
     const node = track.current!;
+    const release = restoreTrack(node);
     const measure = () => {
       const previous = node.scrollLeft > 1;
       const next = node.scrollWidth - node.clientWidth - node.scrollLeft > 1;
@@ -53,8 +72,8 @@ function FeaturedShelf({ language, busy, children }: { language: AppLanguage; bu
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     node.addEventListener('scroll', measure, { passive: true });
-    return () => { observer.disconnect(); node.removeEventListener('scroll', measure); };
-  }, []);
+    return () => { release?.(); observer.disconnect(); node.removeEventListener('scroll', measure); };
+  }, [restoreTrack]);
   const scroll = (direction: number) => {
     const node = track.current;
     if (node) node.scrollBy({ left: direction * node.clientWidth });
@@ -79,6 +98,8 @@ function ComponentPage({item, page}: {item: HtmlComponent; page?: EventPresentat
   return <div className="desktop-component">{page ? <HtmlComponentContext.Provider value={null}>{surface}</HtmlComponentContext.Provider> : surface}</div>;
 }
 type HomeProps = {
+  visible: boolean;
+  reading: LibraryReadingState;
   projectsRef: (element: HTMLDivElement | null) => void;
   language: AppLanguage; page: HomePage; conversationsLoading: boolean; projects: ProjectItem[]; conversations: ConversationSummary[]; assistantName: string;
   events: FriendsWorkEvent[]; snapshot?: FriendsSnapshot; components: HtmlComponent[]; error: boolean; retry(): Promise<void>;
@@ -87,7 +108,6 @@ type HomeProps = {
   onAssistant(): void; onExplore(): void; onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void;
 };
 export function DesktopHomeView(p: HomeProps) {
-  const [calendarOpen, setCalendarOpen] = useState(false);
   const {language, page, events, projects, conversations, onPage} = p;
   const t = uiText(language), home = t('desktop.home'), recent = t('chatSidebar.recent'), projectLabel = t('archivedItemsPanel.projects'), eventLabel = t('desktop.events');
   const selected = page.kind === 'event' ? events.find(item => item.id === page.id) : undefined;
@@ -106,8 +126,10 @@ export function DesktopHomeView(p: HomeProps) {
   const attached = subpage?.componentId ? p.components.find(item => item.id === subpage.componentId) : undefined;
   const heading = page.kind === 'overview' ? home : page.kind === 'events' ? eventLabel : page.kind === 'projects' ? projectLabel :
     page.kind === 'recent' ? recent : page.kind === 'event' ? subpage?.title ?? selected?.title ?? eventLabel : page.kind === 'component' ? component?.title ?? t('appCenterModel.components') : project?.title ?? projectLabel;
-  const scroll = useRef<HTMLElement>(null);
-  useLayoutEffect(() => { scroll.current?.scrollTo(0, 0); }, [page]);
+  const detail = 'id' in page;
+  const pageKey = detail ? JSON.stringify([page.kind, page.id, page.kind === 'event' ? page.page : undefined])
+    : page.kind === 'overview' && page.editing ? 'home-layout-editor' : page.kind;
+  const scroll = usePageScroll(detail ? p.reading.detailOffsets : p.reading.offsets, pageKey);
   const projectRows = (items: ProjectItem[]) => items.map(item => <Row key={item.id} title={item.title} detail={item.rootPath}
     icon={<Folder/>} open={() => onPage({kind:'project', id:item.id})}/>);
   const recentRows = (items: ConversationSummary[]) => items.map(item => <Row key={item.id} title={item.title} detail={item.preview}
@@ -130,7 +152,7 @@ export function DesktopHomeView(p: HomeProps) {
     open:() => onPage(projects[0] ? {kind:'project', id:projects[0].id} : {kind:'projects'})};
   const lead = eventCards[0] ?? (waitingForEvents ? undefined : explore);
   const last = eventCards[1] ?? (waitingForEvents ? undefined : eventCards.length ? explore : library);
-  return <section className="desktop-library" aria-label={heading} data-desktop-page={page.kind} ref={scroll} onScroll={trackHeaderUnderlap}>
+  return <section key={pageKey} className="desktop-library" aria-label={heading} data-desktop-page={page.kind} ref={scroll} onScroll={trackHeaderUnderlap}>
     {page.kind !== 'overview' && <nav className="desktop-crumbs" aria-label={t('desktop.breadcrumb')}>
       <button onClick={() => onPage({kind:'overview'})}>{home}</button>
       {page.kind === 'event' && <><ChevronRight/><button onClick={() => onPage({kind:'events'})}>{eventLabel}</button></>}
@@ -142,24 +164,21 @@ export function DesktopHomeView(p: HomeProps) {
       <div aria-hidden="true" className="desktop-detail-art" data-cover={selected.presentation?.cover ?? 'tide'}/>
       <div><small>{t(`yourFriends.status.${selected.status}`)}</small><h1>{heading}</h1>
         {!selected.conversationExecution && <p>{selected.presentation?.summary ?? selected.intent}</p>}</div>
-    </header> : <h1>{heading}</h1>}
-    {page.kind === 'overview' && <>
-      <FeaturedShelf language={language} busy={waitingForEvents}>
+    </header> : page.kind !== 'overview' && <h1>{heading}</h1>}
+    {page.kind === 'overview' && <HomeBoard language={language} visible={p.visible} editing={!!page.editing}
+      onDone={() => onPage({kind:'overview'})} onCreate={p.onCreateComponent} native={{
+      featured: {title:t('desktop.featured'), content:<FeaturedShelf language={language} busy={waitingForEvents} offsets={p.reading.offsets}>
         <CoverCard card={lead}/><CoverCard card={assistant}/><CoverCard card={projectCard}/><CoverCard card={last}/>
-      </FeaturedShelf>
-      <ComponentsApp language={language} home onCreate={p.onCreateComponent}/>
-      <Shelf title={eventLabel} open={() => onPage({kind:'events'})}><div className="desktop-rows">{waitingForEvents ? pendingRow : events.length ? eventRows(events.slice(0,6)) :
-        <Row title={p.error ? t('desktop.retryEvents') : t('desktop.openAssistant')} detail={p.error ? undefined : p.assistantName} icon={<Waves/>} open={p.error ? p.retry : p.onAssistant}/>}</div></Shelf>
-      <Shelf title={projectLabel} open={() => onPage({kind:'projects'})}><div className="desktop-rows">{projects.length ? projectRows(projects.slice(0,6)) : addProject}</div></Shelf>
-      <Shelf title={recent} open={() => onPage({kind:'recent'})}><div className="desktop-rows">{conversations.length ? recentRows(conversations.slice(0,6)) : p.conversationsLoading ? pendingRow : newChat}</div></Shelf>
-
-    </>}
+      </FeaturedShelf>},
+      events: {title:eventLabel, content:<Shelf title={eventLabel} open={() => onPage({kind:'events'})}><div className="desktop-rows">{waitingForEvents ? pendingRow : events.length ? eventRows(events.slice(0,6)) :
+        <Row title={p.error ? t('desktop.retryEvents') : t('desktop.openAssistant')} detail={p.error ? undefined : p.assistantName} icon={<Waves/>} open={p.error ? p.retry : p.onAssistant}/>}</div></Shelf>},
+      projects: {title:projectLabel, content:<Shelf title={projectLabel} open={() => onPage({kind:'projects'})}><div className="desktop-rows">{projects.length ? projectRows(projects.slice(0,6)) : addProject}</div></Shelf>},
+      recent: {title:recent, content:<Shelf title={recent} open={() => onPage({kind:'recent'})}><div className="desktop-rows">{conversations.length ? recentRows(conversations.slice(0,6)) : p.conversationsLoading ? pendingRow : newChat}</div></Shelf>},
+    }}/>}
     {page.kind === 'events' && <div className="desktop-list">{eventRows(events)}{!events.length && <p role="status">{t(p.error ? 'desktop.eventsUnavailable' : !p.snapshot ? 'desktop.loadingEvents' : 'yourFriends.noEvents')}</p>}
       {p.error && <Row title={t('desktop.retryEvents')} icon={<Waves/>} open={p.retry}/>}
       <Row title={p.assistantName} detail={t('desktop.openAssistant')} icon={<Waves/>} open={p.onAssistant}/>
-      <details open={calendarOpen} onToggle={event => setCalendarOpen(event.currentTarget.open)}><summary>{t('automationPanel.calendarView')}</summary>
-        {calendarOpen && <AutomationCalendar language={language} snapshot={p.snapshot}/>}
-      </details></div>}
+      <EventCalendar language={language} reading={p.reading} snapshot={p.snapshot}/></div>}
     {page.kind === 'projects' && <div className="desktop-list" ref={p.projectsRef}/>}
     {page.kind === 'recent' && <div className="desktop-list">{recentRows(conversations)}{newChat}</div>}
     {project && <><p className="desktop-path">{project.rootPath}</p><Shelf title={recent}><div className="desktop-list">
@@ -169,7 +188,7 @@ export function DesktopHomeView(p: HomeProps) {
       <div key={index}><h2>{item.label}</h2><p>{item.text}</p></div>)}{attached && <ComponentPage item={attached} page={subpage}/>}</section>}
     {selected && children.length > 0 && <div className="desktop-list">{children.map(item =>
       <Row key={item.id} title={item.title} detail={item.items[0]?.label} icon={<Blocks/>} open={() => onPage({kind:'event',id:selected.id,page:item.id})}/>)}</div>}
-    {selected && !subpage && <FriendsEventDetails event={selected} snapshot={p.snapshot} language={language} showHeading={false}/>}
+    {selected && !subpage && <FriendsEventDetails event={selected} snapshot={p.snapshot} language={language} showHeading={false} expanded={p.reading.expanded}/>}
     {selected && !subpage && p.snapshot?.active?.eventId === selected.id && Boolean(p.snapshot.permissions.length || p.snapshot.solutions.length) &&
       <FriendsExecutionRequests snapshot={p.snapshot} language={language} refresh={p.retry}/>}
     {component && <ComponentPage item={component}/>}
@@ -178,12 +197,14 @@ export function DesktopHomeView(p: HomeProps) {
   </section>;
 }
 type ExploreProps = {
+  offsets: PageOffsets;
   language: AppLanguage; groups: {label:string; entries:ApplicationEntry[]}[]; featured: ApplicationEntry[]; query:string;
   onQuery(query:string):void; onLaunch(app:ApplicationEntry):void;
 };
 export function ExploreView(p: ExploreProps) {
   const t = uiText(p.language);
-  return <section className="desktop-library desktop-explore" aria-label={t('appCenter.appCenter')} data-desktop-page="explore" onScroll={trackHeaderUnderlap}>
+  const scroll = usePageScroll(p.offsets, 'explore');
+  return <section className="desktop-library desktop-explore" aria-label={t('appCenter.appCenter')} data-desktop-page="explore" ref={scroll} onScroll={trackHeaderUnderlap}>
     <h1>{t('appCenter.appCenter')}</h1>
     <label className="desktop-filter"><Search/><input type="search" aria-label={t('appCenter.searchApps')} placeholder={t('appCenter.searchApps')} value={p.query} onChange={event => p.onQuery(event.target.value)}/></label>
     {p.featured.length > 0 && <div className="desktop-discover-covers">{p.featured.map((app,index) =>

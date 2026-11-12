@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, FileText, Pause, Play, Square, Trash2 } from 'lucide-react';
 import type { FriendsWorkEvent } from '@cardbush/bush-protocol';
-import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types';
+import type { AppLanguage, AppSection, ConversationSummary, ProjectItem } from '../../types';
 import { uiText } from '../../i18n';
 import { useApplications } from '../appCenter/appCenterStore';
 import { useLaunchApplication } from '../appCenter/AppCenter';
@@ -14,7 +14,8 @@ import { confirmEventDeletion, eventActionLabels, type EventAction } from '../as
 import { useSidebarContextMenu, type SidebarMenuEvent, type SidebarContextMenuItem } from '../sidebar/SidebarContextMenu';
 import { showUiError } from '../../shared/showUiError';
 import type { HomePage } from '../navigation/appPage';
-import { DesktopHomeView, ExploreView } from './DesktopCollectionView';
+import type { PageOffsets } from '../navigation/usePageScroll';
+import { DesktopHomeView, ExploreView, type LibraryReadingState } from './DesktopCollectionView';
 import './desktopCollection.css';
 
 type Props = {
@@ -24,9 +25,19 @@ type Props = {
   onProject(project: ProjectItem): void; onConversation(id: string): void; onAssistant(): void;
   onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void; onExplore(): void;
 };
-export function DesktopHome(props: Props) {
+// Keep small browsing preferences at the window boundary. Only the current page
+// mounts its library, event polling, project portal and embedded documents.
+export function DesktopCollection({section, ...props}: Props & {section: AppSection}) {
+  const [reading] = useState<LibraryReadingState>(() => ({offsets: new Map(), detailOffsets: new Map(), expanded: new Set()}));
+  const [query, setQuery] = useState('');
   const needsEvents = props.page.kind === 'overview' || props.page.kind === 'events' || props.page.kind === 'event';
-  const { snapshot, error, refresh, refreshAfterChange } = useEventExecution(props.ready && props.visible && needsEvents, props.page.kind === 'event' ? 1500 : 15000);
+  const execution = useEventExecution(section === 'home' && props.ready && props.visible && needsEvents, props.page.kind === 'event' ? 1500 : 15000);
+  if (section === 'home') return <DesktopHome {...props} execution={execution} reading={reading}/>;
+  if (section === 'explore') return <DesktopExplore language={props.language} offsets={reading.offsets} query={query} onQuery={setQuery}/>;
+  return null;
+}
+function DesktopHome(props: Props & {execution: ReturnType<typeof useEventExecution>; reading: LibraryReadingState}) {
+  const { snapshot, error, refresh, refreshAfterChange } = props.execution;
   const { menu, openContextMenu, closeMenus } = useSidebarContextMenu();
   useEffect(closeMenus, [props.page, props.visible, closeMenus]);
   const pending = useRef(false);
@@ -69,10 +80,9 @@ export function DesktopHome(props: Props) {
   return <><DesktopHomeView {...props} assistantName={profile.name} projects={projects} conversations={conversations}
     components={components} events={events} snapshot={snapshot} error={error || props.unavailable} retry={refresh} onEventMenu={openEventMenu}/>{menu}</>;
 }
-export function DesktopExplore({language}: {language: AppLanguage}) {
+function DesktopExplore({language, offsets, query, onQuery}: {language: AppLanguage; offsets: PageOffsets; query: string; onQuery(value: string): void}) {
   const apps = useApplications(language);
   const launch = useLaunchApplication();
-  const [query, setQuery] = useState('');
   const needle = query.trim().toLocaleLowerCase(language);
   const matches = apps.filter(app => [app.title, app.description].some(value => value.toLocaleLowerCase(language).includes(needle)));
   const t = uiText(language);
@@ -80,7 +90,7 @@ export function DesktopExplore({language}: {language: AppLanguage}) {
     {label: t('desktop.workspaceApps'), entries: matches.filter(app => app.kind === 'builtin')},
     {label: t('desktop.addedApps'), entries: matches.filter(app => app.kind !== 'builtin')},
   ].filter(group => group.entries.length);
-  return <ExploreView language={language} groups={groups} query={query} onQuery={setQuery}
+  return <ExploreView language={language} offsets={offsets} groups={groups} query={query} onQuery={onQuery}
     featured={needle ? [] : ['builtin:md-presentation','builtin:team'].flatMap(id => apps.find(app => app.id === id) ?? [])}
     onLaunch={launch}/>;
 }

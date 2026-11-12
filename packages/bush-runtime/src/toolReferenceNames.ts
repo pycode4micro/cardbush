@@ -48,8 +48,8 @@ export function resolveToolReferenceName(name: string, turn?: { request: ModelRe
 
 export function unknownToolReferenceError(name: string, domain: 'native' | 'mcp') {
   return withToolFailureFacts(Object.assign(new Error(`Unknown or no-longer-loaded tool name/alias: ${name}. ${domain === 'mcp'
-    ? 'Use mcp_search to find the exact name, then load the schema with get_tool_schema and invoke through call_tool.'
-    : 'Use get_tool_schema with an exact tool name from the current catalog. Use mcp_search to find MCP tools, then invoke the loaded target with call_tool.'} No tool was executed.`), {
+    ? 'Use search_plugins to find the exact name, then load the schema with get_tool_schema and invoke through call_tool.'
+    : 'Use get_tool_schema with an exact tool name from the current catalog. Use search_plugins to find MCP tools, then invoke the loaded target with call_tool.'} No tool was executed.`), {
     code: 'tool_not_found', details: { toolName: name },
   }), { effects: 'none', result: 'known' });
 }

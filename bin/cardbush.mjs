@@ -8,6 +8,9 @@ try {
     process.stdout.write(`CardBush ${version}\n`);
   } else if (['bots','bot-gateway'].includes(process.argv[2])) {
     throw new Error('The standalone Bot gateway has been retired. Use /webhook to connect a bridge to Assistant.');
+  } else if (process.argv[2] === 'runtime') {
+    const { main } = await import('../dist-electron/pluginRuntimeCli.mjs');
+    process.exitCode = await main();
   } else if (process.argv[2] === 'worker') {
     const { main } = await import('../dist-electron/workerCli.mjs');
     process.exitCode = await main();

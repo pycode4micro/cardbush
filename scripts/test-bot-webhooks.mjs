@@ -204,7 +204,7 @@ test('Assistant background completion retains Bot A after a newer message from B
   const root = await mkdtemp(join(tmpdir(), 'bot-background-')), journal = new ConversationJournal(root), delegated = [], calls = [];
   const sessionId = 'personal-assistant';
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
-    botContext: async sourceRef => ({ discovery: 'mcp_search', available: true, targets: [], source: { sourceRef } }),
+    botContext: async sourceRef => ({ discovery: 'search_plugins', available: true, targets: [], source: { sourceRef } }),
     delegate: async input => { delegated.push(input); return { taskId: 'continued', status: 'running' }; },
     provider: { async *stream(input) {
       calls.push(input);
@@ -241,7 +241,7 @@ test('Assistant identifies local input after webhook history and refreshes live 
   const source = { sourceRef: ref, connectionId: 'bot', botName: 'Saved Bot', messageId: 'previous-message', senderId: 'user',
     conversationId: 'room', receivedAt: new Date().toISOString(), capabilities: botCapabilitiesSchema.parse({}) };
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}), delegate: async () => ({}),
-    botContext: async sourceRef => ({ discovery: 'mcp_search', available: online, ...(!online ? { reason: 'bot_offline' } : {}),
+    botContext: async sourceRef => ({ discovery: 'search_plugins', available: online, ...(!online ? { reason: 'bot_offline' } : {}),
       connections: [{ connectionId: 'bot', botName: 'Saved Bot', status: online ? 'connected' : 'offline' }],
       targets: online ? [{ ...source, available: true }] : [], ...(sourceRef ? { source: { ...source, available: online } } : {}) }),
     provider: { async *stream(input) {

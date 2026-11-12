@@ -1,3 +1,4 @@
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -17,7 +18,7 @@ const profile = { scope, model, capability: 'responses_generation_compatibility'
 const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const request = overrides => modelRequestSchema.parse({
   protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model,
-  messages: [{ role: 'user', content: 'Hello' }], tools: registry.definitions(),
+  messages: [{ role: 'user', content: 'Hello' }], tools: legacySearchCatalog(registry),
   metadata: { mcpToolDiscovery: true }, ...overrides,
 });
 const text = value => ({ type: 'message', id: 'msg', role: 'assistant', status: 'completed',
@@ -430,7 +431,7 @@ test('Runtime journals original failures and successful recovery for both counti
     const persistence = new FileRuntimeEventPersistence({ root });
     const host = new InMemoryRuntimeHost({ provider: f.provider, eventLogOptions: { persistence }, maxAttempts: 1, registerDefaultWorkspaceTools: false });
     t.after(async () => { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); });
-    const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model, tools: registry.definitions(),
+    const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model, tools: legacySearchCatalog(registry),
       inputMessages: [{ messageId: 'hello', message: { role: 'user', content: 'Hello' } }], prefixMessages: [],
       maxOutputTokens: 1000, metadata: { contextWindowTokens: 100000, mcpToolDiscovery: true } });
     assert.equal(result.payload.status, 'completed');

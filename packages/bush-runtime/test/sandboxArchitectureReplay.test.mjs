@@ -40,7 +40,7 @@ test('session 095c replay: directory diagnosis, discovered skill read, one-time 
   const directory = await f.run('read_file', { path: f.work });
   assert.equal(directory.error?.code, 'EISDIR', JSON.stringify(directory));
   assert.match(directory.error.message, /directory/);
-  const skills = await f.run('search_skills', { query: '*' });
+  const skills = await f.run('search_plugins', { query: '*' });
   assert.equal(skills.result.matches[0].mainResource, join(f.skill, 'SKILL.md'));
   const read = await f.run('read_file', { path: skills.result.matches[0].mainResource, environment: 'local' });
   assert.equal(read.kind, 'returned', JSON.stringify(read));

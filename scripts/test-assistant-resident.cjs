@@ -40,6 +40,9 @@ async function run() {
   }
   // Persisted selection works without CLI flags and without opening a renderer first.
   fs.writeFileSync(path.join(root, 'assistant-resident.json'), JSON.stringify({ enabled: resident, language: 'en' }));
+  const library = require('../assets/skills/cardbush-docs/scripts/home-library.cjs').openLibrary(root);
+  library.publish({id:'fixture', title:'Fixture card', html:'<p>Local content</p>'});
+  library.close();
   const at = new Date(Date.now() + 28_000).toISOString();
   const friends = path.join(root, 'runtime-state', 'friends');
   fs.mkdirSync(friends, { recursive: true });
@@ -82,7 +85,12 @@ async function run() {
   // Hold the real call before audio capture so the test exercises voice controls without a microphone.
   const ipc=electron.ipcMain, handle=ipc.handle;
   let audioGate;
+  let floatingLibraryReads = 0;
   ipc.handle=function(channel,listener) {
+    if (channel === 'home-components:library') return handle.call(this,channel,(event,...args) => {
+      if (event.sender.getURL().includes('window=assistant')) floatingLibraryReads++;
+      return listener(event,...args);
+    });
     if (channel !== 'voice:settings') return handle.call(this,channel,listener);
     return handle.call(this,channel,async (...args)=>{ await audioGate; return listener(...args); });
   };
@@ -94,7 +102,13 @@ async function run() {
     return ()=>{release();audioGate=undefined;};
   };
   await wait(() => tray && menu, 'tray');
-  assert.deepEqual(menu.items.map(item => item.type), ['normal', 'normal', 'normal'], 'tray independently opens Home and the floating Assistant, or quits');
+  assert.deepEqual(menu.items.map(item => item.type), ['normal', 'checkbox', 'separator', 'normal'], 'tray groups Home and the floating Assistant separately from Quit');
+  for (const item of [menu.items[0], menu.items.at(-1)]) {
+    const icon = typeof item.icon === 'string' ? electron.nativeImage.createFromPath(item.icon) : item.icon;
+    assert.deepEqual(icon.getSize(), {width:16,height:16}, 'action icons occupy the native checkmark column');
+  }
+  assert.ok(!menu.items[1].icon, 'the checkbox uses just the native state indicator');
+  assert.equal(menu.items[1].checked, false);
   const stats = {};
   if (resident) {
     await sleep(1500); stats.idle = take();
@@ -107,6 +121,9 @@ async function run() {
     const win = await wait(() => BrowserWindow.getAllWindows()[0], 'notification opened Assistant');
     await wait(() => win.webContents.executeJavaScript('Boolean(document.querySelector(".resident-assistant .floating-capsule"))'), 'floating Assistant');
     assert.equal(win.isAlwaysOnTop(), true);
+    assert.equal(menu.items[1].checked, true);
+    assert.deepEqual(await win.webContents.executeJavaScript('window.cardbushDesktop.assistantHomeComponentCatalog()'), [{id:'fixture', title:'Fixture card'}]);
+    await win.webContents.executeJavaScript("for(let i=0;i<4;i++) window.dispatchEvent(new Event('focus'))");
     await wait(() => win.webContents.executeJavaScript('document.querySelector(".capsule-replies")?.innerText.includes("Resident reminder")'), 'same journal');
     assert.equal(await win.webContents.executeJavaScript('!!document.querySelector("[data-nav-section]")'), false);
     await sleep(1500); stats.open = take();
@@ -114,7 +131,23 @@ async function run() {
     await wait(()=>win.webContents.executeJavaScript("!!document.querySelector('.capsule-form input')"), 'inline editor');
     await win.webContents.executeJavaScript(`(() => { const n = document.querySelector('.capsule-form input'); if (!n) throw Error('missing composer');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'Unsent fixture draft'); n.dispatchEvent(new Event('input',{bubbles:true})); })()`);
-    await sleep(150); win.close(); await sleep(150); assert.ok(!win.isDestroyed() && !win.isVisible());
+    const popup = electron.Menu.prototype.popup;
+    let usedContextMenu = false;
+    electron.Menu.prototype.popup = function (options) {
+      const close = this.getMenuItemById('close-floating-assistant');
+      if (!close) return popup.call(this, options);
+      assert.deepEqual(this.items.slice(0, 3).map(item => item.role), ['cut', 'copy', 'paste']);
+      usedContextMenu = true;
+      options.callback(); close.click();
+    };
+    try {
+      await sleep(150);
+      const point = await win.webContents.executeJavaScript("(()=>{const b=document.querySelector('.capsule-form input').getBoundingClientRect();return {x:Math.round(b.x+b.width/2),y:Math.round(b.y+b.height/2)}})()");
+      for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type,button:'right',clickCount:1,...point});
+      await wait(()=>usedContextMenu && !win.isVisible(), 'right-click closes the capsule');
+    } finally { electron.Menu.prototype.popup = popup; }
+    assert.ok(!win.isDestroyed(), 'closing retains the draft');
+    assert.equal(menu.items[1].checked, false);
     const openDraft = async target => {
       await wait(() => target.webContents.executeJavaScript("!!document.querySelector('[data-action=compose]')"), 'draft collapsed to toolbar');
       await target.webContents.executeJavaScript("document.querySelector('[data-action=compose]').click()");
@@ -153,7 +186,7 @@ async function run() {
       const restored = await readCatalog(next);
       assert.ok(restored.ok && restored.result.servers.some(s => s.id === 'plugin_xlsx_documents' && s.tools.length), 'document tools remain available after idle');
     }
-    menu.items[1].click();
+    if (!menu.items[1].checked) menu.items[1].click();
     const capsule = await wait(() => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes('window=assistant')), 'resident capsule');
     await wait(() => capsule.webContents.executeJavaScript("!!document.querySelector('[data-action=compose]')"), 'resident toolbar');
     await capsule.webContents.executeJavaScript("document.querySelector('[data-action=compose]').click()");
@@ -177,6 +210,7 @@ async function run() {
     await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, openHome: () => tray.emit('click'),
       openAssistant: () => menu.items[1].click(), wait, root, project, holdAudioSettings });
   }
+  assert.equal(floatingLibraryReads, 0, 'the floating window never requests the full home component library');
   fs.writeFileSync(path.join(root, 'metrics.json'), JSON.stringify(stats, null, 2));
   menu.items.at(-1).click();
 }

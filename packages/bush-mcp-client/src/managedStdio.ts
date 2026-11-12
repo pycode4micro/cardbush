@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { ReadBuffer, serializeMessage, type JSONRPCMessage, type Transport } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, type StdioServerParameters } from '@modelcontextprotocol/client/stdio';
 import { ManagedProcessScope, reserveProcessResources, type ProcessResourceLease, type GuardedProcess } from '@cardbush/bush-runtime/processes';
+import { pluginRuntimeCommand, pluginRuntimeEnvironment } from '@cardbush/platform';
 
 /** Keep the SDK's filtered inheritance, plus the Windows command/runtime essentials. */
 export function stdioEnvironment(overrides: Record<string, string> = {}): Record<string, string> {
@@ -74,13 +75,14 @@ export class ManagedStdioClientTransport implements Transport {
   }
 
   async #start(): Promise<void> {
-    const env = stdioEnvironment(this.parameters.env);
-    let executable = this.parameters.command, args = this.parameters.args ?? [];
+    const env = pluginRuntimeEnvironment(stdioEnvironment(this.parameters.env));
+    const invocation = pluginRuntimeCommand(this.parameters.command, this.parameters.args ?? []);
+    let executable = invocation.command, args = invocation.args;
     if (process.platform === 'win32') {
       if (env.ELECTRON_RUN_AS_NODE !== undefined) env.CARDBUSH_MCP_ORIGINAL_NODE_MODE = env.ELECTRON_RUN_AS_NODE;
       env.ELECTRON_RUN_AS_NODE = '1';
       executable = process.execPath;
-      args = [fileURLToPath(new URL('./stdioProcessEntry.js', import.meta.url)), this.parameters.command, ...args];
+      args = [fileURLToPath(new URL('./stdioProcessEntry.js', import.meta.url)), invocation.command, ...args];
     }
     try {
       await this.prepare();

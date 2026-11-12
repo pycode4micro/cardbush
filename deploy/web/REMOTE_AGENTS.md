@@ -38,7 +38,7 @@ SSH 服务器必须能从 NAS 访问，SSH 服务需允许到 `127.0.0.1:4780`�
 
 ## 3. 自动切片技能
 
-网站内置 `auto-video-slicing`，通过 `search_skills` 发现并读取；位置是 `assets/skills/auto-video-slicing/SKILL.md`。它只整理和委派任务，网站不会安装百应、剪辑或千川工具。远程 Agent 需要自行配置这些能力，并在注册时写清能力说明。
+网站内置 `auto-video-slicing`，通过 `search_plugins` 发现并读取；位置是 `assets/skills/auto-video-slicing/SKILL.md`。它只整理和委派任务，网站不会安装百应、剪辑或千川工具。远程 Agent 需要自行配置这些能力，并在注册时写清能力说明。
 
 用户示例：
 

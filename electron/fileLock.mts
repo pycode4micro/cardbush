@@ -5,7 +5,7 @@ const { lock } = createRequire(import.meta.url)('proper-lockfile') as {
 };
 
 /** A bounded, crash-recoverable lock shared by App and CLI processes. */
-export async function withWorkerStoreLock<T>(path: string, action: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(path: string, action: () => Promise<T>): Promise<T> {
   let compromised: Error | undefined;
   const release = await lock(path, { realpath: false, stale: 30_000, update: 5_000,
     retries: { retries: 100, factor: 1, minTimeout: 100, maxTimeout: 100 },

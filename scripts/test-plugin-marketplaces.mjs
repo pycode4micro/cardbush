@@ -1,3 +1,6 @@
+import { loadPluginSearchPackages } from '../dist-electron/pluginSearchPackages.mjs';
+import { registerMcpDiscovery, ToolRegistry } from '@cardbush/bush-runtime';
+import { CardbushAppsConfigStore } from '@cardbush/product-host';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -46,7 +49,7 @@ const fetcher=async input=>{
  }
  return new Response('',{status:404});
 };
-const options={dataRoot:join(root,'markets'),userPluginRoot:join(root,'installed'),bundledPluginRoot:resolve('assets/plugins'),fetch:fetcher};
+const options={dataRoot:join(root,'plugin-marketplaces'),userPluginRoot:join(root,'installed'),bundledPluginRoot:resolve('assets/plugins'),fetch:fetcher};
 const replacements=[];
 const service=new PluginMarketplaceService({...options,replacePlugin:async(id,replace)=>{replacements.push(id);return replace();}});
 try{
@@ -60,6 +63,22 @@ try{
  const catalog=await service.catalog(source.id);
  assert.equal(catalog.displayName,'Native market');
  assert.equal(catalog.entries[0].available,true);
+ const requestsBeforeSearch = requests.length;
+ const searchRoots = [{ path: options.bundledPluginRoot, source: 'bundled' }, { path: options.userPluginRoot, source: 'user' }];
+ const searchConfig = join(root, 'search-config.json');
+ const registry = new ToolRegistry();
+ registerMcpDiscovery(registry, undefined, undefined, () => loadPluginSearchPackages(searchRoots, searchConfig));
+ const search = registry.resolve('search_plugins');
+ const request = { sessionId: 'local-discovery', turnId: 'turn', tools: registry.definitions(), metadata: {} };
+ const find = async (name, mode) => {
+   const result = await search.execute({ input: search.decodeInput({ query: name, mode }), turn: { request } });
+   return result.matches.filter(card => card.kind === 'plugin' && card.name === name);
+ };
+ for (const mode of ['plugins', 'all']) {
+   assert.deepEqual(await find(native.name, mode), [], 'a cached marketplace listing is not a local package');
+   assert.equal((await find('chrome', mode))[0]?.source, 'bundled', 'optional bundled packages are discoverable');
+ }
+ assert.equal(requests.length, requestsBeforeSearch, 'searching package metadata requires no new download');
  assert.equal(catalog.entries[1].available,false);
  assert.equal(catalog.entries[2].available,false,'unsupported entry does not break the whole catalog');
  // Transient resets are retried once; persistent raw-host failures use the pinned GitHub Contents API.
@@ -87,6 +106,15 @@ try{
  const readsBeforeInstall=requests.length;
  const installed=await service.install(preview.token);
  assert.equal(installed.id,native.name);
+ for (const mode of ['plugins', 'all']) {
+   const cards = await find(native.name, mode);
+   assert.deepEqual(cards.map(card => [card.source, card.installed, card.version]), [['user', true, native.version]]);
+ }
+ const store = new CardbushAppsConfigStore(searchConfig, { loadCatalog: excluded => loadProductPluginCatalog(searchRoots, excluded) });
+ await store.write({ serviceEnabled: true, plugins: [{ id: native.name, installed: true, enabled: false }] });
+ assert.equal((await find(native.name, 'plugins'))[0]?.enabled, false, 'disabled installed packages remain discoverable');
+ await store.write({ serviceEnabled: true, plugins: [{ id: native.name, installed: false, enabled: false }] });
+ assert.deepEqual(await find(native.name, 'all'), [], 'an uninstalled user package is excluded even if files remain');
  assert.equal(await readFile(join(options.userPluginRoot,native.name,'.editor/skills/greet/SKILL.md'),'utf8'),await readFile(join(options.userPluginRoot,native.name,'skills/greet/SKILL.md'),'utf8'));
  assert.deepEqual(requests.slice(readsBeforeInstall),[`https://codeload.github.com/fixture/native/zip/${sha}`],'install downloads the pinned snapshot without looking up a moved branch');
  assert.equal(JSON.parse(await readFile(join(options.userPluginRoot,native.name,'.cardbush-marketplace.json'),'utf8')).revision,sha);

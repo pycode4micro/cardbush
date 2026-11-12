@@ -68,6 +68,7 @@ import {
   loadEnabledProductRuntimeExtensions,
   type PluginRoot, type DeferredPluginServer,
 } from './productPlugins.js';
+import { loadPluginSearchPackages } from './pluginSearchPackages.mjs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -933,6 +934,7 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 
 host = new InMemoryRuntimeHost({
   preparePluginSearch,
+  loadPluginPackages: () => loadPluginSearchPackages(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim()),
   prepareToolCatalog: async tool => {
     await ensureMcpDirectory();
     const servers = new Set([...pluginServerDirectory.keys(), ...(effectiveMcp?.servers.map(server => server.id) ?? [])]);

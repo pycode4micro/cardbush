@@ -301,6 +301,7 @@ export interface InMemoryRuntimeHostOptions {
   toolRegistry?: ToolRegistry;
   /** Restore the MCP server for a verified event collector after a cold start. */
   prepareToolCatalog?: (toolName: string) => Promise<void> | undefined;
+  loadPluginPackages?: import('./pluginSearch.js').PluginPackageSource;
   preparePluginSearch?: import('./mcpToolDiscovery.js').PreparePluginSearch;
   createPermissionId?: () => string;
   checkpointStore?: RuntimeCheckpointStore;
@@ -501,7 +502,7 @@ export class InMemoryRuntimeHost {
     this.#wait = options.wait ?? wait;
     this.#projectorOptions = options.projectorOptions ?? {};
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
-    registerMcpDiscovery(this.#toolRegistry, options.loadSearchResultLimit, options.preparePluginSearch);
+    registerMcpDiscovery(this.#toolRegistry, options.loadSearchResultLimit, options.preparePluginSearch, options.loadPluginPackages);
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     registerFileMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
     registerSourceMemoTools(this.#toolRegistry, this.#toolExecutions, this.#remoteWorkspace);
@@ -2282,7 +2283,7 @@ export class InMemoryRuntimeHost {
     delete request.metadata.mcpDiscoveredToolNames;
     delete request.metadata.mcpDiscoveredToolVersions;
     delete request.metadata.mcpModelToolSnapshot;
-    request.metadata.mcpToolDiscovery = request.tools.some(tool => tool.name === 'mcp_search') &&
+    request.metadata.mcpToolDiscovery = request.tools.some(tool => tool.name === 'search_plugins' || tool.name === 'mcp_search') &&
       request.tools.some(tool => tool.name === 'call_tool');
     const identity: RuntimeEventIdentity = {
       requestId: request.requestId,

@@ -325,6 +325,7 @@ export async function followAgentTurn(client: Client, job: Job, io: ChatTerminal
 
 const help = `CardBush CLI (local conversations and remote subagent workers)
 Usage: cardbush [options]
+       cardbush runtime --help
        cardbush --resume [session-id] [options]
        cardbush serve --data-dir <directory> [service-options]
        cardbush serve --background | --status | --stop

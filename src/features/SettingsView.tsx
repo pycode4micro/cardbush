@@ -4,6 +4,7 @@ import { uiText, formatMessageList } from '../i18n';
 import { modelRequestHeaders } from '@cardbush/bush-protocol';
 import { normalizeAppearance, updateAppearanceProfile } from './appearance/appearancePreferences';
 import { useSettingsHost } from './settings/SettingsHostContext';
+import { PluginRuntimeSettings } from './settings/PluginRuntimeSettings';
 import { SandboxSettingsPanel } from './settings/SandboxSettingsPanel';
 import { ModelsSettingsPanel } from './settings/ModelsSettingsPanel';
 import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
@@ -313,6 +314,7 @@ export function SettingsView({
       return (
         <div className="settings-stack">
           <SandboxSettingsPanel language={language}/>
+          <PluginRuntimeSettings language={language} visible={visible}/>
           <SettingsCard
             title={uiText(language)('settingsView.defaultTerminal')}
             subtitle={

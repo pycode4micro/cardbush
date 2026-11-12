@@ -285,6 +285,34 @@ app.whenReady().then(async () => {
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
       return;
     }
+    if (process.env.CARDBUSH_SETTINGS_CASE === 'plugin-runtimes') {
+      await run(`
+        window.runtimeRequests = [];
+        const installed = [{kind:'node',versions:[]},{kind:'python',versions:[]}];
+        window.cardbushDesktop.managePluginRuntime = async (action, kind, version) => {
+          runtimeRequests.push([action,kind,version]);
+          const item = installed.find(r => r.kind === kind);
+          if (action === 'install') { item.active='3.12.1'; item.versions=[item.active]; }
+          if (action === 'update') { item.active='3.12.2'; item.versions.push(item.active); }
+          if (action === 'use') item.active=version;
+          return structuredClone(installed);
+        };
+        void 0;
+      `);
+      await click('运行环境');
+      await until("runtimeRequests.length > 0");
+      assert.ok(await run("runtimeRequests.every(r => r[0] === 'list')"));
+      await click('安装并使用');
+      await until("!!document.querySelector('[name=plugin-runtime-python]') || document.querySelector('.settings-content')?.textContent.includes('3.12.1')");
+      await click('更新当前系列');
+      await until("document.querySelector('.settings-content')?.textContent.includes('3.12.2')");
+      assert.ok(await run("runtimeRequests.some(r=>r[0]==='update' && r[1]==='python')"));
+      await choose('[name=plugin-runtime-python] + [role=combobox]', '3.12.1');
+      await until("document.querySelector('[name=plugin-runtime-python]')?.value === '3.12.1'");
+      assert.ok(await run("runtimeRequests.some(r=>r[0]==='use' && r[1]==='python' && r[2]==='3.12.1')"));
+      console.log('Plugin runtime settings passed: offline opening, explicit installation, update and switching back.');
+      return;
+    }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'sandbox') {
       await click('运行环境');
       await until("document.querySelector('.settings-sandbox-status')?.textContent === '未安装'");

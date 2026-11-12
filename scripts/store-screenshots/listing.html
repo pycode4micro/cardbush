@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="{{locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CardBush {{version}}</title>
+  <style>
+    :root{color-scheme:light dark;font:16px/1.65 system-ui,sans-serif}
+    body{max-width:66rem;margin:2rem auto;padding:0 clamp(1rem,4vw,3rem)}
+    nav{display:flex;gap:1.5rem}h1{font-size:2.5rem}h2{margin-top:2rem}
+    p,li{max-width:80ch}img{height:auto;width:100%;border:1px solid #8886;border-radius:.5rem}
+    p:has(img){max-width:none}a{color:inherit}
+  </style>
+</head>
+<body>
+  <nav><a href="../zh-CN/index.html" lang="zh-CN">简体中文</a><a href="../en-US/index.html" lang="en-US">English</a></nav>
+  <main>{{content}}</main>
+</body>
+</html>

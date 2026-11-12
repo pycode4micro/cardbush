@@ -32,7 +32,7 @@ Use the desktop app for a visual workspace, or install the Agent and CLI from np
 | Desktop installers | [GitHub Releases](https://github.com/pycode4micro/cardbush/releases) | Choose assets actually attached to a release, for the matching OS and architecture. |
 | Current source | [Development guide](CONTRIBUTING.md) | Build on the target operating system. |
 
-These channels have separate release schedules. As of November 6, 2026, npm provides **1.0.14**. Current source is **1.0.15**, being prepared as an Agent + CLI npm package and a **1.0.15.0** Microsoft Store MSIX; see the [release notes](docs/releases/1.0.15.md). Candidate packages and release notes do not mean publication. Use the actual assets on GitHub Releases and the Store listing to check desktop availability.
+The 1.0.16 release build includes the Agent + CLI npm package and the Windows x64 Store MSIX (1.0.16.0). See the [release notes](docs/releases/1.0.16.md) and check the relevant distribution channel for published versions.
 
 Current desktop source targets **Windows 10 1809+ / Windows 11 x64** and **Linux x64**. The Store package can have a different minimum version until a compatible update is released. There are no published macOS, ARM64 or 32-bit desktop packages. See [installation and platform support](docs/INSTALLATION.md).
 
@@ -75,7 +75,7 @@ cardbush serve --stop
 
 The default service directory is `~/.cardbush/service`. For an explicit directory or a service manager, use `cardbush serve --data-dir /absolute/path/agent-data`. The service owns its own models, credentials and sessions. See [Agent deployment](docs/AGENT_SERVICES.en.md) and [Docker deployment](deploy/agent/README.en.md).
 
-Remote services are registered as subagent workers through Team or `cardbush worker`, rather than opened as standalone Agents chats. Use matching builds at both ends; for the unpublished 1.0.15 candidate, install its verified tarball or build its source. The [subagent-remote-proton protocol](docs/SUBAGENT_REMOTE_PROTOCOL.md) remains experimental. Local CLI chat remains available, including on a server.
+Register remote services as subagent workers through Team or `cardbush worker`. Use matching builds at both ends. To test 1.0.16 locally, install its verified tarball or build from the same source. The [subagent-remote-proton protocol](docs/SUBAGENT_REMOTE_PROTOCOL.md) remains experimental. Local CLI chat is available on desktops and servers.
 
 ## Documentation
 

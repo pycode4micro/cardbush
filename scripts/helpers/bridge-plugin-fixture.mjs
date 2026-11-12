@@ -32,7 +32,7 @@ export function bridgeModelStep(history, file, prefix = 'bridge') {
   const target = source.plugins?.flatMap(plugin => plugin.tools).find(name => name.endsWith('__send_file'));
   if (!target) throw Error('fixture_missing_bridge_plugin');
   const past = JSON.stringify(history);
-  if (!past.includes(`${prefix}-search-call`)) return { id: `${prefix}-search-call`, name: 'mcp_search', arguments: { query: target } };
+  if (!past.includes(`${prefix}-search-call`)) return { id: `${prefix}-search-call`, name: 'search_plugins', arguments: { query: target } };
   if (!past.includes(`${prefix}-schema-call`)) return { id: `${prefix}-schema-call`, name: 'get_tool_schema', arguments: { name: target } };
   if (!past.includes(`${prefix}-file-call`)) return { id: `${prefix}-file-call`, name: 'call_tool', arguments: { name: target, arguments: { file, request_id: `${prefix}-file` } } };
 }

@@ -1,7 +1,8 @@
 import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
-import { useEffect, useRef, useState } from 'react';
-import { Edit3, Mic, MicOff, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { Edit3, Mic, MicOff, PanelTop, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { ProfileMenuContext } from '../profile/ProfileMenu';
 import { confirmAction } from '../../components/confirmAction';
 import { showUiError } from '../../shared/showUiError';
 import { applicationVoiceSession } from '../voice/VoiceConversation';
@@ -11,6 +12,7 @@ import './assistant.css';
 
 export function useAssistantActions(language: string) {
   const profile = useAssistantProfile();
+  const controls = useContext(ProfileMenuContext);
   const [renaming, setRenaming] = useState(false), [resetting, setResetting] = useState(false);
   const reset = async () => {
     if (resetting || !await confirmAction({
@@ -40,6 +42,8 @@ export function useAssistantActions(language: string) {
   return { profile, items: [
     { key: 'assistant-reset', icon: <RotateCcw size={15}/>, label: uiText(language)('useAssistantActions.resetContext'), danger: true, disabled: resetting, onClick: () => void reset() },
     { key: 'assistant-rename', icon: <Edit3 size={15}/>, label: uiText(language)('useAssistantActions.rename'), onClick: () => setRenaming(true) },
+    { key: 'assistant-floating', icon: <PanelTop/>, label: uiText(language)(controls?.floating ? 'resident.closeAssistant' : 'resident.openAssistant'),
+      disabled: controls?.floating === undefined, onClick: () => controls?.select('float') },
     { key: 'assistant-microphone', icon: profile.microphoneMuted ? <MicOff size={15}/> : <Mic size={15}/>, separatorBefore: true,
       label: profile.microphoneMuted ? uiText(language)('useAssistantActions.unmuteMicrophone') : uiText(language)('useAssistantActions.muteMicrophone'), onClick: () => toggleMute('microphoneMuted') },
     { key: 'assistant-output', icon: profile.outputMuted ? <VolumeX size={15}/> : <Volume2 size={15}/>,

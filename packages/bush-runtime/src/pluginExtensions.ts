@@ -144,9 +144,23 @@ export function pluginAgentTools(agent: PluginAgent, exposed: string[]): string[
   }));
   const allowed = agent.tools ? expand(agent.tools) : undefined;
   const denied = expand(agent.disallowedTools ?? []);
+  // Installed profiles may still declare either historical discovery name.
+  if (allowed?.has('search_skills') || allowed?.has('mcp_search')) allowed.add('search_plugins');
   const result = exposed.filter(name => (!allowed || allowed.has(name)) && !denied.has(name));
-  if (result.some(name => name.startsWith('mcp__'))) for (const name of ['mcp_search', 'get_tool_schema', 'call_tool']) if (exposed.includes(name) && !denied.has(name) && !result.includes(name)) result.push(name);
+  if (result.some(name => name.startsWith('mcp__'))) for (const name of ['search_plugins', 'mcp_search', 'get_tool_schema', 'call_tool']) if (exposed.includes(name) && !denied.has(name) && !result.includes(name)) result.push(name);
   return result;
+}
+
+/** An older profile can grant Skill lookup without granting package inventory or MCP discovery. */
+export function pluginAgentSearchModes(agent: PluginAgent, tools: ReadonlySet<string>) {
+  const declared = agent.tools, denied = new Set(agent.disallowedTools);
+  const full = !declared || declared.includes('search_plugins');
+  if (denied.has('search_plugins')) return [];
+  return [
+    ...(full && !denied.has('search_skills') && !denied.has('Skill') || tools.has('search_skills') ? ['skill'] : []),
+    ...(full && !denied.has('mcp_search') || tools.has('mcp_search') ? ['mcp'] : []),
+    ...(full ? ['plugins'] : []),
+  ];
 }
 
 export function validateAgentSkills(agent: PluginAgent | undefined, request: Pick<ModelRequest, 'metadata' | 'tools'>, registry: ToolRegistry): void {

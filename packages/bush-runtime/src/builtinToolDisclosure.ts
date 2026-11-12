@@ -89,7 +89,7 @@ export function registerBuiltinToolDisclosure(registry: ToolRegistry) {
   }).strict().refine(value => (value.name !== undefined) !== (value.names !== undefined), 'Provide name or names, not both.');
   registry.register({
     directInvocation: true,
-    definition: { name: 'get_tool_schema', description: 'Load complete current tool definitions: name for one exact native/MCP name, or names for up to 16. Read the returned schemas before calling call_tool({name, arguments}); direct controls use their returned invocation. Use mcp_search only to discover names. Batch errors are per name; deferred definitions still need loading, and oversized schemas require a complete archive read. Loading executes no target and grants no permissions.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
+    definition: { name: 'get_tool_schema', description: 'Load complete current tool definitions: name for one exact native/MCP name, or names for up to 16. Read the returned schemas before calling call_tool({name, arguments}); direct controls use their returned invocation. Use search_plugins only to discover names. Batch errors are per name; deferred definitions still need loading, and oversized schemas require a complete archive read. Loading executes no target and grants no permissions.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
     manifest: { effect_kind: 'observation', operation: 'tools.schema', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: false },
     parallelSafe: true, decodeInput: value => schema.parse(value),
     execute: context => {

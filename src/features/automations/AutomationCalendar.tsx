@@ -10,9 +10,10 @@ import { calendarDayKey, calendarEntriesForDays, calendarMonthDays, importedEntr
 
 import type { FriendsSnapshot } from '@cardbush/bush-protocol';
 
-export function AutomationCalendar({ language, snapshot }: { language: string; snapshot?: FriendsSnapshot }) {
+export function AutomationCalendar({ language, snapshot, initialDay, onSelectDay }: { language: string; snapshot?: FriendsSnapshot; initialDay?: Date; onSelectDay?(day: Date): void }) {
   const uiLanguage = language, locale = language;
-  const [now, setNow] = useState(Date.now), [selected, setSelected] = useState(() => localDay(new Date()));
+  const [now, setNow] = useState(Date.now), [selected, setDay] = useState(() => initialDay ?? localDay(new Date()));
+  const setSelected = (day: Date) => { setDay(day); onSelectDay?.(day); };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const data = useCalendarData(), { jobs } = useCalendarJobs();
   const days = useMemo(() => calendarMonthDays(selected), [selected]);
@@ -40,7 +41,7 @@ export function AutomationCalendar({ language, snapshot }: { language: string; s
     return () => { clearInterval(timer); window.removeEventListener('focus', tick); document.removeEventListener('visibilitychange', tick); };
   }, []);
   useEffect(() => { if (focus.current) { buttons.current.get(selectedKey)?.focus(); focus.current = false; } }, [selectedKey]);
-  const move = (month: number) => { details.close(); setSelected(date => shiftCalendarMonth(date, month)); };
+  const move = (month: number) => { details.close(); setSelected(shiftCalendarMonth(selected, month)); };
   return <div className="builtin-calendar calendar-surface">
     <div className="builtin-calendar-heading calendar-month-heading">
       <strong aria-live="polite">{selected.toLocaleDateString(locale, { year: 'numeric', month: 'long' })}</strong>

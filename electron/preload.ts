@@ -546,7 +546,14 @@ const desktopApi = {
       outputTruncated?: boolean;
     }>,
   assembleHomeComponent: (files: {name: string; text: string}[]) => ipcRenderer.invoke('home-components:assemble', files),
+  managePluginRuntime: (action: string, kind?: string, version?: string) => ipcRenderer.invoke('plugin-runtimes:manage', action, kind, version),
   homeComponentLibrary: (action: string, revision?: number, items?: unknown[]) => ipcRenderer.invoke('home-components:library', action, revision, items),
+  assistantHomeComponentCatalog: () => ipcRenderer.invoke('assistant:home-component-catalog'),
+  onAssistantFloatingChanged: (listener: (visible: boolean) => void) => {
+    const handle = (_event: Electron.IpcRendererEvent, visible: boolean) => listener(visible);
+    ipcRenderer.on('assistant:floating-changed', handle);
+    return () => { ipcRenderer.removeListener('assistant:floating-changed', handle); };
+  },
   onHomeComponentsChanged: (listener: () => void) => {
     const changed = () => listener();
     ipcRenderer.on('home-components:changed', changed);

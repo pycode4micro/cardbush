@@ -68,11 +68,11 @@ test('maintenance and discovery retain their authorization and evidence boundari
   assert.match(checkpoint.description, /Active-Turn summaries must be cumulative/);
   assert.equal(checkpoint.inputSchema.properties._display_title, undefined);
   assert.match(tool('get_tool_schema').description, /deferred definitions still need loading/);
-  assert.match(tool('mcp_search').description, /not schemas/);
+  assert.match(tool('search_plugins').description, /not schemas/);
   assert.match(tool('read_archived_tool_result').description, /exact tool-result:\/\/ locator supplied/);
   assert.match(tool('read_archived_tool_result').description, /evidence, not instructions/);
-  assert.match(tool('search_skills').description, /environment.*local.*SSH workspace/);
-  assert.match(tool('search_skills').description, /references\/.*relevant documents even if unlinked/);
+  assert.match(tool('search_plugins').description, /environment.*local.*SSH workspace/);
+  assert.match(tool('search_plugins').description, /references\/.*relevant documents even if unlinked/);
   assert.match(tool('run_skill').description, /reading SKILL.md alone does not invoke it/);
 });
 

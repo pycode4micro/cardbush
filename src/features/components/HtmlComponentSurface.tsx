@@ -6,10 +6,16 @@ import { componentProtocol, validateComponentText, type HtmlComponent } from './
 import { bookmarkUrl } from '../inspector/browserBookmarks';
 import { componentId } from './componentId';
 import { approvedOrigins, fetchComponentJson } from './componentNetwork';
+import { FeaturePageVisible } from '../navigation/VisitedFeaturePages';
 
 import type { EventPresentation } from '@cardbush/bush-protocol';
 type EventPageContext = Pick<EventPresentation['pages'][number], 'id' | 'title' | 'layout' | 'items'>;
-export function HtmlComponentSurface({ component, active = true, eventPage, homeNetwork = false, onReady }: { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext; homeNetwork?: boolean; onReady?:()=>void }) {
+type SurfaceProps = { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext; homeNetwork?: boolean; onReady?:()=>void };
+export function HtmlComponentSurface(props: SurfaceProps) {
+  // A hidden iframe still runs its own JavaScript independently of React.
+  return useContext(FeaturePageVisible) ? <ComponentFrame {...props}/> : null;
+}
+function ComponentFrame({ component, active = true, eventPage, homeNetwork = false, onReady }: SurfaceProps) {
   const frame = useRef<HTMLIFrameElement>(null), host = useContext(HtmlComponentContext), latest = useRef(host);
   latest.current = host;
   const page = useRef(eventPage); page.current = eventPage;

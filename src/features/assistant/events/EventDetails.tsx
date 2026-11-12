@@ -7,11 +7,13 @@ import { solutionInteractionAnswer } from '../../interactions/solutionSelectionM
 import { createRuntimeInteractions } from '../../../runtime-client/RuntimeInteractionBridge';
 import { eventBackend } from './eventBackend';
 import { EventResultDisclosure } from '../../automations/EventResultDisclosure';
+import { useDisclosureState } from '../../navigation/useDisclosureState';
 
-export function FriendsEventDetails({ event, snapshot, language, showHeading = true }: {
-  event?: FriendsWorkEvent; snapshot?: FriendsSnapshot; language: string; showHeading?: boolean;
+export function FriendsEventDetails({ event, snapshot, language, showHeading = true, expanded }: {
+  event?: FriendsWorkEvent; snapshot?: FriendsSnapshot; language: string; showHeading?: boolean; expanded?: Set<string>;
 }) {
   const t = uiText(language);
+  const history = useDisclosureState(JSON.stringify(['event', event?.id]), expanded);
   if (!event) return <p className="friends-empty">{t('yourFriends.noEvents')}</p>;
   const status = t(`yourFriends.status.${event.status}`);
   const due = snapshot?.detections.find(timer => timer.eventId === event.id);
@@ -26,11 +28,11 @@ export function FriendsEventDetails({ event, snapshot, language, showHeading = t
         time: date.format(new Date(due.at)), zone,
       })}
     </p>}
-    {execution && execution.runs.length > 0 && <details className="event-history">
+    {execution && execution.runs.length > 0 && <details className="event-history" {...history}>
       <summary>{t('assistant.events.runHistory')}</summary><ul>{[...execution.runs].reverse().map(run => {
         const label = <><time dateTime={run.at}>{date.format(new Date(run.at))}</time> · {t(run.status === 'awaiting_user_action' ? 'automationPanel.needsAttention' : `automationPanel.${run.status}`)}</>;
         return <li key={run.id}>{run.status === 'queued' || run.status === 'running' ? label :
-          <EventResultDisclosure jobId={execution.jobId} runId={run.id} summary={run.summary} language={language} ResultContent={MarkdownContent}>{label}</EventResultDisclosure>}</li>;
+          <EventResultDisclosure jobId={execution.jobId} runId={run.id} summary={run.summary} language={language} ResultContent={MarkdownContent} expanded={expanded}>{label}</EventResultDisclosure>}</li>;
       })}</ul></details>}
     {event.error && <p className="your-friends-error" role="alert">{t(event.interruptedTurnId ? 'yourFriends.executionInterrupted' : 'yourFriends.executionFailed')} <code>{event.error}</code></p>}
     {event.result && <><h3>{t('yourFriends.latestResult')}</h3><div className="friends-result">{execution ? <p>{event.result.text}</p> : <MessageFileReferenceScope workspaceRoot={snapshot?.workspaceDir}>

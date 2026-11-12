@@ -27,7 +27,7 @@ test('MCP discovery hides large catalogs, retains permission checks and cannot c
   const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry); let executions = 0, asks = 0;
   for (let i = 0; i < 1000; i++) registry.register({ ...mcp(`mcp__service${i}__lookup`, `service${i}`, () => { executions++; return { found: true }; }), authorize: () => ({ kind: 'ask', request: { reason: 'External tool', actions: ['read'], targets: [], capabilityIds: ['mcp'] } }) });
   const req = request(registry, { metadata: { mcpToolDiscovery: true } });
-  assert.deepEqual(modelToolDefinitions(registry, req).map(tool => tool.name), ['mcp_search', 'get_tool_schema', 'call_tool']);
+  assert.deepEqual(modelToolDefinitions(registry, req).map(tool => tool.name), ['search_plugins', 'get_tool_schema', 'call_tool']);
   const runner = coordinator(registry, async permission => { asks++; return { decision: 'deny', grantedCapabilityIds: [] }; });
   assert.equal((await call(runner, req, 'mcp__service42__lookup', {})).error.code, 'mcp_discovery_required');
   const searched = await call(runner, req, 'get_tool_schema', { name: 'mcp__service42__lookup' });
@@ -37,7 +37,7 @@ test('MCP discovery hides large catalogs, retains permission checks and cannot c
   const denied = await call(runner, req, 'call_tool', { name: searched.result.matches[0].name, arguments: {} });
   assert.equal(denied.kind, 'failed'); assert.equal(asks, 1); assert.equal(executions, 0);
   const other = request(registry, { sessionId: 'other', metadata: { mcpToolDiscovery: true }, tools: req.tools.filter(tool => !tool.name.includes('service42')) });
-  assert.equal((await call(runner, other, 'mcp_search', { query: '*', server: 'service42' })).result.total, 0);
+  assert.equal((await call(runner, other, 'search_plugins', { query: '*', server: 'service42' })).result.total, 0);
   assert.equal((await call(runner, other, 'call_tool', { name: 'mcp__service42__lookup', arguments: {} })).kind, 'failed');
   const recovered = request(registry, { metadata: structuredClone(req.metadata), messages: structuredClone(req.messages) });
   assert.equal((await call(runner, recovered, 'call_tool', { name: 'mcp__service42__lookup', arguments: {} })).error.code, 'permission_rejected');

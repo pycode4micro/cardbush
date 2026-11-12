@@ -33,8 +33,8 @@ try {
   const observed = [];
   const host = new InMemoryRuntimeHost({ toolRegistry: registry, dataRoot: join(root, 'runtime'), loadPluginExtensions: loader,
     provider: { async *stream(req) { observed.push(req); yield* answer(req, req.metadata.agentRole === 'child' ? 'Reviewed in isolation.' : 'Done.'); } } }); hosts.push(host);
-  const search = registry.resolve('search_skills');
-  assert.ok(!(await search.execute({ input: { query: 'review', limit: 10 } })).matches.some(skill => skill.name.endsWith(':manual')));
+  const search = registry.resolve('search_plugins');
+  assert.ok(!(await search.execute({ input: search.decodeInput({ mode: 'skill', query: 'review', limit: 10 }), turn: { request: request(registry, 'discover', 'review') } })).matches.some(skill => skill.name.endsWith(':manual')));
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('Unexpected approval'); } } });
   const req = request(registry, 'deny', 'review');
   const denied = await coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'auto', name: 'run_skill', argumentsText: JSON.stringify({ command: 'compat:manual' }) }, { requestId: req.requestId, sessionId: req.sessionId, turnId: req.turnId, ordinal: 0, round: 1 }, undefined, { request: req, contextMessages: [] });

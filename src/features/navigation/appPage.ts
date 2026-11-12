@@ -1,6 +1,6 @@
 import type { AppSection } from '../../types';
 import type { SettingsPage } from '../settings/settingsNavigation';
-export type HomePage = { kind: 'overview' | 'events' | 'projects' | 'recent' } |
+export type HomePage = { kind: 'overview'; editing?: true } | { kind: 'events' | 'projects' | 'recent' } |
   { kind: 'project' | 'component'; id: string } | { kind: 'event'; id: string; page?: string };
 
 // A workspace is a window destination. Its host identifies the conversation

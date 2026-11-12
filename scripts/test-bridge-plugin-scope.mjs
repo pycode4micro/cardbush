@@ -17,7 +17,7 @@ test('bridge plugins use ordinary search, isolate sessions and sources, refresh 
   let extraRecipient = false;
   const plugins = new BridgePluginTools(registry, {
     catalog: async sessionId => catalog.filter(item => item.sessionId === sessionId),
-    context: async (sessionId, ref) => ({ discovery: 'mcp_search', available: true, source: ref ? source(ref) : undefined, targets: [source('source-a'), source('source-b'),
+    context: async (sessionId, ref) => ({ discovery: 'search_plugins', available: true, source: ref ? source(ref) : undefined, targets: [source('source-a'), source('source-b'),
       ...(extraRecipient ? [{ ...source('source-a'), sourceRef: 'another-recipient' }] : [])] }),
     call: async (sessionId, input) => { calls.push({ sessionId, input }); return { status: 'accepted' }; },
   }, id => id === 'child-a' ? 'a' : id);
@@ -35,11 +35,11 @@ test('bridge plugins use ordinary search, isolate sessions and sources, refresh 
   const execute = (sessionId, name, args, metadata = {}) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'call', name, argumentsText: JSON.stringify(args) },
     { requestId: 'r', sessionId, turnId: 't', round: 1, ordinal: 1 }, undefined,
     { request: { protocol: 'bush.model_request.v1', requestId: 'r', sessionId, turnId: 't', model: 'fixture', messages: [], tools: registry.definitions(), permissionMode: 'all_free', metadata }, contextMessages: [] });
-  assert.equal((await execute('a', 'mcp_search', { query: 'create_card' })).result.matches.length, 2);
-  assert.equal((await execute('a', 'mcp_search', { query: 'create_card' }, { botDeliveryLocalOnly: true })).result.matches.length, 0);
+  assert.equal((await execute('a', 'search_plugins', { query: 'create_card' })).result.matches.length, 2);
+  assert.equal((await execute('a', 'search_plugins', { query: 'create_card' }, { botDeliveryLocalOnly: true })).result.matches.length, 0);
   assert.equal((await execute('a', names[0], { title: 'local reminder' }, { botDeliveryLocalOnly: true })).kind, 'failed');
-  assert.equal((await execute('b', 'mcp_search', { query: '*' })).result.matches.length, 0, 'another conversation cannot discover these plugins');
-  assert.equal((await execute('child-a', 'mcp_search', { query: '*' })).result.matches.length, 2, 'authorized children retain the root connection scope');
+  assert.equal((await execute('b', 'search_plugins', { query: '*' })).result.matches.length, 0, 'another conversation cannot discover these plugins');
+  assert.equal((await execute('child-a', 'search_plugins', { query: '*' })).result.matches.length, 2, 'authorized children retain the root connection scope');
   assert.equal((await execute('a', names[1], { title: 'wrong platform' }, { botSourceRef: 'source-a' })).error.code, 'bridge_source_mismatch');
   assert.equal((await execute('a', names[0], { title: 'spoof', source_ref: 'source-b' }, { botSourceRef: 'source-a' })).error.code, 'bridge_source_mismatch');
   assert.equal((await execute('b', names[0], { title: 'foreign session' })).kind, 'failed');
@@ -62,7 +62,7 @@ test('bridge plugins use ordinary search, isolate sessions and sources, refresh 
   assert.equal(calls.at(-1).input.revision, 'c'.repeat(64));
   catalog = [];
   await plugins.sync('a');
-  assert.equal((await execute('a', 'mcp_search', { query: '*' })).result.matches.length, 0);
+  assert.equal((await execute('a', 'search_plugins', { query: '*' })).result.matches.length, 0);
   const count = calls.length;
   assert.equal((await execute('a', names[0], { title: 'disconnected' }, { botSourceRef: 'source-a' })).kind, 'failed');
   assert.equal(calls.length, count);

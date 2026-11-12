@@ -12,7 +12,6 @@
 .html-component-card > header { position: absolute; top: 0; left: 0; right: 0; height: 42px; padding: 0 12px; gap: 8px; display: flex; align-items: center; background: var(--surface); border-bottom: 1px solid var(--border); }
 .component-card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .html-component-card > header button { border: 0; padding: 4px 8px; height: 30px; }
-body.component-layout-editing iframe { pointer-events: none !important; }
 .component-import { max-height: calc(100vh - 64px); overflow: auto; width: min(640px, calc(100% - 32px)); }
 .component-import-heading { display: flex; align-items: center; justify-content: space-between; }
 .component-import textarea { resize: vertical; font-family: var(--code-font-family, monospace); }
@@ -21,10 +20,6 @@ body.component-layout-editing iframe { pointer-events: none !important; }
 .component-import .component-action-grant input { flex: none; }
 .html-component-error { padding: 16px; color: var(--text-soft); }
 @container (max-width:540px) { .html-component-card { grid-column: span 12; } }
-.components-app.home-components { height:auto; overflow:visible; padding:0; }
 .component-preview { position:fixed; inset:0; background:var(--surface); }
 .components-app > header :is(h1, h2) { margin:0; font-size:18px; }
 .components-app svg { width:16px; height:16px; }
-.home-component-picker { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
-.home-component-picker button { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); }
-.home-component-picker button:hover { background:var(--surface-hover); }

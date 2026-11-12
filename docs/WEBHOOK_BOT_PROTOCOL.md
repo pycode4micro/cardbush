@@ -6,7 +6,7 @@
 
 主动事件和对话共用 Assistant 的「连接服务」。可以绑定多个微信号；从外部发起的事件沿原连接和收件人回复，本地事件可在 Assistant 设置中选择默认通知对话。已有 Friends 桥在升级后沿用原令牌、消息回执和来源，无需再次配对。
 
-更新后重启 Cardbush 和独立桥。在 App 的任意页面从左下角“个人资料 → Webhook 连接”选择桥，CLI 输入 `/webhook`。绑定目标固定为 Assistant（`personal-assistant`）。旧普通会话连接停用，需要重新配对。已保存的 Assistant 连接自动恢复，无需再复制地址或令牌。桥声明的插件进入 Assistant 的工具搜索，Agent 使用 `mcp_search` → `get_tool_schema` → `call_tool`；Assistant 可以搜索并委派子任务执行。
+更新后重启 Cardbush 和独立桥。在 App 的任意页面从左下角“个人资料 → Webhook 连接”选择桥，CLI 输入 `/webhook`。绑定目标固定为 Assistant（`personal-assistant`）。旧普通会话连接停用，需要重新配对。已保存的 Assistant 连接自动恢复，无需再复制地址或令牌。桥声明的插件进入 Assistant 的工具搜索，Agent 使用 `search_plugins` → `get_tool_schema` → `call_tool`；Assistant 可以搜索并委派子任务执行。
 
 同一桥、同一发送者、同一外部对话在原任务执行期间再次发送普通消息，会立即追加到该轮。模型正在推理时取消该次模型请求并读取补充；正在执行的工具先安全返回，再带结果和补充继续。补充消息有独立的接收回执，任务结果由原消息返回。原轮已结束时新消息开启下一轮。不同账号、群聊、发送者及缺少来源标识的消息独立处理。
 

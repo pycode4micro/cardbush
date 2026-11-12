@@ -21,7 +21,7 @@ test('the shipped Browser Use catalog can be discovered for web research without
   add('blender', 'get_object_summary', 'Return the current object and its properties for the scene.');
   add('github', 'search', 'Search repository code and current issues for the project.');
   const request = { sessionId: 'browser-discovery', turnId: 'turn', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
-  const search = registry.resolve('mcp_search');
+  const search = registry.resolve('search_plugins');
   for (const query of ['web search news', 'search the internet for current news articles']) {
     const result = await search.execute({ input: search.decodeInput({ query, limit: 5 }), turn: { request, contextMessages: [] } });
     assert.equal(result.matches[0].name, 'mcp__browser_use__new_page');
@@ -130,19 +130,19 @@ test('saved default immediately affects both searches, overrides and pagination,
       });
     }
     const request = { sessionId: 's', turnId: 't', tools: registry.definitions(), messages: [{ role: 'user', content: 'Find relevant tools' }], metadata: { mcpToolDiscovery: true } };
-    const search = (name, input = {}) => {
-      const tool = registry.resolve(name);
-      return tool.execute({ input: tool.decodeInput({ ...(input.cursor ? {} : { query: 'fixture' }), ...input }), turn: { request, contextMessages: request.messages } });
+    const search = (mode, input = {}) => {
+      const tool = registry.resolve(mode === 'get_tool_schema' ? mode : 'search_plugins');
+      return tool.execute({ input: tool.decodeInput({ ...(input.cursor ? {} : mode === 'get_tool_schema' ? {} : { mode, query: 'fixture' }), ...input }), turn: { request, contextMessages: request.messages } });
     };
     return { registry, request, search };
   };
   const runtime = makeRuntime(), originalTools = JSON.stringify(modelToolDefinitions(runtime.registry, runtime.request));
   const originalMessages = JSON.stringify(runtime.request.messages);
-  for (const name of ['search_skills', 'mcp_search']) assert.equal((await runtime.search(name)).matches.length, 8);
+  for (const name of ['skill', 'mcp', 'all']) assert.equal((await runtime.search(name)).matches.length, 8);
   // Reuse registrations and the turn: a UI edit changes only subsequent tool results.
   for (const limit of [13, 1, 50, 8]) {
     await api.savePluginSearchResultLimit(limit);
-    for (const name of ['search_skills', 'mcp_search']) {
+    for (const name of ['skill', 'mcp', 'all']) {
       assert.equal((await runtime.search(name)).matches.length, limit);
       assert.equal((await runtime.search(name, { limit: 3 })).matches.length, 3);
     }
@@ -151,25 +151,25 @@ test('saved default immediately affects both searches, overrides and pagination,
     assert.equal(JSON.stringify(modelToolDefinitions(runtime.registry, { ...runtime.request, turnId: `next-${limit}`, metadata: { mcpToolDiscovery: true } })), originalTools);
   }
   await api.savePluginSearchResultLimit(13);
-  const first = await runtime.search('mcp_search'), second = await runtime.search('mcp_search', { cursor: first.next_cursor });
+  const first = await runtime.search('mcp'), second = await runtime.search('mcp', { cursor: first.next_cursor });
   assert.ok(first.next_cursor); assert.ok(second.next_cursor);
   assert.equal(new Set([...first.matches, ...second.matches].map(item => item.name)).size, 26);
-  const fullPage = await runtime.search('mcp_search', { limit: 50 });
-  const last = await runtime.search('mcp_search', { cursor: fullPage.next_cursor });
+  const fullPage = await runtime.search('mcp', { limit: 50 });
+  const last = await runtime.search('mcp', { cursor: fullPage.next_cursor });
   assert.equal(last.matches.length, 2); assert.equal(last.more, false);
-  assert.equal((await runtime.search('mcp_search', { query: 'absent_query_xyz' })).matches.length, 0);
+  assert.equal((await runtime.search('mcp', { query: 'absent_query_xyz' })).matches.length, 0);
   assert.equal(first.matches[0].inputSchema, undefined);
-  assert.equal((await runtime.search('search_skills')).matches[0].mainResource, join(skills, 'search-fixture-00', 'SKILL.md'));
+  assert.equal((await runtime.search('skill')).matches[0].mainResource, join(skills, 'search-fixture-00', 'SKILL.md'));
   const restarted = makeRuntime();
-  for (const name of ['search_skills', 'mcp_search']) {
+  for (const name of ['skill', 'mcp', 'all']) {
     assert.equal((await restarted.search(name)).matches.length, 13);
     for (const limit of [0, -1, 51, 1.2, '5', null]) assert.throws(() => restarted.search(name, { limit }));
   }
   const standalone = makeRuntime(false);
-  for (const name of ['search_skills', 'mcp_search']) assert.equal((await standalone.search(name)).matches.length, 8);
+  for (const name of ['skill', 'mcp', 'all']) assert.equal((await standalone.search(name)).matches.length, 8);
   // A complete load is a single exact tool and does not depend on search preferences.
   const config = await store.read(); await writeFile(path, JSON.stringify({ ...config, searchResultLimit: 0 }));
-  for (const name of ['search_skills', 'mcp_search']) {
+  for (const name of ['skill', 'mcp', 'all']) {
     await assert.rejects(() => runtime.search(name));
     assert.equal((await runtime.search(name, { limit: 2 })).matches.length, 2);
   }
@@ -185,8 +185,41 @@ test('asynchronous settings lookup does not use a tool removed while it was pend
     manifest: { effect_kind: 'observation', operation: 'test', risk: 'low', owner: 'fixture', dispatch_scope: 'parent_session', mutating: false },
     decodeInput: input => input, execute: () => ({}), mcpHook: { server: 'fixture', tool: 'removed', call: async () => ({}) },
   });
-  const tool = registry.resolve('mcp_search'), request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: {} };
+  const tool = registry.resolve('search_plugins'), request = { sessionId: 's', turnId: 't', tools: registry.definitions(), metadata: {} };
   const pending = tool.execute({ input: tool.decodeInput({ query: 'fixture' }), turn: { request } });
   registry.resolve(name).sessionScope = 'other-session'; release(8);
   assert.deepEqual((await pending).matches, []);
+});
+
+test('one discovery entry serves mixed installation guidance, package inventory and scoped MCP results', async () => {
+  const registry = new ToolRegistry(), calls = [];
+  registerSkillTools(registry, [resolve('assets/skills')]);
+  registerMcpDiscovery(registry, undefined, async server => { calls.push(server ?? 'directory'); return []; }, async () => {
+    calls.push('packages');
+    return { packages: [{ name: 'production-assets', displayName: 'Asset management', description: '资产管理插件',
+      source: 'user', version: '1.0.0', installed: true, enabled: true }] };
+  });
+  const management = registry.definitions().map(tool => tool.name);
+  assert.deepEqual(management, ['search_plugins']);
+  const request = { sessionId: 'install', turnId: 'turn', tools: registry.definitions(), metadata: { mcpCatalogUpdates: 'additions' } };
+  const search = registry.resolve('search_plugins');
+  const run = input => search.execute({ input: search.decodeInput(input), turn: { request } });
+  const query = '帮我安装cardbush-pliguns的资产管理插件';
+  const result = await run({ query });
+  assert.equal(result.mode, 'all');
+  assert.ok(result.matches.some(card => card.kind === 'skill' && card.name === 'cardbush-docs' && card.mainResource.endsWith('SKILL.md')));
+  assert.ok(result.matches.some(card => card.kind === 'plugin' && card.name === 'production-assets'));
+  assert.deepEqual(calls.sort(), ['directory', 'packages']);
+  calls.length = 0;
+  const scoped = await run({ mode: 'plugins', query: '*' });
+  assert.deepEqual(scoped.matches.map(card => card.kind), ['plugin']); assert.deepEqual(calls, ['packages']);
+  assert.equal(scoped.matches[0].source, 'user'); assert.equal(scoped.matches[0].keywords, undefined);
+  calls.length = 0;
+  request.metadata.toolExecutionPolicy = 'web_restricted';
+  request.metadata.allowedSkills = ['cardbush-docs'];
+  assert.deepEqual((await run({ query: '*' })).matches.map(card => card.name), ['cardbush-docs']);
+  assert.deepEqual((await run({ mode: 'mcp', query: '*', server: 'fixture' })).matches, []);
+  assert.deepEqual(calls, []);
+  for (const input of [{ mode: 'plugin', query }, { mode: 'skill', server: 'fixture', query }, { mode: 'all' }, { cursor: 'bad' }])
+    assert.throws(() => search.decodeInput(input));
 });

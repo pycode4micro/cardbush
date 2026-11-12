@@ -1,3 +1,5 @@
+import { rankPluginText } from './pluginTextSearch.js';
+import { configurePluginSearch, type PluginSearchSources } from './pluginSearch.js';
 import { readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { searchLimitParameter, searchResultLimitSchema } from '@cardbush/bush-protocol';
@@ -53,14 +55,34 @@ export function registerSkillTools(
     ? async () => normalizeRoots(await roots())
     : async () => normalizeRoots(roots);
   resourceProviders.set(registry, provider);
-  registry.register(searchRegistration(provider, loadSearchResultLimit));
+  const search: NonNullable<PluginSearchSources['skills']> = async (context, query) => {
+    const activeRoots = await provider();
+    const rank = rankPluginText(query);
+    const skills = visibleSkills(await loadCards(activeRoots), context);
+    return skills
+      .map((skill) => ({ ...skill, score: rank(skill.name, skill.description + ' ' + skill.descriptionZh) }))
+      .filter((skill) => skill.score > 0)
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+      .map(skill => ({ score: skill.score, card: {
+        kind: 'skill' as const,
+        name: skill.name,
+        description: discoveryDescription(skill.description),
+        ...(discoveryDescription(skill.description) !== skill.description ? { descriptionTruncated: true } : {}),
+        mainResource: skill.mainResource,
+        environment: 'local',
+        ...(skill.invocation ? { invocation: skill.invocation } : {}),
+      } }));
+  };
+  configurePluginSearch(registry, { skills: search, loadSearchResultLimit });
+  registry.register(searchRegistration(search, loadSearchResultLimit));
 }
 
 function searchRegistration(
-  roots: SkillRootProvider,
+  search: NonNullable<PluginSearchSources['skills']>,
   loadSearchResultLimit?: SearchResultLimitProvider,
 ): ToolRegistration<{ query: string; limit?: number; offset: number }> {
   return {
+    supersededBy: 'search_plugins',
     definition: {
       name: "search_skills",
       description: "Search installed Skills by capability or name; query='*' lists all visible Skills. total counts matches for this query, not all installed Skills. Returns brief descriptions, next_offset, mainResource (SKILL.md), environment=local and an invocation id for plugin Skills. Continue with next_offset as offset and the same query. Read the selected file with read_file in that environment, even in an SSH workspace; local means this Runtime host. Inspect its references/ directory when present and read relevant documents even if unlinked, resolving paths relative to the Skill directory. Reuse resources already in context. To invoke a plugin Skill, pass its exact id to run_skill; other Skills are applied by reading their files.",
@@ -89,22 +111,7 @@ function searchRegistration(
     },
     execute: async (context) => {
       const limit = await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
-      const activeRoots = await roots();
-      const listAll = normalize(context.input.query).trim() === '*';
-      const terms = tokens(context.input.query);
-      const skills = visibleSkills(await loadCards(activeRoots), context);
-      const matches = skills
-        .map((skill) => ({ ...skill, score: listAll ? 1 : score(skill, terms) }))
-        .filter((skill) => skill.score > 0)
-        .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
-        .map(skill => ({
-          name: skill.name,
-          description: discoveryDescription(skill.description),
-          ...(discoveryDescription(skill.description) !== skill.description ? { descriptionTruncated: true } : {}),
-          mainResource: skill.mainResource,
-          environment: 'local',
-          ...(skill.invocation ? { invocation: skill.invocation } : {}),
-        }));
+      const matches = (await search(context, context.input.query)).map(({ card: { kind, ...card } }) => card);
       const { items, ...page } = catalogPage(matches, { offset: context.input.offset, limit });
       return { matches: items, ...page };
     },
@@ -148,48 +155,6 @@ async function loadCards(roots: string[]): Promise<SkillCard[]> {
     }
   }
   return [...byName.values()];
-}
-
-
-function score(skill: SkillCard, terms: string[]): number {
-  if (terms.length === 0) return 0;
-  const name = normalize(skill.name);
-  const description = normalize(`${skill.description} ${skill.descriptionZh}`);
-  return terms.reduce((total, term) =>
-    total + (name === term ? 4 : name.includes(term) ? 2 : description.includes(term) ? 1 : 0), 0);
-}
-
-const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
-
-function tokens(value: string) {
-  // Whitespace splitting treats a Chinese request as one unmatchable term. Keep
-  // identifiers intact, but segment unspaced text. ICU can split unknown terms
-  // such as 插件 into single characters; pairs preserve recall without matching
-  // every description on a particle such as 的.
-  return [...new Set(normalize(value).split(/[^\p{L}\p{N}_]+/u).flatMap((part) =>
-    /\p{Script=Han}/u.test(part)
-      ? segmentHanText(part)
-      : part ? [part] : [],
-  ))];
-}
-
-function segmentHanText(value: string): string[] {
-  const result = [...value].length > 1 ? [value] : [];
-  let previousHan = "";
-  for (const item of wordSegmenter.segment(value)) {
-    if (/^\p{Script=Han}$/u.test(item.segment)) {
-      if (previousHan) result.push(previousHan + item.segment);
-      previousHan = item.segment;
-    } else {
-      previousHan = "";
-      if (item.isWordLike) result.push(item.segment);
-    }
-  }
-  return result;
-}
-
-function normalize(value: string) {
-  return value.normalize("NFKC").toLocaleLowerCase();
 }
 
 

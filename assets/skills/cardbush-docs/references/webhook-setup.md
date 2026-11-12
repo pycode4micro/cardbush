@@ -41,7 +41,7 @@ Webhook 连接只能绑定所在宿主的 Assistant（`personal-assistant`）。
 |---|---|
 | 桥在线 | 个人菜单「Webhook 连接」或 CLI 的 `/webhook status` 显示 `connected`。本机进程在运行、发现接口可读、连接配置已保存分别只证明各自那一步。 |
 | 入站和返回 | 用户消息出现在 Assistant，处理该消息的一轮有 `messageSource.kind: "webhook"` 及对应来源。原平台、原聊天收到预期回复。回报最后一个实际验证到的环节。 |
-| 用户也要求验收文件 | 从该 Bot 发起小文件测试，使用该条消息的来源搜索桥插件（`mcp_search` → `get_tool_schema` → `call_tool`）。Assistant 可委派子任务。调用桥声明的 `send_file`，回到原聊天核对文件能打开。桥返回 `accepted` 表示已接单，平台接口成功和收件人能打开是不同的验证结果。 |
+| 用户也要求验收文件 | 从该 Bot 发起小文件测试，使用该条消息的来源搜索桥插件（`search_plugins` → `get_tool_schema` → `call_tool`）。Assistant 可委派子任务。调用桥声明的 `send_file`，回到原聊天核对文件能打开。桥返回 `accepted` 表示已接单，平台接口成功和收件人能打开是不同的验证结果。 |
 
 普通文字由宿主把最终回复送回原会话。Webhook 来信需要补充信息时，在最终回复中直接提问，等待用户下一条消息。媒体或文件操作按实际发现的插件和当前 `sourceRef` 调用；后台任务沿用原始来源。旧的 `send_to_bot` 已移除。
 

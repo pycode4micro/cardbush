@@ -1,3 +1,4 @@
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -49,7 +50,7 @@ const request = overrides => modelRequestSchema.parse({
     priorAssistant,
     { role: 'tool', toolCallId: 'inspected', content: 'Saved tool result',
       images: [{ url: 'data:image/png;base64,aW1hZ2U=', detail: 'high' }] }],
-  tools: registry.definitions(), metadata: { mcpToolDiscovery: true }, reasoningEffort: 'high', maxOutputTokens: 8192,
+  tools: legacySearchCatalog(registry), metadata: { mcpToolDiscovery: true }, reasoningEffort: 'high', maxOutputTokens: 8192,
   providerState: { strategy: 'response_chain', previousResponseId: 'resp_previous', inputMessageOffset: 3 },
   ...overrides,
 });
@@ -196,7 +197,7 @@ test('Runtime applies the same recovery budget before retrying a transient failu
   const host = new InMemoryRuntimeHost({ provider: f.provider, toolRegistry: tools, maxAttempts: 2,
     registerDefaultWorkspaceTools: false, wait: async () => {} });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-  const result = await host.runModelTurn(request({ tools: tools.definitions(), metadata: {}, permissionMode: 'all_free',
+  const result = await host.runModelTurn(request({ tools: legacySearchCatalog(tools), metadata: {}, permissionMode: 'all_free',
     messages: [{ role: 'user', content: 'Perform an operation' }], providerState: undefined }));
   assert.equal(result.payload.status, 'completed'); assert.equal(executed, 1); assert.equal(f.calls.length, 4);
   assert.deepEqual(f.calls[3], f.calls[2]);
@@ -217,7 +218,7 @@ test('Runtime reuses completed tool results and continues from the recovered res
     decodeInput: value => value, execute: () => ({ completedOperation: ++executed }) });
   const host = new InMemoryRuntimeHost({ provider: f.provider, toolRegistry: tools, maxAttempts: 1, registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-  const result = await host.runModelTurn(request({ tools: tools.definitions(), metadata: {}, permissionMode: 'all_free',
+  const result = await host.runModelTurn(request({ tools: legacySearchCatalog(tools), metadata: {}, permissionMode: 'all_free',
     messages: [{ role: 'user', content: 'Perform two operations' }], providerState: undefined }));
   assert.equal(result.payload.status, 'completed'); assert.equal(executed, 2);
   assert.equal(f.calls.length, 4);

@@ -128,7 +128,7 @@ export class ContextWebhookHost {
     ]).parse(value);
     if (owner(request.sessionId) !== PERSONAL_ASSISTANT_SESSION) {
       if (request.action === 'catalog') return [];
-      if (request.action === 'context') return { discovery:'mcp_search', available:false, reason:'bot_not_connected', targets:[], connections:[] };
+      if (request.action === 'context') return { discovery:'search_plugins', available:false, reason:'bot_not_connected', targets:[], connections:[] };
       return { status:'failed', code:'bridge_source_unavailable' };
     }
     if (request.action === 'context') return this.botContext(request.sessionId, request.sourceRef);
@@ -174,7 +174,7 @@ export class ContextWebhookHost {
     const connections = this.state.connections.filter(c => c.binding.kind !== 'conversation' && owner(c.binding.sessionId) === owner(sessionId))
       .map(c => ({ connectionId: c.id, botName: c.name, status: this.connectionStatus(c) }));
     const connected = connections.some(c => c.status === 'connected');
-    return { discovery: 'mcp_search', available, ...(source ? { source } : {}), targets, connections,
+    return { discovery: 'search_plugins', available, ...(source ? { source } : {}), targets, connections,
       ...(!available ? { reason: source?.reason ?? (sourceRef ? 'source_unavailable' : connected ? 'bot_recipient_unavailable'
         : connections.some(c => c.status === 'offline') ? 'bot_offline' : connections.length ? 'bot_disabled' : 'bot_not_connected') } : {}) };
   }

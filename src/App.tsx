@@ -40,7 +40,8 @@ import { requestAppCenter } from './features/appCenter/appCenterStore';
 import { requestPluginApplication } from './features/plugins/pluginNavigationRequests';
 import { PageNavigationContext, PageNavigationScope, usePageNavigation } from './features/navigation/PageNavigation';
 import { splitPage, tabWorkspaceDestination, type AppPage, type HomePage, type WorkspaceDestination } from './features/navigation/appPage';
-import { DesktopHome, DesktopExplore } from './features/desktop/DesktopCollection';
+import { DesktopCollection } from './features/desktop/DesktopCollection';
+import { VisitedFeaturePages } from './features/navigation/VisitedFeaturePages';
 import { GlobalTooltip } from './components/GlobalTooltip';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
@@ -1919,12 +1920,14 @@ function CardbushApp() {
   }, [chat.activeConversationId, openChangeReviewInspector]);
 
   const openSettings = useCallback((
-    targetSection: SettingsPage = 'overview',
-    pluginTab: 'plugins' | 'skills' = 'plugins',
+    targetSection?: SettingsPage,
+    pluginTab?: 'plugins' | 'skills',
   ) => {
     if (drawerLayout) collapseSidebar();
-    setSettingsInitialSection(targetSection);
-    setSettingsPluginTab(pluginTab);
+    if (targetSection) {
+      setSettingsInitialSection(targetSection);
+      setSettingsPluginTab(pluginTab ?? 'plugins');
+    }
     setSettingsMounted(true);
     setSettingsOpen(true);
   }, [drawerLayout, collapseSidebar]);
@@ -1964,11 +1967,13 @@ function CardbushApp() {
   // React.memo and making an unrelated stream interrupt title animations.
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
     setSettingsOpen(false);
-    if (nextSection === 'home') setHomePage({ kind: 'overview' });
+    if (nextSection === 'home' && ((section === 'home' && !settingsOpen) || (homePage.kind === 'overview' && homePage.editing))) {
+      setHomePage({ kind: 'overview' });
+    }
     if (drawerLayout) collapseSidebar();
     if (section === nextSection || (section !== 'assistant' && nextSection !== 'assistant')) revealConversation();
     setSection(nextSection);
-  }, [section, revealConversation, drawerLayout, collapseSidebar]);
+  }, [section, settingsOpen, homePage, revealConversation, drawerLayout, collapseSidebar]);
   const handleSidebarConversationChange = useCallback((conversationId: string) => {
     if (section === 'chat' && conversationId === chat.activeConversationId) revealConversation();
     openConversation(conversationId);
@@ -2176,7 +2181,7 @@ function CardbushApp() {
       data-diff-indicators={appearance.diffIndicators}
     >
       <ProfileCenter language={language} ready={runtimeStartup.phase === 'ready'} prepare={chat.prepareAssistantRequest}
-        settings={() => openSettings()} switchWindow={async () => { await window.cardbushDesktop!.assistantMode!('float'); }}>
+        settings={() => openSettings()}>
       <AppCenterProvider language={language} exploring={section === 'explore' && !settingsVisible} onExplore={openExplore} onNavigate={(application, environmentId) => {
 
         if (application.kind === 'web') { setSettingsOpen(false); openInspectorTarget({ target: application.target, title: application.title }); return; }
@@ -2346,14 +2351,13 @@ function CardbushApp() {
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
                   onError: error => { void showUiError(uiText(language)('app.componentMessageFailed'), error instanceof Error ? error.message : String(error)); } }),
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
-            {section === 'home' ? <DesktopHome onCreateComponent={openPluginPrompt} projectsRef={setProjectsHost} language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
+            <DesktopCollection section={section} onCreateComponent={openPluginPrompt} projectsRef={setProjectsHost} language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
               page={homePage} onPage={setHomePage} projects={projectItems} conversations={chat.conversations}
               conversationsLoading={runtimeStartup.phase === 'initializing' || chat.loading}
               onProject={project => handleSidebarProjectAction('newChat', project)} onAddProject={handleSidebarAddProject}
               onNew={handleSidebarCreateConversation} onConversation={handleSidebarConversationChange}
               onAssistant={() => handleSidebarSectionChange('assistant')} onExplore={openExplore}/>
-            : section === 'explore' ? <DesktopExplore language={language}/>
-            : section === 'assistant' ? null : section === 'chat' ? (
+            {section === 'chat' && (
               <ComposerPortalContext.Provider value={quickInputOpen ? quickInputTarget : null}>
               <ChatPanel
                 headerActionsTarget={chatActionsSlot ? chatActionsTarget : null}
@@ -2459,20 +2463,22 @@ function CardbushApp() {
                 onDraftChange={setActiveDraft}
               />
               </ComposerPortalContext.Provider>
-            ) : (
-              <FeaturePanel
-                headerActionsTarget={chatActionsSlot ? chatActionsTarget : null}
+            )}
+            <VisitedFeaturePages current={settingsVisible || section === 'home' || section === 'explore' || section === 'chat' || section === 'assistant' ? undefined : section}>
+              {feature => <FeaturePanel
+                onEditHomeLayout={() => { handleSidebarSectionChange('home'); setHomePage({kind:'overview', editing:true}); }}
+                headerActionsTarget={section === feature && chatActionsSlot ? chatActionsTarget : null}
                 creationChatOptions={{ theme, disabledSkillNames, onToggleSkill: toggleSkillEnabled, onConfigureModels: () => openSettings('models'), browserTabs: composerBrowserTabs,
                   onConversationChanged: () => { void chat.reloadConversations().catch(() => undefined); },
-                  composerPortalTarget: (section === 'md-presentation' || section === 'team') && quickInputOpen ? quickInputTarget : null,
+                  composerPortalTarget: section === feature && (feature === 'md-presentation' || feature === 'team') && quickInputOpen ? quickInputTarget : null,
                   externalComposerControls: inspectorControlsVisible, onOpenComposer: () => setQuickInputOpen(true),
-                  onOpenChangeReview: (sessionId, path) => openChangeReviewInspector(sessionId, path), onInspectorContext: section === 'team' ? setTeamInspector : setCreationInspector }}
+                  onOpenChangeReview: (sessionId, path) => openChangeReviewInspector(sessionId, path), onInspectorContext: feature === 'team' ? setTeamInspector : setCreationInspector }}
                 language={language}
                 backendCapabilities={backendCapabilities}
                 onOpenPluginPrompt={openPluginPrompt}
                 inspectorOpen={inspectorOpen}
                 onToggleInspector={toggleInspector}
-                section={section}
+                section={feature}
                 activeProjectDir={activeProjectDir}
                 workflowValidationAvailable={backendCapabilities.teamWorkflows}
                 skills={chat.skills}
@@ -2481,8 +2487,8 @@ function CardbushApp() {
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
                 onOpenConversation={openAutomationConversation}
-              />
-            )}
+              />}
+            </VisitedFeaturePages>
               </HtmlComponentContext.Provider>
           </section>
           {inspectorPresence.mounted || retainedInspectorTabs.length > 0 ? (

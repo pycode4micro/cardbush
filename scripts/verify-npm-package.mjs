@@ -40,11 +40,14 @@ const model = createServer(async (request, response) => {
     }
     calls++;
     if (body.model === 'smoke-worker') workerCalls.push(body);
-    const dispatch = body.model === 'smoke-parent' && !delegated && JSON.stringify(body.input).includes('npm registered worker conversation');
+    // Title generation also receives the user's text, but only the actual parent turn can delegate.
+    const canDelegate = body.tools?.some(tool => tool.type === 'function' && tool.name === 'subagent');
+    const dispatch = canDelegate && body.model === 'smoke-parent' && !delegated && JSON.stringify(body.input).includes('npm registered worker conversation');
     if (dispatch) delegated = true;
     const item = dispatch
       ? { id: `function-${calls}`, call_id: `call-${calls}`, type: 'function_call', name: 'subagent', status: 'completed',
-        arguments: JSON.stringify({ agent_id: 'npm-smoke-worker', prompt: 'Return NPM_AGENT_CLI_SMOKE_OK from the installed worker.' }) }
+        arguments: JSON.stringify({ agent_id: 'npm-smoke-worker', prompt: 'Return NPM_AGENT_CLI_SMOKE_OK from the installed worker.',
+          _display_title: { en: 'Verify worker installation', zh: '验证工作节点安装' } }) }
       : { id: `message-${calls}`, type: 'message', role: 'assistant', status: 'completed',
         content: [{ type: 'output_text', text: answer, annotations: [] }] };
     const result = { id: `response-${calls}`, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };

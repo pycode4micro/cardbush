@@ -55,7 +55,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
   });
   registry.register<CommandInput>({
     modelAvailable: request => options.skill === true || request.metadata.builtinPluginCommandsAvailable !== false,
-    definition: { name: toolName, description: `Invoke an installed plugin ${options.skill ? 'Skill using the exact plugin:name id from search_skills (reading SKILL.md alone does not invoke it)' : 'Command using its exact plugin:name id'} and argument string. The host checks invocation policy, dependencies and permissions, expands parameters and executes declared dynamic context. Follow the returned instructions.`,
+    definition: { name: toolName, description: `Invoke an installed plugin ${options.skill ? 'Skill using the exact plugin:name id from search_plugins in skill mode (reading SKILL.md alone does not invoke it)' : 'Command using its exact plugin:name id'} and argument string. The host checks invocation policy, dependencies and permissions, expands parameters and executes declared dynamic context. Follow the returned instructions.`,
       inputSchema: { type: 'object', properties: { command: { type: 'string' }, arguments: { type: 'string', default: '' } }, required: ['command'], additionalProperties: false } },
     manifest: { effect_kind: 'filesystem_change', operation: 'plugins.commands.invoke', risk: 'medium', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
     executionChannel: 'runtime:default', parallelSafe: false,

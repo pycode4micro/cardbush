@@ -27,7 +27,7 @@ test('native image plugin installation, restricted schema, durable async task an
     round++;
     const names=body.tools.map(tool=>tool.name ?? tool.function?.name);
     if(round<12) for(const name of ['seedream_create_task','seedream_get_task','generation_wait_tasks','image_convert','image_stitch'])assert.ok(names.includes(prefix+name),JSON.stringify(names));
-    const expected = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_skills', 'run_skill', 'list_subagent_options', 'subagent', 'tasks'];
+    const expected = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_plugins', 'run_skill', 'list_subagent_options', 'subagent', 'tasks'];
     if (round < 12) expected.push(...['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch'].map(name => prefix + name));
     assert.deepEqual([...names].sort(), expected.sort());
     if(round===2){const db=new DatabaseSync(join(root,'plugin-state/images/jobs.sqlite3'),{readOnly:true});taskId=db.prepare('SELECT id FROM jobs').get().id;db.close();}

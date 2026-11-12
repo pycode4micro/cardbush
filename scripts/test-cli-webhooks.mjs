@@ -65,7 +65,7 @@ test('shared host reports an occupied port without changing the other host, and 
     assert.equal(state.listening, false); assert.equal(await (await fetch(`http://127.0.0.1:${p}`)).text(), 'existing-owner');
     await assert.rejects(host.command({ action: 'connect', id: randomUUID(), sessionId: 'personal-assistant' }, () => assert.fail()), /listener_failed/);
     await host.command({ action: 'stop', sessionId: 'personal-assistant' }, () => assert.fail()); assert.equal(host.keepAlive, false);
-    assert.deepEqual(await host.botRequest({ action: 'context', sessionId: 's' }), { discovery: 'mcp_search', available: false, reason: 'bot_not_connected', targets: [] });
+    assert.deepEqual(await host.botRequest({ action: 'context', sessionId: 's' }), { discovery: 'search_plugins', available: false, reason: 'bot_not_connected', targets: [] });
     assert.equal(JSON.parse(await readFile(join(root, 'webhooks/host.json'), 'utf8')).enabled, false);
   } finally { await host.close(); occupied.closeAllConnections(); await new Promise(r => occupied.close(r)); await cleanup(root); }
 });

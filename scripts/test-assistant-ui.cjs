@@ -84,7 +84,7 @@ async function buildFixture(directory) {
         fixture.voiceState=()=>applicationVoiceSession().snapshot();
         function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile();
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
-          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} floating={false} prepare={noop} settings={noop} switchWindow={noop}>
+          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} prepare={noop} settings={noop}>
             <ChatSidebar language={language} section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
               assistantEntry={<AssistantStageButton language={language} active={active} onOpen={noop}/>}
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}

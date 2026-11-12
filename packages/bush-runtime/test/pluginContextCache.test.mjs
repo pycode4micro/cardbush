@@ -33,7 +33,7 @@ test('discovery survives turns/restart without resending schemas, but not compac
   const next = modelRequest(registry, { turnId: 'next', messages: history });
   synchronizeMcpDiscovery(registry, next, history);
   assert.equal((await call(coordinator, next, 'call_tool', { name: toolName, arguments: {} })).kind, 'returned');
-  const repeated = await call(coordinator, next, 'mcp_search', { query: 'docs' });
+  const repeated = await call(coordinator, next, 'search_plugins', { query: 'docs' });
   assert.equal(repeated.result.matches[0].loaded, true);
   assert.equal(repeated.result.matches[0].inputSchema, undefined);
   assert.equal((await call(coordinator, next, 'get_tool_schema', { name: toolName })).result.matches[0].inputSchema.type, 'object');

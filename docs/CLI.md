@@ -6,6 +6,20 @@ Install the [npm Agent + CLI package](NPM_AGENT.en.md), then run `cardbush` in y
 
 This guide describes current source. The worker commands and removal of remote chat selection require a new build; they are not part of the published npm 1.0.13.
 
+## On-demand plugin runtimes
+
+The desktop runtime settings and CLI share per-user versions in `~/.cardbush/runtimes/<platform>-<arch>`. Opening the settings page or listing versions is offline. Run an install command to download and verify an interpreter. The npm CLI itself still requires its supported Node version to start.
+
+```sh
+cardbush runtime install python 3.12
+cardbush runtime install node 24
+cardbush runtime update python
+cardbush runtime list
+cardbush runtime path node
+```
+
+Updates follow the selected Python minor or Node major. Use `install` to change series or `use <node|python> <installed-version>` to switch back offline. Python downloads use the builds available in the current Astral standalone release. New MCP stdio and plugin hook processes use the selection. Reconnect an already running MCP server to adopt it. Explicit executable paths continue to work. Keep third-party package dependencies in the plugin's own environment.
+
 ## Models and local execution
 
 No local connection token is required. The CLI shares supported app model, plugin, MCP, network and sandbox JSON settings, but stores its own sessions under `~/.cardbush/cli-agent`. Multiple local CLI windows share one private Runtime; a new window normally gets a new session.

@@ -6,7 +6,7 @@ Responses、Chat Completions 和 Anthropic Messages 经 `providerErrorPayload/pr
 
 Responses 通过 `ProviderCapabilityStore` 共享兼容配置，范围绑定端点配置、凭据和模型。只有明确拒绝实际已发送功能，才选择兼容投影；鉴权、额度、暂时服务故障和无关输入校验不改变能力。
 
-兼容投影使用普通 `mcp_search/get_tool_schema/call_tool` 函数，`store:false` 发送完整历史，本地估算输入，在完整函数结果批次后追加有来源的工具图像观察。渐进发现、指令、推理和结果继续可用，仍是 Responses，不切换 API 家族或模型设置。
+兼容投影使用普通 `search_plugins/get_tool_schema/call_tool` 函数，`store:false` 发送完整历史，本地估算输入，在完整函数结果批次后追加有来源的工具图像观察。渐进发现、指令、推理和结果继续可用，仍是 Responses，不切换 API 家族或模型设置。
 
 尚未暴露任何文本、推理、工具调用或用量前，显式功能拒绝（含早期 SSE）可用兼容投影重试。已有输出后返回失败，确认的能力观察只影响后续请求。取消、本地校验及大小失败不选择兼容配置。
 

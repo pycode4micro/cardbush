@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { type PersonalProfile } from '@cardbush/bush-protocol';
 import type { ChatStreamRequest } from '../../backend/api';
 import { readPersonalProfile } from '../../backend/personalization';
@@ -14,9 +14,9 @@ import { ProfileEditor } from './ProfileEditor';
 
 type Props = {
   language: string; ready: boolean; prepare(): Promise<ChatStreamRequest>;
-  settings(): void | Promise<void>; switchWindow(): Promise<void>; onDialogChange?(open: boolean): void; children: ReactNode;
+  settings(): void | Promise<void>; onDialogChange?(open: boolean): void; children: ReactNode;
 };
-export function ProfileCenter({ language, ready, prepare, settings, switchWindow, onDialogChange, children }: Props) {
+export function ProfileCenter({ language, ready, prepare, settings, onDialogChange, children }: Props) {
   const t = uiText(language), assistant = useAssistantProfile();
   const [profile, setProfile] = useState<PersonalProfile | null>(null);
   const [dialog, show] = useState<ProfileAction>();
@@ -33,9 +33,20 @@ export function ProfileCenter({ language, ready, prepare, settings, switchWindow
     return () => { onDialogChange?.(false); };
   }, [dialog, onDialogChange]);
   const desktop = window.cardbushDesktop;
-  const refreshMode = () => {
-    void desktop?.assistantMode?.('read').then(value => setStartup(value.nextLaunch)).catch(() => {});
-  };
+  const [floating, setFloating] = useState<boolean>();
+  const floatingRevision = useRef(0);
+  const refreshMode = useCallback(() => {
+    const revision = ++floatingRevision.current;
+    void desktop?.assistantMode?.('read').then(value => {
+      setStartup(value.nextLaunch);
+      if (revision === floatingRevision.current) setFloating(value.floating);
+    }).catch(() => {});
+  }, [desktop]);
+  useEffect(() => {
+    const off = desktop?.onAssistantFloatingChanged?.(value => { ++floatingRevision.current; setFloating(value); });
+    refreshMode();
+    return () => { ++floatingRevision.current; off?.(); };
+  }, [desktop, refreshMode]);
   const select = async (action: ProfileAction) => {
     try {
       if (action === 'edit') {
@@ -43,7 +54,10 @@ export function ProfileCenter({ language, ready, prepare, settings, switchWindow
         if (version.current !== revision) return;
         setProfile(value);
       }
-      if (action === 'float') { await switchWindow(); return; }
+      if (action === 'float') {
+        if (floating !== undefined) await desktop?.assistantMode?.('float', !floating);
+        return;
+      }
       if (action === 'settings') { await settings(); return; }
       if (action === 'startup') {
         if (startup !== undefined) setStartup((await desktop!.assistantMode!('startup', !startup)).nextLaunch);
@@ -53,8 +67,8 @@ export function ProfileCenter({ language, ready, prepare, settings, switchWindow
     } catch { setError(action === 'edit' ? 'profile.loadFailed' : 'profile.modeFailed'); }
   };
   const close = () => show(undefined);
-  return <ProfileMenuContext.Provider value={{name:profile?.preferredName ?? '', avatar:profile?.avatar, startup, open:refreshMode, select,
-    windowAvailable:Boolean(desktop?.assistantMode), webhookAvailable:Boolean(desktop?.webhooks)}}>
+  return <ProfileMenuContext.Provider value={{name:profile?.preferredName ?? '', avatar:profile?.avatar, startup, floating, open:refreshMode, select,
+    webhookAvailable:Boolean(desktop?.webhooks)}}>
     {children}
     {dialog === 'edit' && <ProfileEditor language={language} initial={profile} suggestion={assistant.proactive?.recognition.address || previousUserName()}
       close={close} saved={value => { version.current++; setProfile(value); }}/>}

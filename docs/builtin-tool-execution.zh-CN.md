@@ -17,13 +17,13 @@ Registry 是能力权威目录，Provider 定义只是展示，不是授权。�
 | 过滤、转换、串联结果 | `run_tools` |
 | 读取完整原生/MCP 定义 | `get_tool_schema` |
 | 调用已加载业务工具 | `call_tool` |
-| 搜索 MCP 名称 | `mcp_search` |
+| 搜索 MCP 名称 | `search_plugins` |
 
 `subagent` 分派个体，`team` 管保存流程及启动/恢复，`tasks` 负责观察、指定 `node_ids` 结果、停止和子会话读取，`await` 统一等待。编辑 Team 先加载完整定义，加载本身不扩权、不改顶层声明。
 
 `call_tool` 以目标名进入原协调器，复用校验、权限、Hook、资源锁、调度、取消、结果及 UI/日志，wire call/result ID 不变，不是第二个后台执行器或脚本。发现、归档读取、上下文维护仍直接调用，保留回执语义。
 
-发现和调用分别检查：`get_tool_schema` 恰好 `name/names` 二选一（最多 16），覆盖原生和 MCP；`mcp_search` 只搜索。完整回执为 `bush.tool_schema.v1`，含来源/修订，共用归档验证。必须读到完整定义再调用，并行“加载+调用”不满足此前提。脚本经 `run_tools → tools.call`。
+发现和调用分别检查：`get_tool_schema` 恰好 `name/names` 二选一（最多 16），覆盖原生和 MCP；`search_plugins` 只搜索。完整回执为 `bush.tool_schema.v1`，含来源/修订，共用归档验证。必须读到完整定义再调用，并行“加载+调用”不满足此前提。脚本经 `run_tools → tools.call`。
 
 已退役的 `mcp_call/parallel_tools/manage_tool_calls/manage_plugin_agents/await_subagents/read_subagent_conversation/solution_selection/request_permission` 不再注册或提供旧结果适配；旧 `mcp_search action=load` 拒绝。产品策略 v10 在执行前拒绝不兼容历史合同，不迁移重放。显式历史清理可删除会话、执行及恢复状态，保留配置/插件/项目文件。
 

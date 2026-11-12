@@ -264,7 +264,7 @@ test('real restricted tenant uses the private gateway and native HTTP delegation
     const schema = body.tools.find(item => (item.name ?? item.function?.name) === 'subagent');
     assert.ok(!JSON.stringify(schema).includes('"mode"'));
     let item;
-    if (parentRound === 1) item = { type: 'function_call', name: 'search_skills', arguments: JSON.stringify({ query: 'auto-video-slicing' }), call_id: 'search', id: 'search' };
+    if (parentRound === 1) item = { type: 'function_call', name: 'search_plugins', arguments: JSON.stringify({ query: 'auto-video-slicing' }), call_id: 'search', id: 'search' };
     else if (parentRound === 2) {
       const search = body.input.find(item => item.type === 'function_call_output' && item.call_id === 'search');
       assert.ok(search, 'A real skill search observation is required');

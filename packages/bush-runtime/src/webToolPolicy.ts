@@ -12,12 +12,12 @@ export async function normalizeWebImage(bytes: Buffer) {
   return decoder.rotate().png().toBuffer();
 }
 
-export const WEB_BASE_TOOLS = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_skills', 'run_skill'] as const;
+export const WEB_BASE_TOOLS = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_plugins', 'run_skill'] as const;
 export const WEB_IMAGE_TOOLS = ['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch'] as const;
 export const WEB_IMAGE_PREFIX = 'mcp__plugin_volcengine_images_images__';
 export const WEB_REMOTE_TOOLS = ['list_subagent_options', 'subagent', 'tasks'] as const;
 export function webToolAllowed(name: string) {
-  return (WEB_BASE_TOOLS as readonly string[]).includes(name) || (WEB_REMOTE_TOOLS as readonly string[]).includes(name) || WEB_IMAGE_TOOLS.some(tool => name === WEB_IMAGE_PREFIX + tool);
+  return name === 'search_skills' || (WEB_BASE_TOOLS as readonly string[]).includes(name) || (WEB_REMOTE_TOOLS as readonly string[]).includes(name) || WEB_IMAGE_TOOLS.some(tool => name === WEB_IMAGE_PREFIX + tool);
 }
 export function webToolDefinition<T extends ModelRequest['tools'][number]>(tool: T): T {
   if (tool.name === 'list_subagent_options') return { ...tool, description: 'List only administrator-registered remote Agents authorized for this account. Use an exact returned id as subagent.target_agent. No local Agents, roles, auto-assembly, model or plugin synchronization is available.',

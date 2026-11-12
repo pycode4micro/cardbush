@@ -147,7 +147,7 @@ if (coreSettings) {
 if (appearanceNavigation) {
   source = source.replace('className="app theme-dark"', 'className="app theme-bright"')
     .replace('<main style={{padding:26,width:', '<main className="settings-shell" style={{width:')
-    .replace("boxSizing:'border-box'}}>{composer?", "boxSizing:'border-box'}}><section className=\"settings-content\" style={{width:'100%',overflow:'auto'}}>{composer?")
+    .replace("boxSizing:'border-box'}}>{composer?", "boxSizing:'border-box'}}><section className=\"settings-content\" style={{width:'100%',maxHeight:'80vh',overflow:'auto'}}>{composer?")
     .replace('</main><McpUserRequests', '</section></main><McpUserRequests')
     .replace('<PluginFixture {...props} onOpenPrompt=', '<PluginFixture {...props} renderMcp={(id,dialog)=><SettingsFormDialog className="mcp-server-dialog" title="配置服务器" language="zh" onCancel={dialog.onClose} onSubmit={()=>{}} footer={<button onClick={dialog.onClose} type="button">关闭配置</button>}><div data-fixture-mcp={id??\'new\'}>MCP configuration</div></SettingsFormDialog>} onOpenPrompt=');
 }

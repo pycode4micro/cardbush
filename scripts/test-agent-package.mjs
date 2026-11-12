@@ -11,6 +11,7 @@ async function fixture(t) {
   t.after(async () => { assert.ok(resolve(root).startsWith(base + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3 }); });
   for (const path of ['package.json', 'package-lock.json', 'bin/cardbush.mjs', 'bin/cardbush-agent.mjs', 'dist-electron/agentServiceCli.mjs', 'dist-electron/agentServiceProcess.mjs', 'dist-electron/agentService.mjs',
   'deploy/bots/README.md', 'deploy/bots/desktop.md',
+    'dist-electron/pluginRuntimeCli.mjs', 'dist-electron/pluginRuntimeManager.mjs', 'dist-electron/pluginRuntimeCatalog.mjs', 'dist-electron/fileLock.mjs',
     'dist-electron/agentChatCli.mjs', 'dist-electron/agentLocalChat.mjs', 'dist-electron/agentChatModels.mjs', 'dist-electron/agentChatDiagnostics.mjs', 'dist-electron/agentChatShell.mjs',
     'dist-electron/agentLocalRuntime.mjs', 'dist-electron/agentLocalRuntimeHost.mjs', 'dist-electron/agentServer.mjs',
     'dist-electron/localModelAccess.mjs', 'dist-electron/siwcOAuth.mjs',

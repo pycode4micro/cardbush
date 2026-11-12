@@ -36,7 +36,7 @@ function fixture() {
 
 for (const route of ['direct', 'call_tool']) test(`${route}: omitted load returns executable recovery instructions and preserves approvals and hooks`, async () => {
   const f = fixture();
-  const search = await f.call('mcp_search', { query: 'list_pages' });
+  const search = await f.call('search_plugins', { query: 'list_pages' });
   assert.equal(search.model.matches[0].loaded, false);
   const failed = await f.invoke(route);
   const error = failed.model.runtimeError;
@@ -54,7 +54,7 @@ for (const route of ['direct', 'call_tool']) test(`${route}: omitted load return
   assert.equal(loaded.model.matches[0].name, toolName);
   assert.deepEqual(loaded.model.matches[0].inputSchema, { type: 'object', properties: {} });
   assert.equal(f.state.executed, 0, 'loading a schema never runs the browser tool');
-  assert.equal((await f.call('mcp_search', { query: toolName })).model.matches[0].loaded, true);
+  assert.equal((await f.call('search_plugins', { query: toolName })).model.matches[0].loaded, true);
   assert.equal((await f.invoke(route)).model.runtimeError.code, 'permission_rejected');
   assert.equal(f.state.asked, 1); assert.equal(f.state.executed, 0);
   f.state.hooks.length = 0; f.state.allow = true;
@@ -73,7 +73,7 @@ for (const change of ['other-session', 'interface-only', 'removed-from-turn']) t
     const error = (await f.invoke(route)).model.runtimeError;
     assert.equal(error.code, 'tool_not_exposed'); assert.equal(error.details.load, undefined);
   }
-  assert.equal((await f.call('mcp_search', { query: toolName })).model.total, 0);
+  assert.equal((await f.call('search_plugins', { query: toolName })).model.total, 0);
   assert.equal(f.state.executed, 0); assert.equal(f.state.asked, 0);
 });
 
@@ -83,7 +83,7 @@ for (const change of ['compaction', 'schema-revision']) test(`${change}: stale d
   if (change === 'compaction') f.messages.length = 0;
   else f.registry.resolve(toolName).definition.inputSchema = { type: 'object', properties: { extra: { type: 'string' } } };
   synchronizeMcpDiscovery(f.registry, f.request, f.messages);
-  assert.equal((await f.call('mcp_search', { query: toolName })).model.matches[0].loaded, false);
+  assert.equal((await f.call('search_plugins', { query: toolName })).model.matches[0].loaded, false);
   const { load } = (await f.invoke('direct')).model.runtimeError.details;
   await f.call(load.name, load.arguments);
   assert.deepEqual((await f.invoke('direct')).model, { pages: [] });

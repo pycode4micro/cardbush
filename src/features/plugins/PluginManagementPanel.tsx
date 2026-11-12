@@ -15,20 +15,14 @@ import { AccountsPanel } from '../accounts/AccountsPanel';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import {
   Check,
-  ChevronDown,
   ChevronRight,
-  FileArchive,
-  FolderOpen,
   LoaderCircle,
-  PackagePlus,
   Plus,
   RefreshCw,
   Search,
   Server,
   Settings,
-  Store,
   Trash2,
-  UserRound,
 } from 'lucide-react';
 import { type CSSProperties, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PageNavigationScope, usePageState } from '../navigation/PageNavigation';
@@ -47,10 +41,24 @@ import type {
 import { SkillIcon } from '../skills/SkillIcon';
 import { PluginIcon } from '../../components/PluginIcon';
 import { PluginMarketplacePanel } from './PluginMarketplacePanel';
+import { PluginHubToolbar, type PluginHubSection } from './PluginHubToolbar';
 import { usePluginNavigation, type PluginPage as Page, type ManageTab } from './usePluginNavigation';
 import './plugin-management.css';
 import { SettingsCard } from '../settings/SettingsControls';
 import { usePanelHeading } from '../settings/settingsHeading';
+
+type CatalogTab = 'plugins' | 'skills' | 'accounts';
+
+function toolbarSection(page: Page, catalogTab: CatalogTab): PluginHubSection {
+  switch (page.kind) {
+    case 'catalog': return catalogTab;
+    case 'skill': return 'skills';
+    case 'plugin':
+    case 'workspace': return 'plugins';
+    case 'manage': return page.tab === 'mcp' ? 'mcp' : 'manage';
+    default: return page.kind;
+  }
+}
 
 export function PluginManagementPanel({
   language,
@@ -86,16 +94,16 @@ export function PluginManagementPanel({
   const host = useSettingsHost();
   const [installPath, setInstallPath] = useState('');
   const [installOpen, setInstallOpen] = useState(false);
-  const [tab, setTab] = usePageState<'plugins' | 'skills' | 'accounts'>('plugin-tab', initialTab);
+  const [tab, setTab] = usePageState<CatalogTab>('plugin-tab', initialTab);
   const navigationScope = useContext(PageNavigationScope);
-  const { rootRef, entries, page, open: setPage, back, reset, dismissPlugin } = usePluginNavigation();
+  const { rootRef, entries, page, open: setPage, back, reset, dismissPlugin, setManageTab } = usePluginNavigation();
   const appliedPluginRequest = useRef<typeof requestedPlugin>(undefined);
   useEffect(() => {
     if (!requestedPlugin || appliedPluginRequest.current === requestedPlugin) return;
     appliedPluginRequest.current = requestedPlugin;
     setTab('plugins'); setPage(requestedPlugin.extensionId
       ? { kind: 'workspace', pluginId: requestedPlugin.id, extensionId: requestedPlugin.extensionId }
-      : { kind: 'plugin', pluginId: requestedPlugin.id });
+      : { kind: 'plugin', pluginId: requestedPlugin.id }, 'section');
   }, [requestedPlugin, setPage]);
   const [mcpDialog, setMcpDialog] = useState<{ serverId?: string } | null>(null);
   const openMcp = (serverId?: string) => renderMcp ? setMcpDialog({ serverId }) : onOpenMcp?.(serverId);
@@ -109,6 +117,7 @@ export function PluginManagementPanel({
   const [error, setError] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [marketProxyOpen, setMarketProxyOpen] = useState(false);
+  const [marketInstalling, setMarketInstalling] = useState(false);
   const [mcpOverview, setMcpOverview] = useState<McpConnectionOverview | null>(null);
   const [mcpError, setMcpError] = useState('');
   const [mcpLoading, setMcpLoading] = useState(true);
@@ -391,6 +400,18 @@ export function PluginManagementPanel({
     finally { setBusy(''); }
   };
   const proxyMatches = (name: string, id: string) => `${name} ${id}`.toLocaleLowerCase().includes(proxyQuery.trim().toLocaleLowerCase());
+  const openSection = (section: PluginHubSection) => {
+    setAddOpen(false);
+    if (section === 'plugins' || section === 'skills' || section === 'accounts') {
+      if (section === tab) setPage({ kind: 'catalog' }, 'section');
+      else { setTab(section); reset(); }
+    } else if (section === 'mcp' || section === 'manage') {
+      const target = section === 'mcp' ? 'mcp' : 'plugins';
+      if (page.kind === 'manage') setManageTab(target);
+      else setPage({ kind: 'manage', tab: target }, 'section');
+    } else setPage({ kind: section }, 'section');
+  };
+  const activeSection = toolbarSection(page.kind === 'accounts' ? page : entries[1]?.page ?? page, tab);
   const renderPage = (page: Page) => {
   const selectedPlugin = page.kind === 'plugin' ? plugins.find(plugin => plugin.id === page.pluginId) : undefined;
   if (page.kind === 'mcp') return <div className="plugin-mcp-settings">
@@ -429,7 +450,7 @@ export function PluginManagementPanel({
   </div>;
   if (!host.remote && page.kind === 'accounts') return <AccountsPanel language={language}/>;
   if (page.kind === 'marketplace') {
-    return <><PluginMarketplacePanel language={language}
+    return <><PluginMarketplacePanel language={language} onInstallingChange={setMarketInstalling}
       onOpenNetwork={() => setMarketProxyOpen(true)}
       onBack={back}
       onOpenBundled={pluginId => setPage({ kind: 'plugin', pluginId })}
@@ -499,7 +520,8 @@ export function PluginManagementPanel({
     return (
       <PluginManagementList
         language={language}
-        initialTab={page.tab}
+        activeTab={page.tab ?? 'plugins'}
+        onTabChange={setManageTab}
         configuration={configuration}
         query={query}
         plugins={filteredPlugins}
@@ -520,59 +542,6 @@ export function PluginManagementPanel({
 
   return (
     <div className="plugin-hub">
-      <div className="plugin-hub-toolbar">
-        <div className="plugin-hub-tabs" role="tablist">
-          <button className={tab === 'plugins' ? 'active' : ''} type="button" onClick={() => setTab('plugins')}>
-            {uiText(language)('appCenterModel.plugins')}
-          </button>
-          <button className={tab === 'skills' ? 'active' : ''} type="button" onClick={() => setTab('skills')}>
-            {uiText(language)('composer.skills')}
-          </button>
-          <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{uiText(language)('pluginManagementPanel.marketplace')}</button>
-          {!host.remote && <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{uiText(language)('accountsPanel.accounts')}</button>}
-        </div>
-        {tab !== 'accounts' && <div className="plugin-hub-actions">
-          <button type="button" title={uiText(language)('pluginManagementPanel.pluginSettings')} onClick={() => setPage({ kind: 'network' })}>{uiText(language)('common.settings')}</button>
-          <button className="plugin-mcp-manage-button" type="button" onClick={() => setPage({ kind: 'manage', tab: 'mcp' })}>
-            <Server size={17} /><span>{uiText(language)('pluginManagementPanel.mcpServers')}</span>
-          </button>
-          <button type="button" title={uiText(language)('automationPanel.refresh')} onClick={() => void load()}>
-            {busy === 'load' ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}
-          </button>
-          <button type="button" title={uiText(language)('browserStartBookmarks.manage')} onClick={() => setPage({ kind: 'manage' })}>
-            <Settings size={17} />
-          </button>
-          <div className="plugin-add-wrap" ref={addMenuRef}>
-            <button className="plugin-add-button" type="button" disabled={Boolean(busy)} onClick={() => setAddOpen((value) => !value)}>
-              {uiText(language)('composer.add')} <ChevronDown size={15} />
-            </button>
-            {addOpen && (
-              <div className="plugin-add-menu">
-                <button type="button" onClick={() => { setAddOpen(false); setPage({ kind: 'marketplace' }); }}>
-                  <Store size={15} /><span><strong>{uiText(language)('pluginManagementPanel.installFromMarketplace')}</strong><small>{uiText(language)('pluginManagementPanel.browseGithubAndLocalPluginMarketplaces')}</small></span>
-                </button>
-                {!host.remote && <button type="button" onClick={() => void installLocal('zip')}>
-                  <FileArchive size={15} />
-                  <span><strong>{uiText(language)('pluginManagementPanel.installFromZip')}</strong><small>{uiText(language)('pluginManagementPanel.importAPluginArchive')}</small></span>
-                </button>}
-                <button type="button" onClick={() => void installLocal('directory')}>
-                  <FolderOpen size={15} />
-                  <span><strong>{uiText(language)('pluginManagementPanel.installFromFolder')}</strong><small>{uiText(language)('pluginManagementPanel.chooseAnUnpackedPlugin')}</small></span>
-                </button>
-                <button type="button" onClick={() => { addMenuRef.current?.querySelector<HTMLButtonElement>('.plugin-add-button')?.focus(); setAddOpen(false); openMcp(); }}>
-                  <Plus size={15} />
-                  <span><strong>{uiText(language)('pluginManagementPanel.addMcpServer')}</strong><small>{uiText(language)('pluginManagementPanel.connectALocalOrRemoteToolService')}</small></span>
-                </button>
-                <button type="button" onClick={() => { setAddOpen(false); setTab('skills'); }}>
-                  <PackagePlus size={15} />
-                  <span><strong>{uiText(language)('pluginManagementPanel.browseSkills')}</strong><small>{uiText(language)('pluginManagementPanel.manageTheCardbushSkillCatalog')}</small></span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>}
-      </div>
-
       {installOpen && host.remote && <form className="settings-card settings-stack" onSubmit={event => {
         event.preventDefault(); if (busy || !host.installDirectory) return;
         setBusy('install'); setError('');
@@ -617,6 +586,11 @@ export function PluginManagementPanel({
   };
 
   return <div ref={rootRef} className="plugin-navigation">
+    {presentation === 'catalog' && <PluginHubToolbar language={language} section={activeSection} remote={host.remote}
+      busy={busy} installing={marketInstalling} addOpen={addOpen} addMenuRef={addMenuRef}
+      onToggleAdd={() => setAddOpen(value => !value)} onNavigate={openSection} onRefresh={() => void load()}
+      onInstall={kind => { openSection('plugins'); void installLocal(kind); }}
+      onAddMcp={() => { addMenuRef.current?.querySelector<HTMLButtonElement>('.plugin-add-button')?.focus(); setAddOpen(false); openMcp(); }}/>}
     {entries.map((entry, index) => {
       const hidden = index !== entries.length - 1;
       return <div key={entry.id} className="plugin-navigation-page" data-plugin-page={entry.page.kind}
@@ -806,11 +780,12 @@ function SkillCatalogCard({ language, skill, enabled, onOpen, onToggle }: {
   );
 }
 
-function PluginManagementList({ language, initialTab, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, onRefreshMcp, query, busy, onQuery, onOpen, onPersist, onUninstall, error }: {
+function PluginManagementList({ language, activeTab, onTabChange, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, onRefreshMcp, query, busy, onQuery, onOpen, onPersist, onUninstall, error }: {
   onUninstall: (plugin: CardbushAppPlugin) => void;
   error: string;
   language: AppLanguage;
-  initialTab?: ManageTab;
+  activeTab: ManageTab;
+  onTabChange: (tab: ManageTab) => void;
   configuration: CardbushAppsConfiguration | null;
   plugins: CardbushAppPlugin[];
   connections: PluginMcpConnection[];
@@ -824,7 +799,6 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
   onOpen: (plugin: CardbushAppPlugin) => void;
   onPersist: (configuration: CardbushAppsConfiguration, message: string) => void;
 }) {
-  const [activeTab, setActiveTab] = usePageState<ManageTab>('plugin-manage-tab', initialTab ?? 'plugins');
   const installed = plugins.filter((plugin) => plugin.installed);
   const appCount = installed.reduce((sum, plugin) => sum + plugin.components.filter((item) => item.kind === 'app').length, 0);
   const mcpCount = connections.length;
@@ -845,9 +819,9 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
   return (
     <div className="plugin-manage-page">
       <div className="plugin-manage-tabs" role="tablist">
-        <button className={activeTab === 'plugins' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'plugins'} onClick={() => setActiveTab('plugins')}>{uiText(language)('appCenterModel.plugins')} <em>{installed.length}</em></button>
-        <button className={activeTab === 'apps' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'apps'} onClick={() => setActiveTab('apps')}>{uiText(language)('pluginManagementPanel.apps')} <em>{appCount}</em></button>
-        <button className={activeTab === 'mcp' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')}>{uiText(language)('pluginManagementPanel.mcp')}<em>{mcpCount}</em></button>
+        <button className={activeTab === 'plugins' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'plugins'} onClick={() => onTabChange('plugins')}>{uiText(language)('appCenterModel.plugins')} <em>{installed.length}</em></button>
+        <button className={activeTab === 'apps' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'apps'} onClick={() => onTabChange('apps')}>{uiText(language)('pluginManagementPanel.apps')} <em>{appCount}</em></button>
+        <button className={activeTab === 'mcp' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'mcp'} onClick={() => onTabChange('mcp')}>{uiText(language)('pluginManagementPanel.mcp')}<em>{mcpCount}</em></button>
       </div>
       <SearchField language={language} value={query} onChange={onQuery} kind={activeTab === 'plugins' ? 'plugins' : activeTab} />
       {error && <p className="plugin-market-error" role="alert">{error}</p>}

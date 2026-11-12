@@ -101,6 +101,7 @@ async function buildViews() {
       'src/shared/dialogEvents.ts',
       'src/features/conversationHost.ts',
       'src/features/components/ComponentsApp.tsx', 'src/features/components/HtmlComponentSurface.tsx',
+      'src/features/desktop/HomeBoard.tsx',
       'src/features/components/HtmlComponentContext.ts', 'src/features/components/componentStore.ts',
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',
       'src/features/inspector/InspectorTabPages.tsx', 'src/features/inspector/InspectorTileFrame.tsx',
@@ -184,6 +185,7 @@ async function buildViews() {
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'page-navigation' ? [
       'src/features/navigation/PageNavigation.tsx', 'src/features/plugins/PluginManagementPanel.tsx',
+      'src/features/navigation/usePageScroll.ts',
       'src/features/plugins/PluginWorkspace.tsx', 'src/features/plugins/pluginNavigationRequests.ts',
       'src/features/settings/SettingsHostContext.ts', 'src/features/assistant/events/EventDetails.tsx',
       'src/features/windowMenu/applicationMenus.ts',

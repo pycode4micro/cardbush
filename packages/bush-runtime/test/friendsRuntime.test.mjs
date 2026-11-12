@@ -402,7 +402,7 @@ test('Assistant adopts persisted detections, archived work and recognition witho
 test('Assistant-owned event pins the selected notification account even after its preference changes', async t => {
   const sources = new Map(['personal', 'work'].map(id => ['webhook:' + id, {
     sourceRef: 'webhook:' + id, connectionId: id, senderId: 'same-user', conversationId: 'same-chat', available: true }]));
-  const fixtureHost = { botMessaging: { catalog: async () => [], context: async (_root, ref) => ({ discovery: 'mcp_search', available: true,
+  const fixtureHost = { botMessaging: { catalog: async () => [], context: async (_root, ref) => ({ discovery: 'search_plugins', available: true,
     source: sources.get(ref), targets: [...sources.values()] }), call: async () => { throw Error('Unexpected platform call'); } } };
   const f = await fixture(t, async (req, round) => {
     if (data(req).event.id === 'pinned' && round === 1 && data(req).signals[0].kind === 'input') return { calls: [

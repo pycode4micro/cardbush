@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { AgentConnectionManager } from './agentConnections.mjs';
 import { workerCredentialCipher, discardLegacyWorkerCache, openHeadlessWorkers } from './headlessWorkerStore.mjs';
 import { assertConnectorFile, secureConnectorResourceAsync } from './browserConnectorFiles.js';
-import { withWorkerStoreLock } from './workerStoreLock.mjs';
+import { withFileLock as withWorkerStoreLock } from './fileLock.mjs';
 import { localCliDataRoot, localDesktopProfile } from './localProfilePaths.mjs';
 
 type Options = { legacyRoot?: string; nativeHostPath?: string; manager?: AgentConnectionManager['options'] };

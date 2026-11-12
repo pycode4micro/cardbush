@@ -15,6 +15,6 @@ Discovery returns available object IDs, short purposes and necessary state. Regi
 
 Directory queries support `query`, `offset` and `limit`: 20 entries by default, at most 50, with roughly 6,000 characters per page. Preview descriptions are bounded, but search uses full descriptions. Keep the query unchanged and pass `next_offset` as `offset`; `null` ends pagination. `list_subagent_options` paginates agents/tools, not a single definition or settings. `scheduled_results` has no search, uses at most 20 entries per page and also returns `next_offset`.
 
-`mcp_search` only searches. `get_tool_schema` loads built-in and MCP schemas through one entry. Skill search returns descriptions and file references; bodies are read on demand. Execution history also uses summaries and archive locators.
+`search_plugins` defaults to `all`. Use `mode: "skill"` for visible instructions, `"mcp"` for tool names, and `"plugins"` for packages bundled with this host or installed by its user. Package matches include their local source and enabled state. Continue any mode with the returned cursor alone. `get_tool_schema` loads built-in and MCP schemas through one entry. Skill search returns descriptions and file references; bodies are read on demand. Execution history also uses summaries and archive locators.
 
 These rules affect model-facing discovery and management receipts. Configuration UI, persisted definitions, permissions and execution still use full data. Explicitly requested long definitions and results remain accessible through Runtime result archives.

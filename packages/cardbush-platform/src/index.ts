@@ -5,6 +5,7 @@ import { defaultTerminalRuntime, normalizeTerminalRuntime, type TerminalRuntime,
 import { inspectExecutableFile, type ExecutableInspection } from './executableLookup.js';
 export * from './contracts.js';
 export * from './windowsSupport.js';
+export * from './pluginRuntimes.js';
 export type { ExecutableInspection } from './executableLookup.js';
 
 /** Decode file URLs using the target host's path rules, preserving plain paths. */

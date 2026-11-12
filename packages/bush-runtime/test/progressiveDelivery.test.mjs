@@ -49,13 +49,13 @@ test('128-tool overview delivers three complete pages without archives or schema
   const { run, registry, request, store } = fixture();
   const names = []; let cursor, pages = 0, chars = 0;
   do {
-    const result = await run([['mcp_search', cursor ? { cursor, limit: 50 } : { query: '*', server: 'photoshop', limit: 50 }]]);
+    const result = await run([['search_plugins', cursor ? { cursor, limit: 50 } : { query: '*', server: 'photoshop', limit: 50 }]]);
     const page = result.pages[0], content = result.messages[0].content;
     assert.equal(page.archived, undefined); assert.equal(page.total, 128); assert.equal(page.server, 'photoshop');
-    assert.equal(page._searchPage, undefined); assert.equal(page.protocol, undefined);
+    assert.equal(page._page, undefined); assert.equal(page.protocol, undefined);
     assert.ok(content.length <= 16000); assert.ok(page.matches.length > 0);
     assert.ok(page.matches.every(item => item.description.length <= 180 && !item.inputSchema && item.loaded === false));
-    assert.ok(store.get('s', 't', result.calls[0].id).result._searchPage, 'original paging provenance stays in the journal');
+    assert.ok(store.get('s', 't', result.calls[0].id).result._page, 'original paging provenance stays in the journal');
     names.push(...page.matches.map(item => item.name)); chars += content.length; pages++;
     cursor = page.next_cursor;
     assert.equal(page.more, Boolean(cursor));
@@ -71,7 +71,7 @@ test('shared budget shortens complete pages and advances by delivered entries, i
   const seen = [], seenCommands = []; let cursor, offset = 0, rounds = 0;
   do {
     const result = await run([
-      ['mcp_search', cursor ? { cursor, limit: 50 } : { query: '*', limit: 50 }],
+      ['search_plugins', cursor ? { cursor, limit: 50 } : { query: '*', limit: 50 }],
       ['list_plugin_commands', { offset, limit: 50 }],
     ], 2800);
     const [mcp, plugins] = result.pages;
@@ -88,7 +88,7 @@ test('shared budget shortens complete pages and advances by delivered entries, i
     if (!cursor || offset === null) break;
   } while (rounds < 20);
   while (cursor) {
-    const { pages: [page] } = await run([['mcp_search', { cursor }]], 1400);
+    const { pages: [page] } = await run([['search_plugins', { cursor }]], 1400);
     seen.push(...page.matches.map(item => item.name)); cursor = page.next_cursor;
   }
   while (offset !== null) {
@@ -102,14 +102,14 @@ test('shared budget shortens complete pages and advances by delivered entries, i
 test('exhausted budget keeps a complete entry and usable cursor, and stale cursors still fail closed', async () => {
   const { run, registry } = fixture(5); const seen = []; let cursor;
   for (let i = 0; i < 5; i++) {
-    const { pages: [page] } = await run([['mcp_search', cursor ? { cursor, limit: 50 } : { query: '*', limit: 50 }]], 0);
+    const { pages: [page] } = await run([['search_plugins', cursor ? { cursor, limit: 50 } : { query: '*', limit: 50 }]], 0);
     assert.equal(page.archived, undefined); assert.equal(page.matches.length, 1);
     seen.push(page.matches[0].name); cursor = page.next_cursor;
   }
   assert.equal(cursor, undefined); assert.equal(new Set(seen).size, 5);
-  const { pages: [first] } = await run([['mcp_search', { query: '*', limit: 50 }]], 0);
+  const { pages: [first] } = await run([['search_plugins', { query: '*', limit: 50 }]], 0);
   registry.resolve(seen[0]).definition.description = 'Changed catalog definition';
-  const { pages: [stale] } = await run([['mcp_search', { cursor: first.next_cursor }]]);
+  const { pages: [stale] } = await run([['search_plugins', { cursor: first.next_cursor }]]);
   assert.match(JSON.stringify(stale), /cursor_stale|results changed/);
 });
 
@@ -121,18 +121,18 @@ test('skill lookup adds budget-aware continuation without losing names, file loc
     await writeFile(join(path, 'SKILL.md'), `---\nname: ${name}\ndescription: "${'Drawing workflow '.repeat(80)} marker-${i}"\n---\nPRIVATE SKILL INSTRUCTIONS`);
   }
   registerSkillTools(registry, [root]); request.metadata.disabledSkills = ['drawing-13'];
-  const seen = []; let offset = 0;
+  const seen = []; let cursor;
   do {
-    const result = await run([['search_skills', { query: 'drawing', offset, limit: 50 }]], 1500), page = result.pages[0];
+    const result = await run([['search_plugins', cursor ? { cursor, limit: 50 } : { query: 'drawing', mode: 'skill', limit: 50 }]], 1500), page = result.pages[0];
     assert.equal(page.total, 13); assert.equal(page.archived, undefined); assert.ok(page.matches.length > 0);
     assert.doesNotMatch(result.messages[0].content, /PRIVATE SKILL INSTRUCTIONS/);
     for (const match of page.matches) assert.equal(match.mainResource, join(root, match.name, 'SKILL.md'));
-    seen.push(...page.matches.map(item => item.name)); offset = page.next_offset;
-  } while (offset !== null && seen.length <= 13);
-  assert.equal(offset, null); assert.equal(seen.length, 13); assert.equal(new Set(seen).size, 13);
-  const { pages: [tailMatch] } = await run([['search_skills', { query: 'marker-12' }]]);
+    seen.push(...page.matches.map(item => item.name)); cursor = page.next_cursor;
+  } while (cursor && seen.length <= 13);
+  assert.equal(cursor, undefined); assert.equal(seen.length, 13); assert.equal(new Set(seen).size, 13);
+  const { pages: [tailMatch] } = await run([['search_plugins', { query: 'marker-12' }]]);
   assert.equal(tailMatch.matches[0].name, 'drawing-12', 'ranking still searches beyond the preview');
-  assert.throws(() => registry.resolve('search_skills').decodeInput({ query: 'drawing', offset: -1 }));
+  assert.throws(() => registry.resolve('search_plugins').decodeInput({ query: 'drawing', offset: -1 }));
 });
 
 test('grouped employee pages preserve native kind order across delivery cuts', async () => {

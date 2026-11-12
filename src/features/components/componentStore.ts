@@ -45,7 +45,10 @@ function subscribe(listener: () => void) {
   }
   return () => { listeners.delete(listener); if (!listeners.size) detach?.(); };
 }
-export function useComponents() { return useSyncExternalStore(subscribe, () => current, () => defaultComponents); }
+const noSubscription = () => () => {};
+export function useComponents(enabled = true) {
+  return useSyncExternalStore(enabled ? subscribe : noSubscription, () => enabled ? current : defaultComponents, () => defaultComponents);
+}
 export async function saveComponents(value: ComponentCollection, expectedRevision: number) {
   const api = window.cardbushDesktop?.homeComponentLibrary;
   const previous = api ? await getComponents() : legacy();

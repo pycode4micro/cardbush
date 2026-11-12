@@ -208,7 +208,7 @@ async function run() {
     });
     assert.equal(toolCatalogResponse.ok, true);
     const toolNames = toolCatalogResponse.result.map((tool) => tool.name);
-    assert.ok(toolNames.includes('search_skills'));
+    assert.ok(toolNames.includes('search_plugins'));
     assert.ok(toolNames.includes('mcp__cardbush_apps__computer_use'));
     assert.ok(toolNames.includes('mcp__browser_use__navigate_page'));
     const originalApps = JSON.parse(readFileSync(appsConfigPath, 'utf8'));

@@ -55,7 +55,7 @@ Product Host 在根 Turn 创建时解析 ID，传入不透明 Provider binding�
 
 Fork 复制派发前的完整消息（包括 system/developer），再追加明确角色和以 `你当前处于子agent状态` 开头的用户任务。它不重写父历史、工具或顺序。`system_prompt`、`allowed_tools`、`settings` 仅供 clean，fork 携带时拒绝。
 
-`list_subagent_options` 默认返回可复用员工和已安装角色，支持搜索／分页。注册员工已有配置；按需用 `agent_id` 或 `agent_type` 读取单项。`section: "settings"` 返回模型 ID、限额、Skill 范围、权限上限、可信 Hook；`section: "tools"` 搜索子工具，均不返回模型凭据。Skill 在已声明范围内通过 `search_skills` 发现。
+`list_subagent_options` 默认返回可复用员工和已安装角色，支持搜索／分页。注册员工已有配置；按需用 `agent_id` 或 `agent_type` 读取单项。`section: "settings"` 返回模型 ID、限额、Skill 范围、权限上限、可信 Hook；`section: "tools"` 搜索子工具，均不返回模型凭据。Skill 在已声明范围内通过 `search_plugins` 发现。
 
 临时 clean 的必填 `system_prompt` 是实际系统消息，`prompt` 是带子状态提醒的用户任务；不复制父历史或系统提示。父方必须提供必要事实、用户交流语言、行为与交付要求。`agent_type` 还施加插件角色指令、限制及环境。
 

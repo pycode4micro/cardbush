@@ -31,6 +31,7 @@ const toolLogos: Record<string, LucideIcon> = {
   open_external_url: Globe,
   linux_computer_use: Globe,
   linux_browser_use: Globe,
+  search_plugins: Search,
   search_skills: BookOpenCheck,
   read_archived_tool_result: FileText,
   inject_image_input: Image,

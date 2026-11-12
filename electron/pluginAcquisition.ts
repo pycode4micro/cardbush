@@ -4,6 +4,7 @@ import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { safePackagePath, withinPackage } from './pluginPackagePaths';
 import { extractNpmPluginArchive, pluginArchiveLimits } from './pluginArchives';
+import { pluginRuntimeCommand } from '@cardbush/platform';
 
 export interface NpmPluginSource { kind: 'npm'; package: string; version?: string; registry?: string }
 export type AcquisitionCommand = (command: string, args: string[], cwd: string, signal?: AbortSignal) => Promise<string>;
@@ -106,6 +107,8 @@ export async function acquireNpmPlugin(source: NpmPluginSource, stage: string, d
 }
 
 async function npmCommand(): Promise<[string, string[]]> {
+  const managed = pluginRuntimeCommand('npm', []);
+  if (managed.command !== 'npm') return [managed.command, managed.args];
   if (process.platform !== 'win32') return ['npm', []];
   const paths = (process.env.PATH ?? '').split(';');
   for (const directory of paths) {
