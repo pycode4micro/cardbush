@@ -6,6 +6,16 @@ import { RuntimeTurnSignals } from '../dist/turnSignals.js';
 import { RuntimeTaskActivity } from '../dist/runtimeTaskProgress.js';
 
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+test('tool art tracks execution, handles overlapping calls and briefly retains fast calls', () => {
+  const task = new RuntimeTaskActivity(), now = Date.now();
+  const event = (kind, id, name) => task.observe({ kind, createdAt: new Date(now).toISOString(), payload: { toolCallId: id, toolName: name } });
+  event('tool_queued', 'a', 'read_file'); assert.equal(task.toolPresentation.current(now), undefined);
+  event('tool_running', 'a', 'read_file'); event('tool_running', 'b', 'edit_file');
+  assert.deepEqual(task.toolPresentation.current(now), { name: 'read_file', running: true });
+  event('tool_cancelled', 'a', 'read_file'); assert.deepEqual(task.toolPresentation.current(now), { name: 'edit_file', running: true });
+  event('tool_returned', 'b', 'edit_file'); assert.deepEqual(task.toolPresentation.current(now + 1000), { name: 'edit_file', running: false });
+  assert.equal(task.toolPresentation.current(now + 3000), undefined);
+});
 test('default task wait survives many former timeout windows and remains interruptible without stopping work', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const signals = new RuntimeTurnSignals(), work = Promise.withResolvers(), registry = new ToolRegistry();

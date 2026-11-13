@@ -150,6 +150,7 @@ export function useInspectorWorkspace({
       setInspectorWidth(Math.min(previous?.width ?? splitWidthRef.current ?? 620, maximum), true);
     }
   }, [setSidebarCollapsed, setSection, sidebarCollapsed, sidebarWidth, compactLayout, setInspectorOpen, setInspectorWidth, mainStageRef, splitWidthRef, coverRestore, setInspectorCover, setQuickInputOpen]);
+  const returnFromInspector = exitPage ?? leaveInspectorCover;
   const revealConversation = useCallback(() => {
     if (standalone) { setSection(section); return; }
     if (inspectorControlsVisible) {
@@ -214,11 +215,11 @@ export function useInspectorWorkspace({
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || hasOpenModal()) return;
       event.preventDefault();
       if (inspectorCover && !sidebarCollapsed) { setSidebarCollapsed(true); return; }
-      if (quickInputOpen) setQuickInputOpen(false); else (exitPage ?? leaveInspectorCover)();
+      if (quickInputOpen) setQuickInputOpen(false); else returnFromInspector();
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
-  }, [inspectorControlsVisible, quickInputOpen, leaveInspectorCover, exitPage, interactive, inspectorCover, sidebarCollapsed, setSidebarCollapsed, setQuickInputOpen]);
+  }, [inspectorControlsVisible, quickInputOpen, returnFromInspector, interactive, inspectorCover, sidebarCollapsed, setSidebarCollapsed, setQuickInputOpen]);
 
   const dismissQuickInput = useCallback(() => setQuickInputOpen(false), [setQuickInputOpen]);
   useQuickInputDismiss(inspectorControlsVisible && quickInputOpen, dismissQuickInput);
@@ -254,7 +255,7 @@ export function useInspectorWorkspace({
   }, [inspectorOpen, inspectorCover, standalone, inspectorWidth, sidebarCollapsed, sidebarWidth, compactLayout, mainStageRef, conversationCoverRequested]);
   return {
     inspectorWidth, setInspectorWidth, inspectorLayout, setInspectorLayout,
-    inspectorCover, enterInspectorCover, leaveInspectorCover, revealConversation,
+    inspectorCover, enterInspectorCover, returnFromInspector, revealConversation,
     mainStageRef, conversationCovered, inspectorControlsVisible,
     quickInputOpen, setQuickInputOpen, toggleMultiPage, openMultiPage,
   };

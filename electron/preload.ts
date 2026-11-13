@@ -312,11 +312,18 @@ const desktopApi = {
     ipcRenderer.invoke('attention:notify-session', payload) as Promise<{ shown: boolean }>,
   setSessionAttentionCount: (count: number) =>
     ipcRenderer.invoke('attention:set-count', count) as Promise<void>,
+  onAssistantReplyAdded: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('attention:assistant-reply-added', listener);
+    return () => { ipcRenderer.removeListener('attention:assistant-reply-added', listener); };
+  },
   consumeSessionAttentionOpen: () =>
     ipcRenderer.invoke('attention:consume-open-session') as Promise<{
       sessionId: string;
+      messageId?: string;
       queuedAt: number;
     } | null>,
+  setAssistantPageVisible: (visible: boolean) => ipcRenderer.send('attention:assistant-page-visible', visible),
   onOpenSessionAttention: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on('attention:open-session', listener);
@@ -371,6 +378,8 @@ const desktopApi = {
   creationCanvas: (input: import('./creationCanvasFiles.mjs', { with: { 'resolution-mode': 'import' } }).CanvasFileRequest) => ipcRenderer.invoke('creation:canvas', input) as Promise<import('./creationCanvasFiles.mjs', { with: { 'resolution-mode': 'import' } }).CanvasFileResponse>,
   markdownFile: (input: import('./mdPresentationFiles').MarkdownFileRequest) => ipcRenderer.invoke('markdown:file', input) as Promise<import('./mdPresentationFiles').MarkdownFile | null>,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  saveTransferredFile: (name: string, bytes: Uint8Array) =>
+    ipcRenderer.invoke('files:save-transferred', name, bytes) as Promise<string>,
   inspectAttachments: (paths: string[]) =>
     ipcRenderer.invoke('files:inspect-attachments', paths) as Promise<Array<{
       path: string;

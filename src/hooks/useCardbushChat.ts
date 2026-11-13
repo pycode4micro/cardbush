@@ -1707,9 +1707,6 @@ export function useCardbushChat(
   const { receive: receiveEventResults, unreadEventResults, latestEventArrival } = useConversationEventInbox(eventAttention);
   const inbox = useMemo(() => workspaceInbox(attentionByConversation, unreadEventResults), [attentionByConversation, unreadEventResults]);
   useEffect(() => {
-    if (!backend.scope) void window.cardbushDesktop?.setSessionAttentionCount?.(inbox.notices.length).catch(() => undefined);
-  }, [backend.scope, inbox.notices.length]);
-  useEffect(() => {
     if (backend.scope || requestContext.runtimeReady === false) return;
     return observeConversationEvents(async (state, reloadList, signal) => {
       receiveEventResults(state);

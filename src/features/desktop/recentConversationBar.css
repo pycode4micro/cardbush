@@ -42,6 +42,12 @@
   display:flex; align-items:baseline; gap:clamp(8px,1vw,14px); min-width:0; max-width:100%; text-align:start; color:var(--text);
 }
 .recent-chat-copy small { flex:none; white-space:nowrap; color:var(--text-mid); font-size:calc(11px * var(--ui-font-scale,1)); }
+.recent-chat-copy small:is([data-activity=working],[data-activity=thinking])::before {
+  content:''; display:inline-block; width:5px; height:5px; margin-inline-end:5px; vertical-align:middle;
+  border-radius:50%; background:var(--accent);
+  animation:var(--assistant-cue-motion, assistant-cue-glow) 2.4s ease-in-out infinite;
+  animation-play-state:var(--assistant-motion-play, running);
+}
 .recent-chat-copy strong { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; line-height:1.25;
   font-size:calc(12.5px * var(--ui-font-scale,1)); font-weight:550; }
 .recent-bar-actions, .window-chat-actions { display:flex; align-items:center; gap:var(--bar-button-gap); }

@@ -34,6 +34,7 @@ export class SessionAttentionNotificationGate {
 
 export type SessionAttentionOpenIntent = {
   sessionId: string;
+  messageId?: string;
   queuedAt: number;
 };
 
@@ -41,19 +42,20 @@ export class SessionAttentionOpenQueue {
   readonly #items: SessionAttentionOpenIntent[] = [];
   readonly #recentlyQueued = new Map<string, number>();
 
-  enqueue(sessionId: string, now = Date.now()): boolean {
+  enqueue(sessionId: string, now = Date.now(), messageId?: string): boolean {
     const normalized = sessionId.trim();
     if (!normalized) return false;
     this.#purge(now);
-    const lastQueuedAt = this.#recentlyQueued.get(normalized);
+    const key = JSON.stringify([normalized, messageId]);
+    const lastQueuedAt = this.#recentlyQueued.get(key);
     if (
       lastQueuedAt != null &&
       now - lastQueuedAt <= sessionAttentionDuplicateWindowMs
     ) return false;
-    this.#recentlyQueued.set(normalized, now);
+    this.#recentlyQueued.set(key, now);
     const existing = this.#items.findIndex((item) => item.sessionId === normalized);
     if (existing >= 0) this.#items.splice(existing, 1);
-    this.#items.push({ sessionId: normalized, queuedAt: now });
+    this.#items.push({ sessionId: normalized, queuedAt: now, ...(messageId && { messageId }) });
     if (this.#items.length > sessionAttentionIntentLimit) {
       this.#items.splice(0, this.#items.length - sessionAttentionIntentLimit);
     }
@@ -84,17 +86,18 @@ export class SessionAttentionOpenQueue {
   }
 }
 
-export function encodeSessionAttentionActivation(sessionId: string): string {
+export function encodeSessionAttentionActivation(sessionId: string, messageId?: string): string {
   const normalized = sessionId.trim();
-  return normalized ? `${activationPrefix}${encodeURIComponent(normalized)}` : '';
+  return normalized ? activationPrefix + [normalized, ...(messageId ? [messageId] : [])].map(encodeURIComponent).join('#') : '';
 }
 
-export function decodeSessionAttentionActivation(value: string): string {
+export function decodeSessionAttentionActivation(value: string): Pick<SessionAttentionOpenIntent, 'sessionId' | 'messageId'> | undefined {
   const normalized = value.trim();
-  if (!normalized.startsWith(activationPrefix)) return '';
+  if (!normalized.startsWith(activationPrefix)) return;
   try {
-    return decodeURIComponent(normalized.slice(activationPrefix.length)).trim();
+    const [sessionId, messageId] = normalized.slice(activationPrefix.length).split('#').map(part => decodeURIComponent(part).trim());
+    if (sessionId) return { sessionId, ...(messageId && { messageId }) };
   } catch {
-    return '';
+    return;
   }
 }

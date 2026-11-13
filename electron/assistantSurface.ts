@@ -1,7 +1,7 @@
 import { screen, type BrowserWindow, type Rectangle } from 'electron';
 
 export type AssistantSurface = 'capsule' | 'compose' | 'replies' | 'voice';
-export type AssistantSurfaceState = { surface: AssistantSurface; replyWidth?: number };
+export type AssistantSurfaceState = { surface: AssistantSurface; replyWidth?: number; messageId?: string };
 export const assistantCallPhases = ['connecting', 'listening', 'speaking', 'muted', 'error'] as const;
 export type AssistantCallPhase = typeof assistantCallPhases[number];
 const height = 40;
@@ -34,10 +34,10 @@ function surfaceGeometry(win: BrowserWindow) {
   return { area, zoom, expandedWidth: Math.min(area.width, Math.round(344 * zoom)) };
 }
 
-export function assistantSurfaceState(win: BrowserWindow, surface: AssistantSurface): AssistantSurfaceState {
+export function assistantSurfaceState(win: BrowserWindow, surface: AssistantSurface, messageId?: string): AssistantSurfaceState {
   if (surface !== 'replies') return { surface };
   const { expandedWidth, zoom } = surfaceGeometry(win);
-  return { surface, replyWidth: expandedWidth / zoom - 2 * inset };
+  return { surface, replyWidth: expandedWidth / zoom - 2 * inset, ...(messageId && { messageId }) };
 }
 
 export function sizeAssistantSurface(win: BrowserWindow, mode: AssistantSurface, measuredReplyHeight = 0) {

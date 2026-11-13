@@ -1,6 +1,53 @@
 // Runs inside the opaque component iframe. The host checks the sender, token and grants.
 (() => {
   const { protocol, token, network } = document.currentScript.dataset;
+  // Keep this capability inside the trusted click listener, outside the widget SDK.
+  const linkKey = document.currentScript.dataset.linkKey;
+  delete document.currentScript.dataset.linkKey;
+  if (linkKey) {
+    const send = parent.postMessage.bind(parent);
+    // Report iframe destinations, not load success: cross-origin pages cannot
+    // be inspected reliably. The host validates every address independently.
+    let pulse = 0, last;
+    const report = () => {
+      pulse = 0;
+      const sites = new Map();
+      for (const frame of document.querySelectorAll('iframe[src]')) {
+        if (frame.hasAttribute('srcdoc')) continue;
+        const url = URL.parse(frame.getAttribute('src'));
+        if (!url || url.protocol !== 'https:' || url.username || url.password || url.href.length > 4096) continue;
+        if (!sites.has(url.origin)) sites.set(url.origin, url.href);
+        if (sites.size >= 8) break;
+      }
+      const urls = [...sites.values()], value = JSON.stringify(urls);
+      if (value !== last) { last = value; send({protocol, token, topic:'home.embedTargets', urls}, '*'); }
+    };
+    const schedule = () => { if (!pulse) pulse = requestAnimationFrame(report); };
+    addEventListener('DOMContentLoaded', () => {
+      new MutationObserver(changes => {
+        if (changes.some(change => change.type === 'attributes' ? change.target.localName === 'iframe' :
+          [...change.addedNodes, ...change.removedNodes].some(node => node.nodeType === 1 && (node.localName === 'iframe' || node.querySelector('iframe'))))) schedule();
+      }).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['src','srcdoc']});
+      schedule();
+    }, {once:true});
+    // A fast srcdoc can finish parsing before React installs its listener.
+    const handshake = event => {
+      if (event.source !== parent || event.data?.token !== token || event.data?.topic !== 'host.context') return;
+      removeEventListener('message', handshake); last = undefined; schedule();
+    };
+    addEventListener('message', handshake);
+    const follow = event => {
+      if (!event.isTrusted || event.defaultPrevented || event.button > 1) return;
+      const anchor = event.target.closest?.('a[href]');
+      if (!anchor || anchor.hasAttribute('download') || anchor.getAttribute('href').trim().startsWith('#')) return;
+      const url = anchor.href;
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
+      event.preventDefault();
+      send({ protocol, token, linkKey, topic: 'home.followLink', url }, '*');
+    };
+    addEventListener('click', follow);
+    addEventListener('auxclick', follow);
+  }
   const pending = new Map();
   const listeners = new Map();
   let sequence = 0;

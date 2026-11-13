@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 
 const storageKey = 'cardbush.inspector_cover_position';
 type Position = { x: number; y: number };
@@ -12,13 +12,14 @@ function readPosition(): Position {
   return { x: .5, y: 1 };
 }
 
-/** Anchor the capsule, then fit the input independently so opening it never moves the handle. */
+/** Anchor the capsule, then fit the input independently so opening it never moves the capsule. */
 export function useInspectorCoverPosition(inputOpen: boolean, inert: boolean) {
   const root = useRef<HTMLDivElement>(null), capsule = useRef<HTMLDivElement>(null);
   const position = useRef<Position | null>(null);
   position.current ??= readPosition();
   const geometry = useRef({ minX: 0, maxX: 0, minY: 0, maxY: 0, scaleX: 1, scaleY: 1, left: 0, top: 0 });
-  const drag = useRef<{ id: number; handle: HTMLButtonElement; x: number; y: number; left: number; top: number; origin: Position; moved: boolean } | null>(null);
+  const drag = useRef<{ id: number; capture: HTMLElement; x: number; y: number; left: number; top: number; origin: Position; moved: boolean } | null>(null);
+  const suppressPointerClick = useRef(false);
 
   const layout = useCallback(() => {
     const host = root.current, bar = capsule.current;
@@ -61,10 +62,11 @@ export function useInspectorCoverPosition(inputOpen: boolean, inert: boolean) {
     const current = drag.current;
     if (!current) return;
     drag.current = null;
+    suppressPointerClick.current = cancel || current.moved;
     if (cancel) { position.current = current.origin; layout(); }
     else if (current.moved) save();
-    document.body.classList.remove('inspector-cover-dragging');
-    if (current.handle.hasPointerCapture(current.id)) current.handle.releasePointerCapture(current.id);
+    document.body.classList.remove('inspector-cover-pointer-active', 'inspector-cover-dragging');
+    if (current.capture.hasPointerCapture(current.id)) current.capture.releasePointerCapture(current.id);
   }, [layout, save]);
 
   useLayoutEffect(() => {
@@ -82,8 +84,12 @@ export function useInspectorCoverPosition(inputOpen: boolean, inert: boolean) {
       const current = drag.current;
       if (!current || event.pointerId !== current.id) return;
       const dx = (event.clientX - current.x) / geometry.current.scaleX, dy = (event.clientY - current.y) / geometry.current.scaleY;
-      if (!current.moved && Math.hypot(dx, dy) < 4) return;
-      current.moved = true;
+      if (!current.moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        current.moved = true;
+        document.body.classList.add('inspector-cover-dragging');
+        root.current?.querySelectorAll<HTMLElement>('[popover]:popover-open').forEach(menu => menu.hidePopover());
+      }
       move(current.left + dx, current.top + dy);
     };
     const pointerUp = (event: globalThis.PointerEvent) => { if (event.pointerId === drag.current?.id) finish(); };
@@ -105,20 +111,29 @@ export function useInspectorCoverPosition(inputOpen: boolean, inert: boolean) {
   useEffect(() => { if (inert) finish(true); }, [inert, finish]);
 
   return { root, capsule, handlers: {
-    onPointerDown(event: PointerEvent<HTMLButtonElement>) {
-      if (event.button !== 0 || inert || drag.current) return;
-      event.preventDefault();
-      root.current?.querySelectorAll<HTMLElement>('[popover]:popover-open').forEach(menu => menu.hidePopover());
+    onPointerDown(event: PointerEvent<HTMLDivElement>) {
+      if (!event.isPrimary || event.button !== 0 || inert || drag.current) return;
+      suppressPointerClick.current = false;
       layout();
       const { left, top } = geometry.current;
-      drag.current = { id: event.pointerId, handle: event.currentTarget, x: event.clientX, y: event.clientY,
+      // Keep the native click on the pressed button (including its icon),
+      // while retaining pointer events outside the capsule during a drag.
+      const capture = (event.target as Element).closest('button') ?? event.currentTarget;
+      drag.current = { id: event.pointerId, capture, x: event.clientX, y: event.clientY,
         left, top, origin: { ...position.current! }, moved: false };
-      event.currentTarget.setPointerCapture(event.pointerId);
-      document.body.classList.add('inspector-cover-dragging');
+      capture.setPointerCapture(event.pointerId);
+      // A native webview would otherwise swallow the first move outside the pill.
+      document.body.classList.add('inspector-cover-pointer-active');
     },
-    onLostPointerCapture(event: PointerEvent<HTMLButtonElement>) { if (event.pointerId === drag.current?.id) finish(); },
-    onDoubleClick() { position.current = { x: .5, y: 1 }; layout(); save(); },
-    onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    onClickCapture(event: MouseEvent<HTMLDivElement>) {
+      if (event.detail !== 0 && suppressPointerClick.current) {
+        event.preventDefault(); event.stopPropagation();
+      }
+    },
+    onLostPointerCapture(event: PointerEvent<HTMLDivElement>) {
+      if (event.target === drag.current?.capture && event.pointerId === drag.current.id) finish(true);
+    },
+    onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
       event.preventDefault(); event.stopPropagation();
       if (event.key === 'Home') position.current = { x: .5, y: 1 };

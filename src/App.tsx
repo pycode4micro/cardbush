@@ -41,6 +41,7 @@ import { requestPluginApplication } from './features/plugins/pluginNavigationReq
 import { PageNavigationContext, PageNavigationScope, usePageNavigation } from './features/navigation/PageNavigation';
 import { splitPage, tabWorkspaceDestination, type AppPage, type HomePage, type WorkspaceDestination } from './features/navigation/appPage';
 import { DesktopCollection } from './features/desktop/DesktopCollection';
+import { useTaskbarUnread } from './features/desktop/useTaskbarUnread';
 import { VisitedFeaturePages } from './features/navigation/VisitedFeaturePages';
 import { GlobalTooltip } from './components/GlobalTooltip';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
@@ -496,6 +497,7 @@ function CardbushApp() {
     contextWindowUsageAvailable: backendCapabilities.contextWindowUsage,
     workspaceChangesAvailable: backendCapabilities.workspaceChanges,
   });
+  useTaskbarUnread(chat.workspaceNotices.length, runtimeStartup.phase === 'ready');
   useEffect(() => installUiLongTaskObserver(), []);
   useEffect(() => {
     const saved = (event: Event) => {
@@ -742,7 +744,7 @@ function CardbushApp() {
   }, [inspectorWorkspaceId]);
   const {
     inspectorWidth, setInspectorWidth, inspectorLayout, setInspectorLayout,
-    inspectorCover, enterInspectorCover, leaveInspectorCover, revealConversation,
+    inspectorCover, enterInspectorCover, returnFromInspector, revealConversation,
     mainStageRef, conversationCovered, inspectorControlsVisible,
     quickInputOpen, setQuickInputOpen, toggleMultiPage, openMultiPage,
   } = useInspectorWorkspace({
@@ -1510,9 +1512,17 @@ function CardbushApp() {
   }, [chat.activeConversationId, chat.setConversationProject, createConversation, projectItems]);
 
   const pendingSessionAttentionRef = useRef('');
-  const openSessionAttention = useCallback((sessionId: string) => {
+  const [assistantNoticeTarget, setAssistantNoticeTarget] = useState<{ id: string }>();
+  const clearAssistantNoticeTarget = useCallback(() => setAssistantNoticeTarget(undefined), []);
+  const openSessionAttention = useCallback((sessionId: string, messageId?: string) => {
     const normalized = sessionId.trim();
     if (!normalized) return;
+    if (normalized === PERSONAL_ASSISTANT_SESSION) {
+      pendingSessionAttentionRef.current = '';
+      void openNoticeSource(normalized);
+      setAssistantNoticeTarget(messageId ? { id: messageId } : undefined);
+      return;
+    }
 
     setSettingsOpen(false);
     setSection('chat');
@@ -1520,7 +1530,7 @@ function CardbushApp() {
     if (openConversation(normalized)) {
       pendingSessionAttentionRef.current = '';
     }
-  }, [openConversation]);
+  }, [openConversation, openNoticeSource]);
 
   const consumeSessionAttentionOpen = useCallback(async () => {
     const consume = window.cardbushDesktop?.consumeSessionAttentionOpen;
@@ -1528,7 +1538,7 @@ function CardbushApp() {
     for (let index = 0; index < 20; index += 1) {
       const intent = await consume().catch(() => null);
       if (!intent) break;
-      openSessionAttention(intent.sessionId);
+      openSessionAttention(intent.sessionId, intent.messageId);
     }
   }, [openSessionAttention]);
 
@@ -2030,6 +2040,11 @@ function CardbushApp() {
   const splitCoverClass = !workspacePage && !settingsOpen && splitOpen
     ? inspectorCover ? ' inspector-covered' : conversationCovered ? ' inspector-conversation-covered' : '' : '';
   const assistantVisible = navigationSection === 'assistant';
+  const readingAssistant = destination === 'assistant' && !settingsOpen && !inspectorControlsVisible && !(drawerLayout && !sidebarCollapsed);
+  useEffect(() => {
+    window.cardbushDesktop?.setAssistantPageVisible?.(readingAssistant);
+    return () => window.cardbushDesktop?.setAssistantPageVisible?.(false);
+  }, [readingAssistant]);
   const assistantProfile = useAssistantProfile();
   const lastChatPage = useRef<'assistant' | 'chat'>('assistant');
   useEffect(() => {
@@ -2333,6 +2348,7 @@ function CardbushApp() {
           )}
           <section ref={mainStageRef} className="main-stage" aria-hidden={workspacePage || settingsVisible || undefined} inert={workspacePage || settingsVisible || inspectorControlsVisible || drawerLayout && !sidebarCollapsed ? true : undefined}>
             <AssistantView observeActivity={runtimeStartup.phase === 'ready'} active={section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
+              transcriptVisible={readingAssistant} noticeTarget={readingAssistant ? assistantNoticeTarget : undefined} onNoticeLocated={clearAssistantNoticeTarget}
               transcriptFooter={section === 'assistant' ? eventInbox(PERSONAL_ASSISTANT_SESSION) : undefined}
               headerActionsTarget={assistantVisible ? chatActionsTarget : null}
               workSummaryAvailable={workSummaryAvailable}
@@ -2864,7 +2880,7 @@ function CardbushApp() {
           {!settingsVisible && inspectorControlsVisible && <InspectorCoverControls language={language} inputOpen={quickInputOpen}
             status={activeCreationInspector?.inputStatus}
             inert={(drawerLayout || inspectorCover) && !sidebarCollapsed} onTargetChange={setQuickInputTarget}
-            onBack={workspacePage ? undefined : leaveInspectorCover} onToggleInput={() => {
+            onBack={returnFromInspector} ownsWindowBack={!workspacePage} onToggleInput={() => {
               if (!quickInputOpen && section !== 'assistant' && section !== 'md-presentation' && section !== 'team') setSection('chat');
               setQuickInputOpen(open => !open);
             }} />}

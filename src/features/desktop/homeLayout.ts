@@ -2,8 +2,8 @@ import type { HtmlComponent } from '../components/componentModel';
 
 export const nativeSections = ['featured', 'events', 'projects', 'recent'] as const;
 export type NativeSection = typeof nativeSections[number];
-type Dimensions = { width?: number; height?: number; column?: number };
-export type HomeBlock = Dimensions & (
+export type HomeDimensions = { width?: number; height?: number; column?: number };
+export type HomeBlock = HomeDimensions & (
   | { kind: 'native'; id: NativeSection; hidden?: boolean }
   | { kind: 'html'; id: string }
   | { kind: 'web'; id: string; title: string; url: string }

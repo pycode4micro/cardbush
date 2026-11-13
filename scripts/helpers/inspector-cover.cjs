@@ -24,7 +24,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.coverSent=[];window.coverStops=0;
     localStorage.setItem('cardbush.inspector_width','500');
     localStorage.removeItem('cardbush.inspector_split_width');
-    window.CoverFixture=function CoverFixture({startSidebarCollapsed=true}={}){
+    window.CoverFixture=function CoverFixture({startSidebarCollapsed=true,exitPage}={}){
       const [target,setTarget]=React.useState(null),[sidebarCollapsed,setSidebarCollapsed]=React.useState(startSidebarCollapsed);
       const [section,setSection]=React.useState('chat'),[inspectorOpen,setInspectorOpen]=React.useState(true);
       const [windowMaximized,setWindowMaximized]=React.useState(false);
@@ -32,7 +32,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       window.coverPreview=setPreview;
       const [tiled,setTiled]=React.useState(true);
       const [tabs]=React.useState([{id:'first',kind:'resource',detail:{target:'https://first.example/'}},{id:'second',kind:'resource',detail:{target:'https://second.example/'}}]);
-      const workspace=views.useInspectorWorkspace({language:'zh',windowMaximized,compactLayout:false,
+      const workspace=views.useInspectorWorkspace({language:'zh',windowMaximized,compactLayout:false,exitPage,
         section,setSection,sidebarCollapsed,sidebarWidth:280,setSidebarCollapsed,inspectorOpen,setInspectorOpen,
         inspectorTabs:tabs,activeInspectorTab:tabs[0],openInspectorTab:()=>{},setInspectorAddMenuOpen:()=>{}});
       const {inspectorCover:covered,inspectorControlsVisible,conversationCovered,mainStageRef,inspectorWidth:width,setInspectorWidth:setWidth,quickInputOpen:input,setQuickInputOpen:setInput}=workspace;
@@ -59,7 +59,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
                 renderFrame:tab=>h(views.InspectorTileFrame,{tab,language:'zh',onSwap:()=>{}})},tab=>h('webview',{src:${JSON.stringify(browserPreview)},
                   style:{width:'100%',height:'100%'},webpreferences:'contextIsolation=yes,nodeIntegration=no,sandbox=yes'})))))),
           inspectorControlsVisible&&h(views.InspectorCoverControls,{language:'zh',inputOpen:input,inert:covered&&!sidebarCollapsed,
-            onTargetChange:setTarget,onBack:workspace.leaveInspectorCover,onToggleInput:()=>setInput(value=>!value)})));
+            onTargetChange:setTarget,onBack:workspace.returnFromInspector,ownsWindowBack:!exitPage,onToggleInput:()=>setInput(value=>!value)})));
     };
     renderView(h(CoverFixture));
   `);
@@ -188,7 +188,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   fs.writeFileSync(path.join(root,'tmp','inspector-cover-quick-input.png'),(await window.webContents.capturePage()).toPNG());
   await require('./quick-input-preview.cjs')({run,until,pause,window,root});
   await require('./quick-input-drag.cjs')({run,until,pause,window,root,guestId});
-  await run('coverUpdate({draft:"return draft"});document.querySelector("[data-history-action=back]:enabled").click()');
+  await run('coverUpdate({draft:"return draft"})');
+  const backPoint=await run('(()=>{const r=document.querySelector(".inspector-cover-back svg").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()');
+  window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...backPoint});
+  window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...backPoint});
   await until('!document.querySelector(".inspector-covered") && !!document.querySelector(".main-stage textarea[data-composer-input]")','Back returns composer to conversation');
   assert.equal(await run('document.querySelector(".main-stage textarea[data-composer-input]").value'),'return draft');
   assert.ok(await run('document.querySelector(".main-stage .message-list").textContent.includes("检查完成，这是本次回复。")'),'expanded conversation shows the reply');
@@ -248,6 +251,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('document.querySelector("#sidebar-conversation").click()');await pause(300);
   assert.equal(await run('coverWorkspace.inspectorOpen && coverWorkspace.inspectorWidth===500'),true,'wide navigation preserves a usable split');
   await require('./inspector-window-layout.cjs')({run,until,pause,window,root});
+  await run('window.pageReturns=0; renderView(h(CoverFixture,{key:"standalone",exitPage:()=>{pageReturns++;}}))');
+  await until('!!document.querySelector(".inspector-cover-back")','standalone tabs expose floating Back');
+  assert.equal(await run('!!document.querySelector("[data-history-action=back]:enabled")'),false,'the floating control leaves standalone window history to the router');
+  await run('document.querySelector(".inspector-cover-back").click()');
+  assert.equal(await run('pageReturns'),1,'standalone Back delegates to the page router once');
   console.log('Inspector recovery passed: persisted/clamped widths, real composer, sidebar hit testing, drag recovery, reopen, safe split restore and narrow-window return.');
   console.log('Inspector cover passed: real pointer drag, full inner/tile widths, single/multi-page, window resize and 125% renderer zoom, narrow drag handles, native bar retained, Composer and original-width restoration.');
   await require('./inspector-workspace.cjs')({run,until,pause});

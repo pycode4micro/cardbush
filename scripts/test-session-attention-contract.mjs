@@ -39,7 +39,7 @@ assert.match(main, /!isWindowVisible\(mainWindow\) \|\| !mainWindow\.isFocused\(
 assert.match(main, /notification\.on\('click',[\s\S]*?attention:open-session/);
 assert.match(main, /Notification\.handleActivation\(/);
 assert.match(main, /toastXml:\s*sessionAttentionToastXml/);
-assert.match(main, /sessionAttentionOpenQueue\.enqueue\(sessionId\)/);
+assert.match(main, /sessionAttentionOpenQueue\.enqueue\(sessionId, Date\.now\(\), messageId\)/);
 assert.match(main, /attention:consume-open-session/);
 assert.match(main, /mainWindow\.restore\(\);[\s\S]*?mainWindow\.show\(\);[\s\S]*?mainWindow\.focus\(\);[\s\S]*?mainWindow\.moveTop\(\)/);
 assert.match(main, /mainWindow\.setOverlayIcon\(/);
@@ -127,7 +127,8 @@ assert.match(storage, /maxPersistedAttentionAgeMs/);
 assert.match(hook, /attentionByConversation/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'completed'/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'interaction'/);
-assert.match(hook, /setSessionAttentionCount\?\.\(inbox\.notices\.length\)/, 'native unread count shares the desktop inbox projection');
+assert.match(app, /useTaskbarUnread\(chat\.workspaceNotices\.length/, 'the workspace publishes its inbox count once; embedded chats cannot overwrite it');
+assert.match(read('src', 'features', 'desktop', 'useTaskbarUnread.ts'), /setSessionAttentionCount\?\.\(workspaceUnread \+ assistantUnread\)/);
 assert.match(hook, /clearSessionAttention\(activeConversationIdRef.current, 'completed'\)/);
 
 assert.match(app, /attentionByConversation=\{chat\.attentionByConversation\}/);
@@ -201,8 +202,15 @@ assert.equal(
 
 const hostileSessionId = 'local-会话<&> %25';
 const activation = encodeSessionAttentionActivation(hostileSessionId);
-assert.equal(decodeSessionAttentionActivation(activation), hostileSessionId);
-assert.equal(decodeSessionAttentionActivation('https://untrusted.invalid/'), '');
-assert.equal(decodeSessionAttentionActivation('cardbush-attention-v1:%E0%A4%A'), '');
+assert.equal(decodeSessionAttentionActivation(activation).sessionId, hostileSessionId);
+const replyTarget = decodeSessionAttentionActivation(encodeSessionAttentionActivation('personal-assistant', 'reply#1'));
+assert.equal(replyTarget.messageId, 'reply#1');
+const replyQueue = new SessionAttentionOpenQueue();
+assert.ok(replyQueue.enqueue(replyTarget.sessionId, 1000, replyTarget.messageId));
+assert.equal(replyQueue.consume(1000).messageId, 'reply#1');
+assert.equal(replyQueue.enqueue('personal-assistant', 1001, 'reply#1'), false);
+assert.ok(replyQueue.enqueue('personal-assistant', 1001, 'reply#2'));
+assert.equal(decodeSessionAttentionActivation('https://untrusted.invalid/'), undefined);
+assert.equal(decodeSessionAttentionActivation('cardbush-attention-v1:%E0%A4%A'), undefined);
 
 console.log('session attention contract tests passed');

@@ -9,6 +9,7 @@ export class ConversationJournal {
   private cache = new Map<string, ConversationEntry[]>();
   private histories = new Map<string, AssistantModelHistory>();
   private reactions = new Map<string, Record<string, AssistantReaction>>();
+  private replyPositions = new Map<string, { byId: Map<string, { index: number; at: string }>; latest?: { id: string; at: string } }>();
   constructor(private root: string, private onAppend?: (sessionId: string, entry: ConversationEntry) => void) {}
   private file(sessionId: string) { return join(this.root, createHash('sha256').update(sessionId).digest('hex') + '.jsonl'); }
   modelHistory(sessionId: string) {
@@ -16,7 +17,7 @@ export class ConversationJournal {
     if (!history) { history = new AssistantModelHistory(this.file(sessionId).replace(/\.jsonl$/, '.model.jsonl')); this.histories.set(sessionId, history); }
     return history;
   }
-  read(sessionId: string): ConversationEntry[] {
+  private entries(sessionId: string): ConversationEntry[] {
     let entries = this.cache.get(sessionId);
     if (!entries) {
       entries = [];
@@ -37,7 +38,30 @@ export class ConversationJournal {
       }
       this.cache.set(sessionId, entries);
     }
-    return entries.map(item => ({ ...item }));
+    return entries;
+  }
+  read(sessionId: string): ConversationEntry[] {
+    return this.entries(sessionId).map(item => ({ ...item }));
+  }
+  private indexReply(sessionId: string, entry: ConversationEntry) {
+    const positions = this.replyPositions.get(sessionId);
+    if (!positions || entry.role !== 'assistant' || !isAssistantPageMessage(entry)) return;
+    positions.byId.set(entry.id, { index: positions.byId.size, at: entry.createdAt });
+    positions.latest = { id: entry.id, at: entry.createdAt };
+  }
+  replyStatus(sessionId: string, after?: { id: string; at: string }) {
+    let positions = this.replyPositions.get(sessionId);
+    if (!positions) {
+      const entries = this.entries(sessionId);
+      positions = { byId: new Map() };
+      this.replyPositions.set(sessionId, positions);
+      for (const entry of entries) this.indexReply(sessionId, entry);
+    }
+    const { byId, latest } = positions;
+    const position = after && byId.get(after.id);
+    const unread = !after ? 0 : position ? byId.size - position.index - 1
+      : !after.at ? byId.size : Array.from(byId.values()).filter(item => item.at > after.at).length;
+    return { unread, ...(!after && latest ? { latest: { ...latest } } : {}) };
   }
   append(sessionId: string, value: ConversationEntry) {
     const entry = conversationEntrySchema.parse(value), entries = this.read(sessionId);
@@ -50,6 +74,7 @@ export class ConversationJournal {
     mkdirSync(this.root, { recursive: true });
     appendFileSync(this.file(sessionId), JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600, flush: true });
     this.cache.set(sessionId, [...entries, entry]);
+    this.indexReply(sessionId, entry);
     this.onAppend?.(sessionId, entry);
     return entry;
   }
@@ -76,6 +101,7 @@ export class ConversationJournal {
     return this.readReactions(sessionId);
   }
   forget(sessionId: string) {
+    this.replyPositions.delete(sessionId);
     this.modelHistory(sessionId).clear(); rmSync(this.file(sessionId), { force: true }); this.cache.delete(sessionId);
     rmSync(this.file(sessionId) + '.reactions.json', { force: true }); this.reactions.delete(sessionId);
   }

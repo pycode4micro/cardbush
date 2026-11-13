@@ -1,7 +1,7 @@
 import { isAssistantPageMessage } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
 import { readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
-import { PERSONAL_ASSISTANT_SESSION as sessionId, type ConversationEntry } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION as sessionId, type ConversationEntry, type AssistantActivitySnapshot } from '@cardbush/bush-protocol';
 import { createConversation, type ChatStreamRequest } from '../../backend/api';
 import { conversationJournalCommand, readConversationJournal, assistantVoiceMessages } from '../../backend/conversationJournal';
 import { prepareRuntimeAgentRequest } from '../../backend/runtimeChat';
@@ -10,6 +10,7 @@ import { createDesktopRuntimeSession } from '../../runtime-client/ElectronRuntim
 import { readAssistantProfile } from './assistantProfile';
 import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision } from '../../shared/chatAttachments';
 import { assistantExecutionAttachments } from './assistantAttachments';
+import { saveAssistantReceipt } from './assistantReadReceipt';
 let resetting: Promise<void> | undefined;
 let contextVersion = 0;
 
@@ -17,9 +18,9 @@ let contextVersion = 0;
 export const assistantBackend = {
   ensure: (name: string) => createConversation({ sessionId, title: name, metadata: { personalAssistant: true } }),
   read: (after = 0, language?: string) => readConversationJournal(sessionId, after, language),
-  activity: async () => (await conversationJournalCommand<{activity: import('@cardbush/bush-protocol').AssistantWorkActivity}>({
+  activity: () => conversationJournalCommand<AssistantActivitySnapshot>({
     action: 'activity', sessionId,
-  })).activity,
+  }),
   async react(messageId: string, reaction: import('@cardbush/bush-protocol').AssistantReaction | null) {
     const version = contextVersion;
     const { generation } = await assistantBackend.read();
@@ -60,7 +61,8 @@ export const assistantBackend = {
     return resetting = (async () => {
       await assistantBackend.ensure(readAssistantProfile().name);
       await window.cardbushDesktop?.voice?.realtime?.forgetHistory(sessionId);
-      await conversationJournalCommand({ action: 'reset', sessionId });
+      const { generation } = await conversationJournalCommand<{ generation: number }>({ action: 'reset', sessionId });
+      saveAssistantReceipt({ generation, id: '', at: '' }, true);
       window.dispatchEvent(new Event('cardbush:assistant-reset'));
     })().finally(() => { resetting = undefined; });
   },

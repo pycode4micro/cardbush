@@ -1,8 +1,10 @@
+import { componentOrigins } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
 export const componentProtocol = 'cardbush.html-surface/1';
 export const componentStorageKey = 'cardbush.html_components.v1';
 export const maxComponentBytes = 256 * 1024;
 export type HtmlComponent = { id: string; title: string; html: string; allowActions: boolean;
-  width: number; height: number; order: number; home?: boolean; networkDomains?: string[]; approvedNetworkOrigins?: string[] };
+  width: number; height: number; order: number; home?: boolean; networkDomains?: string[]; approvedNetworkOrigins?: string[];
+  embedDomains?: string[]; approvedEmbedOrigins?: string[] };
 export type ComponentCollection = { version: 1; revision: number; items: HtmlComponent[] };
 export const defaultComponents: ComponentCollection = {version: 1, revision: 0, items: []};
 
@@ -18,8 +20,14 @@ export function normalizeComponents(value: unknown): ComponentCollection {
   }).map(item => ({id: item.id, title: String(item.title || 'HTML').trim().slice(0, 80), html: item.html, allowActions: item.allowActions === true,
     width: Math.max(3, Math.min(12, Math.round(item.width) || 6)), height: Math.max(120, Math.min(1200, Math.round(item.height) || 280)),
     order: Number.isFinite(item.order) ? item.order : 0,
+    embedDomains:componentOrigins(item.embedDomains), approvedEmbedOrigins:approvedEmbedOrigins(item),
     home: item.home === true || (item.home === undefined && Array.isArray(input.welcomeLayout?.items) && input.welcomeLayout.items.some(place => place?.componentId === item.id))}));
   return {version: 1, revision: Number(input.revision) || 0, items: items.sort((a,b) => a.order - b.order)};
+}
+
+export function approvedEmbedOrigins(item: HtmlComponent) {
+  const requested = componentOrigins(item.embedDomains);
+  return componentOrigins(item.approvedEmbedOrigins).filter(site => requested.includes(site));
 }
 
 export function validateComponentText(value: unknown): string {

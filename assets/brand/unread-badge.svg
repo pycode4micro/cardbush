@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="1" y="2" width="46" height="44" rx="21" fill="#0969da" stroke="#fff" stroke-width="2"/>
+  <text x="24" y="24" dy=".35em" text-anchor="middle" fill="#fff"
+        font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="{size}">{label}</text>
+</svg>

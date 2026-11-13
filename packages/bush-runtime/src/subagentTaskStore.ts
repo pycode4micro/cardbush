@@ -29,7 +29,7 @@ export class SubagentTaskStore {
   readonly #parents = new Map<string, ParentTasks>();
   readonly #listeners = new Set<() => void>();
   // Only this host's in-flight dispatches own execution. Journal replay restores history.
-  readonly #liveByParent = new Map<string, Set<string>>();
+  readonly #liveByParent = new Map<string, Map<string, { sessionId: string; turnId: string } | undefined>>();
 
   startedHere(parentSessionId: string, taskId: string): boolean {
     return this.#liveByParent.get(parentSessionId)?.has(taskId) ?? false;
@@ -112,8 +112,8 @@ export class SubagentTaskStore {
     });
     this.#append(input.parentSessionId, task);
     let live = this.#liveByParent.get(input.parentSessionId);
-    if (!live) this.#liveByParent.set(input.parentSessionId, live = new Set());
-    live.add(input.taskId);
+    if (!live) this.#liveByParent.set(input.parentSessionId, live = new Map());
+    live.set(input.taskId, task.remote ? undefined : { sessionId: task.childSessionId, turnId: task.childTurnId });
     return structuredClone(task);
   }
 
@@ -196,6 +196,10 @@ export class SubagentTaskStore {
 
   runningCount(parentSessionId: string): number {
     return this.#liveByParent.get(parentSessionId)?.size ?? 0;
+  }
+  *liveLocalTurns(parentSessionId: string) {
+    const live = this.#liveByParent.get(parentSessionId);
+    if (live) for (const child of live.values()) if (child) yield child;
   }
 
   restoredLocalRuns(parentSessionId: string, taskId?: string): SubagentTask[] {

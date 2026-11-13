@@ -31,7 +31,7 @@ async function buildFixture(directory) {
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
-          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
+          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,toolName:fixture.toolName,expression:fixture.expression,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
           react:async(messageId,reaction)=>{if(fixture.failReact)throw Error('fixture reaction failed');fixture.reactions??={};if(reaction)fixture.reactions[messageId]=reaction;else delete fixture.reactions[messageId];return {reactions:structuredClone(fixture.reactions)};},
           answerPermission:async(answer)=>{if(fixture.failPermission)throw Error('Approval connection failed');(fixture.permissionAnswers??=[]).push(answer);fixture.management.permissions=fixture.management.permissions.filter(item=>item.permissionId!==answer.permissionId);},
           stop:async()=>{fixture.stops=(fixture.stops??0)+1;fixture.busy=false;fixture.retry=null;fixture.runtimeError='已停止回复，可以稍后重试。';},
@@ -57,6 +57,8 @@ async function buildFixture(directory) {
         import {uiText} from ${file('src/i18n/index.ts')};
         import {ChatSidebar} from ${file('src/features/sidebar/ChatSidebar.tsx')};
         import {AssistantStageButton} from ${file('src/features/desktop/AssistantStageButton.tsx')};
+        import {AssistantSkinContext} from ${file('src/features/assistant/assistantSkinContext.ts')};
+        import {pixelRobot} from ${file('src/features/assistant/art/pixelRobot.ts')};
         import ${file('src/features/desktop/recentConversationBar.css')};
         import {ApplicationVoiceHost,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
         import {realtimeConversationSnapshot} from ${file('src/features/voice/realtimeAgentBridge.ts')};
@@ -84,7 +86,9 @@ async function buildFixture(directory) {
         fixture.voiceState=()=>applicationVoiceSession().snapshot();
         function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile();
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
-          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} prepare={noop} settings={noop}>
+          const [skin,setSkin]=useState(pixelRobot);
+          fixture.changeSkin=custom=>setSkin(custom?{...pixelRobot,props:{anchor:{x:10,y:45,size:40},paths:{pencil:'M1 1h3v3H1z'},gestures:{pencil:'scan'}}}:pixelRobot);
+          return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><AssistantSkinContext.Provider value={skin}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} prepare={noop} settings={noop}>
             <ChatSidebar language={language} section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
               assistantEntry={<AssistantStageButton language={language} active={active} onOpen={noop}/>}
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
@@ -93,7 +97,7 @@ async function buildFixture(directory) {
               composerControls={controls} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:''};}} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
               composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
             {portal&&<aside ref={setTarget} className="inspector-quick-input" style={{position:"fixed",bottom:20,left:300,width:450,zIndex:30}}/>}
-          </ProfileCenter></ApplicationVoiceHost></div>;
+          </ProfileCenter></ApplicationVoiceHost></AssistantSkinContext.Provider></div>;
         }createRoot(document.getElementById('root')).render(<Fixture/>);`;
     },
   }], build: { write: false, minify: false, lib: { entry: path.resolve('src/__assistant_fixture__.tsx'), name: 'AssistantFixture', formats: ['iife'] } } });
@@ -264,28 +268,37 @@ app.whenReady().then(async () => {
     const stage = '.sidebar-footer .assistant-stage';
     const stageCue = cue => until(`document.querySelector('${stage} [data-cue=${cue}]')`);
     await stageCue('thought');
-    await read('document.documentElement.dataset.motionPreference="off";fixture.activity="working";void 0');
-    await stageCue('terminal');
+    await read('document.documentElement.dataset.motionPreference="off";fixture.activity="working";fixture.toolName="terminal_exec";void 0');
+    await until(`document.querySelector('${stage} [data-tool-prop=terminal]')`);
     assert.deepEqual(await read(`(() => {
       const actor = document.querySelector('${stage} .assistant-stage-actor');
       const sprite = actor.querySelector('img');
-      const gesture = sprite.getAnimations()[0];
-      const iterations = gesture.effect.getTiming().iterations;
-      gesture.finish();
-      return [iterations, actor.getAnimations().length, getComputedStyle(sprite).translate];
-    })()`), [2, 0, 'none'], 'work gestures settle on a visible resting frame at a fixed position');
+      const [gesture, loop] = sprite.getAnimations();
+      fixture.workLoop = loop;
+      const timing = loop.effect.getTiming();
+      gesture.finish(); loop.pause(); loop.currentTime = timing.delay + timing.duration * 0.5;
+      return [gesture.effect.getTiming().iterations, timing.iterations === Infinity, actor.getAnimations().length, getComputedStyle(sprite).translate];
+    })()`), [2, true, 0, '-12.5%'], 'two opening gestures lead into a small, repeating frame change without moving the actor');
     await read('fixture.theme("bright");void 0');
     await until('document.querySelector(".app.theme-bright")');
-    assert.equal(await read(`document.querySelector('${stage} img').getAnimations().length`), 0, 'a re-render in the same scene does not restart the gesture');
-    const cursorStyle = `getComputedStyle(document.querySelector('${stage} [data-cue=terminal]'), '::after')`;
+    assert.ok(await read(`document.querySelector('${stage} img').getAnimations().includes(fixture.workLoop)`), 'a theme change does not restart the gesture');
+    await read('fixture.toolName="edit_file";fixture.expression={mood:"happy",replyId:"reply-1",expiresAt:Date.now()+3100};void 0');
+    await until(`document.querySelector('${stage}[data-state=working] [data-expression=happy]') && document.querySelector('${stage} [data-tool-prop=pencil]')`);
+    const propStyle = `getComputedStyle(document.querySelector('${stage} .assistant-tool-prop'))`;
     await read('document.documentElement.dataset.windowVisible="false";void 0');
-    assert.equal(await read(`${cursorStyle}.animationPlayState`), 'paused', 'the terminal cursor pauses in a hidden window');
+    assert.equal(await read(`${propStyle}.animationPlayState`), 'paused', 'props pause in a hidden window');
     await read('delete document.documentElement.dataset.windowVisible;document.documentElement.dataset.motionPreference="on";void 0');
-    assert.equal(await read(`${cursorStyle}.animationName`), 'none', 'the terminal stays legible without motion');
+    assert.equal(await read(`${propStyle}.animationName`), 'none', 'the tool remains legible without motion');
+    await until(`!document.querySelector('${stage} .robot-expression') && document.querySelector('${stage}[data-state=working] [data-tool-prop=pencil]')`);
+    await read('fixture.changeSkin(true);void 0');
+    await until(`document.querySelector('${stage} .assistant-tool-prop[data-gesture=scan] [data-tool-prop=pencil] path')?.getAttribute('d')==='M1 1h3v3H1z'`);
+    assert.equal(await read(`${propStyle}.getPropertyValue('--prop-x')`), '10%', 'a replacement skin controls placement, drawing and gesture without changing the tool');
+    await read('fixture.changeSkin(false);void 0');
     await read('delete document.documentElement.dataset.motionPreference;void 0');
     await read('fixture.activity="waiting";void 0');
     await stageCue('hourglass');
-    await read('delete fixture.activity;fixture.theme("dark");void 0');
+    assert.equal(await read(`!!document.querySelector('${stage} .assistant-tool-prop')`), false, 'waiting does not pretend to execute a tool');
+    await read('delete fixture.activity;delete fixture.expression;delete fixture.toolName;fixture.theme("dark");void 0');
     await stageCue('thought');
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'), 3);
     const dark = await read('getComputedStyle(document.querySelector(".assistant-view")).color');
@@ -330,7 +343,7 @@ app.whenReady().then(async () => {
     win.setSize(1120,800);await until('innerWidth===1120');await pause(150);
     const menu=async()=>{await read(`document.querySelector('[data-nav-section=assistant]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:95}));void 0`);await until('document.querySelector(".sidebar-context-menu")');};
     const choose=label=>read(`Array.from(document.querySelectorAll('.sidebar-context-menu button')).find(button=>button.textContent.trim()===${JSON.stringify(label)}).click();void 0`);
-    await menu();assert.equal(await read('document.querySelectorAll(".sidebar-context-menu button").length'),4);
+    await menu();assert.deepEqual(await read('Array.from(document.querySelectorAll(".sidebar-context-menu button"), button => button.dataset.sidebarMenuItem)'), ['assistant-reset','assistant-rename','assistant-floating','assistant-microphone','assistant-output']);
     await choose('麦克风静音');assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).microphoneMuted'),true);
     await menu();await choose('播报静音');assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).outputMuted'),true);
     await menu();assert.ok(await read('document.querySelector(".sidebar-context-menu").textContent.includes("恢复播报")'));

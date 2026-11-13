@@ -154,6 +154,10 @@ export class InMemoryRuntimeEventLog {
     const stream = this.#stream(sessionId, turnId);
     return stream.events.length ? stream.activity.snapshot() : undefined;
   }
+  liveTool(sessionId: string, turnId: string) {
+    // A UI poll must never load or replay a turn from disk.
+    return this.#streams.get(JSON.stringify([sessionId, turnId]))?.activity.toolPresentation.current();
+  }
 
   replay(
     sessionId: string,

@@ -99,6 +99,7 @@ import {
   decodeSessionAttentionActivation,
   encodeSessionAttentionActivation,
 } from './sessionAttentionRouting';
+import { taskbarBadge } from './taskbarBadge';
 import {
   type BrowserConnectorStatus,
 } from './browserConnectorBroker';
@@ -304,6 +305,8 @@ let assistantWindowReady = false;
 let assistantFloating = false;
 let openHomeOnReady = false;
 let assistantSurface: AssistantSurface = 'capsule';
+let assistantPageVisible = false;
+let assistantReplyTarget: string | undefined;
 let capsuleCallPhase: AssistantCallPhase | null = null;
 function setCapsuleCallPhase(phase: AssistantCallPhase | null) {
   if (phase === capsuleCallPhase) return;
@@ -318,8 +321,9 @@ function traceAssistantWindow(win: BrowserWindow, action: string, details?: Reco
   appendDebugLog('assistant-surface', { process: process.pid, window: win.id, action, surface: assistantSurface,
     bounds: win.getBounds(), visible: win.isVisible(), focused: win.isFocused(), ...details });
 }
-function showAssistantSurface(surface: AssistantSurface, source = 'renderer') {
-  if (!assistantWindow || assistantWindow.isDestroyed() || assistantSurface === surface) return;
+function showAssistantSurface(surface: AssistantSurface, source = 'renderer', messageId?: string) {
+  if (!assistantWindow || assistantWindow.isDestroyed() || (assistantSurface === surface && assistantReplyTarget === messageId)) return;
+  assistantReplyTarget = messageId;
   traceAssistantWindow(assistantWindow, 'transition', { next: surface, source });
   const dismissReplies = assistantSurface === 'replies' && surface === 'capsule' && assistantReplyHeight !== undefined && source !== 'hide';
   assistantSurface = surface;
@@ -327,7 +331,7 @@ function showAssistantSurface(surface: AssistantSurface, source = 'renderer') {
     assistantReplyHeight = undefined;
     if (surface !== 'replies') sizeAssistantSurface(assistantWindow, surface);
   }
-  sendToLiveRenderer(assistantWindow, 'assistant:surface-changed', assistantSurfaceState(assistantWindow, surface));
+  sendToLiveRenderer(assistantWindow, 'assistant:surface-changed', assistantSurfaceState(assistantWindow, surface, messageId));
 }
 let retainAssistantWindow = false;
 const residentPreferencePath = () => path.join(app.getPath('userData'), 'assistant-resident.json');
@@ -649,6 +653,8 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
   });
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
+  assistantPageVisible = false;
+  window.webContents.on('did-start-loading', () => { if (mainWindow === window) assistantPageVisible = false; });
   if (assistantWindow) sendToLiveRenderer(assistantWindow, 'workspace:presence', true);
   installAppSessionPermissions(window);
   windowScrollDiagnostics.set(window, new WindowScrollDiagnostics(window, appLogsDir()));
@@ -678,6 +684,8 @@ function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' |
   window.on('restore', refreshWindowBackdrop);
   window.on('restore', () => traceMainWindowComposition(window, 'restore'));
   window.on('show', refreshWindowBackdrop);
+  window.on('show', applySessionAttentionBadge);
+  window.on('restore', applySessionAttentionBadge);
   window.on('show', () => traceMainWindowComposition(window, 'show', [0, 80]));
   window.on('hide', () => traceMainWindowComposition(window, 'hide', [0, 80]));
   window.on('blur', () => traceMainWindowComposition(window, 'blur', [0, 80]));
@@ -1276,7 +1284,7 @@ function loadRenderer(target: BrowserWindow, mode: 'main' | 'shadow' | 'assistan
 function createTray() {
   const icon = loadCardbushTrayIcon(32);
   tray = new Tray(icon);
-  tray.setToolTip('cardbush');
+  applySessionAttentionBadge();
   updateTrayMenu();
   tray.on('click', showWorkspaceHome);
   nativeTheme.on('updated', updateTrayMenu);
@@ -1547,22 +1555,11 @@ function quoteWindowsCommandArgument(value: string) {
   return `"${value.replace(/"/g, '\\"')}"`;
 }
 
-function loadSessionAttentionOverlayIcon() {
-  return nativeImage.createFromDataURL(
-    'data:image/svg+xml;utf8,' +
-      encodeURIComponent(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="#d88933" stroke="#fff" stroke-width="3"/><path d="M9.5 16.5 14 21l8.5-10" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-      ),
-  );
-}
-
 function applySessionAttentionBadge() {
-  const count = Math.max(0, Math.round(sessionAttentionCount));
+  const count = sessionAttentionCount;
+  const description = count ? nativeText()('main.unreadBadge', { count }) : '';
   if (process.platform === 'win32' && mainWindow != null && !mainWindow.isDestroyed()) {
-    mainWindow.setOverlayIcon(
-      count > 0 ? loadSessionAttentionOverlayIcon() : null,
-      count > 0 ? `${count} 个会话待处理` : '',
-    );
+    mainWindow.setOverlayIcon(taskbarBadge(app.getAppPath(), count), description);
   }
   if (process.platform === 'darwin' && app.dock) {
     app.dock.setBadge(count > 0 ? String(count) : '');
@@ -1570,7 +1567,7 @@ function applySessionAttentionBadge() {
     app.setBadgeCount(count);
   }
   if (tray != null && !tray.isDestroyed()) {
-    tray.setToolTip(count > 0 ? `cardbush · ${count} 个会话待处理` : 'cardbush');
+    tray.setToolTip(description || cardbushDisplayName);
   }
 }
 
@@ -1599,16 +1596,19 @@ function showSessionAttentionNotification(value: unknown) {
     return { shown: false };
   }
   if (!sessionAttentionNotificationGate.accept(payload)) return { shown: false };
-  const assistantFocused = payload.sessionId === 'personal-assistant' && assistantWindow?.isFocused() && isWindowVisible(assistantWindow);
-  const shouldShow = !assistantFocused && (mainWindow == null || !isWindowVisible(mainWindow) || !mainWindow.isFocused());
-  if (!shouldShow) {
+  const workspaceInBackground = mainWindow == null || !isWindowVisible(mainWindow) || !mainWindow.isFocused();
+  const assistantNotice = payload.sessionId === 'personal-assistant';
+  const readingReplies = assistantNotice && payload.kind === 'completed' && assistantSurface === 'replies' &&
+    assistantWindow?.isFocused() && isWindowVisible(assistantWindow);
+  if (readingReplies || (!workspaceInBackground && (!assistantNotice || assistantPageVisible))) {
     return { shown: false };
   }
   if (!Notification.isSupported()) {
     sessionAttentionNotificationGate.forget(payload);
     return { shown: false };
   }
-  const activationArguments = encodeSessionAttentionActivation(payload.sessionId);
+  const messageId = assistantNotice && payload.kind === 'completed' ? payload.interactionId || undefined : undefined;
+  const activationArguments = encodeSessionAttentionActivation(payload.sessionId, messageId);
   let notification: Notification | undefined;
   const failed = (error: unknown) => {
     if (notification) activeSessionAttentionNotifications.delete(notification);
@@ -1629,7 +1629,7 @@ function showSessionAttentionNotification(value: unknown) {
         : {}),
     });
     const owned = notification;
-    notification.on('click', () => activateSessionAttention(payload.sessionId));
+    notification.on('click', () => activateSessionAttention(payload.sessionId, messageId));
     notification.on('close', () => activeSessionAttentionNotifications.delete(owned));
     notification.on('failed', (_event, error) => failed(error));
     activeSessionAttentionNotifications.add(notification);
@@ -1657,13 +1657,13 @@ function escapeXmlText(value: string) {
     .replace(/>/g, '&gt;');
 }
 
-function activateSessionAttention(sessionId: string) {
-  if (sessionId === 'personal-assistant' && (assistantWindow?.isVisible() || assistantResident && !mainWindow)) {
-    showFloatingAssistant(); showAssistantSurface('replies', 'notification'); return;
+function activateSessionAttention(sessionId: string, messageId?: string) {
+  if (sessionId === 'personal-assistant' && messageId && (assistantResident || assistantWindow?.isVisible() && !mainWindow?.isFocused())) {
+    showFloatingAssistant();
+    showAssistantSurface('replies', 'notification', messageId);
+    return;
   }
-  if (sessionAttentionOpenQueue.enqueue(sessionId)) {
-    publishSessionAttentionOpenAvailable();
-  }
+  if (!sessionAttentionOpenQueue.enqueue(sessionId, Date.now(), messageId)) return;
   showWorkspaceWindow();
   publishSessionAttentionOpenAvailable();
 }
@@ -1749,7 +1749,7 @@ function showFloatingAssistant() {
   });
   assistantWindow = window;
   publishFloatingAssistant(true);
-  assistantSurface = 'capsule'; assistantReplyHeight = undefined;
+  assistantSurface = 'capsule'; assistantReplyHeight = undefined; assistantReplyTarget = undefined;
   assistantWindowReady = false; retainAssistantWindow = false;
   window.setMenu(null);
   window.webContents.on('context-menu', (event, params) => {
@@ -1901,7 +1901,7 @@ ipcMain.on('assistant:set-capsule-call', (event, phase: unknown) => {
 ipcMain.handle('assistant:surface', (event, surface: unknown) => {
   const owner = requireAppFrame(event);
   if (owner !== assistantWindow) throw Error('invalid_assistant_window');
-  if (surface === 'read') return assistantSurfaceState(owner, assistantSurface);
+  if (surface === 'read') return assistantSurfaceState(owner, assistantSurface, assistantReplyTarget);
   if (surface !== 'capsule' && surface !== 'compose' && surface !== 'replies' && surface !== 'voice') throw Error('invalid_assistant_surface');
   showAssistantSurface(surface);
   return assistantSurfaceState(owner, assistantSurface);
@@ -1979,6 +1979,10 @@ ipcMain.handle('shadow:window-close', (event) => {
   state.window.close();
 });
 
+ipcMain.on('attention:assistant-page-visible', (event, visible) => {
+  if (event.sender === mainWindow?.webContents && event.senderFrame === event.sender.mainFrame) assistantPageVisible = visible === true;
+});
+
 ipcMain.handle('attention:notify-session', (event, payload: unknown) => {
   if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
     return { shown: false };
@@ -1987,10 +1991,8 @@ ipcMain.handle('attention:notify-session', (event, payload: unknown) => {
 });
 
 ipcMain.handle('attention:set-count', (event, count: number) => {
-  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
-    return;
-  }
-  sessionAttentionCount = Math.max(0, Math.round(Number(count) || 0));
+  if (requireAppFrame(event) !== mainWindow || !Number.isSafeInteger(count) || count < 0 || count === sessionAttentionCount) return;
+  sessionAttentionCount = count;
   applySessionAttentionBadge();
 });
 
@@ -2063,6 +2065,7 @@ ipcMain.handle('app:set-ui-language', (event, language: unknown) => {
   if (next === nativeUiLanguage) return;
   nativeUiLanguage = next;
   updateTrayMenu();
+  applySessionAttentionBadge();
 });
 
 ipcMain.handle('app:show-error', (event, error: { title?: unknown; message?: unknown }) => {
@@ -2476,6 +2479,21 @@ ipcMain.handle('markdown:file', async (event, input: import('./mdPresentationFil
     });
   }
   return markdownFiles.command(input);
+});
+
+ipcMain.handle('files:save-transferred', async (event, name: string, bytes: Uint8Array) => {
+  if (event.senderFrame !== event.sender.mainFrame || !(appWindowForSender(event.sender) || shadowWindows.has(event.sender.id))) {
+    throw Error('invalid_window_sender');
+  }
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength > 64 * 1024 * 1024 || typeof name !== 'string') throw Error('invalid_attachment');
+  const filename = path.win32.basename(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').slice(0, 180);
+  if (!filename || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(filename)) throw Error('invalid_attachment_name');
+  const dir = path.join(app.getPath('userData'), 'transferred-attachments', randomUUID());
+  const target = path.join(dir, filename);
+  await fs.promises.mkdir(dir, { recursive: true });
+  try { await fs.promises.writeFile(target, bytes, { flag: 'wx' }); }
+  catch (error) { await fs.promises.rm(dir, { recursive: true, force: true }); throw error; }
+  return target;
 });
 
 ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => {
@@ -3502,6 +3520,11 @@ ipcMain.handle('shell:open-external', (event, targetUrl: string) => {
 
 ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow && sourceWindow === assistantWindow && event.senderFrame === event.sender.mainFrame) {
+    const url = safeUrl(target);
+    if (url && isWebProtocol(url)) return openUiPreview(url.href);
+    return;
+  }
   if (sourceWindow !== mainWindow) {
     return;
   }
@@ -3766,9 +3789,9 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     app.setAppUserModelId(cardbushAppUserModelId);
     Notification.handleActivation((details) => {
-      const sessionId = decodeSessionAttentionActivation(details.arguments);
-      if (sessionId) {
-        activateSessionAttention(sessionId);
+      const target = decodeSessionAttentionActivation(details.arguments);
+      if (target) {
+        activateSessionAttention(target.sessionId, target.messageId);
       } else {
         showMainWindow();
       }
@@ -4245,7 +4268,8 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
         if (operation === 'assistant.is-resident') return assistantResident;
         if (operation === 'assistant.attention') {
           const notice = payload as { id: string; text?: string; interaction: boolean };
-          if ((assistantResident || assistantWindow) && typeof notice?.id === 'string') return showSessionAttentionNotification({
+          if (typeof notice?.id === 'string' && !notice.interaction) sendToLiveRenderer(mainWindow, 'attention:assistant-reply-added');
+          if (typeof notice?.id === 'string') return showSessionAttentionNotification({
             sessionId: 'personal-assistant', title: nativeText()('resident.notificationTitle'), turnId: notice.id,
             kind: notice.interaction ? 'interaction' : 'completed', interactionId: notice.id,
             body: notice.interaction ? nativeText()('resident.needsAttention') : notice.text,

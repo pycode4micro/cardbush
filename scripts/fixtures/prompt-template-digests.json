@@ -98,7 +98,7 @@
   {
     "name": "assistant-memory",
     "slots": [],
-    "sha256": "df6d98ecdb396879949334901f52db2611f1dde4b7a51150498b877c8785b87e"
+    "sha256": "d460cbfb6077dc44c995023c23a70204d4e8e22ec5c13ca3aed6a817a8a3d764"
   },
   {
     "name": "assistant-report",

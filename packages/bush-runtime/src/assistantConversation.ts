@@ -1,4 +1,5 @@
 import { delegatedRequestContext } from './assistantDelegationOrigins.js';
+import { LiveToolPresentation } from './liveToolPresentation.js';
 import { ModelRequestInterruption, ModelRequestInterrupted } from './modelRequestInterruption.js';
 import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
 import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
@@ -11,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, isAssistantPageMessage, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalTaskInput, conversationalSubagentTools,
-  savedNextStepPrediction, type ConversationEntry, type AssistantWorkActivity,
+  savedNextStepPrediction, assistantExpressionSchema, type AssistantExpression, type AssistantReplyExpression, type AssistantActivitySnapshot, type ConversationEntry, type AssistantWorkActivity,
   individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition, type TeamRun } from '@cardbush/bush-protocol';
 import { executeBufferedModelRound, type BufferedModelRetryStatus } from './bufferedModelRetry.js';
 import type { ModelProvider } from './modelProvider.js';
@@ -68,6 +69,8 @@ export class AssistantConversation {
   private paused = false;
   private error: string | RuntimeUiError = '';
   private retry?: BufferedModelRetryStatus;
+  private replyExpression?: AssistantReplyExpression;
+  private directTools = new LiveToolPresentation();
   private stopped = false;
   private controller?: AbortController;
   private executingTools?: AbortSignal;
@@ -84,6 +87,7 @@ export class AssistantConversation {
     exists(id: string): boolean;
     tasks(id: string): SubagentTask[];
     runningTaskCount?(id: string): number;
+    childTool?(id: string): string | undefined;
     delegate(input: unknown): Promise<unknown>;
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
@@ -109,10 +113,20 @@ export class AssistantConversation {
     if (workingTasks || this.deps.eventRunning?.()) return 'working';
     return this.error && !this.paused ? 'error' : 'idle';
   }
+  private activitySnapshot(workingTasks: number, eventNeedsResponse: boolean): AssistantActivitySnapshot {
+    const expression = this.replyExpression;
+    const activity = this.activity(workingTasks, eventNeedsResponse);
+    const direct = this.directTools.current();
+    const toolName = activity === 'working' || activity === 'thinking'
+      ? (direct?.running ? direct.name : (workingTasks ? this.deps.childTool?.(PERSONAL_ASSISTANT_SESSION) : undefined) ?? direct?.name) : undefined;
+    return { activity, ...(toolName ? { toolName } : {}),
+      ...(expression && expression.expiresAt > Date.now() ? { expression } : {}) };
+  }
   command(value: unknown) {
     const input = assistantConversationRequestSchema.parse(value);
+    if (input.action === 'reply-status') return { generation: this.generation, ...this.journal.replyStatus(input.sessionId, input.after) };
     if (input.action === 'activity') {
-      return { activity: this.activity(this.runningTasks(input.sessionId), this.deps.eventNeedsResponse?.() === true) };
+      return this.activitySnapshot(this.runningTasks(input.sessionId), this.deps.eventNeedsResponse?.() === true);
     }
     const language = resolveUiLanguage(('language' in input ? input.language : undefined) ?? ('parent' in input ? input.parent.metadata.uiLanguage : this.configured?.parent.metadata.uiLanguage));
     if (!this.deps.exists(input.sessionId)) throw new RuntimeUiError('assistantRuntime.missing', undefined, language);
@@ -128,7 +142,7 @@ export class AssistantConversation {
       return { entries: entries.slice(input.after), cursor: entries.length, generation: this.generation,
         reactions: this.journal.readReactions(input.sessionId),
         eventNeedsResponse,
-        ...(input.sessionId === PERSONAL_ASSISTANT_SESSION ? { activity: this.activity(workingTasks, eventNeedsResponse) } : {}),
+        ...(input.sessionId === PERSONAL_ASSISTANT_SESSION ? this.activitySnapshot(workingTasks, eventNeedsResponse) : {}),
         ...(input.sessionId === PERSONAL_ASSISTANT_SESSION && this.deps.management ? { management: this.deps.management.snapshot() } : {}),
         ...(nextStepPrediction ? { nextStepPrediction } : {}),
         workingTasks,
@@ -142,6 +156,8 @@ export class AssistantConversation {
     if (input.action === 'react') return { reactions: this.journal.setReaction(input.sessionId, input.messageId, input.reaction) };
     if (input.action === 'append') return this.journal.append(input.sessionId, input.entry);
     if (input.action === 'stop') {
+      this.replyExpression = undefined;
+      this.directTools.clear();
       this.paused = true; this.pending = false; this.retry = undefined; this.controller?.abort();
       this.error = new RuntimeUiError('assistantRuntime.stopped', undefined, language);
       return { status: this.busy ? 'stopping' : 'stopped' };
@@ -172,6 +188,8 @@ export class AssistantConversation {
     const configured = this.configured, retryRequested = this.retryRequested;
     this.retryRequested = false;
     const controller = this.controller = new AbortController();
+    this.directTools = new LiveToolPresentation();
+    this.replyExpression = undefined;
     this.webhookTurn = configured.parent.metadata.botSourceRef && configured.parent.turnId.startsWith('webhook-')
       ? { turnId: configured.parent.turnId, entries: [] } : undefined;
     const execution = { ...configured.parent, turnId: `assistant_${randomUUID()}`,
@@ -412,8 +430,10 @@ export class AssistantConversation {
       this.webhookTurn = undefined;
     }
     const live = this.webhookTurn;
+    let expression: AssistantExpression | undefined;
     const consumeGuidance = () => {
       if (!live?.entries.length) return;
+      expression = undefined;
       const additions = live.entries.splice(0);
       for (const entry of additions) {
         if (!remaining.some(item => item.id === entry.id)) {
@@ -432,6 +452,7 @@ export class AssistantConversation {
       parent.metadata.assistantEventEvidence = evidence.slice(-256).map(entry => ({ id: entry.id, sourceRef: entry.botSourceRef }));
     };
     let published = false;
+    const directTools = this.directTools;
     let managementStopped: Error | undefined;
     for (let round = 0; round < 10; round++) {
       signal.throwIfAborted();
@@ -471,10 +492,15 @@ export class AssistantConversation {
       if (!toolCalls.length) {
         const text = result.text.trim() || (spoken && published ? uiText(resolveUiLanguage(parent.metadata.uiLanguage))('assistantRuntime.published') : '');
         this.webhookTurn = undefined;
-        if (text) publish({
-          id: `text-${randomUUID()}`, role: 'assistant', content: text, createdAt: new Date().toISOString(), source: spoken ? 'voice' : 'text', visibility: 'conversation', ...(spoken ? { voiceMode: 'chained' as const } : {}) });
+        if (text) {
+          const replyId = `text-${randomUUID()}`;
+          publish({ id: replyId, role: 'assistant', content: text, createdAt: new Date().toISOString(), source: spoken ? 'voice' : 'text', visibility: 'conversation', ...(spoken ? { voiceMode: 'chained' as const } : {}) });
+          this.replyExpression = expression ? { mood: expression, replyId, expiresAt: Date.now() + 6000 } : undefined;
+        }
         return;
       }
+      // A new tool round supersedes an earlier final-display signal.
+      expression = undefined;
       let memoryQueue: Promise<unknown> = Promise.resolve();
       let delegationQueue: Promise<unknown> = Promise.resolve();
       let managementQueue: Promise<unknown> = Promise.resolve();
@@ -488,28 +514,37 @@ export class AssistantConversation {
           // Providers add presentation metadata to every function schema. Use the
           // same boundary as the normal tool coordinator before business validation.
           const args = stripToolDisplayTitle(JSON.parse(call.argumentsText), definition);
+          const run = async <T>(callback: () => Promise<T> | T) => {
+            signal.throwIfAborted();
+            directTools.start(call.id, call.name);
+            try {
+              const value = await callback();
+              directTools.finish(call.id);
+              return value;
+            } catch (error) { directTools.cancel(call.id); throw error; }
+          };
           let output: unknown;
           if (call.name === 'page_write') {
             const { content } = assistantPageInputSchema.parse(args);
-            publish({ id: `page-${randomUUID()}`, role: 'assistant', content, createdAt: new Date().toISOString(), source: 'page', visibility: 'conversation' });
+            await run(() => publish({ id: `page-${randomUUID()}`, role: 'assistant', content, createdAt: new Date().toISOString(), source: 'page', visibility: 'conversation' }));
             published = true; output = { status: 'written' };
           } else if (call.name === 'tasks' && !nativeTools.some(tool => tool.name === call.name)) {
             const { action, task_ids, cursor } = conversationalTaskInput.parse(args);
             const tasks = this.deps.tasks(id);
             if (task_ids?.some(taskId => !tasks.some(task => task.taskId === taskId))) throw Object.assign(Error('Task is not owned by this assistant.'), { code: 'subagent_not_owned' });
             if (action === 'conversation') {
-              output = await this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: 'read_subagent_conversation',
-                parent, taskId: task_ids![0], cursor, targetAgent: profile.targetAgent || undefined });
+              output = await run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: 'read_subagent_conversation',
+                parent, taskId: task_ids![0], cursor, targetAgent: profile.targetAgent || undefined }));
               signal.throwIfAborted();
             } else {
               const selected = tasks.filter(task => !task_ids?.length || task_ids.includes(task.taskId));
-              selected.forEach(task => this.watched.add(task.taskId)); this.schedule();
+              await run(() => { selected.forEach(task => this.watched.add(task.taskId)); this.schedule(); });
               output = { status: selected.some(task => task.status === 'running') ? 'watching' : 'settled', tasks: selected.map(task => ({ taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 8000) })) };
             }
           } else if (managementTools.some(tool => tool.name === call.name)) {
             const execution = managementQueue.then(async () => {
               if (managementStopped) throw managementStopped;
-              try { return await this.deps.management!.execute({ ...call, argumentsText: JSON.stringify(args) }, parent, request, round, ordinal, signal); }
+              try { return await run(() => this.deps.management!.execute({ ...call, argumentsText: JSON.stringify(args) }, parent, request, round, ordinal, signal)); }
               catch (error) {
                 if (error instanceof Error && 'code' in error && error.code === 'assistant_management_stopped') managementStopped = error;
                 throw error;
@@ -520,14 +555,16 @@ export class AssistantConversation {
           } else if (memoryTools.some(tool => tool.name === call.name)) {
             // Serialize memory operations, including corrections, through the
             // existing validators and receipts. Execution tools stay delegated.
-            const execution = memoryQueue.then(() => this.deps.memory!.execute({ ...call, argumentsText: JSON.stringify(args) },
-              request, authored?.content, round, ordinal, signal));
+            const execution = memoryQueue.then(() => run(() => this.deps.memory!.execute({ ...call, argumentsText: JSON.stringify(args) },
+              request, authored?.content, round, ordinal, signal)));
             memoryQueue = execution.catch(() => undefined);
             output = await execution;
+            if (call.name === 'summary_for_user' && output && typeof output === 'object' && 'expression' in output)
+              expression = assistantExpressionSchema.parse(output.expression);
           } else if (nativeTools.some(tool => tool.name === call.name)) {
             // Preserve registration-before-assembly order within one model batch.
             // Dispatch receipts are immediate; the child work remains independent.
-            const execution = delegationQueue.then(() => { signal.throwIfAborted(); return this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args }); });
+            const execution = delegationQueue.then(() => run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args })));
             delegationQueue = execution.catch(() => undefined);
             output = await execution;
             signal.throwIfAborted();
@@ -535,8 +572,8 @@ export class AssistantConversation {
             if (taskId) { this.watched.add(taskId); this.announced.delete(taskId); this.schedule(); }
           } else {
             const input = conversationalSubagentInput.parse(args);
-            output = await this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
-              parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined });
+            output = await run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
+              parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined }));
             signal.throwIfAborted();
             const taskId = (output as { taskId?: string })?.taskId;
             if (taskId) { this.watched.add(taskId); this.announced.delete(taskId); this.schedule(); }
@@ -589,6 +626,7 @@ export class AssistantConversation {
   }
   forget(sessionId: string) {
     this.deps.agents?.forget(sessionId);
+    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.replyExpression = undefined; this.directTools.clear(); }
     if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.webhookTurn = undefined; this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
     if (sessionId === PERSONAL_ASSISTANT_SESSION) this.deps.management?.reset();
     this.journal.forget(sessionId);

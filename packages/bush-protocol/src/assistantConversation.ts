@@ -13,6 +13,10 @@ export interface AssistantManagementSnapshot {
 export const ASSISTANT_CONVERSATION_COMMAND = 'runtime.assistant_conversation' as const;
 export const PERSONAL_ASSISTANT_SESSION = 'personal-assistant' as const;
 export type AssistantWorkActivity = 'idle' | 'thinking' | 'working' | 'waiting' | 'retrying' | 'error';
+export const assistantExpressionSchema = z.enum(['happy', 'curious', 'caring', 'surprised']);
+export type AssistantExpression = z.infer<typeof assistantExpressionSchema>;
+export interface AssistantReplyExpression { mood: AssistantExpression; replyId: string; expiresAt: number }
+export interface AssistantActivitySnapshot { activity: AssistantWorkActivity; expression?: AssistantReplyExpression; toolName?: string }
 export const ASSISTANT_REACTIONS = ['❤️', '👍', '👎', '‼️', '😂', '✅', '🎉', '🙏', '🤔', '👀', '🚀', '😮'] as const;
 export const assistantReactionSchema = z.enum(ASSISTANT_REACTIONS);
 export type AssistantReaction = z.infer<typeof assistantReactionSchema>;
@@ -62,6 +66,8 @@ export const assistantProfileSchema = z.object({
 }).strict();
 export type AssistantProfile = z.infer<typeof assistantProfileSchema>;
 export const assistantConversationRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('reply-status'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION),
+    after: z.object({ id: z.string().max(220), at: z.string().max(64) }).optional() }).strict(),
   z.object({ action: z.literal('activity'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION) }).strict(),
   z.object({ action: z.literal('read'), sessionId: z.string().min(1), after: z.number().int().nonnegative().default(0), language: z.string().max(80).optional() }).strict(),
   z.object({ action: z.literal('reset'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION) }).strict(),

@@ -2,7 +2,9 @@ import { uiText } from '../../i18n';
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { HtmlComponentContext } from './HtmlComponentContext';
 import { componentDocument } from './componentDocument';
-import { componentProtocol, validateComponentText, type HtmlComponent } from './componentModel';
+import { approvedEmbedOrigins, componentProtocol, validateComponentText, type HtmlComponent } from './componentModel';
+import { componentOrigin, componentOrigins } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
+import { ComponentEmbedBar } from './ComponentEmbedBar';
 import { bookmarkUrl } from '../inspector/browserBookmarks';
 import { componentId } from './componentId';
 import { approvedOrigins, fetchComponentJson } from './componentNetwork';
@@ -10,20 +12,30 @@ import { FeaturePageVisible } from '../navigation/VisitedFeaturePages';
 
 import type { EventPresentation } from '@cardbush/bush-protocol';
 type EventPageContext = Pick<EventPresentation['pages'][number], 'id' | 'title' | 'layout' | 'items'>;
-type SurfaceProps = { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext; homeNetwork?: boolean; onReady?:()=>void };
+type SurfaceProps = { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext; onHome?: boolean; onReady?:()=>void;
+  onEditEmbeds?:(origins:string[])=>void };
 export function HtmlComponentSurface(props: SurfaceProps) {
   // A hidden iframe still runs its own JavaScript independently of React.
   return useContext(FeaturePageVisible) ? <ComponentFrame {...props}/> : null;
 }
-function ComponentFrame({ component, active = true, eventPage, homeNetwork = false, onReady }: SurfaceProps) {
+function ComponentFrame({ component, active = true, eventPage, onHome = false, onReady, onEditEmbeds }: SurfaceProps) {
   const frame = useRef<HTMLIFrameElement>(null), host = useContext(HtmlComponentContext), latest = useRef(host);
   latest.current = host;
   const page = useRef(eventPage); page.current = eventPage;
   const visible = useRef(active); visible.current = active;
   const [error, setError] = useState(''), loads = useRef(0), mounted = useRef(true);
-  const sites = homeNetwork && active && !eventPage ? approvedOrigins(component).join(' ') : '';
-  const token = useMemo(() => componentId(), [component.id, component.html, sites]);
-  const document = useMemo(() => componentDocument(component.html, token, Boolean(sites)), [component.html, token, sites]);
+  const liveHome = onHome && active && !eventPage;
+  const sites = liveHome ? approvedOrigins(component).join(' ') : '';
+  const embeds = liveHome ? approvedEmbedOrigins(component).join(' ') : '';
+  const token = useMemo(() => componentId(), [component.id, component.html, sites, embeds]);
+  const homeLinks = liveHome && Boolean(host);
+  const linkKey = useMemo(() => homeLinks ? componentId() : undefined, [token, homeLinks]);
+  const document = useMemo(() => componentDocument(component.html, token, Boolean(sites), linkKey, embeds.split(' ')), [component.html, token, sites, linkKey, embeds]);
+  const [reported, setReported] = useState<{token:string;targets:Map<string,string>}>();
+  const targets = reported?.token === token ? reported.targets : new Map<string,string>();
+  const requested = componentOrigins(component.embedDomains);
+  const candidates = [...new Set([...requested,...targets.keys()])].slice(0,8);
+  const missing = candidates.filter(origin => !embeds.split(' ').includes(origin));
   const reply = (message: unknown) => frame.current?.contentWindow?.postMessage({ protocol: componentProtocol, token, ...message as object }, '*');
   const context = () => { const current = latest.current;
     if (page.current) {
@@ -39,6 +51,23 @@ function ComponentFrame({ component, active = true, eventPage, homeNetwork = fal
     const handler = async (event: MessageEvent) => {
       const message = event.data;
       if (event.source !== frame.current?.contentWindow || event.origin !== 'null' || !message || message.protocol !== componentProtocol || message.token !== token) return;
+      if (message.topic === 'home.embedTargets') {
+        if (!linkKey || !visible.current || page.current || !Array.isArray(message.urls) || message.urls.length > 8) return;
+        const targets = new Map<string,string>();
+        for (const raw of message.urls) {
+          const href = bookmarkUrl(raw), origin = href && componentOrigin(new URL(href).origin);
+          if (origin) targets.set(origin, href!);
+        }
+        setReported({token,targets});
+        return;
+      }
+      if (message.topic === 'home.followLink') {
+        if (linkKey && message.linkKey === linkKey && visible.current && !page.current) {
+          const url = bookmarkUrl(message.url);
+          if (url) latest.current?.openBrowser(url);
+        }
+        return;
+      }
       if (typeof message.id !== 'string' || message.id.length > 100 || message.jsonrpc !== '2.0') return;
       try {
         if (new TextEncoder().encode(JSON.stringify(message)).length > 128000 || inFlight >= 8) throw new Error('REQUEST_LIMIT');
@@ -86,7 +115,7 @@ function ComponentFrame({ component, active = true, eventPage, homeNetwork = fal
     };
     window.addEventListener('message', handler);
     return () => { mounted.current = false; requests.abort(); window.removeEventListener('message', handler); };
-  }, [token, component.id, component.allowActions, sites]);
+  }, [token, component.id, component.allowActions, sites, linkKey]);
   useEffect(() => {
     const app = window.document.querySelector('.app'); let scheduled = 0;
     const update = () => {
@@ -114,7 +143,13 @@ function ComponentFrame({ component, active = true, eventPage, homeNetwork = fal
   }, [token]);
   useEffect(() => { publish.current(); }, [host?.revision, host?.language, host?.running, active, eventPage]);
   if (error) return <div className="html-component-error" role="alert">{error}</div>;
-  return <iframe key={token} ref={frame} className="html-component-frame" title={component.title} srcDoc={document} sandbox="allow-scripts"
+  const surface = <iframe key={linkKey ?? token} ref={frame} className="html-component-frame" title={component.title} srcDoc={document} sandbox="allow-scripts"
+    {...(liveHome ? {credentialless:''} : {})}
     referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"
     onLoad={() => { if (++loads.current > 1) { setError(uiText(host?.language)('htmlComponentSurface.componentNavigatedAwayFromItsSandboxDocument')); return; } publish.current(); onReady?.(); }} />;
+  if (!liveHome || !onEditEmbeds || !host) return surface;
+  return <div className="component-embed-layout">
+    <ComponentEmbedBar targets={targets} missing={missing} configure={() => onEditEmbeds(candidates)} open={host.openBrowser}/>
+    {surface}
+  </div>;
 }

@@ -153,10 +153,13 @@ declare global {
         interactionId?: string;
       }) => Promise<{ shown: boolean }>;
       setSessionAttentionCount: (count: number) => Promise<void>;
+      onAssistantReplyAdded?: (callback: () => void) => () => void;
       consumeSessionAttentionOpen: () => Promise<{
         sessionId: string;
+        messageId?: string;
         queuedAt: number;
       } | null>;
+      setAssistantPageVisible: (visible: boolean) => void;
       onOpenSessionAttention: (
         callback: () => void,
       ) => () => void;
@@ -232,6 +235,7 @@ declare global {
       creationCanvas: (input: import('../../electron/creationCanvasFiles.mjs').CanvasFileRequest) => Promise<import('../../electron/creationCanvasFiles.mjs').CanvasFileResponse>;
       markdownFile: (input: import('../../electron/mdPresentationFiles').MarkdownFileRequest) => Promise<import('../../electron/mdPresentationFiles').MarkdownFile | null>;
       getPathForFile: (file: File) => string;
+      saveTransferredFile: (name: string, bytes: Uint8Array) => Promise<string>;
       inspectAttachments: (paths: string[]) => Promise<Array<{
         path: string;
         name: string;

@@ -101,6 +101,7 @@ import {
   fileUrl,
   isImagePath,
 } from '../../shared/localPaths';
+import { readFileAsDataUrl, importTransferredFiles } from '../../shared/transferredFiles';
 import type {
   AppLanguage,
   ManagedModelConfig,
@@ -301,15 +302,6 @@ function composerPopoverAnchorFromTrigger(
     width,
     placement,
   };
-}
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(reader.error ?? new Error(uiText()('composer.failed_to_read_image')));
-    reader.readAsDataURL(file);
-  });
 }
 
 export function Composer({
@@ -993,53 +985,19 @@ export function Composer({
       } finally { setAttachmentUploads(current => current - 1); }
       return;
     }
-    const pathBacked: string[] = [];
-    const transientImages: File[] = [];
-    for (const file of files.slice(0, 32)) {
-      const pathValue = pathForTransferredFile(file);
-      if (pathValue) {
-        pathBacked.push(pathValue);
-      } else if (file.type.startsWith('image/')) {
-        transientImages.push(file);
+    setAttachmentUploads(current => current + 1);
+    try {
+      const paths: string[] = [];
+      const { attachments, errors } = await importTransferredFiles(files.slice(0, 32));
+      for (const { path, name, previewUrl } of attachments) {
+        if (previewUrl) {
+          const image = { id: crypto.randomUUID(), path, name, previewUrl };
+          setImageAttachments(current => [...current, image]);
+        } else paths.push(path);
       }
-    }
-    if (pathBacked.length > 0) {
-      await addAttachmentPaths(pathBacked);
-    }
-    if (transientImages.length === 0) {
-      return;
-    }
-    if (!window.cardbushDesktop?.saveImageDataUrl) {
-      return;
-    }
-    try {
-      const saved = await Promise.all(
-        transientImages.map(async (file) => {
-          const dataUrl = await readFileAsDataUrl(file);
-          const result = await window.cardbushDesktop!.saveImageDataUrl(
-            dataUrl,
-            file.name || 'cardbush-paste',
-          );
-          return {
-            id: `image-${crypto.randomUUID()}`,
-            path: result.path,
-            name: file.name || result.name,
-            previewUrl: dataUrl,
-          };
-        }),
-      );
-      setImageAttachments((current) => [...current, ...saved]);
-    } catch (caught) {
-      console.warn(caught);
-    }
-  }
-
-  function pathForTransferredFile(file: File): string {
-    try {
-      return window.cardbushDesktop?.getPathForFile?.(file)?.trim() ?? '';
-    } catch {
-      return '';
-    }
+      await addAttachmentPaths(paths);
+      if (errors.length) throw new Error(errors.join('\n'));
+    } finally { setAttachmentUploads(current => current - 1); }
   }
 
   function selectModel(model: string) {

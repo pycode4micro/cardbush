@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 export type HomeItem = { id:string; title:string; html:string; width:number; height:number; order:number; home?:boolean; allowActions:boolean;
-  networkDomains?:string[]; approvedNetworkOrigins?:string[] };
+  networkDomains?:string[]; approvedNetworkOrigins?:string[]; embedDomains?:string[]; approvedEmbedOrigins?:string[] };
 export type HomeSnapshot = { version:1; revision:number; items:HomeItem[] };
 export type HomeToolHost = {
   snapshot(): HomeSnapshot | null;
@@ -36,13 +36,13 @@ export function registerHomeComponentTools(server:McpServer, host:()=>HomeToolHo
       nextOffset:start+limit<item.html.length ? start+limit : null});
   } catch(cause) {return failure(cause);} });
   server.registerTool('edit_home_component', {
-    description:'Create or update one installed Home widget in place. Use the revision from read_home_component. For updates prefer exact unique replacements, in order. Other widgets, placement, size and widget state are preserved unless explicitly changed. Content changes revoke existing grants. networkDomains requests exact HTTPS origins for cardbush.net.fetchJson; only the user can approve them in the component editor. Never patch host code, build output or relax the sandbox to edit or verify a widget.',
+    description:'Create or update one installed Home widget in place. Use the revision from read_home_component. For updates prefer exact unique replacements, in order. Other widgets, placement, size and widget state are preserved unless explicitly changed. Content changes revoke existing grants. Request exact HTTPS origins separately: networkDomains for cardbush.net.fetchJson, embedDomains for iframe pages or official embed players. Only the user can approve. Provide a normal link for sites that disallow framing. Never patch host code, build output or relax the sandbox to edit or verify a widget.',
     inputSchema:{id,mode:z.enum(['create','update']),expectedRevision:z.number().int().nonnegative(),title:z.string().trim().min(1).max(80).optional(),
       html:z.string().min(1).max(262144).optional(), replacements:z.array(z.object({before:z.string().min(1).max(65536),after:z.string().max(65536)})).min(1).max(24).optional(),
       home:z.boolean().optional(),width:z.number().int().min(3).max(12).optional(),height:z.number().int().min(120).max(1200).optional(),
-      networkDomains:z.array(z.string().max(260)).max(8).optional()},
+      networkDomains:z.array(z.string().max(260)).max(8).optional(),embedDomains:z.array(z.string().max(260)).max(8).optional()},
     annotations:{readOnlyHint:false,openWorldHint:false},
-  }, async ({id,mode,expectedRevision,html,replacements,title,width,height,home,networkDomains}) => { try {
+  }, async ({id,mode,expectedRevision,html,replacements,title,width,height,home,networkDomains,embedDomains}) => { try {
     const state=snapshot();
     if(state.revision!==expectedRevision) throw Error('REVISION_CONFLICT');
     const previous=state.items.find(item=>item.id===id);
@@ -55,7 +55,7 @@ export function registerHomeComponentTools(server:McpServer, host:()=>HomeToolHo
       if(at<0 || source.indexOf(before,at+1)>=0) throw Error('PATCH_CONTEXT_NOT_UNIQUE');
       source=source.slice(0,at)+after+source.slice(at+before.length);
     }
-    const next=host().publish({id,title,html:source,width,height,networkDomains},home,expectedRevision);
+    const next=host().publish({id,title,html:source,width,height,networkDomains,embedDomains},home,expectedRevision);
     return text({revision:next.revision,...metadata(lookup(next,id))});
   } catch(cause) {return failure(cause);} });
   if(preview) server.registerTool('preview_home_component',{

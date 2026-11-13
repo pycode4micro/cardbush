@@ -84,8 +84,31 @@ test('runtime assistant shares the ordinary conversation database and existing t
   assert.equal(refs(requests[0])[0].memories[0].id, memoryId);
   assert.equal(refs(requests[0])[0].memories[0].source.session_id, 'ordinary');
   const definitions = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
-  for (const name of ['check_habit', 'summary_for_user', 'revise_memory']) assert.deepEqual(requests[0].tools.find(t => t.name === name), definitions.find(t => t.name === name));
+  for (const name of ['check_habit', 'summary_for_user', 'revise_memory']) {
+    const actual = structuredClone(requests[0].tools.find(t => t.name === name));
+    if (name === 'summary_for_user') {
+      assert.deepEqual(actual.inputSchema.properties.expression.enum, ['happy', 'curious', 'caring', 'surprised']);
+      delete actual.inputSchema.properties.expression;
+    }
+    assert.deepEqual(actual, definitions.find(t => t.name === name));
+  }
   assert.ok(!(await command({ action: 'read' })).entries.some(e => e.content.includes(memoryId)), 'references stay out of the visible transcript');
+});
+
+test('a valid expression belongs only to the published reply, with or without memory enabled', async t => {
+  const f = fixture(t, (_, round) => ({ calls: round === 0 || round === 2 ? [
+    { id: 'mood-' + round, name: 'summary_for_user', args: { expression: round === 0 ? 'happy' : 'invalid' } },
+  ] : [] }));
+  const activity = () => f.assistant.command({ action: 'activity', sessionId: id });
+  f.send('Hello', normalizeIndividuation()); await f.idle();
+  const { expression } = f.read();
+  assert.equal(expression.mood, 'happy'); assert.equal(expression.replyId, f.read().entries.at(-1).id);
+  assert.ok(expression.expiresAt > Date.now()); assert.deepEqual(activity(), { activity: 'idle', expression });
+  assert.equal(existsSync(f.store.path), false);
+  f.restart(); assert.equal(activity().expression, undefined, 'reopening does not replay old expressions');
+  f.send('Hello again', normalizeIndividuation()); await f.idle();
+  assert.equal(receipts(f.requests.at(-1)).at(-1).status, 'failed');
+  assert.equal(activity().expression, undefined);
 });
 
 test('automatic recall is relevant, bounded and deduplicated across turns and restart', async t => {
@@ -161,7 +184,7 @@ test('task completion never recalls, observes or writes user memory and cannot r
     { id: 'background-save', name: 'summary_for_user', args: { habit: { text: '用户喜欢后台任务结果。' } } },
     { id: 'background-revise', name: 'revise_memory', args: { id: memoryId, revision: 1, action: 'retract', reason: '后台声称用户要求', user_quote: quote } },
     { id: 'background-read', name: 'check_habit', args: { ids: [memoryId] } },
-    { id: 'background-final', name: 'summary_for_user', args: {} },
+    { id: 'background-final', name: 'summary_for_user', args: { expression: 'caring' } },
   ] : [] }));
   memoryId = await f.seed('用户导出报表可能需要 XLSX。', 'prediction');
   f.send(quote); await f.idle();
@@ -172,6 +195,7 @@ test('task completion never recalls, observes or writes user memory and cannot r
   const results = receipts(f.requests.at(-1));
   assert.equal(results[1].code, 'memory_requires_user_input'); assert.equal(results[2].code, 'memory_requires_user_input');
   assert.equal(results[3].status, 'ok'); assert.equal(results[4].final_response, true);
+  assert.equal(f.read().expression?.mood, 'caring');
   assert.ok(f.requests[2].messages.some(m => m.name === 'background_task_result' && m.visibility === 'internal'));
   assert.equal((await f.store.read({ ids: [memoryId] }, on)).memories[0].state, 'active');
 });

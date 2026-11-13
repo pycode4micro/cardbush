@@ -4,7 +4,8 @@ import { uiText } from '../../i18n';
 import type { AppLanguage } from '../../types';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
 import type { HtmlComponent } from '../components/componentModel';
-import { blockKey, nativeSections, type HomeBlock, type NativeSection } from './homeLayout';
+import { blockKey, nativeSections, type HomeBlock, type HomeDimensions, type NativeSection } from './homeLayout';
+import { HomeBlockResizeHandles } from './HomeBlockResizeHandles';
 import './homeBoard.css';
 
 export type NativeHomeContent = Record<NativeSection, {title: string; content: ReactNode}>;
@@ -14,7 +15,7 @@ type ViewProps = {
   onDone(): void; togglePicker(): void; toggleNative(id: NativeSection): void; toggleHtml(item: HtmlComponent): void;
   createInChat?(): void; editHtml(item?: HtmlComponent): void; editWeb(item?: Extract<HomeBlock, {kind:'web'}>): void;
   openWeb(url: string): void; remove(block: HomeBlock): void; move(source: string, target: string): void;
-  resize(block: HomeBlock, dimension: 'width' | 'height' | 'column', value?: number): void;
+  resize(block: HomeBlock, dimensions: HomeDimensions): void;
 };
 
 function NearViewport({children}: {children: ReactNode}) {
@@ -74,20 +75,27 @@ export function HomeBoardView(p: ViewProps) {
           style={{'--block-span':width, '--block-height':height && height + 'px', '--block-column':column} as CSSProperties}
           onDragOver={event => { if (p.editing && dragged.current && dragged.current !== key) { event.preventDefault(); setOver(key); } }}
           onDrop={event => { if (p.editing && dragged.current) { event.preventDefault(); p.move(dragged.current, key); endDrag(); } }}>
+          {p.editing && <div className="home-block-move" draggable aria-hidden="true"
+            onDragStart={event => {
+              const card = event.currentTarget.parentElement!;
+              const bounds = card.getBoundingClientRect();
+              dragged.current = key;
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', name);
+              event.dataTransfer.setDragImage(card, event.clientX - bounds.left, event.clientY - bounds.top);
+            }} onDragEnd={endDrag}/>}
           {p.editing && <div className="home-block-tools" role="group" aria-label={t('homeComponents.edit', {name})}>
-            <span className="home-drag" draggable title={t('homeLayout.drag')} aria-hidden="true"
-              onDragStart={event => { dragged.current = key; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', name); }}
-              onDragEnd={endDrag}><GripVertical/></span>
+            <span className="home-drag" title={t('homeLayout.drag')} aria-hidden="true"><GripVertical/></span>
             <button type="button" data-home-action="earlier" aria-label={t('common.moveUp')} disabled={!index}
               onClick={() => p.move(key, blockKey(p.blocks[index - 1]))}><ArrowUp/></button>
             <button type="button" data-home-action="later" aria-label={t('common.moveDown')} disabled={index === p.blocks.length - 1}
               onClick={() => p.move(key, blockKey(p.blocks[index + 1]))}><ArrowDown/></button>
-            <label>{t('homeLayout.width')}<select value={width} onChange={event => p.resize(block, 'width', Number(event.target.value))}>
+            <label>{t('homeLayout.width')}<select value={width} onChange={event => p.resize(block, {width:Number(event.target.value)})}>
               {Array.from({length:10}, (_, i) => i+3).map(value => <option key={value} value={value}>{t('homeLayout.columns', {count:value})}</option>)}</select></label>
-            <label>{t('homeLayout.height')}<select value={height ?? ''} onChange={event => p.resize(block, 'height', Number(event.target.value) || undefined)}>
+            <label>{t('homeLayout.height')}<select value={height ?? ''} onChange={event => p.resize(block, {height:Number(event.target.value) || undefined})}>
               {block.kind === 'native' && <option value="">{t('homeLayout.auto')}</option>}
               {heights.map(value => <option key={value} value={value}>{t('homeLayout.pixels', {count:value})}</option>)}</select></label>
-            {width < 12 && <label>{t('homeLayout.column')}<select name="column" value={column ?? ''} onChange={event => p.resize(block, 'column', Number(event.target.value) || undefined)}>
+            {width < 12 && <label>{t('homeLayout.column')}<select name="column" value={column ?? ''} onChange={event => p.resize(block, {column:Number(event.target.value) || undefined})}>
               <option value="">{t('homeLayout.auto')}</option>
               {Array.from({length:13-width}, (_, i) => i+1).map(value => <option key={value} value={value}>{value}</option>)}</select></label>}
             {block.kind !== 'native' && <button type="button" data-home-action="configure" aria-label={t('homeComponents.edit', {name})}
@@ -102,9 +110,11 @@ export function HomeBoardView(p: ViewProps) {
                 : p.visible && <NearViewport>{block.kind === 'web' ?
                   <iframe name="cardbush-home-website" title={name} src={block.url} sandbox="allow-scripts" {...{credentialless:''}} referrerPolicy="no-referrer"
                     allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'; fullscreen 'none'"/>
-                  : <HtmlComponentSurface component={html!} homeNetwork/>}</NearViewport>}
+                  : <HtmlComponentSurface component={html!} onHome onEditEmbeds={embedDomains => p.editHtml({...html!,embedDomains})}/>}</NearViewport>}
             </>}
           </div>
+          {p.editing && <HomeBlockResizeHandles width={width} column={column} height={height}
+            label={t('canvasStage.resizeItem')} onCommit={dimensions => p.resize(block, dimensions)}/>}
         </section>;
       })}
     </div>

@@ -28,6 +28,15 @@ if (typeof electron === 'string') {
 async function run() {
   const { app, BrowserWindow, Notification, Tray } = electron;
   const root = process.argv[2], resident = process.argv[3] === 'resident';
+  const badgeByWindow = new Map();
+  if (process.platform === 'win32') {
+    const apply = BrowserWindow.prototype.setOverlayIcon;
+    BrowserWindow.prototype.setOverlayIcon = function(image, description) {
+      const previous = badgeByWindow.get(this.id);
+      badgeByWindow.set(this.id, { pixels: image?.toPNG(), description, calls: (previous?.calls ?? 0) + 1 });
+      return apply.call(this, image, description);
+    };
+  }
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const wait = async (read, label) => {
     const end = Date.now() + 55_000;
@@ -35,7 +44,7 @@ async function run() {
     throw Error('Timed out: ' + label);
   };
   app.setPath('appData', root); app.setPath('userData', root); app.setAppPath(project);
-  for (const key of ['desktop','documents','downloads']) {
+  for (const key of ['desktop','documents','downloads','pictures']) {
     const directory=path.join(root,key); fs.mkdirSync(directory,{recursive:true}); app.setPath(key,directory);
   }
   // Persisted selection works without CLI flags and without opening a renderer first.
@@ -209,6 +218,32 @@ async function run() {
     await wait(() => win.isVisible(), 'tray Open restores the same workspace');
     await require('./helpers/personal-profile.cjs')({ win, BrowserWindow, openHome: () => tray.emit('click'),
       openAssistant: () => menu.items[1].click(), wait, root, project, holdAudioSettings });
+    for (const other of BrowserWindow.getAllWindows()) if (other !== win && other.webContents.getURL().includes('window=assistant')) other.hide();
+    win.show(); win.focus();
+    await wait(() => win.isFocused(), 'workspace is foreground on Projects');
+    for (const id of ['selected-reply','newer-reply']) {
+      const entry = {id, createdAt:new Date().toISOString(), content:id, role:'assistant', source:'text', visibility:'conversation'};
+      const request = {protocol:'bush.runtime_ipc.v1', type:'command', operationId:crypto.randomUUID(),
+        command:{kind:'runtime.assistant_conversation',payload:{action:'append',sessionId:'personal-assistant',entry}}};
+      assert.ok((await win.webContents.executeJavaScript(`window.cardbushDesktop.runtime.command(${JSON.stringify(request)})`)).ok);
+    }
+    const selectedNotice = await wait(() => notices.find(item => item.body === 'selected-reply'), 'foreground Projects receives the Assistant toast');
+    if (process.platform === 'win32') {
+      const { taskbarBadge } = require(path.join(project, 'dist-electron', 'taskbarBadge.js'));
+      const pixels = count => taskbarBadge(project, count).toPNG();
+      assert.equal(taskbarBadge(project, 0), null);
+      assert.notDeepEqual(pixels(1), pixels(2));
+      assert.notDeepEqual(pixels(99), pixels(100));
+      assert.deepEqual(pixels(100), pixels(101), 'overflow shows 99+');
+      await wait(() => badgeByWindow.get(win.id)?.pixels?.equals(pixels(2)), 'two unread Assistant replies on the real taskbar button');
+      win.hide();
+      const previous = badgeByWindow.get(win.id).calls;
+      win.show();
+      await wait(() => badgeByWindow.get(win.id).calls > previous && badgeByWindow.get(win.id).pixels?.equals(pixels(2)), 'restoring the workspace reapplies unread without marking it read');
+    }
+    selectedNotice.emit('click');
+    await wait(() => win.webContents.executeJavaScript(`document.querySelector('[data-message-id="selected-reply"] article')?.checkVisibility() && document.querySelector('[data-message-id="selected-reply"] article') === document.activeElement`), 'notice opens and focuses the specific Assistant reply');
+    if (process.platform === 'win32') await wait(() => badgeByWindow.get(win.id)?.pixels === undefined, 'reading Assistant removes the taskbar overlay');
   }
   assert.equal(floatingLibraryReads, 0, 'the floating window never requests the full home component library');
   fs.writeFileSync(path.join(root, 'metrics.json'), JSON.stringify(stats, null, 2));

@@ -34,7 +34,7 @@ function ConversationStatusButton({ language, conversation, viewingConversation,
   }
   return <button className="recent-bar-chat" type="button"
     aria-label={status ? t('assistantActivity.open', { name: title, status }) : undefined} onClick={() => open(id)}>
-    <span className="recent-chat-copy"><strong>{title}</strong>{status && <small>{status}</small>}</span>
+    <span className="recent-chat-copy"><strong>{title}</strong>{status && <small data-activity={id === PERSONAL_ASSISTANT_SESSION ? activity : undefined}>{status}</small>}</span>
   </button>;
 }
 

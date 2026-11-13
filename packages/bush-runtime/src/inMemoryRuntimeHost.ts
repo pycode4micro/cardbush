@@ -537,6 +537,15 @@ export class InMemoryRuntimeHost {
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       runningTaskCount: id => this.#subagentTasks.runningCount(id),
+      childTool: id => {
+        let recent: string | undefined;
+        for (const child of this.#subagentTasks.liveLocalTurns(id)) {
+          const tool = this.#eventLog.liveTool(child.sessionId, child.turnId);
+          if (tool?.running) return tool.name;
+          recent ??= tool?.name;
+        }
+        return recent;
+      },
       eventRunning: () => this.#assistantEvents.executingAssistantEvent,
       delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),

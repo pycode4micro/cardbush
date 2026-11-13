@@ -166,6 +166,25 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
       return {canceled:false,filePaths:[file]};
     };
     await click('.capsule-attach'); await visible('.capsule-files');
+    await read(`(() => {
+      const input = document.querySelector('.capsule-form input');
+      const image = new DataTransfer();
+      const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5WQAAAAASUVORK5CYII='), c => c.charCodeAt(0));
+      image.items.add(new File([png], 'still.png', {type:'image/png'}));
+      input.dispatchEvent(new ClipboardEvent('paste', {bubbles:true, cancelable:true, clipboardData:image}));
+      const media = new DataTransfer();
+      for (const [name, type] of [['clip.mp4','video/mp4'], ['voice.wav','audio/wav']]) {
+        media.items.add(new File(['isolated test data'], name, {type}));
+      }
+      media.setData('text/plain','copied file descriptions');
+      input.dispatchEvent(new ClipboardEvent('paste', {bubbles:true, cancelable:true, clipboardData:media}));
+      const drop = new DataTransfer();
+      drop.items.add(new File(['removable'], 'remove.txt', {type:'text/plain'}));
+      input.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:drop}));
+    })()`);
+    await wait(()=>read("document.querySelectorAll('.capsule-file').length === 5 && !!document.querySelector('.capsule-file img')"),'pasted image, multi-file clipboard and dropped document are attached');
+    assert.equal(await read("document.querySelector('.capsule-form input').value"), '', 'file paste only adds attachments');
+    await read("[...document.querySelectorAll('.capsule-file')].find(node => node.textContent === 'remove.txt').click()");
     await type('Capsule attachment test');
     current.focus(); await wait(()=>current.isFocused(),'editor has native focus');
     workspace.focus(); await visible(bell);
@@ -182,8 +201,12 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
     await wait(()=>read("document.querySelector('.capsule-badge')?.textContent==='1'"),'one real unread reply');
     fs.writeFileSync(path.join(__dirname,'../../tmp/floating-capsule-unread.png'),(await current.webContents.capturePage()).toPNG());
     const journal=await read(`window.cardbushDesktop.runtime.command({protocol:'bush.runtime_ipc.v1',type:'command',operationId:crypto.randomUUID(),command:{kind:'runtime.assistant_conversation',payload:{action:'read',sessionId:'personal-assistant'}}})`);
-    assert.ok(journal.ok && journal.result.entries.some(entry => entry.role==='user' &&
-      entry.content.includes('Capsule attachment test') && entry.attachments?.some(item=>item.name==='capsule-fixture.txt')), 'the Assistant journal received the text and attachment together');
+    assert.ok(journal.ok);
+    const sent=journal.result.entries.find(entry=>entry.role==='user' && entry.content.includes('Capsule attachment test'));
+    assert.deepEqual(sent.attachments.map(item=>item.type).sort(), ['audio','document','image','video']);
+    assert.ok(sent.attachments.some(item=>item.name==='capsule-fixture.txt'));
+    assert.ok(!sent.attachments.some(item=>item.name==='remove.txt'));
+    for (const item of sent.attachments) assert.ok(fs.statSync(item.path).size > 0, item.name);
     const anchor = current.getBounds();
     const resized = [];
     const onResize = () => {
@@ -213,9 +236,31 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
       return workspace.webContents.executeJavaScript(`window.cardbushDesktop.runtime.command(${JSON.stringify(request)})`);
     };
     assert.ok((await append('Previous reply\n'.repeat(35))).ok);
-    assert.ok((await append('Latest reply from Assistant')).ok);
+    const link = config.models[0].baseURL;
+    const latest = [
+      'Latest reply from Assistant', '',
+      'v2 的镜头是**生成时关闭音效**的。', '',
+      '- 画面保持 v2', '- 给不同角色配音', '',
+      '| Version | Result |', '| --- | --- |', '| v3 | Ready |', '',
+      '```text', 'x'.repeat(120), '```', '',
+      `[Preview](${link})`,
+    ].join('\n');
+    assert.ok((await append(latest)).ok);
     await click(bell);
     await wait(() => read("document.querySelector('.capsule-replies article:first-of-type p')?.textContent==='Latest reply from Assistant' && document.querySelector('.capsule-reply-scroll').scrollTop===0"), 'opening reads the latest Assistant reply before polling resumes');
+    const latestBody = '.capsule-replies article:first-of-type .markdown-content';
+    await visible(latestBody + ' table');
+    assert.ok(await read(`(() => {
+      const body = document.querySelector('${latestBody}');
+      const pane = document.querySelector('.capsule-reply-scroll');
+      const code = body.querySelector('pre');
+      return body.querySelector('strong')?.textContent === '生成时关闭音效' &&
+        body.querySelectorAll('ul > li').length === 2 && body.querySelector('td')?.textContent === 'v3' &&
+        body.querySelector('a.web-link')?.href === ${JSON.stringify(link)} &&
+        code.scrollWidth > code.clientWidth && pane.scrollWidth === pane.clientWidth;
+    })()`), 'Markdown keeps CJK emphasis, list items, table cells and a wide code block within the reply sheet');
+    await click(latestBody + ' .markdown-code-actions button[aria-pressed=false]');
+    assert.ok(await read(`(() => { const pre = document.querySelector('${latestBody} pre'); return pre.scrollWidth === pre.clientWidth; })()`), 'wrapping code fits the narrow sheet');
     await click('.capsule-replies article:first-of-type p');
     assert.ok(await read("!!document.querySelector('.capsule-replies')"), 'reading a reply keeps the list open');
     await wait(()=>read("document.querySelector('.capsule-replies').getBoundingClientRect().top >= 0 && document.querySelector('.capsule-reply-scroll').scrollHeight > document.querySelector('.capsule-reply-scroll').clientHeight"),'long replies scroll inside the sheet');
@@ -251,6 +296,11 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
     await click(bell);
     await wait(()=>read("document.querySelector('.capsule-replies[data-visible=true]')?.ariaHidden==='false'"), 'reopening during exit preserves the active sheet');
     await read('window.holdJournalPoll=false; void 0');
+    const preview = workspace.webContents.executeJavaScript(`new Promise(resolve => {
+      const off = window.cardbushDesktop.onOpenInspectorRequest(({target}) => { off(); resolve(target); });
+    })`);
+    await click(latestBody + ' a.web-link');
+    assert.equal(await preview, link, 'a reply link reaches the workspace inspector');
     workspace.focus(); await wait(()=>read("!document.querySelector('.capsule-replies')"),'outside focus closes replies');
     assert.ok(current.isVisible() && !current.isDestroyed(), 'outside focus leaves the capsule on the desktop');
     current.focus();

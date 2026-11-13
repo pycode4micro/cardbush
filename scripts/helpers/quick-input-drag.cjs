@@ -15,14 +15,14 @@ module.exports = async ({ run, until, pause, window, root, guestId }) => {
         {id:'drag-assistant',role:'assistant',content:'正在检查。\\n\\n'.repeat(30),turnId:'cover-turn'},
         {id:'drag-guidance',role:'user',content:'先保留当前网页',turnId:'cover-turn',metadata:{turn_guidance:true,guidance_delivery:'queued'}}] });
   `);
-  const dragTo = async (x, y, cancel = false) => {
-    const from = await run(`(() => { const r=document.querySelector('.inspector-cover-drag').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
+  const dragTo = async (x, y, cancel = false, source = '.inspector-cover-input-toggle') => {
+    const from = await run(`(() => { const r=document.querySelector(${JSON.stringify(source)}).getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
     window.webContents.sendInputEvent({ type:'mouseDown', button:'left', clickCount:1, ...from });
     for (let i=1;i<=6;i++) {
       window.webContents.sendInputEvent({ type:'mouseMove', x:Math.round(from.x+(x-from.x)*i/6), y:Math.round(from.y+(y-from.y)*i/6) });
       await pause(16);
     }
-    assert.equal(await run('document.body.classList.contains("inspector-cover-dragging")'), true, 'drag retains capture across the native browser');
+    await until('document.body.classList.contains("inspector-cover-dragging")', 'drag from '+source+' retains capture across the native browser towards '+x+','+y);
     if (cancel) window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
     window.webContents.sendInputEvent({ type:'mouseUp', button:'left', clickCount:1, x:Math.round(x), y:Math.round(y) });
     await pause(100);
@@ -49,12 +49,12 @@ module.exports = async ({ run, until, pause, window, root, guestId }) => {
     await until('dragGuidance.length===1', 'quick input can send queued guidance');
     assert.deepEqual(await run('dragGuidance'), [{id:'queued-one',mode:'interrupt_and_continue'}]);
     assert.deepEqual(await run(`Array.from(document.querySelector('.inspector-cover-capsule').children,button=>button.className)`),
-      ['inspector-cover-drag','inspector-cover-input-toggle'], 'capsule contains only the drag handle and input');
+      ['inspector-cover-back','inspector-cover-input-toggle'], 'the capsule offers Back and Input without a separate drag control');
     await pause(100);
     const viewport = await run('({width:innerWidth,height:innerHeight,top:document.querySelector(".desktop-shell").getBoundingClientRect().top})');
     for (const [label,x,y] of [['top-left',20,viewport.top+20],['top-right',viewport.width-20,viewport.top+20],
       ['bottom-right',viewport.width-20,viewport.height-20],['bottom-left',20,viewport.height-20]]) {
-      await dragTo(x,y);
+      await dragTo(x,y,false,label.endsWith('right') ? '.inspector-cover-back svg' : '.inspector-cover-input-toggle');
       await assertFits(label);
       if (label==='top-left') fs.writeFileSync(path.join(root,'tmp','quick-input-drag-top.png'),(await window.capturePage()).toPNG());
     }
@@ -93,7 +93,7 @@ module.exports = async ({ run, until, pause, window, root, guestId }) => {
     console.log('Quick input drag passed: all edges, opposite-side expansion, narrow/zoomed layout, native browser and draft preservation, cancel, saved position and guidance sending.');
   } finally {
     window.webContents.setZoomFactor(1); window.setSize(...size);
-    await run(`document.querySelector('.inspector-cover-drag')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true,cancelable:true}));coverUpdate(dragSavedProps);`);
+    await run(`document.querySelector('.inspector-cover-input-toggle')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true,cancelable:true}));coverUpdate(dragSavedProps);`);
     await pause(200);
   }
 };

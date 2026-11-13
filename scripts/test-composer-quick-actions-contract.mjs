@@ -136,7 +136,9 @@ assert.match(preloadSource, /inspectAttachments:[\s\S]*?files:inspect-attachment
 assert.match(preloadSource, /import \{[^}]*webUtils[^}]*\} from 'electron'/);
 assert.match(preloadSource, /getPathForFile:\s*\(file:\s*File\)\s*=>\s*webUtils\.getPathForFile\(file\)/);
 assert.match(source, /function addTransferredFiles\(files:\s*File\[\]\)/);
-assert.match(source, /getPathForFile\?\.\(file\)/);
+assert.match(source, /await importTransferredFiles\(files/);
+const transferSource = readSourceFile(path.resolve('src/shared/transferredFiles.ts'), 'utf8');
+assert.match(transferSource, /getPathForFile\?\.\(file\)/);
 assert.match(source, /event\.clipboardData\.files/);
 assert.match(source, /useFileDropZone\(dropTargetRef, transfer =>/);
 assert.match(source, /const files = \[\.\.\.transfer\.files\];[\s\S]*?addTransferredFiles\(files\)/);
@@ -225,7 +227,7 @@ const module = { exports: {} };
 vm.runInNewContext(transpiled.outputText, {
   module,
   exports: module.exports,
-  require: () => ({}),
+  require: id => id.endsWith('/recoverableLazy') ? { recoverableLazy: () => () => null } : {},
   window: {},
   console,
 });

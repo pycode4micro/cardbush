@@ -20,7 +20,29 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
       Object.getOwnPropertyDescriptor(${tag}.prototype,'value').set.call(node,${JSON.stringify(value)});
       node.dispatchEvent(new Event('${tag === 'HTMLSelectElement' ? 'change' : 'input'}',{bubbles:true}))})()`);
   }
+  const mouse = (type, x, y) => win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+    type, x, y, button:'left', buttons:type === 'mouseReleased' ? 0 : 1, clickCount:1,
+  });
+  async function resize(edge, dx, dy, cancel = false) {
+    const selector = web + ' [data-home-resize=' + edge + ']';
+    const {x,y,step} = await js(`(async()=>{const handle=document.querySelector('${selector}');
+      handle.scrollIntoView({block:'center',behavior:'instant'}); await new Promise(requestAnimationFrame);
+      const r=handle.getBoundingClientRect();
+      if (document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)!==handle) throw Error('Resize grip obscured: '+document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,200));
+      const board=handle.closest('.home-board'); return {x:r.x+r.width/2,y:r.y+r.height/2,
+        step:(board.clientWidth+parseFloat(getComputedStyle(board).columnGap))/12};})()`);
+    await mouse('mousePressed',x,y);
+    await mouse('mouseMoved',x+dx*step,y+dy);
+    await wait(`!!document.querySelector('${web}').style.getPropertyValue('--resize-height')`);
+    if (cancel) {
+      win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+      win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+    }
+    await mouse('mouseReleased',x+dx*step,y+dy);
+    await wait(`!document.querySelector('${web}').style.getPropertyValue('--resize-height')`);
+  }
   try {
+    win.webContents.debugger.attach();
     await win.webContents.session.cookies.set({url:origin, name:'home_fixture', value:'private', sameSite:'lax'});
     assert.equal(await js("!!document.querySelector('.desktop-library [data-home-action]')"),false,'home opens without editing controls');
     await edit();
@@ -35,11 +57,18 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     await field(web+' select', '8', 'HTMLSelectElement');
     await field(web+' label:nth-of-type(2) select', '480', 'HTMLSelectElement');
     await field(web+' [name=column]', '3', 'HTMLSelectElement');
+    await resize('corner',-1,-40,true);
+    assert.equal(await js(`document.querySelector('${web} select').value`),'8','Escape cancels the width preview');
+    await resize('corner',-2,-36);
+    assert.deepEqual(await js(`[...document.querySelectorAll('${web} select')].map(el=>el.value)`),['6','444','3']);
     const before = await js(order);
     await click(web+' [data-home-action=earlier]');
     const key = before.at(-1);
     assert.equal((await js(order)).at(-2), key);
-    await js(`(() => { const source=document.querySelector('${web} .home-drag'),target=document.querySelector('[data-home-block="native:featured"]');
+    await js(`(() => { const body=document.querySelector('${web} .home-block-body');body.scrollIntoView({block:'center'});
+      const box=body.getBoundingClientRect();const source=document.elementFromPoint(box.x+box.width/2,box.y+box.height/2);
+      if (!source?.draggable) throw Error('Card body does not accept drag');
+      const target=document.querySelector('[data-home-block="native:featured"]');
       const dataTransfer=new DataTransfer();
       source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer}));
       target.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer}));
@@ -48,7 +77,7 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     await click(add); await click('[data-home-native=recent]');
     await click('[data-home-add=html]');
     await field('.component-import input:not([type=file])','Board counter');
-    await field('.component-import textarea','<button onclick="this.textContent=42">41</button>', 'HTMLTextAreaElement');
+    await field('.component-import textarea',`<button onclick="this.textContent=42">41</button><a href="${origin}/widget-link" target="_blank"><span>Schedule</span></a>`, 'HTMLTextAreaElement');
     await click('.component-import [type=submit]');
     await wait('!!document.querySelector("[data-kind=html]") && !document.querySelector("dialog[open]")');
     assert.equal(requests.length, 0, 'layout editing keeps remote pages unloaded');
@@ -74,19 +103,33 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     const custom = () => win.webContents.mainFrame.frames.find(frame => frame.url === 'about:srcdoc');
     await poll(() => custom()?.executeJavaScript('!!document.querySelector("button")'), 'custom HTML visible');
     assert.equal(await custom().executeJavaScript('document.querySelector("button").click();document.querySelector("button").textContent'),'42');
+    const widget = custom();
+    await widget.executeJavaScript('document.querySelector("a").click()');
+    assert.equal(await js("!!document.querySelector('#right-inspector')?.checkVisibility()"),false,'widget scripts cannot open tabs on their own');
+    const link = await widget.executeJavaScript('(()=>{const r=document.querySelector("a span").getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2};})()');
+    const frame = await js(`(()=>{const el=document.querySelector('${html} iframe');el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x,y:r.y};})()`);
+    win.focus();
+    await mouse('mousePressed',frame.x+link.x,frame.y+link.y); await mouse('mouseReleased',frame.x+link.x,frame.y+link.y);
+    await wait("document.querySelector('#right-inspector')?.checkVisibility()");
+    await poll(()=>requests.some(req=>req.url === '/widget-link'),'user link opens the target URL in the built-in browser');
+    assert.equal(widget.url,'about:srcdoc','the component remains on Home');
     await reload(); await wait('!!document.querySelector("[data-kind=html]")');
     assert.deepEqual(await js(order),saved,'all placements and hidden sections survive a restart');
-    assert.deepEqual(await js(`(()=>{const s=document.querySelector('${web}').style;return [s.getPropertyValue('--block-span'),s.getPropertyValue('--block-height'),s.getPropertyValue('--block-column')]})()`),['8','480px','3']);
+    assert.deepEqual(await js(`(()=>{const s=document.querySelector('${web}').style;return [s.getPropertyValue('--block-span'),s.getPropertyValue('--block-height'),s.getPropertyValue('--block-column')]})()`),['6','444px','3']);
     win.setMinimumSize(420,400); win.setSize(520,640);
     await wait('innerWidth < 550');
     await wait(`Math.abs(document.querySelector('${web}').getBoundingClientRect().width - document.querySelector('.home-board').getBoundingClientRect().width) < 2`);
-    await edit(); await click(web+' [data-home-action=remove]'); await click(add); await click('[data-home-native=recent]');
+    await edit();
+    await resize('corner',1,-20);
+    assert.deepEqual(await js(`[...document.querySelectorAll('${web} select')].map(el=>el.value)`),['6','424','3'],'single-column height changes preserve wide screen span');
+    await click(web+' [data-home-action=remove]'); await click(add); await click('[data-home-native=recent]');
     assert.ok((await js(order)).includes('native:recent'));
     await click(done);
     await visible('.home-board[data-editing=false]');
     assert.equal(await js("!!document.querySelector('.desktop-library [data-home-action]')"),false);
     console.log('Editable Home passed: native visibility, drag/button ordering, sizes, real web navigation, HTML interaction, sandbox and reload.');
   } finally {
+    win.webContents.debugger.detach();
     site.closeAllConnections();
     await new Promise(resolve => site.close(resolve));
   }

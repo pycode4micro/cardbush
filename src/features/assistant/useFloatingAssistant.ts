@@ -2,26 +2,15 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { isAssistantPageMessage, type ConversationEntry } from '@cardbush/bush-protocol';
 import type { AssistantSurface, AssistantSurfaceState } from '../../../electron/assistantSurface';
 
-const readKey = 'cardbush_assistant_read_receipt';
-type Receipt = { generation: number; id: string; at: string };
-function readReceipt(): Receipt | undefined {
-  try {
-    const value = JSON.parse(localStorage.getItem(readKey) ?? 'null');
-    if (value && typeof value.generation === 'number' && typeof value.id === 'string' && typeof value.at === 'string') return value;
-  } catch { /* Initialize the read position from the first available journal. */ }
-}
+import { readAssistantReceipt, saveAssistantReceipt, observeAssistantReceipt } from './assistantReadReceipt';
 
 export function useFloatingAssistant(floating: boolean, active: boolean, entries: ConversationEntry[], generation?: number) {
   const [layout, setLayout] = useState<AssistantSurfaceState>({surface: 'capsule'});
   const { surface } = layout;
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [focused, setFocused] = useState(() => document.hasFocus() && !document.hidden);
-  const [receipt, setReceipt] = useState(readReceipt);
-  useEffect(() => {
-    const sync = (event: StorageEvent) => { if (!event.key || event.key === readKey) setReceipt(readReceipt()); };
-    window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
-  }, []);
+  const [receipt, setReceipt] = useState(readAssistantReceipt);
+  useEffect(() => observeAssistantReceipt(() => setReceipt(readAssistantReceipt())), []);
   useLayoutEffect(() => {
     if (!floating) { setLayout({surface: 'capsule'}); setHost(null); return; }
     let live = true, changed = false;
@@ -43,14 +32,11 @@ export function useFloatingAssistant(floating: boolean, active: boolean, entries
   useEffect(() => {
     if (generation === undefined || !active) return;
     const reading = focused && (!floating || surface === 'replies');
-    if (!reading && receipt?.generation === generation) return;
-    if (receipt && (receipt.generation > generation || receipt.generation === generation && receipt.at > (latest?.createdAt ?? ''))) return;
-    if (receipt?.generation === generation && receipt.id === (latest?.id ?? '')) return;
-    const next = { generation, id: latest?.id ?? '', at: latest?.createdAt ?? '' };
-    localStorage.setItem(readKey, JSON.stringify(next)); setReceipt(next);
+    if (!reading && receipt) return;
+    saveAssistantReceipt({ generation, id: latest?.id ?? '', at: latest?.createdAt ?? '' });
   }, [active, floating, focused, generation, latest, receipt, surface]);
   const unread = useMemo(() => {
-    if (!receipt || generation !== receipt.generation) return 0;
+    if (!receipt || generation === undefined) return 0;
     const index = replies.findIndex(entry => entry.id === receipt.id);
     return index < 0 ? replies.filter(entry => entry.createdAt > receipt.at).length : replies.length - index - 1;
   }, [generation, receipt, replies]);

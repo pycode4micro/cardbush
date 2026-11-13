@@ -138,7 +138,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run("sessionFixture.workspace.enterInspectorCover();void 0"); await until('sessionFixture.workspace.inspectorCover', 'cover a');
   await run("sessionFixture.setSession('b');void 0"); await until('!sessionFixture.workspace.inspectorCover && !sessionFixture.sidebarCollapsed', 'b does not inherit a cover or drawer');
   await run("sessionFixture.setSession('a');void 0"); await until('sessionFixture.workspace.inspectorCover && sessionFixture.sidebarCollapsed', 'a restores its cover');
-  await run("sessionFixture.workspace.leaveInspectorCover();sessionFixture.tabs.closeTabs(new Set(['a-first']));void 0");
+  await run("sessionFixture.workspace.returnFromInspector();sessionFixture.tabs.closeTabs(new Set(['a-first']));void 0");
   await until('!sessionFixture.tabs.allTabs.some(tab=>tab.id==="a-first")', 'real close disposes original page');
   await pause(250); assert.equal(guest.isDestroyed(), true);
   assert.equal(await run('sessionFixture.tabs.allTabs.length'), 4, 'closing one workspace page retains the others');

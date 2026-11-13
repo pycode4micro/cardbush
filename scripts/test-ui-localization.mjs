@@ -153,7 +153,7 @@ test('renderer and native consumers share the generated catalog', async () => {
 test('native menus follow the App language, normalize locale tags and reject other senders', async () => {
   const file = 'electron/main.ts';
   const source = ts.createSourceFile(file, await readFile(file, 'utf8'), ts.ScriptTarget.Latest, true);
-  const functions = ['nativeText', 'updateTrayMenu'].map(name => {
+  const functions = ['nativeText', 'updateTrayMenu', 'applySessionAttentionBadge'].map(name => {
     const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
     assert.ok(declaration, name);
     return declaration.getText(source);
@@ -163,10 +163,12 @@ test('native menus follow the App language, normalize locale tags and reject oth
   assert.ok(registration);
   let handler;
   const menus = [];
+  const badgeLabels = [];
   const bindings = { uiText, resolveUiLanguage: catalog.resolve,
     app: { isReady: () => true, getLocale: () => 'en-GB', getAppPath: () => process.cwd() },
     path, nativeTheme: { shouldUseDarkColors: false },
-    Menu: { buildFromTemplate: template => template }, tray: { setContextMenu: menu => menus.push(menu) },
+    Menu: { buildFromTemplate: template => template }, tray: { setContextMenu: menu => menus.push(menu), isDestroyed: () => false, setToolTip: text => badgeLabels.push(text) },
+    process: { platform: 'win32' }, mainWindow: null, sessionAttentionCount: 2,
     showWorkspaceHome: () => {}, assistantFloating: false, setFloatingAssistant: () => {}, requestAppQuit: () => {},
     ipcMain: { handle: (_channel, callback) => { handler = callback; } },
     requireAppFrame: event => { if (event.sender.id !== 7) throw Error('Untrusted sender'); },
@@ -178,6 +180,7 @@ test('native menus follow the App language, normalize locale tags and reject oth
   assert.deepEqual(labels(), expected('en'));
   handler({ sender: { id: 7 } }, 'zh-CN');
   assert.deepEqual(labels(), expected('zh'));
+  assert.equal(badgeLabels.at(-1), uiText('zh')('main.unreadBadge', { count: 2 }));
   const count = menus.length;
   handler({ sender: { id: 7 } }, 'zh');
   assert.equal(menus.length, count, 'same resolved language does not rebuild the menu');
@@ -185,6 +188,7 @@ test('native menus follow the App language, normalize locale tags and reject oth
   assert.deepEqual(labels(), expected('zh'));
   handler({ sender: { id: 7 } }, 'en-US');
   assert.deepEqual(labels(), expected('en'));
+  assert.equal(badgeLabels.at(-1), uiText('en')('main.unreadBadge', { count: 2 }));
   handler({ sender: { id: 7 } }, { invalid: 'locale' });
   assert.deepEqual(labels(), expected('en'));
 });

@@ -1000,8 +1000,15 @@ assert.ok(
   'Tool and Runtime-maintenance rows must use the shared Tool logo renderer',
 );
 assert.match(toolLogoSource, /normalized\.startsWith\('mcp__'\)/);
-assert.match(toolLogoSource, /read_file: FileText/);
-assert.match(toolLogoSource, /subagent: GitFork/);
+const { toolProp, pixelToolArt } = await loadChatTranscript({ source: `export * from ${JSON.stringify(path.resolve('src/features/tools/pixelToolArt.ts'))};` });
+assert.match(toolLogoSource, /builtinToolProp\(normalized\)/);
+assert.equal(toolProp('read_file'), 'page');
+assert.equal(toolProp('subagent'), 'team');
+assert.equal(toolProp('mcp__browser_use__navigate_page'), 'globe');
+assert.equal(toolProp('mcp__cardbush_apps__computer_use'), 'screen');
+assert.equal(toolProp('mcp__external__action'), 'plug');
+assert.equal(toolProp('unknown'), 'wrench');
+assert.notEqual(pixelToolArt.page, pixelToolArt.team);
 assert.match(
   styleSource,
   /\.assistant-thinking-model \{[\s\S]*?background: transparent;[\s\S]*?border: 0;[\s\S]*?box-shadow: none;/,

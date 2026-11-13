@@ -38,6 +38,8 @@ function fixture(initial = {}) {
   const active = new Set();
   const context = { exports: {}, ...routing, ...nativeVisibility, process: { platform: 'win32' },
     sessionAttentionNotificationGate: new routing.SessionAttentionNotificationGate(),
+    assistantPageVisible: !!initial.assistantPageVisible, assistantSurface: initial.surface ?? 'capsule',
+    assistantWindow: initial.surface ? { ...window, isFocused: () => true } : null,
     mainWindow: initial.noWindow ? null : window, Notification, activeSessionAttentionNotifications: active,
     randomUUID: () => String(notices.length), loadCardbushIcon: () => undefined,
     activateSessionAttention: id => opened.push(id), appendDebugLog: (...args) => logs.push(args),
@@ -46,6 +48,23 @@ function fixture(initial = {}) {
   return { state, notices, opened, logs, active, flashes: () => flashes, show: context.exports.show };
 }
 const attention = { sessionId: 'chat', turnId: 'turn', kind: 'completed', title: 'Task', body: 'Done' };
+
+test('Assistant replies reach the current workspace or capsule unless the reply surface is being read', () => {
+  const reply = {...attention, sessionId:'personal-assistant', interactionId:'reply#1'};
+  for (const [state, kind, expected] of [
+    [{focused:true}, 'completed', true],
+    [{focused:true, assistantPageVisible:true}, 'completed', false],
+    [{minimized:true, assistantPageVisible:true}, 'completed', true],
+    [{noWindow:true, surface:'compose'}, 'completed', true],
+    [{surface:'capsule'}, 'completed', true],
+    [{surface:'replies'}, 'completed', false],
+    [{surface:'replies'}, 'interaction', true],
+  ]) {
+    const f = fixture(state);
+    assert.equal(f.show({...reply,kind}).shown, expected, JSON.stringify({state,kind}));
+    if (expected && kind === 'completed') assert.match(f.notices[0].options.toastXml, /personal-assistant#reply%231/);
+  }
+});
 
 test('native delivery uses visibility, focus AND minimize state', () => {
   for (const [state, expected] of [

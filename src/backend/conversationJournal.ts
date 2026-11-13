@@ -1,10 +1,9 @@
 import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
-import { ASSISTANT_CONVERSATION_COMMAND, type ConversationEntry, type NextStepPrediction, type AssistantManagementSnapshot } from '@cardbush/bush-protocol';
+import { ASSISTANT_CONVERSATION_COMMAND, type ConversationEntry, type NextStepPrediction, type AssistantManagementSnapshot, type AssistantActivitySnapshot } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 import type { ChatMessage } from '../types';
 
-export interface ConversationJournalSnapshot { entries: ConversationEntry[]; cursor: number; busy: boolean; error: string; canRetry?: boolean; workingTasks?: number; generation?: number;
-  activity?: import('@cardbush/bush-protocol').AssistantWorkActivity;
+export interface ConversationJournalSnapshot extends Partial<AssistantActivitySnapshot> { entries: ConversationEntry[]; cursor: number; busy: boolean; error: string; canRetry?: boolean; workingTasks?: number; generation?: number;
   reactions?: Record<string, import('@cardbush/bush-protocol').AssistantReaction>;
   eventNeedsResponse?: boolean;
   management?: AssistantManagementSnapshot;

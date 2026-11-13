@@ -69,15 +69,15 @@ body.right-inspector-resizing .inspector-conversation-covered > .right-inspector
   background: color-mix(in srgb, var(--surface) 72%, transparent);
   backdrop-filter: blur(22px) saturate(1.5); -webkit-backdrop-filter: blur(22px) saturate(1.5);
   box-shadow: 0 10px 32px #0003, 0 2px 6px #0001, inset 0 1px 0 #ffffff38;
-  pointer-events: auto; user-select: none;
+  pointer-events: auto; user-select: none; touch-action: none; cursor: grab;
 }
 .inspector-cover-capsule button { position: relative; border: 0; border-radius: 999px; padding: 8px 16px; display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; background: transparent; color: var(--text); font: inherit; line-height: 1.2; white-space: nowrap; }
 .inspector-cover-capsule button + button::before { content: ''; position: absolute; left: -2px; top: 25%; height: 50%; width: 1px; background: color-mix(in srgb, var(--text) 14%, transparent); }
 .inspector-cover-capsule button:hover, .inspector-cover-capsule button[aria-expanded="true"] { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .inspector-cover-capsule button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.inspector-cover-capsule .inspector-cover-drag { padding: 7px; color: var(--text-soft); cursor: grab; touch-action: none; }
+.inspector-cover-back > svg { width: 15px; height: 15px; }
 body.inspector-cover-dragging, body.inspector-cover-dragging * { cursor: grabbing !important; user-select: none !important; }
-body.inspector-cover-dragging :is(webview, iframe) { pointer-events: none !important; }
+body.inspector-cover-pointer-active :is(webview, iframe) { pointer-events: none !important; }
 .inspector-quick-input {
   position: absolute; left: var(--quick-input-left, 16px); top: var(--quick-input-top, auto); bottom: var(--quick-input-bottom, 70px);
   width: var(--quick-input-width, calc(100% - 32px)); max-height: var(--quick-input-max-height, calc(100% - 86px)); min-height: 0;

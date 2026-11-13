@@ -41,11 +41,12 @@ import { copyText } from '../messageFeedback';
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'preparing' | 'sending' | 'accepted' | 'failed' };
 export function AssistantView({ active, language, floating, prepare, observeActivity, ownsConfiguration = true, composerControls,
-  headerActionsTarget, workSummaryAvailable = true, transcriptFooter, inspectorOpen = false, onToggleInspector,
+  headerActionsTarget, workSummaryAvailable = true, transcriptFooter, inspectorOpen = false, onToggleInspector, noticeTarget, onNoticeLocated, transcriptVisible = active,
   browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
   active: boolean; language: string; observeActivity?: boolean; floating?: { retainDraft?(value: boolean): void };
   prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean;
   composerControls?: AssistantComposerControls;
+  noticeTarget?: { id: string }; onNoticeLocated?(): void; transcriptVisible?: boolean;
   transcriptFooter?: ReactNode;
   headerActionsTarget?: HTMLElement | null; workSummaryAvailable?: boolean;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
@@ -113,7 +114,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   const cursor = useRef(0);
   const generation = useRef<number | undefined>(undefined);
   const refreshing = useRef<Promise<void> | undefined>(undefined);
-  const capsule = useFloatingAssistant(Boolean(floating), active, entries, generation.current);
+  const capsule = useFloatingAssistant(Boolean(floating), transcriptVisible, entries, generation.current);
   const [capsuleFiles, setCapsuleFiles] = useState<string[]>([]);
   const retainDraft = floating?.retainDraft;
   useEffect(() => {
@@ -161,7 +162,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       else if (result.entries.length) setEntries(current => [...current, ...result.entries.filter(entry => !current.some(old => old.id === entry.id))]);
       if (result.entries.length) setSubmitted(current => current.filter(item => !result.entries.some(entry => entry.id === item.entry.id)));
       setEventNeedsResponse(result.eventNeedsResponse === true);
-      setBusy(result.busy); setAssistantActivity(result.activity ?? (result.busy ? 'thinking' : result.workingTasks ? 'working' : 'idle'));
+      setBusy(result.busy); setAssistantActivity(result.activity ?? (result.busy ? 'thinking' : result.workingTasks ? 'working' : 'idle'), result.expression, result.toolName);
       setRuntimeError(result.error); setRetry(result.retry);
       setNextStepPrediction(current => JSON.stringify(current) === JSON.stringify(result.nextStepPrediction) ? current : result.nextStepPrediction);
       setManagement(current => JSON.stringify(current) === JSON.stringify(result.management) ? current : result.management);
@@ -194,7 +195,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
         pending = true;
         try {
           const state = await assistantBackend.activity();
-          if (!disposed) setAssistantActivity(state);
+          if (!disposed) setAssistantActivity(state.activity, state.expression, state.toolName);
         } catch { if (!disposed) setAssistantActivity('idle'); }
         finally { pending = false; }
       };
@@ -273,6 +274,9 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     scrollToMessage(row); row.querySelector<HTMLElement>('article')?.focus({ preventScroll: true }); setHighlighted(id);
     return true;
   }, [composerPortalTarget, scrollToMessage]);
+  useEffect(() => {
+    if (noticeTarget && jumpToMessage(noticeTarget.id)) onNoticeLocated?.();
+  }, [noticeTarget, pageEntries, jumpToMessage, onNoticeLocated]);
   const reactToMessage = async (id: string, reaction: AssistantReaction | null) => {
     if (reactionPending.current) return;
     const version = assistantBackend.contextVersion(), contextGeneration = generation.current;
@@ -357,7 +361,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
         ready={ready} sending={submitting} calling={callHere} voiceOpen={capsule.surface === 'voice'} voiceBlocked={voiceInUse && !callHere} draft={draft} changeDraft={setDraft}
         files={capsuleFiles} changeFiles={setCapsuleFiles} compose={() => void capsule.show('compose')}
         collapse={() => void capsule.show('capsule')} open={() => void capsule.show('replies')} send={send}
-        repliesOpen={capsule.surface === 'replies'} replyWidth={capsule.replyWidth} replies={capsule.replies} error={error || runtimeError ? assistantErrorText(error || runtimeError, language) : ''}
+        repliesOpen={capsule.surface === 'replies'} replyWidth={capsule.replyWidth} targetId={capsule.messageId} replies={capsule.replies} error={error || runtimeError ? assistantErrorText(error || runtimeError, language) : ''}
         openVoice={() => {
           if (!callHere) { voice.update(target); void voice.start('call'); }
           void capsule.show('voice');

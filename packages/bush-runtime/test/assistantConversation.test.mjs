@@ -11,6 +11,42 @@ import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION as id, REPORT_DELIVE
 import { withToolDisplayTitle } from '../dist/toolDisplay.js';
 
 const temporary = () => mkdtempSync(join(tmpdir(), 'assistant-conversation-'));
+test('badge counts only new visible replies and survives journal replay without recounting duplicates', () => {
+  const root = temporary(), journal = new ConversationJournal(root), session = 'personal-assistant';
+  const at = '2026-01-01T08:05:00.000Z';
+  const reply = id => ({ id, role: 'assistant', source: 'text', visibility: 'conversation', content: id, createdAt: at });
+  journal.append(session, reply('a'));
+  const initial = journal.replyStatus(session);
+  assert.deepEqual(initial, { unread: 0, latest: { id: 'a', at } }, 'do not badge history on first use');
+  for (const item of [{ ...reply('user'), role: 'user' }, { ...reply('internal'), visibility: 'internal' },
+    { ...reply('private-voice'), source: 'voice' }, reply('b'), reply('b'), reply('c')]) journal.append(session, item);
+  for (const source of [journal, new ConversationJournal(root)]) {
+    assert.equal(source.replyStatus(session, initial.latest).unread, 2);
+    assert.equal(source.replyStatus(session, { id: 'b', at }).unread, 1);
+    assert.equal(source.replyStatus(session, { id: 'c', at }).unread, 0);
+  }
+  journal.forget(session);
+  assert.deepEqual(journal.replyStatus(session, initial.latest), { unread: 0 });
+});
+test('a running tool is shown only for a live child belonging to the personal Assistant', async t => {
+  const log = new InMemoryRuntimeEventLog(), tasks = new SubagentTaskStore();
+  const host = new InMemoryRuntimeHost({ dataRoot: temporary(), eventLog: log, subagentTaskStore: tasks,
+    provider: { async *stream() { assert.fail('status polling should not run a model'); } } });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const activity = () => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, action: 'activity' } });
+  function start(parent, name) {
+    const task = tasks.start({ parentSessionId: parent, parentTurnId: 'p', taskId: name,
+      childSessionId: name, childTurnId: 'c', prompt: 'fixture', inheritContext: false, inheritedMessageCount: 0 });
+    const identity = { sessionId: task.childSessionId, turnId: task.childTurnId, requestId: 'r' };
+    log.append(identity, { kind: 'tool_running', payload: { toolCallId: 'i', toolName: name, ordinal: 0 } });
+    return identity;
+  }
+  start('other', 'edit_file'); assert.deepEqual(await activity(), { activity: 'idle' });
+  const child = start(id, 'read_file');
+  assert.deepEqual(await activity(), { activity: 'working', toolName: 'read_file' });
+  log.append(child, { kind: 'turn_terminal', payload: { status: 'completed', reason: 'complete', details: {} } });
+  assert.equal((await activity()).toolName, undefined);
+});
 test('stopped child with a surviving running receipt is idle in the toolbar and stopped in task history', async () => {
   const events = [];
   const persistence = { load: () => events, append: event => events.push(event) };
@@ -96,6 +132,7 @@ test('assistant accepts provider display metadata on all four tools, including a
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks, checkpoint: () => ({}),
     delegate: async input => {
       assert.equal(assistant.command({ action: 'activity', sessionId: id }).activity, 'working');
+      if (!delegated.length) assert.equal(assistant.command({ action: 'activity', sessionId: id }).toolName, 'subagent');
       delegated.push(input);
       if (input.action === 'subagent' && !input.taskId) tasks.push({ taskId: 'child', status: 'running', finalResponse: '' });
       return { taskId: 'child', status: 'running' };

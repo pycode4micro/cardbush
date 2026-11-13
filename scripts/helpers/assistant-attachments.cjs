@@ -24,7 +24,20 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   await fill('textarea', '用这张图生成视频。');
   await pause(100);
   const originalHeight = await read('document.querySelector(".composer-surface").getBoundingClientRect().height');
-  await pick([portrait, filePath]);
+  const mixedPaste = await read(`(() => {
+    const data = new DataTransfer(), paths = new WeakMap();
+    for (const original of ${JSON.stringify([portrait, filePath])}) {
+      const file = new File([], original.split(/[\\\\/]/).pop());
+      paths.set(file, original);
+      data.items.add(file);
+    }
+    cardbushDesktop.getPathForFile = file => paths.get(file) ?? '';
+    data.setData('text/plain', 'alternate clipboard text');
+    const paste = new ClipboardEvent('paste', {bubbles:true, cancelable:true, clipboardData:data});
+    document.querySelector('textarea').dispatchEvent(paste);
+    return paste.defaultPrevented;
+  })()`);
+  assert.ok(mixedPaste, 'pasting multiple copied files consumes the paste and keeps the typed draft');
   await until('document.querySelector(".composer-image-preview img")?.naturalWidth===400 && !!document.querySelector(".composer-file-attachment")');
   const input = await read(`(()=>{const tray=document.querySelector('.composer-attachments'),surface=document.querySelector('.composer-surface');return {
     contained:surface.contains(tray)&&tray.getBoundingClientRect().top>=surface.getBoundingClientRect().top,above:tray.getBoundingClientRect().bottom<=surface.querySelector('textarea').getBoundingClientRect().top,

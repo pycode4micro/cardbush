@@ -8,7 +8,7 @@ import library from './home-library.cjs';
 const { values, positionals } = parseArgs({allowPositionals:true, options: {
   output:{type:'string'}, id:{type:'string'}, title:{type:'string'}, html:{type:'string'}, script:{type:'string',multiple:true},
   style:{type:'string',multiple:true}, home:{type:'boolean'}, width:{type:'string'}, height:{type:'string'}, profile:{type:'string'},
-  origin:{type:'string',multiple:true}, 'expected-revision':{type:'string'}
+  origin:{type:'string',multiple:true}, 'embed-origin':{type:'string',multiple:true}, 'expected-revision':{type:'string'}
 }});
 const appData = process.platform === 'win32' ? process.env.APPDATA : process.platform === 'darwin'
   ? join(homedir(),'Library','Application Support') : process.env.XDG_CONFIG_HOME || join(homedir(),'.config');
@@ -26,7 +26,7 @@ try {
   } else if (positionals[0] === 'publish' && values.id) {
     const paths = [values.html,...(values.style ?? []),...(values.script ?? [])].filter(Boolean);
     const html = files.assembleComponent(await Promise.all(paths.map(async path => ({name:basename(path),text:await readFile(path,'utf8')}))));
-    const result = db.publish({id:values.id,title:values.title,html,networkDomains:values.origin,
+    const result = db.publish({id:values.id,title:values.title,html,networkDomains:values.origin,embedDomains:values['embed-origin'],
       width:values.width === undefined ? undefined : Number(values.width),height:values.height === undefined ? undefined : Number(values.height)},
       values.home, values['expected-revision'] === undefined ? undefined : Number(values['expected-revision']));
     const {id,title,home} = result.items.find(item => item.id === values.id);

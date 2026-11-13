@@ -14,6 +14,7 @@ import { conversationAgentModel, readInitialPermissionMode, readInitialReference
 import { effectiveModels } from '../settings/modelPreferences';
 import { readInitialLanguageMode, readSystemLanguage, resolveAppLanguage, readDisabledSkillNames, readVisualInputEnabled } from '../settings/localPreferences';
 import { useTeamChoices } from '../team/teamWorkspaceStore';
+import { OPEN_INSPECTOR_EVENT, type InspectorOpenDetail } from '../inspector/inspectorEvents';
 import { applicationVoiceSession } from '../voice/VoiceConversation';
 import { assistantVoiceActivity } from './assistantActivity';
 import { AssistantWindowView } from './AssistantWindowView';
@@ -86,6 +87,15 @@ export function AssistantWindow() {
     const update = () => setDark(media.matches);
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
+  }, []);
+  useEffect(() => {
+    // This window has no inspector of its own. Delegate web links to the desktop.
+    const openLink = (event: Event) => {
+      const { target } = (event as CustomEvent<InspectorOpenDetail>).detail;
+      if (/^https?:\/\//i.test(target)) void window.cardbushDesktop?.openUiPreview(target);
+    };
+    window.addEventListener(OPEN_INSPECTOR_EVENT, openLink);
+    return () => window.removeEventListener(OPEN_INSPECTOR_EVENT, openLink);
   }, []);
   return <AssistantWindowView language={language} theme={themeClassNames(theme)}
     appearance={appearanceVariables(appearance, theme, settings.importedThemeStyle, settings.font.family)}

@@ -64,7 +64,7 @@ export function HomeBoard({language, native, visible, editing, onDone, onCreate}
         else window.open(url, '_blank', 'noopener,noreferrer');
       }}
       remove={remove} move={(source, target) => change(current => moveHomeBlock(current, source, target))}
-      resize={(block, dimension, value) => change(current => current.map(old => blockKey(old) === blockKey(block) ? {...old, [dimension]:value} : old))}/>
+      resize={(block, dimensions) => change(current => current.map(old => blockKey(old) === blockKey(block) ? {...old, ...dimensions} : old))}/>
     {editor && <ComponentEditor language={language} initial={editor.initial} onClose={() => setEditor(undefined)} onSave={async item => {
       const items = editor.initial ? library.items.map(old => old.id === item.id ? item : old)
         : [...library.items, {...item, home:true, order:Math.max(-1,...library.items.map(old => old.order))+1}];

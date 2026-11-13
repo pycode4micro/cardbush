@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type Dispatch, type SetStateAction } from 'react';
+import { importTransferredFiles } from '../../shared/transferredFiles';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 
 export type CapsuleInput = {
   composing: boolean; voiceOpen: boolean; repliesOpen: boolean; ready: boolean; sending: boolean;
-  draft: string; changeDraft(value: string): void; files: string[]; changeFiles(files: string[]): void;
+  draft: string; changeDraft(value: string): void; files: string[]; changeFiles: Dispatch<SetStateAction<string[]>>;
   collapse(): void; send(text: string): Promise<boolean>;
 };
 
@@ -43,6 +44,7 @@ export function useCapsuleControls(p: CapsuleInput) {
     return () => observer.disconnect();
   }, [renderReplies, repliesOpen]);
   const [failed, setFailed] = useState(false);
+  const [attachmentError, setAttachmentError] = useState('');
   const drag = useRef<{id:number; x:number; y:number; moved:boolean} | undefined>(undefined);
   const suppressClick = useRef(false);
   const beginDrag = (event: PointerEvent<HTMLDivElement>) => {
@@ -79,18 +81,33 @@ export function useCapsuleControls(p: CapsuleInput) {
       previous.current = undefined;
     }
   }, [p.composing, p.voiceOpen]);
+  const pendingImports = useRef(0);
+  const [importing, setImporting] = useState(false);
   const submit = async () => {
-    if (!p.ready || p.sending || (!p.draft.trim() && !p.files.length)) return;
-    const text = [p.draft, ...p.files.map(path => '@"' + path + '"')].filter(Boolean).join('\n');
-    if (await p.send(text)) { p.changeDraft(''); p.changeFiles([]); setFailed(false); p.collapse(); }
+    if (pendingImports.current || !p.ready || p.sending || (!p.draft.trim() && !p.files.length)) return;
+    const text = [...p.files.map(path => '@' + path), p.draft].filter(Boolean).join('\n');
+    if (await p.send(text)) { p.changeDraft(''); p.changeFiles([]); setFailed(false); setAttachmentError(''); p.collapse(); }
     else { setFailed(true); input.current?.focus(); }
   };
-  const attach = async () => {
+  const attach = async (files?: File[]) => {
+    if (p.sending) return;
+    pendingImports.current++;
+    setImporting(true);
+    setAttachmentError('');
     try {
-      const paths = await window.cardbushDesktop?.pickAttachments?.();
-      if (paths?.length) p.changeFiles([...new Set([...p.files, ...paths])]);
-    } catch { setFailed(true); }
-    input.current?.focus();
+      if (files) {
+        const { attachments, errors } = await importTransferredFiles(files);
+        p.changeFiles(current => [...new Set([...current, ...attachments.map(item => item.path)])]);
+        if (errors.length) setAttachmentError(errors.join('\n'));
+      } else {
+        const paths = await window.cardbushDesktop?.pickAttachments?.();
+        if (paths?.length) p.changeFiles(current => [...new Set([...current, ...paths])]);
+      }
+    } catch (error) { setAttachmentError(error instanceof Error ? error.message : String(error)); }
+    finally {
+      setImporting(--pendingImports.current > 0);
+      input.current?.focus();
+    }
   };
-  return {input, toolbar, sheet, renderReplies, revealReplies: repliesOpen && presence.visible, limit, setLimit, failed, setFailed, suppressClick, beginDrag, moveDrag, endDrag, submit, attach};
+  return {input, toolbar, sheet, renderReplies, revealReplies: repliesOpen && presence.visible, limit, setLimit, failed, setFailed, attachmentError, suppressClick, beginDrag, moveDrag, endDrag, submit, attach, importing};
 }

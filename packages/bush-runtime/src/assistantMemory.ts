@@ -1,4 +1,4 @@
-import { normalizeIndividuation, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type ToolCall } from '@cardbush/bush-protocol';
+import { assistantExpressionSchema, normalizeIndividuation, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type ToolCall } from '@cardbush/bush-protocol';
 import type { IndividuationMemory } from './individuationMemory.js';
 import { recallIndividuation, changedIndividuation } from './individuationContext.js';
 import { deliveredMemoryVersions } from './individuationTools.js';
@@ -15,7 +15,13 @@ export class AssistantMemory {
       throw Error('Assistant memory cannot request additional permissions.');
     } } });
   }
-  definitions() { return this.registry.definitions().filter(tool => names.has(tool.name)); }
+  definitions() {
+    return this.registry.definitions().filter(tool => names.has(tool.name)).map(tool => tool.name !== 'summary_for_user' ? tool : {
+      ...tool, inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties as Record<string, unknown>),
+        expression: { type: 'string', enum: assistantExpressionSchema.options, description: 'Optional visual expression of the Assistant for the upcoming reply.' },
+      } },
+    });
+  }
   private async optional(work: () => Promise<ModelMessage | undefined>, signal: AbortSignal) {
     try { return await work(); }
     catch (error) { signal.throwIfAborted(); this.onError?.(error instanceof Error ? error : new Error(String(error))); return undefined; }
@@ -43,6 +49,13 @@ export class AssistantMemory {
     // Completion notifications are not user evidence. Empty final-display receipts
     // remain available, but background work cannot create or correct preferences.
     const args = JSON.parse(call.argumentsText);
+    // Presentation belongs to the personal Assistant, not the shared memory tool.
+    const expression = call.name === 'summary_for_user' && args?.expression !== undefined
+      ? assistantExpressionSchema.parse(args.expression) : undefined;
+    if (expression) {
+      delete args.expression;
+      call = { ...call, argumentsText: JSON.stringify(args) };
+    }
     if (user === undefined && (call.name === 'revise_memory' || call.name === 'summary_for_user' && (args?.habit || args?.prediction))) {
       return { status: 'rejected', code: 'memory_requires_user_input', saved: false,
         reason: 'Background results are not a new user request. Save or correct memory only from new user input.' };
@@ -54,6 +67,8 @@ export class AssistantMemory {
       { request, contextMessages: user === undefined ? [] : [{ role: 'user', content: user }], signal });
     signal.throwIfAborted();
     if (outcome.kind !== 'returned') throw Object.assign(Error(outcome.error.message), { code: outcome.error.code });
-    return outcome.result;
+    const result = outcome.result;
+    return expression && result && typeof result === 'object' && 'status' in result && result.status === 'ok'
+      ? { ...result, expression } : result;
   }
 }

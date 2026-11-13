@@ -1,4 +1,5 @@
 import type { RuntimeEvent } from '@cardbush/bush-protocol';
+import { LiveToolPresentation } from './liveToolPresentation.js';
 
 export interface RuntimeTaskProgress {
   phase: 'starting' | 'model' | 'tools' | 'waiting_user' | 'compacting' | 'completed' | 'failed' | 'stopped';
@@ -11,6 +12,7 @@ export interface RuntimeTaskProgress {
 
 /** Derived from the existing event stream. No second lifecycle or private content. */
 export class RuntimeTaskActivity {
+  readonly toolPresentation = new LiveToolPresentation();
   private phase: RuntimeTaskProgress['phase'] = 'starting';
   private lastActivity?: string;
   private models = 0;
@@ -25,9 +27,13 @@ export class RuntimeTaskActivity {
     switch (event.kind) {
       case 'provider_input_observed': this.models++; this.phase = 'model'; break;
       case 'tool_queued': this.tools.add(event.payload.toolCallId); this.phase = 'tools'; break;
+      case 'tool_running': this.toolPresentation.start(event.payload.toolCallId, event.payload.toolName); break;
       case 'tool_returned':
       case 'tool_failed':
       case 'tool_cancelled':
+        if (event.kind === 'tool_returned' && !event.payload.resultError)
+          this.toolPresentation.finish(event.payload.toolCallId, Date.parse(event.createdAt));
+        else this.toolPresentation.cancel(event.payload.toolCallId);
         this.tools.delete(event.payload.toolCallId);
         if (!this.finished.has(event.payload.toolCallId)) this.completed++;
         if (event.kind === 'tool_failed' || event.kind === 'tool_returned' && event.payload.resultError) {
@@ -45,7 +51,7 @@ export class RuntimeTaskActivity {
       case 'solution_selection_cancelled': this.questions.delete(event.payload.selectionId); break;
       case 'context_compaction_started': this.phase = 'compacting'; break;
       case 'context_compaction_completed': this.phase = 'model'; break;
-      case 'turn_terminal': this.phase = event.payload.status === 'awaiting_user_action' ? 'waiting_user' : event.payload.status; this.tools.clear(); this.approvals.clear(); this.questions.clear(); break;
+      case 'turn_terminal': this.phase = event.payload.status === 'awaiting_user_action' ? 'waiting_user' : event.payload.status; this.toolPresentation.clear(); this.tools.clear(); this.approvals.clear(); this.questions.clear(); break;
     }
   }
   snapshot(): RuntimeTaskProgress {
