@@ -40,7 +40,7 @@ export function webAttachments(items: unknown): ChatAttachment[] {
   return items.flatMap(item => {
     const path = typeof item?.path === 'string' ? personalFilePath(item.path) : null;
     if (!path) return [];
-    const type = String(item.mime ?? '').startsWith('image/') || item.type === 'image' ? 'image' : 'document';
+    const type = String(item.mime ?? '').startsWith('image/') || item.type === 'image' ? 'image' : String(item.mime ?? '').startsWith('video/') ? 'video' : String(item.mime ?? '').startsWith('audio/') ? 'audio' : 'document';
     return [{ id: item.id || path, path, name: item.name || path.split('/').at(-1), type, size: item.size } as ChatAttachment];
   });
 }

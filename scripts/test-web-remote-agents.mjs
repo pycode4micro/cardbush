@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { AgentWebFiles } from '../dist-electron/agentWebFiles.mjs';
+import { agentFileRead, agentFileUpload } from '../dist-electron/agentFiles.mjs';
+import { deliveredFilePaths } from '../dist-electron/agentFileTransfer.mjs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AgentService } from '../dist-electron/agentService.mjs';
@@ -100,7 +103,7 @@ test('the immutable web policy denies local forks, auto-assembly, extra paramete
   assert.equal(await webToolDenial(request, 'subagent', { prompt: 'x', target_agent: 'remote-test', _display_title: title }), undefined);
   assert.ok(await webToolDenial(request, 'subagent', { prompt: 'x', target_agent: 'remote-test', mode: 'fork', _display_title: title }));
   const narrowed = webToolDefinition({ name: 'subagent', inputSchema: {} });
-  assert.deepEqual(Object.keys(narrowed.inputSchema.properties), ['prompt', 'target_agent', 'task_id', 'delivery', 'response']);
+  assert.deepEqual(Object.keys(narrowed.inputSchema.properties), ['prompt', 'files', 'target_agent', 'task_id', 'delivery', 'response']);
   for (const delivery of ['queue', 'insert']) {
     assert.equal(await webToolDenial(request, 'subagent', { task_id: 'task', prompt: 'Use the new date', delivery }), undefined);
     assert.ok(await webToolDenial(request, 'subagent', { target_agent: 'remote-test', prompt: 'Use the new date', delivery }));
@@ -143,7 +146,7 @@ test('native runtime discovers only remote targets and preserves async await/fol
   assert.equal((await invoke('subagent', { prompt: 'Continue local', task_id: 'old-local' })).kind, 'failed');
 });
 
-async function gatewayFixture(t, remoteFactory) {
+async function gatewayFixture(t, remoteFactory, agents = { close() {} }) {
   const { registry } = await fixture(remoteFactory); await save(registry);
   const store = {
     async authenticate(token) { return token.startsWith('admin') ? { id: 'admin', role: 'admin', is_active: true } : token.startsWith('alice') ? { id: 'alice', role: 'member', is_active: true } : null; },
@@ -151,7 +154,7 @@ async function gatewayFixture(t, remoteFactory) {
     async users() { return [...users].map(id => ({ id })); },
     async conversation(userId, id) { if (id !== 'parent-' + userId) throw new WebError(404, 'Not owned'); return { id }; },
   };
-  const server = await serveWeb({ modelSecret: secret, defaultModelId: 'm', models: [{ id: 'm' }], origin: 'http://fixture.test', host: '127.0.0.1', port: 0, staticRoot: 'dist-web' }, store, { close() {} }, undefined, registry);
+  const server = await serveWeb({ modelSecret: secret, defaultModelId: 'm', models: [{ id: 'm' }], origin: 'http://fixture.test', host: '127.0.0.1', port: 0, staticRoot: 'dist-web' }, store, agents, undefined, registry);
   t.after(() => server.close());
   const base = 'http://127.0.0.1:' + server.port;
   const configuration = { gateway: base + '/internal/remote-agents/alice', credential: remoteAgentToken(secret, 'alice') };
@@ -258,6 +261,11 @@ test('real restricted tenant uses the private gateway and native HTTP delegation
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     if (req.url.endsWith('/input_tokens')) { res.end('{"input_tokens":100}'); return; }
+    if (!body.tools) {
+      assert.match(body.input[0].content, /conversation title/);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: ' + JSON.stringify({ type: 'response.completed', response: { id: 'title', object: 'response', status: 'completed', model: body.model, output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Remote test', annotations: [] }] }] } }) + '\n\n'); return;
+    }
     parentRound++;
     const names = body.tools.map(item => item.name ?? item.function?.name);
     assert.ok(names.includes('subagent')); assert.ok(names.includes('tasks')); assert.ok(!names.includes('terminal_exec'));
@@ -383,4 +391,46 @@ test('concurrent delegates are bounded and live revocation cancels remote work',
   await save(f.registry, agentInput({ enabled: false, token: '' }));
   await Promise.all(pending);
   assert.equal(stopped, 4, 'Revoking the remote Agent must cancel the other running tasks');
+});
+
+test('gateway copies media both ways and serves authenticated byte ranges', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'web-remote-media-'));
+  const personal = join(root, 'alice'), workspace = join(root, 'child');
+  await mkdir(join(personal, 'workspaces'), {recursive:true}); await mkdir(workspace);
+  t.after(() => rm(root, { recursive:true, force:true, maxRetries:4 }));
+  const files = new AgentWebFiles(personal), video = Buffer.alloc(1024 * 1024 + 101, 17); video.write('ftyp',4);
+  const inputPath = join(personal,'workspaces','source.mp4'); await writeFile(inputPath,video);
+  const outputPath = join(workspace,'result.mp4'); await writeFile(outputPath,video);
+  let submitted, prepared, starts = 0;
+  const client = {
+    async info() { return {...info('instance-a'),capabilities:{delegation:true,fileTransfer:1}}; },close(){},
+    async call(operation,input) {
+      if(operation==='delegation.prepare') { prepared=input;return {sessionId:input.sessionId}; }
+      if(operation==='files.upload') { assert.equal(input.sessionId,prepared.sessionId); return agentFileUpload(workspace,input); }
+      if(operation==='files.read') return agentFileRead(workspace,input);
+      if(operation==='delegation.submit') {
+        submitted=input;starts++;
+        assert.equal(input.files.length,1);assert.notEqual(input.files[0],inputPath);
+        assert.deepEqual(await readFile(input.files[0]),video);return {id:input.taskId,status:'completed'};
+      }
+      if(operation==='chat.jobs') return [{id:submitted.taskId,sessionId:submitted.sessionId,turnId:submitted.turnId,delegation:{parentSessionId:submitted.parentSessionId},status:'completed'}];
+      if(operation==='sessions.get') return {sessionId:submitted.sessionId,metadata:{delegationOwner:submitted.parentSessionId},turns:[{turnId:submitted.turnId,status:'completed',usage:{},messages:[{messageId:'final',turnId:submitted.turnId,message:{role:'assistant',content:`[Video](<${outputPath.replaceAll('\\','/')}>)`,toolCalls:[]}}]}]};
+      assert.fail(operation);
+    }, async *events() {},
+  };
+  const f=await gatewayFixture(t,async()=>client,{close(){},async get(id){assert.equal(id,'alice');return {call(op,input){assert.equal(op,'web.files');return files.call(input);}};}});
+  const input={connectionId:'remote-test',agentId:'instance-a',parentSessionId:'parent-alice',parentTurnId:'turn',sessionId:'delegated-media',turnId:'turn-media',taskId:'media',prompt:'Return the video',files:[inputPath],permissionMode:'all_free',language:'en'};
+  const result=await callWebRemoteAgent(f.configuration,'agents.delegate',input);
+  assert.equal(starts,1);assert.match(result.finalResponse,/SHA-256/);
+  const [returned]=deliveredFilePaths(result.finalResponse);assert.ok(returned.startsWith(personal.replaceAll("\\", "/")));
+  assert.deepEqual(await readFile(returned),video);
+  const url=f.base+'/api/web/v1/files/view?path='+encodeURIComponent(returned)+'&owner=alice';
+  assert.equal((await fetch(url)).status,401);
+  const headers={Cookie:'cardbush_web='+ 'alice'.padEnd(54,'_')};
+  const head=await fetch(url,{method:'HEAD',headers});assert.equal(head.status,200);assert.equal(head.headers.get('content-type'),'video/mp4');assert.equal(Number(head.headers.get('content-length')),video.length);
+  const response=await fetch(url,{headers:{...headers,Range:'bytes=700000-800000'}});
+  assert.equal(response.status,206);assert.equal(response.headers.get('content-range'),`bytes 700000-800000/${video.length}`);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()),video.subarray(700000,800001));
+  assert.equal((await fetch(url.replace('owner=alice','owner=bob'),{headers})).status,401);
+  assert.equal((await fetch(url,{headers:{...headers,Range:'bytes=999999999-'}})).status,416);
 });

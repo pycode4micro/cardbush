@@ -85,24 +85,21 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     const saved = await js(order);
     await click(done);
     await js(`document.querySelector('${web}').scrollIntoView()`);
-    const guest = () => win.webContents.mainFrame.frames.find(frame => frame.url.startsWith(origin));
+    const standalone = () => require('electron').webContents.getAllWebContents().find(w=>w.getType()==='webview' && w.getURL()===origin+'/');
     const poll = async (condition, label) => {
       for (let i=0;i<120;i++) {if (await condition()) return; await new Promise(resolve=>setTimeout(resolve,50));}
       throw Error(label);
     };
-    await poll(() => guest()?.executeJavaScript('!!document.querySelector("a")'), 'website loaded');
-    assert.equal(await guest().executeJavaScript('document.querySelector("button").click();document.querySelector("button").textContent'),'7');
-    assert.deepEqual(await guest().executeJavaScript('[typeof cardbushDesktop,typeof require]'),['undefined','undefined']);
-    assert.ok(await js(`document.querySelector('${web} iframe').credentialless`));
-    await guest().executeJavaScript('document.querySelector("a").click()');
-    await poll(() => guest()?.url.endsWith('/next'), 'same-site links work in the website card');
+    await poll(()=>standalone()?.executeJavaScript('window.top===self && !!document.querySelector("button")'),'saved website opens directly in the card');
+    assert.equal(await js(`!!document.querySelector('${web} iframe')`),false);
+    const website=standalone();
+    assert.equal(await website.executeJavaScript('document.querySelector("button").click();document.querySelector("button").textContent'),'7');
+    assert.deepEqual(await website.executeJavaScript('[typeof cardbushDesktop,typeof require]'),['undefined','undefined']);
+    assert.equal(await js(`!!document.querySelector('${web} .component-embed-bar')`),false);
+    await website.executeJavaScript('document.querySelector("a").click()');
+    await poll(() => website.getURL().endsWith('/next'), 'same-site links work in the website card');
     assert.equal(requests[0].referer, undefined);
     assert.ok(requests.every(request => !request.cookie));
-    await click(web+' [data-embed-website]');
-    const standalone = () => require('electron').webContents.getAllWebContents().find(w=>w.getType()==='webview' && w.getURL()===origin+'/');
-    await poll(()=>standalone()?.executeJavaScript('window.top===self && !!document.querySelector("button")'),'manually added website opens in the same card');
-    await click(web+' [data-embed-back]');
-    await poll(()=>guest()?.executeJavaScript('!!document.querySelector("button")'),'back restores the embedded preview');
     await js(`document.querySelector('${html}').scrollIntoView()`);
     await wait('!!document.querySelector("[data-kind=html] iframe")');
     const custom = () => win.webContents.mainFrame.frames.find(frame => frame.url === 'about:srcdoc');

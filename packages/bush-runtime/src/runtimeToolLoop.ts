@@ -5,7 +5,7 @@ import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
 import { toolCallDisplay } from './toolDisplay.js';
 import { modelMcpAppReference } from './mcpAppReference.js';
 import type { ToolNameScope } from './toolReferenceNames.js';
-import { scheduledToolName as resolveScheduledToolName } from './toolScheduling.js';
+import { scheduledToolName as resolveScheduledToolName, toolExecutionPhases } from './toolScheduling.js';
 import {
   type ModelMessage,
   type ModelRequest,
@@ -302,14 +302,17 @@ export class RuntimeToolLoop {
       }
     };
     // Commands can activate turn-scoped restrictions across execution channels.
-    const outcomes = toolCalls.some(call => ['run_plugin_command', 'run_skill'].includes(targetFor(call)))
-      ? await executeSequentially(toolCalls, executeOne)
-      : await executeByChannel(
-      toolCalls,
-      executeOne,
-      (toolCall) => this.#registry.executionChannel(targetFor(toolCall)),
-      (toolCall) => this.#registry.isParallelSafe(targetFor(toolCall)),
-    );
+    const sequential = toolCalls.some(call => ['run_plugin_command', 'run_skill'].includes(targetFor(call)));
+    const outcomes: ToolExecutionOutcome[] = new Array(toolCalls.length);
+    for (const phase of toolExecutionPhases(toolCalls, targetFor)) {
+      const execute = (ordinal: number) => executeOne(toolCalls[ordinal]!, ordinal);
+      const results = sequential ? await executeSequentially(phase, execute) : await executeByChannel(
+        phase, execute,
+        ordinal => this.#registry.executionChannel(targetFor(toolCalls[ordinal]!)),
+        ordinal => this.#registry.isParallelSafe(targetFor(toolCalls[ordinal]!)),
+      );
+      phase.forEach((ordinal, index) => { outcomes[ordinal] = results[index]!; });
+    }
     const nativeResults = outcomes.map((outcome) =>
       outcome.kind === "returned" ? outcome.result : { runtimeError: outcome.error }
     );

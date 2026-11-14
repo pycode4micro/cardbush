@@ -19,6 +19,7 @@ import type { ModelProvider } from './modelProvider.js';
 import { ConversationJournal } from './conversationJournal.js';
 import { compactRealtimeContext } from './realtimeContextCompaction.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
+import { toolExecutionPhases } from './toolScheduling.js';
 import { estimateContextPressure, requiresContextCompactionBeforeRound } from './contextCompaction.js';
 import { completeContextUnits } from './contextCompactionTransaction.js';
 import type { AssistantMemory } from './assistantMemory.js';
@@ -506,7 +507,8 @@ export class AssistantConversation {
       let managementQueue: Promise<unknown> = Promise.resolve();
       const failures = new Set<string>();
       this.executingTools = signal;
-      const results = await Promise.all(toolCalls.map(async (call, ordinal) => {
+      const execute = async (ordinal: number) => {
+        const call = toolCalls[ordinal]!;
         try {
           signal.throwIfAborted();
           const definition = tools.find(tool => tool.name === call.name);
@@ -568,15 +570,13 @@ export class AssistantConversation {
             delegationQueue = execution.catch(() => undefined);
             output = await execution;
             signal.throwIfAborted();
-            const taskId = (output as { taskId?: string })?.taskId;
-            if (taskId) { this.watched.add(taskId); this.announced.delete(taskId); this.schedule(); }
+            this.watchDelegation(output);
           } else {
             const input = conversationalSubagentInput.parse(args);
             output = await run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
               parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined }));
             signal.throwIfAborted();
-            const taskId = (output as { taskId?: string })?.taskId;
-            if (taskId) { this.watched.add(taskId); this.announced.delete(taskId); this.schedule(); }
+            this.watchDelegation(output);
           }
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify(output) };
         } catch (error) {
@@ -585,7 +585,13 @@ export class AssistantConversation {
             : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'assistant_tool_failed';
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify({ status: 'failed', code, error: error instanceof Error ? error.message : String(error) }) };
         }
-      })).finally(() => { if (this.executingTools === signal) this.executingTools = undefined; });
+      };
+      const results: ModelMessage[] = new Array(toolCalls.length);
+      try {
+        for (const phase of toolExecutionPhases(toolCalls)) {
+          await Promise.all(phase.map(async ordinal => { results[ordinal] = await execute(ordinal); }));
+        }
+      } finally { if (this.executingTools === signal) this.executingTools = undefined; }
       signal.throwIfAborted();
       history.append(results);
       if (!activeSources.size) for (const call of toolCalls) {
@@ -596,6 +602,13 @@ export class AssistantConversation {
       if (managementStopped) throw managementStopped;
     }
     throw new RuntimeUiError('assistantRuntime.roundLimit');
+  }
+  private watchDelegation(output: unknown) {
+    const receipt = output as { taskId?: string; status?: string } | undefined;
+    // A settled receipt already delivers this attempt's outcome. Check the receipt,
+    // not the live task: a running receipt may race a genuine background completion.
+    if (!receipt?.taskId || ['completed', 'failed', 'stopped', 'unavailable'].includes(receipt.status ?? '')) return;
+    this.watched.add(receipt.taskId); this.announced.delete(receipt.taskId); this.schedule();
   }
   private schedule() {
     if (this.timer || this.stopped) return;

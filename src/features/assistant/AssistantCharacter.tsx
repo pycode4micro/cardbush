@@ -1,7 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
 import type { AssistantReplyExpression } from '@cardbush/bush-protocol';
 import { useAssistantActivity, useAssistantExpression, useAssistantTool, type AssistantActivity } from './assistantActivity';
-import { useAssistantAvatar } from './assistantAvatar';
 import type { AssistantSkin, SpriteSheet } from './assistantSkin';
 import { useAssistantSkin } from './assistantSkinContext';
 import { PixelToolIcon } from '../tools/PixelToolIcon';
@@ -28,11 +27,10 @@ function SpriteFilm({ state, sheet, className, children }: { state: AssistantAct
   </span>;
 }
 
-export function AssistantPortrait({ state, avatar, skin: override, expression, toolName }: {
-  state: AssistantActivity; avatar: string; skin?: AssistantSkin; expression?: AssistantReplyExpression; toolName?: string;
+export function AssistantPortrait({ state, skin: override, expression, toolName }: {
+  state: AssistantActivity; skin?: AssistantSkin; expression?: AssistantReplyExpression; toolName?: string;
 }) {
   const current = useAssistantSkin(), skin = override ?? current;
-  if (avatar) return <span className="assistant-character assistant-avatar" data-state={state} aria-hidden="true"><img src={avatar} alt=""/></span>;
   const face = expression && ['idle', 'thinking', 'working'].includes(state) ? skin.expressions?.poses[expression.mood] : undefined;
   const prop = toolName && ['working', 'thinking'].includes(state) ? toolProp(toolName) : undefined;
   const mount = skin.props?.anchor;
@@ -47,8 +45,8 @@ export function AssistantPortrait({ state, avatar, skin: override, expression, t
   </SpriteFilm>;
 }
 
-export function AssistantStage({ state, avatar, skin: override }: {
-  state: AssistantActivity; avatar: string; skin?: AssistantSkin;
+export function AssistantStage({ state, skin: override }: {
+  state: AssistantActivity; skin?: AssistantSkin;
 }) {
   const expression = useAssistantExpression();
   const current = useAssistantSkin(), skin = override ?? current;
@@ -56,11 +54,11 @@ export function AssistantStage({ state, avatar, skin: override }: {
   const cue = (skin.portrait.clips[state] ?? skin.portrait.clips.idle).stageCue;
   return <span className="assistant-stage" aria-hidden="true" data-state={state}>
     <span className="assistant-stage-actor">
-      <AssistantPortrait state={state} avatar={avatar} skin={skin} expression={expression} toolName={toolName}/>
-      {!avatar && cue && !(toolName && state === 'thinking') && <span className="assistant-stage-cue" data-cue={cue}/>}
+      <AssistantPortrait state={state} skin={skin} expression={expression} toolName={toolName}/>
+      {cue && !(toolName && state === 'thinking') && <span className="assistant-stage-cue" data-cue={cue}/>}
     </span>
   </span>;
 }
 export function AssistantCharacter() {
-  return <AssistantPortrait state={useAssistantActivity()} avatar={useAssistantAvatar()} expression={useAssistantExpression()} toolName={useAssistantTool()}/>;
+  return <AssistantPortrait state={useAssistantActivity()} expression={useAssistantExpression()} toolName={useAssistantTool()}/>;
 }

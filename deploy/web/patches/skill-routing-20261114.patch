@@ -1,0 +1,40 @@
+--- a/assets/skills/auto-video-slicing/SKILL.md
++++ b/assets/skills/auto-video-slicing/SKILL.md
+@@ -1,13 +1,27 @@
+ ---
+ name: auto-video-slicing
+-description: 收集登录手机号、主播名称、原厂款号或商品 ID、千川账号 ID，整理自动切片及视频库上传任务并异步交给已授权的远程子 Agent。适用于百应主播商品切片；不在网站本地剪辑或安装工具。
++description: Delegate video production and Qianchuan library uploads to authorized remote Agents. Route Baiying replay clipping, AI video generation, and existing-file uploads separately; Baiying login is required only when the requested work uses Baiying materials. Do not execute video tools locally on the website.
+ ---
+ 
+ # 自动切片任务交接
+ 
+ 这个技能在招财网站整理任务，通过现有远程子 Agent 执行。不得启动本地 Agent、自动装配模型或插件、执行 SSH 命令。SSH 连接由管理员配置，技能不接收连接密码、私钥、访问令牌、Cookie。
+ 
++## Route the requested work before collecting inputs
++
++Determine the workflow from the user's requested output and actual source materials, not from the presence of an anchor name, product code, phone number, or Qianchuan destination.
++
++- **Baiying replay clipping:** when the task requires fetching or clipping Baiying replay materials, use the four inputs and clipping handoff below. Baiying account/product verification belongs to this branch.
++- **AI video generation:** delegate the user's topic, anchor, product references or product code, requested duration/sound, and Qianchuan destination to an authorized generation-capable Agent. Use available anchor assets and product-image sources. Do not require a Baiying phone number, account lookup, login, SMS code, replay, or smart clipping unless the user also requests Baiying materials. A supplied phone number alone does not change this route.
++- **Existing-file upload:** transfer the available file to an authorized upload-capable Agent with the target Qianchuan account and receipt context. Do not regenerate the video or require Baiying login. Report genuinely missing file/account information.
++
++For generation or existing-file uploads, compose a handoff for that branch instead of copying the clipping template below. Preserve the user's objective and existing authorization; include only the inputs and capabilities needed for this task. State the required source workflow explicitly (for example, AI generation from product images, with no Baiying material dependency). Do not convert a product-code lookup into Baiying ownership verification. Keep the same-task waiting/resume, upload-only, result verification and no-duplicate-submission constraints in all branches. Use remote tools actually available on the target Agent.
++
++An executing child Agent should follow the delegated task rather than applying this website handoff workflow again. If a handoff explicitly requires Baiying while the stated task has no Baiying dependency, clarify that conflict with the parent before initiating login or sending an SMS; do not silently expand the user's task.
++
+ ## 必填输入
++
++The following four-input requirements apply only to the Baiying replay-clipping branch.
+ 
+ 每个任务必须有以下四项。先从用户当前任务及已明确的上下文提取；缺项时只询问缺少的内容，补齐前不委派、不登录、不切片、不上传。
+ 
+@@ -28,6 +42,8 @@
+ 4. 不因等待超时重新发送制作/上传。登录验证码优先让用户在远端认证交互中输入，不将验证码持久化进技能或交接清单。用户撤销授权或停止时遵守当前可用的任务控制机制；无法确认远端停止就如实说明。
+ 
+ ## 交接文本
++
++Use this template only for Baiying replay clipping, not AI generation or existing-file uploads.
+ 
+ 将占位值替换成实际输入，明确区分事实、用户要求和默认策略：
+ 

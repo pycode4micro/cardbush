@@ -173,6 +173,49 @@ for (const route of ['script', 'round']) test(`${route}: Hook stops also reach c
   assert.equal(started, 1, 'the queued target must not execute after another call stops its batch');
 });
 
+for (const route of ['direct', 'call_tool']) for (const summaryIndex of [0, 2, 3])
+test(`ordinary ${route} summary at ${summaryIndex} waits for all execution channels`, { timeout: 8000 }, async t => {
+  const f = fixture(t), memoryGate = f.gate(), workGate = f.gate(), events = [];
+  f.add('check_habit', async () => { events.push('memory-start'); await memoryGate.promise; events.push('memory-end'); return {}; }, { executionChannel: 'memory' });
+  f.add('revise_memory', () => { events.push('revise'); return {}; }, { executionChannel: 'memory' });
+  f.add('probe', async () => {
+    events.push('probe-start'); await workGate.promise; events.push('probe-end');
+    if (summaryIndex === 2) throw Error('probe failed');
+    return {};
+  }, { executionChannel: 'probe' });
+  f.add('summary_for_user', () => { events.push('summary'); return {}; }, { executionChannel: 'memory', parallelSafe: true });
+  if (route === 'call_tool') await f.load(['summary_for_user']);
+  const calls = ['check_habit', 'probe', 'revise_memory'].map(name => ({ protocol: 'bush.tool_call.v1', id: name, name, argumentsText: '{}' }));
+  calls.splice(summaryIndex, 0, { protocol: 'bush.tool_call.v1', id: 'summary', name: route === 'direct' ? 'summary_for_user' : 'call_tool',
+    argumentsText: route === 'direct' ? '{}' : JSON.stringify({ name: 'summary_for_user', arguments: {} }) });
+  const loop = new RuntimeToolLoop({ registry: f.registry, eventLog: new InMemoryRuntimeEventLog(), executionStore: f.store,
+    identity: { requestId: 'r', sessionId: 's', turnId: 't' } });
+  const pending = loop.execute(calls, { round: 3, assistantMessageId: 'a-3', request: f.request,
+    contextMessages: f.messages, toolNameScope: f.scope(), signal: f.controller.signal });
+  await until(() => events.includes('memory-start') && events.includes('probe-start')); await flush();
+  assert.ok(!events.includes('summary'), 'summary cannot overtake any running tool');
+  memoryGate.resolve(); await until(() => events.includes('revise')); await flush();
+  assert.ok(!events.includes('summary'), 'finishing memory tools does not finish work on other channels');
+  workGate.resolve(); const output = await pending;
+  assert.equal(events.at(-1), 'summary');
+  assert.equal(events.filter(event => event === 'summary').length, 1);
+  assert.deepEqual(output.messages.filter(message => message.role === 'tool').map(message => message.toolCallId), calls.map(call => call.id));
+  const records = f.store.listTurn('s', 't').filter(record => calls.some(call => call.id === record.toolCall.id));
+  for (const [ordinal, call] of calls.entries()) assert.equal(records.find(record => record.toolCall.id === call.id).ordinal, ordinal);
+  assert.equal(records.find(record => record.toolCall.id === 'probe').outcome, summaryIndex === 2 ? 'failed' : 'returned');
+});
+
+test('ordinary command batches still execute summary last while retaining command order', async t => {
+  const f = fixture(t), events = [];
+  for (const name of ['summary_for_user', 'run_skill', 'probe']) f.add(name, () => { events.push(name); return {}; });
+  const calls = ['summary_for_user', 'run_skill', 'probe'].map(name => ({ protocol: 'bush.tool_call.v1', id: name, name, argumentsText: '{}' }));
+  const loop = new RuntimeToolLoop({ registry: f.registry, eventLog: new InMemoryRuntimeEventLog(),
+    identity: { requestId: 'r', sessionId: 's', turnId: 't' } });
+  const output = await loop.execute(calls, { round: 1, assistantMessageId: 'a-1', request: f.request, signal: f.controller.signal });
+  assert.deepEqual(events, ['run_skill', 'probe', 'summary_for_user']);
+  assert.deepEqual(output.messages.filter(message => message.role === 'tool').map(message => message.toolCallId), calls.map(call => call.id));
+});
+
 test('the 32-call limit still rejects additional calls', { timeout: 8000 }, async t => {
   const f = fixture(t);
   let count = 0;

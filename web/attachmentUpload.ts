@@ -1,3 +1,4 @@
+import { FILE_TRANSFER_LIMIT, MEDIA_FILE_EXTENSION, transferredFileMime } from '@cardbush/bush-protocol';
 import { uiText } from '@cardbush/platform/i18n';
 export const uploadLimits = {
   fileBytes: 16 * 1024 * 1024,
@@ -145,7 +146,13 @@ async function optimizeImage(file: File, info: ImageInfo, signal: AbortSignal): 
 export async function prepareAttachment(file: File, signal: AbortSignal, progress: (text: string) => void): Promise<PreparedAttachment> {
   signal.throwIfAborted();
   if (!file.size) throw new Error(uiText()("web.theAttachmentIsEmptySelectAFileAgain"));
-  if (file.type.startsWith('video/')) throw unsupported();
+  if (MEDIA_FILE_EXTENSION.test(file.name)) {
+    if (file.size > FILE_TRANSFER_LIMIT) throw new Error(uiText()('web.mediaFileTooLarge'));
+    const mime = transferredFileMime(file.name, new Uint8Array(await file.slice(0, 64).arrayBuffer()));
+    signal.throwIfAborted();
+    if (!/^(audio|video)\//.test(mime)) throw unsupported();
+    return { file: new File([file], file.name, { type: mime, lastModified: file.lastModified }) };
+  }
   const image = /\.(png|jpe?g|webp)$/i.test(file.name) || /^image\/(png|jpeg|webp)$/.test(file.type);
   if (!image) {
     if (!/\.(txt|md|csv|tsv|json|log|pdf|docx|xlsx|pptx)$/i.test(file.name)) throw unsupported();

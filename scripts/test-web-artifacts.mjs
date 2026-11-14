@@ -10,10 +10,10 @@ const task = (extra = {}) => ({ kind:'seedream', status:'succeeded', result:{dat
 const receipt = value => ({ mcp:{name}, result:{structuredContent:value} });
 const plain = value => JSON.parse(JSON.stringify(value));
 
-test('turn downloads include authored outputs once, without reference uploads, videos, external or code-example files', () => {
+test('turn downloads include authored outputs once, including media while excluding reference uploads, external and code-example files', () => {
   const output = message({content:`![图](<${image}>)\n\n[再次下载](<${image}>)\n\n![参考](/data/workspaces/uploads/source.png)\n\n![外部](https://example.test/out.png)\n\n[视频](/data/workspaces/generated/out.mp4)\n\n\`![示例](/data/workspaces/generated/example.png)\``,
     loopHistory:[message({id:'earlier', content:`![中间产物](<${image}>)`}), message({id:'user',role:'user',attachments:[{type:'image',path:'/data/workspaces/generated/input.png'}]})]});
-  assert.deepEqual(plain(ui.webTurnArtifacts(output)).map(item=>item.path),[image]);
+  assert.deepEqual(plain(ui.webTurnArtifacts(output)).map(item=>item.path),['/data/workspaces/generated/out.mp4',image]);
 });
 test('only completed native image receipts yield downloads, including batched asynchronous wait results', () => {
   const result=ui.imageReceiptArtifacts(name,receipt({items:[{observation:{task:task()}},{observation:{task:task()}},{observation:{task:task({status:'running'})}}]}));

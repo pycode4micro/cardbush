@@ -3,8 +3,9 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import { HtmlComponentContext } from './HtmlComponentContext';
 import { componentDocument } from './componentDocument';
 import { approvedEmbedOrigins, componentProtocol, validateComponentText, type HtmlComponent } from './componentModel';
-import { componentOrigin, componentOrigins } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
-import { ComponentEmbedBar } from './ComponentEmbedBar';
+import { approvedWebsiteUrl } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
+import { ComponentBrowserViews } from './ComponentBrowserViews';
+import { componentBrowsers, type ComponentBrowser } from './componentBrowsers';
 import { HomeWebsiteView } from './HomeWebsiteView';
 import { bookmarkUrl } from '../inspector/browserBookmarks';
 import { componentId } from './componentId';
@@ -13,20 +14,23 @@ import { FeaturePageVisible } from '../navigation/VisitedFeaturePages';
 
 import type { EventPresentation } from '@cardbush/bush-protocol';
 type EventPageContext = Pick<EventPresentation['pages'][number], 'id' | 'title' | 'layout' | 'items'>;
-type SurfaceProps = { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext; onHome?: boolean; onReady?:()=>void;
-  onEditEmbeds?:(origins:string[])=>void };
+type SurfaceProps = { component: HtmlComponent; active?: boolean; eventPage?: EventPageContext; onHome?: boolean; onReady?:()=>void };
 export function HtmlComponentSurface(props: SurfaceProps) {
+  const {id, html, homeWebsiteUrl} = props.component;
+  const grants = approvedEmbedOrigins(props.component).join(' ');
+  const displayKey = useMemo(() => componentId(), [id, html, grants, homeWebsiteUrl]);
   // A hidden iframe still runs its own JavaScript independently of React.
-  return useContext(FeaturePageVisible) ? <ComponentDisplay key={props.component.id} {...props}/> : null;
+  return useContext(FeaturePageVisible) ? <ComponentDisplay key={displayKey} {...props}/> : null;
 }
 function ComponentDisplay(props: SurfaceProps) {
   const host = useContext(HtmlComponentContext);
-  const [website, setWebsite] = useState<string>();
+  const [showComponent, setShowComponent] = useState(false);
   const canBrowse = props.onHome && props.active !== false && !props.eventPage && !!window.cardbushDesktop?.homeComponentLibrary;
-  if (canBrowse && host && website) return <HomeWebsiteView url={website} back={() => setWebsite(undefined)} open={host.openBrowser}/>;
-  return <ComponentFrame {...props} showWebsite={canBrowse ? setWebsite : undefined}/>;
+  const saved = approvedWebsiteUrl(props.component.homeWebsiteUrl, approvedEmbedOrigins(props.component));
+  if (canBrowse && host && saved && !showComponent) return <HomeWebsiteView url={saved} back={() => setShowComponent(true)} open={host.openBrowser}/>;
+  return <ComponentFrame {...props} browsers={Boolean(canBrowse)}/>;
 }
-function ComponentFrame({ component, active = true, eventPage, onHome = false, onReady, onEditEmbeds, showWebsite }: SurfaceProps & {showWebsite?:(url:string)=>void}) {
+function ComponentFrame({ component, active = true, eventPage, onHome = false, onReady, browsers }: SurfaceProps & {browsers:boolean}) {
   const frame = useRef<HTMLIFrameElement>(null), host = useContext(HtmlComponentContext), latest = useRef(host);
   latest.current = host;
   const page = useRef(eventPage); page.current = eventPage;
@@ -39,11 +43,8 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
   const homeLinks = liveHome && Boolean(host);
   const linkKey = useMemo(() => homeLinks ? componentId() : undefined, [token, homeLinks]);
   const document = useMemo(() => componentDocument(component.html, token, Boolean(sites), linkKey, embeds.split(' ')), [component.html, token, sites, linkKey, embeds]);
-  const [reported, setReported] = useState<{token:string;targets:Map<string,string>}>();
-  const targets = reported?.token === token ? reported.targets : new Map<string,string>();
-  const requested = componentOrigins(component.embedDomains);
-  const candidates = [...new Set([...requested,...targets.keys()])].slice(0,8);
-  const missing = candidates.filter(origin => !embeds.split(' ').includes(origin));
+  const [reported, setReported] = useState<{token:string;items:ComponentBrowser[]}>();
+  const browserItems = browsers && reported?.token === token ? reported.items : [];
   const reply = (message: unknown) => frame.current?.contentWindow?.postMessage({ protocol: componentProtocol, token, ...message as object }, '*');
   const context = () => { const current = latest.current;
     if (page.current) {
@@ -59,14 +60,9 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
     const handler = async (event: MessageEvent) => {
       const message = event.data;
       if (event.source !== frame.current?.contentWindow || event.origin !== 'null' || !message || message.protocol !== componentProtocol || message.token !== token) return;
-      if (message.topic === 'home.embedTargets') {
-        if (!linkKey || !visible.current || page.current || !Array.isArray(message.urls) || message.urls.length > 8) return;
-        const targets = new Map<string,string>();
-        for (const raw of message.urls) {
-          const href = bookmarkUrl(raw), origin = href && componentOrigin(new URL(href).origin);
-          if (origin) targets.set(origin, href!);
-        }
-        setReported({token,targets});
+      if (message.topic === 'home.browserLayout') {
+        if (!browsers || !linkKey || !visible.current || page.current || !frame.current) return;
+        setReported({token,items:componentBrowsers(message.items, embeds.split(' '),frame.current.clientWidth,frame.current.clientHeight)});
         return;
       }
       if (message.topic === 'home.followLink') {
@@ -123,7 +119,7 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
     };
     window.addEventListener('message', handler);
     return () => { mounted.current = false; requests.abort(); window.removeEventListener('message', handler); };
-  }, [token, component.id, component.allowActions, sites, linkKey]);
+  }, [token, component.id, component.allowActions, sites, embeds, linkKey, browsers]);
   useEffect(() => {
     const app = window.document.querySelector('.app'); let scheduled = 0;
     const update = () => {
@@ -155,9 +151,9 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
     {...(liveHome ? {credentialless:''} : {})}
     referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"
     onLoad={() => { if (++loads.current > 1) { setError(uiText(host?.language)('htmlComponentSurface.componentNavigatedAwayFromItsSandboxDocument')); return; } publish.current(); onReady?.(); }} />;
-  if (!liveHome || !onEditEmbeds || !host) return surface;
-  return <div className="component-embed-layout">
-    <ComponentEmbedBar targets={targets} missing={missing} configure={() => onEditEmbeds(candidates)} open={host.openBrowser} showWebsite={showWebsite}/>
+  if (!browsers) return surface;
+  return <div className="component-browser-layout">
     {surface}
+    <ComponentBrowserViews items={browserItems} status={({id,url,revision},state) => reply({topic:'browser.status',value:{id,url,revision,state}})}/>
   </div>;
 }

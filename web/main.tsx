@@ -14,6 +14,7 @@ import { activateBrowserCache, type AccountCache } from './browserCache';
 import { BrowserCacheContext, useAccountCache } from './BrowserCacheProvider';
 import { OrganizationAdmin as Admin } from './OrganizationAdmin';
 import { useConversationList } from './useConversationList';
+import { useConversationSolutions } from './useConversationSolutions';
 import { mergeConversationPage } from './conversationPages';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -89,6 +90,7 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
   const [draft, setDraft] = useState(''), [model, setModel] = useState(identity.defaultModelId), [query, setQuery] = useState(''), [error, setError] = useState(externalError);
   useEffect(() => { setModel(previous => identity.models.some(item => item.id === previous) ? previous : identity.defaultModelId); }, [identity.models, identity.defaultModelId]);
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(false), [sidebar, setSidebar] = useState(true), [admin, setAdmin] = useState(false), [archive, setArchive] = useState(false);
+  const solutions = useConversationSolutions(admin ? null : selected);
   const list = useConversationList(archive, query, setError), conversations = list.items, setConversations = list.setItems, refreshList = list.refresh;
   const [olderLoading, setOlderLoading] = useState(false);
   const stateRef = useRef(state); stateRef.current = state;
@@ -331,7 +333,8 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
         {loading && <div className="status-line"><span className="loading-dot"/>{uiText(language)("web.openingConversation")}</div>}
         <div className="message-column">{state?.history?.nextCursor && <button className="load-older-messages" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? uiText(language)("common.loading") : uiText(language)("web.loadEarlierMessages")}</button>}<NativeTranscript state={state} live={live} selected={selected} submitting={submitting} connectionUnavailable={reconnecting || Boolean(connectionError)} modelName={identity.models.find(item => item.id === model)?.name ?? model} onError={setError} onRetry={text => { setDraft(text); editor.current?.focus(); }}>
           {compacting && <div className="status-line"><span className="loading-dot"/>{uiText(language)("web.compactingContextTheConversationWillContinue")}</div>}
-          <Solutions items={state?.solutions ?? []} refresh={() => selected ? refresh(selected) : Promise.resolve()}/>
+          <Solutions items={solutions.items ?? state?.solutions ?? []} refresh={solutions.refresh}/>
+          {solutions.unavailable && <p className="form-error" role="alert">{uiText(language)('web.remoteQuestionsUnavailable')}</p>}
         </NativeTranscript></div>
       </div><ScrollBottomButton language={language} visible={scrollBottomVisible} onClick={jumpToBottom}/></div><div className="composer-area">{error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label={uiText(language)("chatStatusViews.dismissNotification")} onClick={() => setError('')}><X size={15}/></button></div>}{(loading || reconnecting || connectionError) && <SessionConnectionStatus
           phase={connectionError ? 'failed' : loading ? 'starting' : 'reconnecting'}

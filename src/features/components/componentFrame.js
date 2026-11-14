@@ -6,42 +6,72 @@
   delete document.currentScript.dataset.linkKey;
   if (linkKey) {
     const send = parent.postMessage.bind(parent);
-    // Report iframe destinations, not load success: cross-origin pages cannot
-    // be inspected reliably. The host validates every address independently.
-    let scheduled = false, last;
+    // A component owns its browser slots and layout. The host admits declared
+    // origins and renders each slot as an isolated top-level website document.
+    let scheduled = false, last, nextBrowser = 0;
+    const identities = new WeakMap(), nodes = new Map(), observed = new WeakSet();
+    const resize = new ResizeObserver(() => schedule());
+    const identity = node => {
+      if (!identities.has(node)) identities.set(node, {id:'browser-'+ ++nextBrowser, revision:0});
+      return identities.get(node);
+    };
     const report = () => {
       scheduled = false;
-      const sites = new Map();
-      for (const frame of document.querySelectorAll('iframe[src]')) {
-        if (frame.hasAttribute('srcdoc')) continue;
-        const url = URL.parse(frame.getAttribute('src'));
+      const items = [];
+      nodes.clear();
+      for (const node of document.querySelectorAll('cardbush-browser[src]')) {
+        const url = URL.parse(node.getAttribute('src'));
         if (!url || url.protocol !== 'https:' || url.username || url.password || url.href.length > 4096) continue;
-        if (!sites.has(url.origin)) sites.set(url.origin, url.href);
-        if (sites.size >= 8) break;
+        if (!observed.has(node)) { observed.add(node); resize.observe(node); }
+        const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+        if (!node.getClientRects().length || style.visibility !== 'visible' || Number(style.opacity) === 0) continue;
+        let left = Math.max(0,box.left), top = Math.max(0,box.top);
+        let right = Math.min(document.documentElement.clientWidth,box.right), bottom = Math.min(innerHeight,box.bottom);
+        for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+          const css = getComputedStyle(parent), bounds = parent.getBoundingClientRect();
+          if (css.visibility !== 'visible' || Number(css.opacity) === 0) { right = left; break; }
+          if (/(auto|scroll|hidden|clip)/.test(css.overflowX)) { left = Math.max(left,bounds.left+parent.clientLeft); right = Math.min(right,bounds.left+parent.clientLeft+parent.clientWidth); }
+          if (/(auto|scroll|hidden|clip)/.test(css.overflowY)) { top = Math.max(top,bounds.top+parent.clientTop); bottom = Math.min(bottom,bounds.top+parent.clientTop+parent.clientHeight); }
+        }
+        if (right <= left || bottom <= top) continue;
+        const ref = identity(node); nodes.set(ref.id,node);
+        items.push({...ref,url:url.href,x:box.x,y:box.y,width:box.width,height:box.height,
+          clipX:left,clipY:top,clipWidth:right-left,clipHeight:bottom-top});
+        if (items.length >= 8) break;
       }
-      const urls = [...sites.values()], value = JSON.stringify(urls);
-      if (value !== last) { last = value; send({protocol, token, topic:'home.embedTargets', urls}, '*'); }
+      const value = JSON.stringify(items);
+      if (value !== last) { last = value; send({protocol, token, topic:'home.browserLayout', items}, '*'); }
     };
-    // Address discovery reads the DOM, not its layout. A background or occluded
-    // frame may never receive an animation frame.
     const schedule = () => {
       if (scheduled) return;
       scheduled = true;
-      queueMicrotask(report);
+      requestAnimationFrame(report);
     };
+    customElements.define('cardbush-browser', class extends HTMLElement {
+      get src() { return this.getAttribute('src') || ''; }
+      set src(value) { this.setAttribute('src', value); }
+      reload() { identity(this).revision++; schedule(); }
+      connectedCallback() { schedule(); }
+      disconnectedCallback() { resize.unobserve(this); observed.delete(this); schedule(); }
+    });
     addEventListener('DOMContentLoaded', () => {
-      new MutationObserver(changes => {
-        if (changes.some(change => change.type === 'attributes' ? change.target.localName === 'iframe' :
-          [...change.addedNodes, ...change.removedNodes].some(node => node.nodeType === 1 && (node.localName === 'iframe' || node.querySelector('iframe'))))) schedule();
-      }).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['src','srcdoc']});
+      new MutationObserver(schedule).observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['src','style','class','hidden']});
+      resize.observe(document.documentElement);
       schedule();
     }, {once:true});
-    // A fast srcdoc can finish parsing before React installs its listener.
-    const handshake = event => {
-      if (event.source !== parent || event.data?.token !== token || event.data?.topic !== 'host.context') return;
-      removeEventListener('message', handshake); last = undefined; schedule();
-    };
-    addEventListener('message', handshake);
+    addEventListener('scroll', schedule, true);
+    addEventListener('resize', schedule);
+    addEventListener('message', event => {
+      const message = event.data;
+      if (event.source !== parent || message?.protocol !== protocol || message.token !== token) return;
+      if (message.topic === 'host.context' || message.topic === 'host.resized') { last = undefined; schedule(); }
+      if (message.topic === 'browser.status') {
+        const value = message.value, node = nodes.get(value?.id);
+        if (node && identity(node).revision === value.revision && URL.parse(node.src)?.href === value.url && ['loaded','failed'].includes(value.state)) {
+          node.dispatchEvent(new CustomEvent(value.state === 'loaded' ? 'load' : 'error', {detail:{url:value.url}}));
+        }
+      }
+    });
     const follow = event => {
       if (!event.isTrusted || event.defaultPrevented || event.button > 1) return;
       const anchor = event.target.closest?.('a[href]');

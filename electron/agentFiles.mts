@@ -2,9 +2,11 @@ import { mkdir, open, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import type { RuntimeFileReceipt } from '@cardbush/bush-protocol';
+import { createHash } from 'node:crypto';
+import { transferLimit, transferChunkSize } from './agentFileTransfer.mjs';
 
-const chunkSize = 512 * 1024;
-const maxSize = 64 * 1024 * 1024;
+const chunkSize = transferChunkSize;
+const maxSize = transferLimit;
 interface FileReceiptAccess {
   roots: string[];
   resolveReceipt(path: string): Promise<RuntimeFileReceipt | null | undefined>;
@@ -19,7 +21,7 @@ function inside(root: string, path: string) {
   return path;
 }
 export async function agentFileRead(root: string, input: Record<string, unknown>, access?: FileReceiptAccess) {
-  const value = z.object({ path: z.string().min(1), offset: z.number().int().nonnegative().default(0) }).parse(input);
+  const value = z.object({ path: z.string().min(1), offset: z.number().int().nonnegative().default(0), version: z.string().optional() }).parse(input);
   const canonical = await realpath(root);
   const requested = resolve(isAbsolute(value.path) ? value.path : join(canonical, value.path));
   const receipt = await access?.resolveReceipt(requested);
@@ -29,7 +31,9 @@ export async function agentFileRead(root: string, input: Record<string, unknown>
     const { content } = await access!.readImageSnapshot(receipt.path);
     const name = basename(requested, extname(requested)) + extname(receipt.path).toLowerCase();
     const bytes = content.subarray(value.offset, value.offset + chunkSize);
-    return { name, size: content.length, offset: value.offset, content: bytes.toString('base64'), done: value.offset + bytes.length >= content.length };
+    const version = createHash('sha256').update(content).digest('hex');
+    if (value.version && value.version !== version) throw new Error('file_transfer_source_changed');
+    return { name, size: content.length, version, offset: value.offset, content: bytes.toString('base64'), done: value.offset + bytes.length >= content.length };
   }
   const path = await realpath(requested);
   const external = !isInside(canonical, path);
@@ -51,7 +55,9 @@ export async function agentFileRead(root: string, input: Record<string, unknown>
   const file = await open(path, 'r');
   try {
     const info = await file.stat();
-    if (!info.isFile() || info.size > maxSize) throw new Error('Only files up to 64 MiB can be transferred.');
+    if (!info.isFile() || info.size > maxSize) throw new Error('file_transfer_size_limit');
+    const version = createHash('sha256').update(JSON.stringify([info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs])).digest('hex');
+    if (value.version && value.version !== version) throw new Error('file_transfer_source_changed');
     if (external && receipt?.kind === 'file_memo' && (info.size !== receipt.size || info.mtimeMs !== receipt.mtimeMs)) {
       throw new Error('文件已变化，请在会话中更新文件回执后重试。File changed since its conversation receipt was recorded.');
     }
@@ -59,15 +65,16 @@ export async function agentFileRead(root: string, input: Record<string, unknown>
     const { bytesRead } = await file.read(buffer, 0, buffer.length, value.offset);
     const after = await file.stat();
     if (after.size !== info.size || after.mtimeMs !== info.mtimeMs) throw new Error('File changed during transfer.');
-    return { name: basename(path), size: info.size, offset: value.offset, content: buffer.subarray(0, bytesRead).toString('base64'), done: value.offset + bytesRead >= info.size };
+    return { name: basename(path), size: info.size, version, offset: value.offset, content: buffer.subarray(0, bytesRead).toString('base64'), done: value.offset + bytesRead >= info.size };
   } finally { await file.close(); }
 }
 export async function agentFileUpload(root: string, input: Record<string, unknown>) {
   const value = z.object({ uploadId: z.string().uuid(), name: z.string().min(1).max(200).regex(/^[^/\\\x00-\x1f:]+$/),
-    offset: z.number().int().nonnegative().max(maxSize), content: z.string().max(710_000).regex(/^[A-Za-z0-9+/]*={0,2}$/) }).parse(input);
+    offset: z.number().int().nonnegative().max(maxSize), content: z.string().max(710_000).regex(/^[A-Za-z0-9+/]*={0,2}$/),
+    size: z.number().int().nonnegative().max(maxSize).optional(), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(input);
   if (['.', '..'].includes(value.name)) throw new Error('Invalid file name.');
   const bytes = Buffer.from(value.content, 'base64');
-  if (bytes.length > chunkSize || value.offset + bytes.length > maxSize) throw new Error('Upload exceeds 64 MiB.');
+  if (bytes.length > chunkSize || value.offset + bytes.length > maxSize) throw new Error('file_transfer_size_limit');
   const canonical = await realpath(root);
   const attachmentRoot = join(canonical, '.cardbush-attachments');
   await mkdir(attachmentRoot, { recursive: true });
@@ -88,6 +95,12 @@ export async function agentFileUpload(root: string, input: Record<string, unknow
       const { bytesRead } = await file.read(previous, 0, previous.length, value.offset);
       if (size < value.offset + bytes.length || bytesRead !== bytes.length || !previous.equals(bytes)) throw new Error('Upload offset conflict.');
     } else { await file.write(bytes, 0, bytes.length, value.offset); await file.sync(); }
+    if (value.sha256 !== undefined) {
+      if (!value.sha256 || value.size !== (await file.stat()).size || value.offset !== value.size || bytes.length) throw new Error('file_transfer_verification_failed');
+      const hash = createHash('sha256');
+      for await (const chunk of file.createReadStream({ start: 0, autoClose: false })) hash.update(chunk);
+      if (hash.digest('hex') !== value.sha256) throw new Error('file_transfer_verification_failed');
+    }
     return { path: join(await realpath(dirname(path)), basename(path)), name: value.name, nextOffset: value.offset + bytes.length };
   } finally { await file.close(); }
 }

@@ -1,10 +1,11 @@
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative } from 'node:path';
 import yauzl from 'yauzl';
 import { fork } from 'node:child_process';
 import { z } from 'zod';
 import { normalizeWebImage } from '@cardbush/bush-runtime/web-policy';
 import { agentFileRead, agentFileUpload } from './agentFiles.mjs';
+import { FILE_TRANSFER_LIMIT, MEDIA_FILE_EXTENSION, transferredFileMime } from '@cardbush/bush-protocol';
 
 const limit = 16 * 1024 * 1024;
 const uuid = z.string().uuid();
@@ -59,15 +60,19 @@ export class AgentWebFiles {
     const rel = relative(personal, candidate);
     if (isAbsolute(rel) || rel === '..' || rel.startsWith('../') || rel.startsWith('..\\')) throw new Error('Access outside personal files denied.');
     const info = await stat(candidate);
-    if (!info.isFile() || info.size > 64 * 1024 * 1024) throw new Error('File unavailable.');
-    return { id: '', path: candidate, name: basename(candidate), size: info.size, mime: ['.png','.jpg','.jpeg','.webp'].includes(extname(candidate).toLowerCase()) ? `image/${extname(candidate).toLowerCase() === '.png' ? 'png' : extname(candidate).toLowerCase() === '.webp' ? 'webp' : 'jpeg'}` : 'application/octet-stream' };
+    if (!info.isFile() || info.size > FILE_TRANSFER_LIMIT) throw new Error('File unavailable.');
+    const file = await open(candidate, 'r');
+    let mime: string;
+    try { const header = Buffer.alloc(64); const { bytesRead } = await file.read(header, 0, 64, 0); mime = transferredFileMime(candidate, header.subarray(0, bytesRead)); }
+    finally { await file.close(); }
+    return { id: '', path: candidate, name: basename(candidate), size: info.size, mime };
   }
   async attachment(id: string): Promise<Attachment> {
     const value = JSON.parse(await readFile(join(this.root, 'config', 'files', uuid.parse(id) + '.json'), 'utf8')) as Attachment;
     await this.describe(value.path); return value;
   }
   call(input: Record<string, unknown>): Promise<unknown> {
-    if (input.action !== 'upload') return this.#call(input);
+    if (input.action !== 'upload' && input.action !== 'import') return this.#call(input);
     const result = this.#uploads.then(() => this.#call(input));
     this.#uploads = result.catch(() => undefined); return result;
   }
@@ -75,10 +80,17 @@ export class AgentWebFiles {
     if (input.action === 'describe') return input.id ? this.attachment(String(input.id)) : this.describe(String(input.path));
     if (input.action === 'read') {
       const value = await this.describe(String(input.path));
-      return { ...await agentFileRead(join(this.root, 'workspaces'), { path: value.path, offset: input.offset }), mime: value.mime };
+      return { ...await agentFileRead(join(this.root, 'workspaces'), { path: value.path, offset: input.offset, version: input.version }), mime: value.mime };
+    }
+    if (input.action === 'import') {
+      const root = join(this.root, 'workspaces', 'generated', 'remote');
+      await mkdir(root, { recursive: true });
+      return agentFileUpload(root, input);
     }
     if (input.action !== 'upload') throw new Error('Unknown file operation.');
-    const value = z.object({ action: z.literal('upload'), uploadId: uuid, name: z.string().min(1).max(160).regex(/^[^/\\\x00-\x1f:]+$/), offset: z.number().int().min(0).max(limit), content: z.string().max(710_000), size: z.number().int().min(1).max(limit), done: z.boolean() }).strict().parse(input);
+    const value = z.object({ action: z.literal('upload'), uploadId: uuid, name: z.string().min(1).max(160).regex(/^[^/\\\x00-\x1f:]+$/), offset: z.number().int().min(0).max(FILE_TRANSFER_LIMIT), content: z.string().max(710_000), size: z.number().int().min(1).max(FILE_TRANSFER_LIMIT), done: z.boolean() }).strict().parse(input);
+    const media = MEDIA_FILE_EXTENSION.test(value.name);
+    if (!media && value.size > limit) throw new Error('file_transfer_size_limit');
     const completed = await this.attachment(value.uploadId).catch(() => null);
     if (completed) return { nextOffset: value.size, attachment: completed };
     if (value.offset + Buffer.from(value.content, 'base64').length > value.size) throw new Error('Upload size mismatch.');
@@ -86,16 +98,23 @@ export class AgentWebFiles {
     const result = await agentFileUpload(stage, value);
     if (!value.done) return { nextOffset: result.nextOffset };
     if (result.nextOffset !== value.size || (await stat(result.path)).size !== value.size) throw new Error('Upload is incomplete.');
-    let bytes = await readFile(result.path), name = value.name, mime: string;
+    let bytes: Buffer | undefined, name = value.name, mime: string;
     try {
-      if (/\.(png|jpe?g|webp)$/i.test(name)) {
+      if (media) {
+        const file = await open(result.path, 'r');
+        try { const header = Buffer.alloc(64); const read = await file.read(header, 0, 64, 0); mime = transferredFileMime(name, header.subarray(0, read.bytesRead)); }
+        finally { await file.close(); }
+        if (!/^(audio|video)\//.test(mime)) throw new Error('file_transfer_invalid_media');
+      } else if (/\.(png|jpe?g|webp)$/i.test(name)) {
+        bytes = await readFile(result.path);
         bytes = Buffer.from(await normalizeWebImage(bytes)); name = name.replace(/\.[^.]+$/, '.png'); mime = 'image/png';
-      } else mime = await validateWebDocument(bytes, name);
+      } else { bytes = await readFile(result.path); mime = await validateWebDocument(bytes, name); }
     } catch (error) { await rm(result.path, { force: true }); throw error; }
     const target = join(this.root, 'workspaces', 'uploads', value.uploadId); await mkdir(target, { recursive: true });
     const path = join(target, name);
-    await writeFile(result.path, bytes, { mode: 0o600 }); await rename(result.path, path);
-    const attachment: Attachment = { id: value.uploadId, path, name, mime, size: bytes.length };
+    if (bytes) await writeFile(result.path, bytes, { mode: 0o600 });
+    await rename(result.path, path);
+    const attachment: Attachment = { id: value.uploadId, path, name, mime, size: bytes?.length ?? value.size };
     if (/\.(pdf|docx|xlsx|pptx)$/i.test(name)) {
       attachment.textPath = path + '.extracted.txt';
       await writeFile(attachment.textPath, await extractDocument(path), { mode: 0o600 });

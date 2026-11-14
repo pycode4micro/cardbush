@@ -168,13 +168,13 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       assert.equal(status.runtime.applicationState, 'applied');
       assert.deepEqual(status.configuration.servers, []);
     });
-    await t.test('installed widget edits are bounded, atomic and cannot grant themselves capabilities', async () => {
+    await t.test('installed widget edits activate website declarations while keeping JSON and action grants separate', async () => {
       const origin = 'https://scores.example.org';
       const start = await invoke('read_home_component');
       const first = await invoke('edit_home_component', {mode:'create',id:'scores',title:'Scores',html:'one one two',home:true,width:12,height:680,
         networkDomains:[origin],embedDomains:['https://player.example.org'],expectedRevision:start.revision});
       assert.deepEqual(first.approvedNetworkOrigins,[]);
-      assert.deepEqual(first.embedDomains,['https://player.example.org']); assert.deepEqual(first.approvedEmbedOrigins,[]);
+      assert.deepEqual(first.embedDomains,['https://player.example.org']); assert.deepEqual(first.approvedEmbedOrigins,first.embedDomains);
       const other = await invoke('edit_home_component',{mode:'create',id:'other',title:'Other',html:'isolated',expectedRevision:first.revision});
       const read = await invoke('read_home_component',{id:'scores',find:'two',limit:2});
       assert.equal(read.source,'tw'); assert.equal(read.nextOffset,10);
@@ -193,7 +193,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       assert.deepEqual(renamed.approvedEmbedOrigins,first.embedDomains);
       const changed=await invoke('edit_home_component',{...patch,replacements:[{before:'two',after:'three'}],expectedRevision:renamed.revision});
       assert.deepEqual(changed.approvedNetworkOrigins,[]); assert.equal(changed.allowActions,false);
-      assert.deepEqual(changed.approvedEmbedOrigins,[]);
+      assert.deepEqual(changed.approvedEmbedOrigins,first.embedDomains);
       assert.deepEqual([changed.home,changed.width,changed.height,changed.title],[true,12,680,'Live scores']);
       const final=home.snapshot(); assert.equal(final.items[0].html,'one one three'); assert.deepEqual(final.items[1],before.items[1]);
     });

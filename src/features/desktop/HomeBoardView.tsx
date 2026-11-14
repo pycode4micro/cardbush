@@ -33,17 +33,10 @@ function NearViewport({children}: {children: ReactNode}) {
   return <div className="home-live-surface" ref={host}>{entered && children}</div>;
 }
 
-function HomeWebsiteBlock({url, title, language}: {url:string; title:string; language:AppLanguage}) {
-  const [browse, setBrowse] = useState(false);
-  const t = uiText(language);
-  if (browse) return <HomeWebsiteView url={url} back={() => setBrowse(false)}/>;
-  return <div className="component-embed-layout">
-    {window.cardbushDesktop?.homeComponentLibrary && <div className="component-embed-bar">
-      <button type="button" data-embed-website onClick={() => setBrowse(true)}>{t('homeComponents.viewWebsiteHere',{name:new URL(url).host})}</button>
-    </div>}
-    <iframe name="cardbush-home-website" title={title} src={url} sandbox="allow-scripts" {...{credentialless:''}} referrerPolicy="no-referrer"
-      allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'; fullscreen 'none'"/>
-  </div>;
+function HomeWebsiteBlock({url, title}: {url:string; title:string}) {
+  if (window.cardbushDesktop?.homeComponentLibrary) return <HomeWebsiteView url={url}/>;
+  return <iframe name="cardbush-home-website" title={title} src={url} sandbox="allow-scripts" {...{credentialless:''}} referrerPolicy="no-referrer"
+    allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'; payment 'none'; usb 'none'; fullscreen 'none'"/>;
 }
 
 export function HomeBoardView(p: ViewProps) {
@@ -122,8 +115,8 @@ export function HomeBoardView(p: ViewProps) {
                 {block.kind === 'web' && <button type="button" aria-label={t('homeLayout.openWebsite', {name})} onClick={() => p.openWeb(block.url)}><ExternalLink/></button>}</header>
               {p.editing ? <div className="home-block-preview">{block.kind === 'web' ? <><Globe/>{new URL(block.url).host}</> : <Code2/>}</div>
                 : p.visible && <NearViewport>{block.kind === 'web' ?
-                  <HomeWebsiteBlock key={block.url} url={block.url} title={name} language={p.language}/>
-                  : <HtmlComponentSurface component={html!} onHome onEditEmbeds={embedDomains => p.editHtml({...html!,embedDomains})}/>}</NearViewport>}
+                  <HomeWebsiteBlock key={block.url} url={block.url} title={name}/>
+                  : <HtmlComponentSurface component={html!} onHome/>}</NearViewport>}
             </>}
           </div>
           {p.editing && <HomeBlockResizeHandles width={width} column={column} height={height}

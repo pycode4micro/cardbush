@@ -1,3 +1,4 @@
+import { FILE_TRANSFER_LIMIT } from '@cardbush/bush-protocol';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import type { SessionSnapshot, ToolExecutionRecord } from '@cardbush/bush-protocol';
 import type { WebAgent } from './webAgentPool.mjs';
@@ -15,7 +16,7 @@ export function generatedArtifactPath(source: unknown): string | null {
     if (path.startsWith('file://')) { const url = new URL(path); if (url.hostname && url.hostname !== 'localhost') return null; path = url.pathname; }
     path = decodeURIComponent(path).replace(/^\/\/(?=data\/workspaces\/)/, '/');
   } catch { return null; }
-  if (!path.startsWith('/data/workspaces/generated/') || !/\.(png|jpe?g|webp)$/i.test(path) || path.length > 1000 || /[\\\x00-\x1f\x7f?#:]/.test(path) || path.split('/').slice(1).some(part => !part || part === '.' || part === '..')) return null;
+  if (!path.startsWith('/data/workspaces/generated/') || path.length > 1000 || /[\\\x00-\x1f\x7f?#:]/.test(path) || path.split('/').slice(1).some(part => !part || part === '.' || part === '..')) return null;
   return path;
 }
 type Output = { path: string; sources: string[] };
@@ -88,15 +89,15 @@ export async function webArtifactManifest(agent: WebAgent, sessionId: string, tu
   }
   for (const path of references) if (!selected.has(path)) selected.set(path, { path, sources: [] });
   if (selected.size > 1024) throw new WebError(400, '本轮产物超过 1024 个，请分批下载。');
-  const items: Array<{ id: string; path: string; name: string; type: 'image'; display: 'attachment'; readOnly: true }> = [];
+  const items: Array<{ id: string; path: string; name: string; type: 'image' | 'video' | 'audio' | 'document'; display: 'attachment'; readOnly: true }> = [];
   // Validate candidates before offering them; a typo in Markdown cannot poison the ZIP.
   const candidates = [...selected.keys()];
   for (let start = 0; start < candidates.length; start += 4) {
     const group = await Promise.all(candidates.slice(start, start + 4).map(async path => {
       try {
         const file = await agent.call('web.files', { action: 'describe', path }) as { path: string; size: number; mime: string };
-        return file.path === path && file.size <= 64 * 1024 * 1024 && ['image/png', 'image/jpeg', 'image/webp'].includes(file.mime)
-          ? { id: path, path, name: path.split('/').at(-1)!, type: 'image' as const, display: 'attachment' as const, readOnly: true as const } : null;
+        return file.path === path && file.size <= FILE_TRANSFER_LIMIT
+          ? { id: path, path, name: path.split('/').at(-1)!, type: (file.mime.startsWith('image/') ? 'image' : file.mime.startsWith('video/') ? 'video' : file.mime.startsWith('audio/') ? 'audio' : 'document') as 'image' | 'video' | 'audio' | 'document', display: 'attachment' as const, readOnly: true as const } : null;
       } catch (error) {
         // Missing authored references are excluded; transport/runtime failures must remain retryable.
         if (error instanceof Error && /ENOENT|File unavailable|Access outside personal files denied/.test(error.message)) return null;

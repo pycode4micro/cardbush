@@ -1,6 +1,6 @@
 import { uiText } from '@cardbush/platform/i18n';
 import { api } from './api';
-import { generatedImagePath } from './artifacts';
+import { generatedFilePath } from './artifacts';
 
 type ArchiveStatus = { id: string; filename: string; state: 'ready' | 'queued' | 'streaming' | 'completed' | 'failed'; completed: number; total: number; error?: string };
 
@@ -8,7 +8,7 @@ type ArchiveStatus = { id: string; filename: string; state: 'ready' | 'queued' |
 export async function downloadArtifactArchive(sources: string[], sessionId: string, valid: () => boolean, signal: AbortSignal,
   progress: (completed: number, total: number) => void) {
   const paths = [...new Set(sources.map(source => {
-    const path = generatedImagePath(source);
+    const path = generatedFilePath(source);
     if (!path) throw new Error(uiText()("web.onlyImagesGeneratedByThisAccountCanBeDownloaded"));
     return path;
   }))];

@@ -23,9 +23,10 @@ export function webToolDefinition<T extends ModelRequest['tools'][number]>(tool:
   if (tool.name === 'list_subagent_options') return { ...tool, description: 'List only administrator-registered remote Agents authorized for this account. Use an exact returned id as subagent.target_agent. No local Agents, roles, auto-assembly, model or plugin synchronization is available.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false } };
   if (tool.name !== 'subagent') return tool;
-  return { ...tool, description: 'Asynchronously delegate to an authorized remote worker. For new work provide prompt and target_agent from list_subagent_options. Follow up with task_id and prompt, optionally delivery queue/insert; answer a pending interaction with task_id and response. Inspect pending questions/permissions with tasks. Never create local Agents or copy parent history, credentials, files or configuration. The worker retains its own model, tools and authority; human-required approvals cannot be granted by the parent model.',
+  return { ...tool, description: 'Asynchronously delegate to an authorized remote worker. For new work provide prompt and target_agent from list_subagent_options. Follow up with task_id and prompt, optionally delivery queue/insert; answer a pending interaction with task_id and response. Inspect pending questions/permissions with tasks. Never create local Agents or copy parent history, credentials or configuration. Explicit files are transferred by the host; return verified parent-local links from the result. The worker retains its own model, tools and authority; human-required approvals cannot be granted by the parent model.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {
       prompt: { type: 'string', minLength: 1, maxLength: 100000, description: 'Self-contained assignment or message. Required unless response supplies the complete reply. No credentials or personal file paths.' },
+      files: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 4000 }, maxItems: 32, description: 'New remote task only. Select exact paths in this account personal folder to transfer to the worker. Images, video, audio and documents are copied; never send credentials.' },
       target_agent: { type: 'string', minLength: 1, description: 'Authorized remote Agent id; required for new work.' },
       task_id: { type: 'string', minLength: 1, description: 'Owned remote task id for a follow-up; do not combine with target_agent.' },
       delivery: { type: 'string', enum: ['queue', 'insert'], description: 'task_id and prompt only: queue a later turn, or interrupt active model reasoning in the exact current turn. Already dispatched tools finish before insert takes effect. Do not combine with response.' },
@@ -45,7 +46,8 @@ export async function webToolDenial(request: ModelRequest | undefined, name: str
   if (name === 'list_subagent_options' && Object.keys(input).length) return 'Only the authorized remote Agent list is available.';
   if (name === 'subagent') {
     const replying = input.response !== undefined;
-    if (Object.keys(input).some(key => !['prompt', 'target_agent', 'task_id', 'delivery', 'response'].includes(key)) ||
+    if (input.files !== undefined && (!input.target_agent || !z.array(z.string().min(1).max(4000)).max(32).safeParse(input.files).success)) return 'Files require a new authorized remote task.';
+    if (Object.keys(input).some(key => !['prompt', 'target_agent', 'task_id', 'delivery', 'response', 'files'].includes(key)) ||
         ((!replying || input.prompt !== undefined) && (typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 100000)) ||
         Boolean(input.target_agent) === Boolean(input.task_id) ||
         (input.delivery !== undefined && (!input.task_id || !['queue', 'insert'].includes(String(input.delivery)) || replying)) ||

@@ -16,14 +16,27 @@ module.exports = async ({win,BrowserWindow,openHome,openAssistant,wait,root,proj
   await wait(()=>read("!document.querySelector('[data-profile-action=startup]').disabled"),'profile menu ready');
   fs.writeFileSync(path.join(project,'tmp','personal-profile-menu.png'),(await current.webContents.capturePage()).toPNG());
   await click('[data-profile-action=edit]');await visible('.profile-editor');
+  // Image validation belongs to the personal profile now that Assistant has no static avatar picker.
+  for (const [contents,key] of [["'corrupted'",'assistantAvatar.thisImageCouldNotBeReadTry'],['new Uint8Array(8*1024*1024+1)','assistantAvatar.chooseAnImageSmallerThan8Mb']]) {
+    await read(`(()=>{const files=new DataTransfer();files.items.add(new File([${contents}],'photo.png',{type:'image/png'}));
+      const picker=document.querySelector('.profile-editor input[type=file]');picker.files=files.files;picker.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    const messages=['en','zh'].map(language=>require('../../src/i18n/locales/'+language+'.json').messages[key]);
+    await wait(()=>read(`${JSON.stringify(messages)}.includes(document.querySelector('.profile-editor .settings-inline-error')?.textContent)`),key);
+    assert.equal(await read("!!document.querySelector('.profile-photo-preview img')"),false,'invalid images do not replace the profile photo');
+  }
   const photo = fs.readFileSync(path.join(project,'src/features/desktop/art/fern.jpg')).toString('base64');
   await read(`(() => { const bytes=Uint8Array.from(atob(${JSON.stringify(photo)}),c=>c.charCodeAt(0));
     const files=new DataTransfer();files.items.add(new File([bytes],'photo.jpg',{type:'image/jpeg'}));
     const picker=document.querySelector('.profile-editor input[type=file]');picker.files=files.files;
     picker.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   await wait(()=>read("document.querySelector('.profile-photo-preview img')?.naturalWidth===256"),'previews the decoded and cropped photo');
+  const draftPhoto=await read("document.querySelector('.profile-photo-preview img').src");
   await read(`for(const [selector,text] of [['[name=preferredName]','Lin'],['[name=habits]','Send short updates on Fridays.']]){
     const input=document.querySelector(selector);Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input),'value').set.call(input,text);input.dispatchEvent(new Event('input',{bubbles:true}));}void 0`);
+  await read("document.querySelector('.profile-editor input[type=file]').dispatchEvent(new Event('cancel',{bubbles:true}));void 0");
+  assert.ok(await read("document.querySelector('.profile-editor:modal')"),'cancelling the file picker keeps profile editing open');
+  assert.equal(await read("document.querySelector('[name=preferredName]').value"),'Lin','picker cancellation retains draft fields');
+  assert.equal(await read("document.querySelector('.profile-photo-preview img').src"),draftPhoto,'picker cancellation retains the draft photo');
   await click('.profile-editor [type=submit]');
   await wait(()=>read("document.querySelector('.profile-trigger').textContent.includes('Lin') && !document.querySelector('.profile-editor')"),'registered profile saved');
   assert.ok(await read("document.querySelector('.profile-symbol img')?.src.startsWith('data:image/webp;base64,')"));

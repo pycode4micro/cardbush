@@ -7,13 +7,15 @@ import { equalSecret, json, readJson, WebError } from './webCommon.mjs';
 import { remoteAgentToken, remoteIdentity, WebRemoteAgents } from './webRemoteAgents.mjs';
 import { runRemoteSubagent } from './remoteSubagent.mjs';
 import { uiText } from '@cardbush/platform/i18n';
+import type { WebAgents } from './webAgentPool.mjs';
+import { deliveredFilePaths, transferFile, type FileChunk } from './agentFileTransfer.mjs';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,160}$/);
 const common = { connectionId: id, agentId: id.optional(), parentSessionId: id, sessionId: id };
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('agents.list'), input: z.object({}).strict() }).strict(),
   z.object({ operation: z.literal('agents.delegate'), input: z.object({ ...common, taskId: id, turnId: id, parentTurnId: id,
-    prompt: z.string().min(1).max(100_000), queue: z.boolean().optional(), worker: remoteWorkerSchema.optional(), permissionRouting: z.enum(['user', 'parent']).optional(), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
+    prompt: z.string().min(1).max(100_000), files: z.array(z.string().min(1).max(4000)).max(32).optional(), queue: z.boolean().optional(), worker: remoteWorkerSchema.optional(), permissionRouting: z.enum(['user', 'parent']).optional(), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
   z.object({ operation: z.literal('agents.control'), input: z.object({ connectionId: id, agentId: id, parentSessionId: id,
     worker: remoteWorkerSchema.optional(), control: remoteControlSchema }).strict().transform(value => ({ ...value, sessionId: value.control.contextId })) }).strict(),
   z.object({ operation: z.literal('agents.read-child'), input: z.object(common).strict() }).strict(),
@@ -23,7 +25,7 @@ const requestSchema = z.discriminatedUnion('operation', [
  * credential, arbitrary RPC, configuration sync, shell or provisioning endpoint. */
 export class WebRemoteAgentBridge {
   readonly #active = new Map<string, number>();
-  constructor(readonly registry: WebRemoteAgents, readonly store: WebStore) {}
+  constructor(readonly registry: WebRemoteAgents, readonly store: WebStore, readonly agents?: WebAgents) {}
   async handle(request: IncomingMessage, response: ServerResponse, path: string, signal: AbortSignal) {
     const match = path.match(/^\/internal\/remote-agents\/([A-Za-z0-9_-]+)$/);
     if (!match || request.method !== 'POST' || request.headers.origin !== undefined) throw new WebError(404, 'Not found.');
@@ -133,11 +135,58 @@ export class WebRemoteAgentBridge {
         })().catch(() => abort.abort()).finally(() => { validating = false; });
       }, 10_000);
       const remote = client;
+      if (input.files?.length) {
+        if (info.capabilities.fileTransfer !== 1 || !this.agents) throw new Error('remote_file_transfer_upgrade_required');
+        const source = await this.agents.get(userId);
+        await remote.call('delegation.prepare', { sessionId, parentSessionId, parentTurnId: delegated.parentTurnId, ...(input.worker ? { worker: input.worker } : {}) }, combined);
+        const files: string[] = [];
+        let total = 0;
+        for (const path of [...new Set(input.files)]) {
+          const transferred = await transferFile(`${taskId}:${path}`,
+            async (offset, version) => {
+              const chunk = await source.call('web.files', { action: 'read', path, offset, version }) as FileChunk;
+              if (!offset && total + chunk.size > 4 * 1024 * 1024 * 1024) throw new Error('file_transfer_batch_size_limit');
+              return chunk;
+            },
+            value => remote.call('files.upload', { sessionId, ...value }, combined) as Promise<{ path: string; nextOffset: number }>, combined);
+          total += transferred.size;
+          if (total > 4 * 1024 * 1024 * 1024) throw new Error('file_transfer_batch_size_limit');
+          files.push(transferred.path);
+        }
+        delegated.files = files;
+      } else delete delegated.files;
       const result = await runRemoteSubagent({
         connect: async () => info,
         call: (_id, operation, value, signal) => remote.call(operation, value, signal),
         events: (_id, input, signal) => remote.events(input, signal),
       }, delegated, combined, { onAccepted: () => { if (!response.destroyed) response.write('{"type":"accepted"}\n'); } });
+      if (this.agents && info.capabilities.fileTransfer === 1 && result.finalResponse) {
+        const target = await this.agents.get(userId);
+        const files: Array<{ path: string; name: string; size: number; sha256: string }> = [];
+        const failures: string[] = [];
+        let total = 0;
+        for (const path of deliveredFilePaths(result.finalResponse)) {
+          try {
+            const transferred = await transferFile(`${taskId}:result:${path}`,
+              async (offset, version) => {
+                const chunk = await remote.call('files.read', { sessionId, path, offset, version }, combined) as FileChunk;
+                if (!offset && total + chunk.size > 4 * 1024 * 1024 * 1024) throw new Error('file_transfer_batch_size_limit');
+                return chunk;
+              },
+              value => target.call('web.files', { action: 'import', ...value }) as Promise<{ path: string; nextOffset: number }>, combined);
+            total += transferred.size;
+            if (total > 4 * 1024 * 1024 * 1024) throw new Error('file_transfer_batch_size_limit');
+            const delivered = { ...transferred, path: transferred.path.replaceAll('\\', '/') };
+            files.push(delivered);
+            result.finalResponse = result.finalResponse.replaceAll(path, delivered.path).replaceAll(encodeURI(path), delivered.path);
+          } catch (error) {
+            combined.throwIfAborted();
+            failures.push(path.split(/[\\/]/).at(-1) ?? path);
+          }
+        }
+        if (files.length) result.finalResponse += '\n\nTransferred files (verified in the parent account; use these paths for previews and downloads):\n' + files.map(file => `- [${file.name.replace(/[\[\]\\]/g, '_')}](<${file.path}>) (${file.size} bytes, SHA-256 ${file.sha256})`).join('\n');
+        if (failures.length) result.finalResponse += '\n\nFile transfer failed; these files are not delivered. Inspect the original task without repeating generation: ' + JSON.stringify(failures);
+      }
       response.end(JSON.stringify({ type: 'result', value: result }) + '\n');
     } catch (error) {
       if (response.headersSent) {

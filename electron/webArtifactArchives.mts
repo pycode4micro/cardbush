@@ -1,3 +1,4 @@
+import { FILE_TRANSFER_LIMIT } from '@cardbush/bush-protocol';
 import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { posix } from 'node:path';
@@ -17,12 +18,12 @@ const ZipStream = createRequire(import.meta.url)('zip-stream') as new (options: 
 }) => Zip;
 const chunkSize = 512 * 1024;
 const generatedRoot = '/data/workspaces/generated/';
-const personalImage = z.string().min(1).max(1000).refine(path =>
-  path.startsWith(generatedRoot) && /\.(png|jpe?g|webp)$/i.test(path) &&
+const personalArtifact = z.string().min(1).max(1000).refine(path =>
+  path.startsWith(generatedRoot) &&
   !/[\\\x00-\x1f\x7f]/.test(path) && !path.slice(generatedRoot.length).split('/').some(part => !part || part === '.' || part === '..'),
-  '只能下载当前账号生成的图片。');
-export const archiveRequest = z.object({ sessionId: z.string().regex(/^web-[a-f0-9]{40}$/), paths: z.array(personalImage).min(1).max(1024) }).strict();
-const description = z.object({ path: personalImage, size: z.number().int().min(0).max(64 * 1024 * 1024), mime: z.enum(['image/png', 'image/jpeg', 'image/webp']) });
+  'account_artifact_required');
+export const archiveRequest = z.object({ sessionId: z.string().regex(/^web-[a-f0-9]{40}$/), paths: z.array(personalArtifact).min(1).max(1024) }).strict();
+const description = z.object({ path: personalArtifact, size: z.number().int().min(0).max(FILE_TRANSFER_LIMIT), mime: z.string().min(1) });
 const readChunk = z.object({ name: z.string().min(1).max(1000), size: z.number().int().min(0), offset: z.number().int().min(0), content: z.string().max(Math.ceil(chunkSize / 3) * 4), done: z.boolean() });
 type Entry = { path: string; name: string; size: number };
 type Ticket = {

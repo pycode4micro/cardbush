@@ -63,6 +63,7 @@ export interface RemoteSubagentBridge {
 
 export interface SubagentInput {
   prompt: string;
+  files?: string[];
   name?: string;
   mode: 'fork' | 'clean';
   systemPrompt?: string;
@@ -348,6 +349,7 @@ export function registerSubagentTool(
           return options.remoteAgents!.run({ ...remote, taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
             sessionId: childSessionId, turnId: childTurnId, prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${context.input.prompt}`,
             ...(context.input.delivery === 'queue' ? { queue: true } : {}),
+            ...(Array.isArray(context.input.files) && context.input.files.length ? { files: z.array(z.string().min(1).max(4000)).max(32).parse(context.input.files) } : {}),
             permissionMode, permissionRouting: route === 'parent' ? 'parent' : 'user', language: resolveUiLanguage(parent.metadata.uiLanguage),
           }, context.signal, () => {
             if (tasks.get(context.sessionId, taskId)?.remoteAcceptedAt) return;
@@ -662,7 +664,8 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
     if (typeof object.target_agent !== 'string' || !object.target_agent.trim()) throw new Error('target_agent must be a saved Agent connection ID.');
     if (!onlySubagentArguments(object, 'remote')) throw new Error('Remote delegation accepts prompt, target_agent and optional name/run_in_background only; the server owns its configuration.');
     if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
-    return { prompt, name, mode: 'clean', targetAgent: object.target_agent.trim(), runInBackground: object.run_in_background as boolean | undefined };
+    return { prompt, name, mode: 'clean', targetAgent: object.target_agent.trim(), runInBackground: object.run_in_background as boolean | undefined,
+      ...(object.files !== undefined ? { files: z.array(z.string().min(1).max(4000)).max(32).parse(object.files) } : {}) };
   }
   if (object.task_id !== undefined) {
     if (typeof object.task_id !== 'string' || !object.task_id.trim()) throw new Error('task_id must be non-empty.');

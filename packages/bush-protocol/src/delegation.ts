@@ -63,6 +63,7 @@ export interface RemoteSubagentRequest {
   permissionRouting?: 'user' | 'parent';
   worker?: z.infer<typeof remoteWorkerSchema>;
   queue?: boolean;
+  files?: string[];
 }
 export interface RemoteSubagentResult {
   status: 'completed' | 'failed' | 'stopped' | 'unavailable'; finalResponse: string; errorMessage: string; usage: SubagentTask['usage'];

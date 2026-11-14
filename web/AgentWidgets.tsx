@@ -68,7 +68,7 @@ export function UploadButton({ upload }: { upload: ReturnType<typeof useAttachme
   const language = useUiLanguage();
 
   const input = useRef<HTMLInputElement>(null);
-  return <><input ref={input} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.txt,.md,.csv,.tsv,.json,.log,.pdf,.docx,.xlsx,.pptx" onChange={event => { void upload.add(Array.from(event.target.files ?? [])); event.target.value = ''; }}/><button className="icon-button" type="button" aria-label={uiText(language)("web.uploadImagesOrFiles")} title={uiText(language)("web.largeImagesAreOptimizedAutomaticallyDocumentsMustBeUnder16MbVideo")} disabled={upload.busy} onClick={() => input.current?.click()}><Paperclip size={18}/></button></>;
+  return <><input ref={input} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.txt,.md,.csv,.tsv,.json,.log,.pdf,.docx,.xlsx,.pptx,.mp4,.m4v,.mov,.webm,.mp3,.wav,.ogg,.m4a" onChange={event => { void upload.add(Array.from(event.target.files ?? [])); event.target.value = ''; }}/><button className="icon-button" type="button" aria-label={uiText(language)("web.uploadImagesOrFiles")} title={uiText(language)("web.largeImagesAreOptimizedAutomaticallyDocumentsMustBeUnder16MbVideo")} disabled={upload.busy} onClick={() => input.current?.click()}><Paperclip size={18}/></button></>;
 }
 export type Solution = RuntimeSolutionSelection;
 export function Solutions({ items, refresh }: { items: Solution[]; refresh: () => Promise<void> }) {

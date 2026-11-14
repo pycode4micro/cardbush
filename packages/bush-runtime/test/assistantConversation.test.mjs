@@ -7,7 +7,7 @@ import { delegatedRequestContext } from '../dist/assistantDelegationOrigins.js';
 import { ConversationJournal } from '../dist/conversationJournal.js';
 import { AssistantConversation } from '../dist/assistantConversation.js';
 import { InMemoryRuntimeEventLog, InMemoryRuntimeHost, SessionStore, ToolRegistry, SubagentTaskStore } from '../dist/index.js';
-import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION as id, REPORT_DELIVERY_INSTRUCTIONS } from '@cardbush/bush-protocol';
+import { assistantProfileSchema, conversationalSubagentTools, PERSONAL_ASSISTANT_SESSION as id, REPORT_DELIVERY_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import { withToolDisplayTitle } from '../dist/toolDisplay.js';
 
 const temporary = () => mkdtempSync(join(tmpdir(), 'assistant-conversation-'));
@@ -196,6 +196,124 @@ test('a delayed result gets later corrections only from its originating bridge a
   const brief = JSON.parse(delegatedRequestContext([original], journal).content);
   assert.deepEqual(brief.laterUserMessages.map(item => item.messageId), ['correction']);
   assert.deepEqual(JSON.parse(delegatedRequestContext([], journal).content).requests, []);
+});
+
+for (const native of [false, true]) for (const scenario of [
+  ...['completed', 'failed', 'stopped', 'unavailable'].map(status => ({ status })),
+  { status: 'running', asynchronous: true },
+  { status: 'message_queued', asynchronous: true },
+  { status: 'running', asynchronous: true, finishedBeforeReceipt: true },
+]) test(`assistant ${native ? 'native' : 'conversational'} delegation receipt ${scenario.status}${scenario.finishedBeforeReceipt ? ' with an already finished task' : ''} only requests undelivered results`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const journal = new ConversationJournal(temporary()), requests = [], delegated = [], tasks = [];
+  const replyStarted = gate(), releaseReply = gate();
+  const tool = conversationalSubagentTools.find(tool => tool.name === 'subagent');
+  const task = { taskId: 'receipt-child', parentTurnId: 'assistant-turn', originMessageIds: ['receipt-input'],
+    status: scenario.asynchronous ? 'running' : scenario.status, finalResponse: '', errorMessage: '' };
+  const finish = () => Object.assign(task, { status: scenario.asynchronous ? 'completed' : scenario.status,
+    finalResponse: 'Verified probe result.', errorMessage: scenario.status === 'failed' ? 'credential_key_file_required' : '' });
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => tasks, checkpoint: () => ({}),
+    ...(native ? { delegationTools: () => [tool] } : {}),
+    delegate: async input => {
+      delegated.push(input); tasks.push(task);
+      if (!scenario.asynchronous || scenario.finishedBeforeReceipt) finish();
+      return { taskId: task.taskId, status: scenario.status,
+        ...(!scenario.asynchronous ? { finalResponse: task.finalResponse, errorMessage: task.errorMessage } : {}) };
+    }, provider: { async *stream(request) {
+      const index = requests.length; requests.push(request);
+      if (index === 0) yield* response(request, { calls: [{ id: 'probe', name: 'subagent', args: { prompt: 'Read-only probe' } }] });
+      else if (index === 1) {
+        replyStarted.resolve(); await releaseReply.promise;
+        yield* response(request, { text: 'Initial receipt reported.' });
+      } else yield* response(request, { text: 'Background result reported.' });
+    } } });
+  t.after(() => { releaseReply.resolve(); assistant.close(); });
+  const settle = async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    const state = assistant.command({ action: 'read', sessionId: id });
+    assert.equal(state.error, ''); assert.equal(state.busy, false);
+    return state;
+  };
+  assistant.command({ action: 'turn', sessionId: id, entry: entry('receipt-input'),
+    parent: { ...parent(), tools: [tool] }, profile: assistantProfileSchema.parse({}) });
+  await replyStarted.promise;
+  assert.equal(requests.length, 2);
+  assert.equal(delegated.length, 1);
+  assert.equal(Boolean(delegated[0].nativeArguments), native);
+  const receipt = JSON.parse(requests[1].messages.find(message => message.toolCallId === 'probe').content);
+  assert.equal(receipt.status, scenario.status);
+  // Let completion observation run while the initial reply is still in flight.
+  t.mock.timers.tick(1200);
+  releaseReply.resolve(); await settle();
+  if (scenario.asynchronous && !scenario.finishedBeforeReceipt) {
+    assert.equal(requests.length, 2, 'a running task must not trigger a completion request');
+    finish(); t.mock.timers.tick(1200); await settle();
+  }
+  t.mock.timers.tick(3600);
+  const state = await settle(), expectedReplies = scenario.asynchronous ? 2 : 1;
+  assert.equal(requests.length, expectedReplies + 1, 'only dispatch, its reply and a genuinely pending completion may request the model');
+  assert.equal(new Set(requests.map(request => request.requestId)).size, requests.length);
+  assert.equal(delegated.length, 1, 'completion notification must not dispatch the task again');
+  assert.deepEqual(state.entries.filter(item => item.role === 'assistant').map(item => item.content),
+    scenario.asynchronous ? ['Initial receipt reported.', 'Background result reported.'] : ['Initial receipt reported.']);
+  const notices = state.entries.filter(item => item.source === 'task');
+  assert.equal(notices.length, scenario.asynchronous ? 1 : 0);
+  if (scenario.asynchronous) {
+    assert.equal(requests.at(-1).messages.filter(message => message.name === 'background_task_result').length, 1);
+    assert.equal(JSON.parse(notices[0].content).result, task.finalResponse);
+    assert.deepEqual(state.entries.at(-1).responseTo, ['receipt-input']);
+  }
+});
+
+for (const native of [false, true]) for (const summaryIndex of [0, 2, 3])
+test(`assistant ${native ? 'native' : 'conversational'} summary at ${summaryIndex} executes after all other tools`, async t => {
+  const journal = new ConversationJournal(temporary()), requests = [], events = [], memoryCalls = [];
+  const delegated = gate(), checked = gate(), releaseDelegate = gate(), releaseMemory = gate();
+  const tool = conversationalSubagentTools.find(tool => tool.name === 'subagent');
+  const calls = [{ id: 'check', name: 'check_habit', args: {} },
+    { id: 'probe', name: 'subagent', args: { prompt: 'Read-only probe' } },
+    { id: 'revise', name: 'revise_memory', args: {} }];
+  calls.splice(summaryIndex, 0, { id: 'summary', name: 'summary_for_user', args: {} });
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
+    ...(native ? { delegationTools: () => [tool] } : {}),
+    delegate: async () => {
+      events.push('delegate-start'); delegated.resolve(); await releaseDelegate.promise;
+      events.push('delegate-end');
+      if (summaryIndex === 2) throw Error('probe failed');
+      return { taskId: 'probe-child', status: 'completed', finalResponse: 'Verified.' };
+    },
+    memory: { definitions: () => ['check_habit', 'revise_memory', 'summary_for_user'].map(name => ({ name, inputSchema: { type: 'object' } })),
+      recall: async () => undefined, changes: async () => undefined, schedule: () => {},
+      execute: async (call, _request, _user, _round, ordinal) => {
+        memoryCalls.push({ name: call.name, ordinal });
+        if (call.name === 'check_habit') { checked.resolve(); await releaseMemory.promise; }
+        events.push(call.name);
+        return { status: 'ok', ...(call.name === 'summary_for_user' ? { expression: 'happy' } : {}) };
+      } },
+    provider: { async *stream(request) {
+      requests.push(request);
+      yield* response(request, requests.length === 1 ? { calls } : { text: 'Final reply.' });
+    } } });
+  t.after(() => { releaseDelegate.resolve(); releaseMemory.resolve(); assistant.close(); });
+  assistant.command({ action: 'turn', sessionId: id, entry: entry('ordered-input'),
+    parent: { ...parent(), tools: [tool] }, profile: assistantProfileSchema.parse({}) });
+  await Promise.all([delegated.promise, checked.promise]);
+  assert.ok(!events.includes('summary_for_user'), 'summary must wait for running tools even when emitted first');
+  releaseMemory.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(events, ['delegate-start', 'check_habit', 'revise_memory']);
+  assert.equal(requests.length, 1, 'do not request a reply while work is pending');
+  releaseDelegate.resolve();
+  await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
+  const state = assistant.command({ action: 'read', sessionId: id });
+  assert.equal(state.error, '');
+  assert.deepEqual(events, ['delegate-start', 'check_habit', 'revise_memory', 'delegate-end', 'summary_for_user']);
+  assert.equal(requests.length, 2);
+  const receipts = requests[1].messages.filter(message => message.role === 'tool');
+  assert.deepEqual(receipts.map(message => message.toolCallId), calls.map(call => call.id), 'retain model tool-call order in history');
+  assert.equal(JSON.parse(receipts.find(message => message.toolCallId === 'probe').content).status, summaryIndex === 2 ? 'failed' : 'completed');
+  assert.deepEqual(memoryCalls, ['check_habit', 'revise_memory', 'summary_for_user'].map(name => ({ name, ordinal: calls.findIndex(call => call.name === name) })));
+  assert.equal(state.expression.mood, 'happy');
+  assert.deepEqual(state.entries.filter(item => item.role === 'assistant').map(item => item.content), ['Final reply.']);
 });
 
 test('text assistant dispatch reaches the actual child loop and reports completion asynchronously', async () => {

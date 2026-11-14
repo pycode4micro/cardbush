@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), electron = require('electron');
 if (typeof electron === 'string') {
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  if (process.argv.includes('--character')) env.CARDBUSH_ASSISTANT_UI_CASE = 'character';
   if (process.argv.includes('--submission')) env.CARDBUSH_ASSISTANT_UI_CASE = 'submission';
   if (process.argv.includes('--shortcuts')) env.CARDBUSH_ASSISTANT_UI_CASE = 'shortcuts';
   if (process.argv.includes('--timeline')) env.CARDBUSH_ASSISTANT_UI_CASE = 'timeline';
@@ -11,7 +12,7 @@ if (typeof electron === 'string') {
   const directory = fs.mkdtempSync(path.resolve('tmp/assistant-ui-'));
   // Keep the native bundler in Node so Electron can close its Windows I/O loop cleanly.
   buildFixture(directory).then(() => {
-    const result = require('node:child_process').spawnSync(electron, [__filename, directory], { env, windowsHide: true, stdio: 'inherit', timeout: 60000 });
+    const result = require('node:child_process').spawnSync(electron, [__filename, directory], { env, windowsHide: true, stdio: 'inherit', timeout: env.CARDBUSH_ASSISTANT_UI_CASE ? 60000 : 100000 });
     if (result.error) console.error(result.error); process.exitCode = result.status ?? 1;
   }).catch(error => { console.error(error); process.exitCode = 1; });
 } else {
@@ -65,7 +66,7 @@ async function buildFixture(directory) {
         import {useAssistantProfile} from ${file('src/features/assistant/assistantProfile.ts')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};import ${file('src/features/voice/voice.css')};
         import ${file('src/features/inspector/inspectorWorkspace.css')};
-        window.cardbushDesktop={pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),
+        window.cardbushDesktop={onCapsuleCallPhase:handler=>{fixture.callPhase=handler;return()=>delete fixture.callPhase;},pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),
           voice:{settings:async()=>({engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,voice:'female',language:'zh-CN'}),
             cancel:async()=>{},setCallActive:async()=>{},transcribe:async()=>{if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);return{text:'录音发送也应定位到最新消息'};}}};
         const noop=()=>{};const controls={selectedModel:'fixture',availableModels:[],onModelChange:noop,onConfigureModels:()=>fixture.configure=true,
@@ -80,6 +81,8 @@ async function buildFixture(directory) {
           {id:'p',role:'assistant',content:'## 今日重点\\n\\n先确认方向，再逐步推进。\\n\\n- 保留关键资料\\n- 后台任务可以继续执行',source:'page',visibility:'conversation',createdAt:new Date().toISOString()},
           {id:'loop',role:'user',content:'不应显示的工具日志',source:'task',visibility:'internal',createdAt:new Date().toISOString()}
         ],busy:false};
+        fixture.legacyAvatar=document.createElement('canvas').toDataURL('image/png');
+        localStorage.setItem('cardbush_personal_assistant_avatar_v1',fixture.legacyAvatar);
         fixture.callContext=()=>realtimeConversationSnapshot(applicationVoiceSession().target).context;
         fixture.uiText=uiText;
         fixture.callHistory=()=>applicationVoiceSession().target?.historyMessages??[];
@@ -116,7 +119,9 @@ app.commandLine.appendSwitch('force-device-scale-factor', '1');
 app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const deadline = setTimeout(() => app.exit(1), 55000);
+// The full suite also traverses every character state and tool via the real polling feed.
+// Individual UI assertions retain their short deadline; allow time for the cumulative cases.
+const deadline = setTimeout(() => { console.error('Assistant UI suite exceeded its total time budget'); app.exit(1); }, process.env.CARDBUSH_ASSISTANT_UI_CASE ? 55000 : 95000);
 app.whenReady().then(async () => {
   if (process.env.CARDBUSH_ASSISTANT_UI_CASE === 'attachments') electron.protocol.handle('cardbush-file', request => {
     const target = path.resolve(decodeURIComponent(new URL(request.url).pathname).replace(/^\/(?=[a-z]:)/i, ''));
@@ -134,7 +139,7 @@ app.whenReady().then(async () => {
   const fill = (selector, value) => read(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(n instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})();`);
   try {
     await win.loadFile(path.join(directory, 'index.html')); await until('document.querySelectorAll(".assistant-message").length===2');
-    if (['submission', 'shortcuts', 'timeline', 'management', 'attachments', 'message-actions'].includes(process.env.CARDBUSH_ASSISTANT_UI_CASE)) {
+    if (['character', 'submission', 'shortcuts', 'timeline', 'management', 'attachments', 'message-actions'].includes(process.env.CARDBUSH_ASSISTANT_UI_CASE)) {
       await require('./helpers/assistant-' + process.env.CARDBUSH_ASSISTANT_UI_CASE + '.cjs')({ read, until, fill, click, pause, win, directory });
       assert.deepEqual(errors, []); return;
     }
@@ -207,99 +212,7 @@ app.whenReady().then(async () => {
     await fill('.assistant-composer-dock textarea', '继续聊聊'); await click('.assistant-composer-dock .send-button[aria-label="发送"]');
     await until('document.querySelectorAll(".assistant-message-user").length===2'); assert.equal(await read('fixture.sent.length'), 1);
     assert.equal(await read('getComputedStyle(document.querySelector(".assistant-message-row:last-child .assistant-message-user>div")).animationName'), 'assistant-bubble-send');
-    const openSettings = async () => { await click('.profile-trigger'); await click('[data-profile-action=assistant]'); }, dialog = '.assistant-settings-dialog';
-    const bounds = await read('document.querySelector(".composer-surface").getBoundingClientRect().toJSON()');
-    await openSettings(); await until('document.querySelector(".assistant-settings-dialog:modal")');
-    assert.equal(await read('document.activeElement.name'), 'assistant-name');
-    assert.deepEqual(await read('document.querySelector(".composer-surface").getBoundingClientRect().toJSON()'), bounds, 'modal does not move the conversation/composer');
-    assert.equal(await read('document.querySelector("textarea[name=assistant-persona]").value'), '');
-    assert.match(await read('document.querySelector("textarea[name=assistant-persona]").placeholder'), /温和、可靠/);
-    await read('fixture.language("en");void 0');
-    await until('document.querySelector("textarea[name=assistant-persona]")?.placeholder.includes("Warm, reliable")');
-    assert.equal(await read('document.querySelector("textarea[name=assistant-persona]").value'), '');
-    await read('fixture.language("zh");void 0');
-    await until('document.querySelector("textarea[name=assistant-persona]")?.placeholder.includes("温和、可靠")');
-    await fill(dialog+' input[name="assistant-name"]', '尚未保存的名称');
-    await fill(dialog+' textarea', '尚未保存的交流方式');
-    const cancelAvatarPicker = () => read('document.querySelector(".assistant-settings-dialog input[type=file]").dispatchEvent(new Event("cancel",{bubbles:true}));void 0');
-    await cancelAvatarPicker();
-    assert.ok(await read('document.querySelector(".assistant-settings-dialog:modal")'),'cancelling the file picker must not close assistant settings');
-    assert.equal(await read('document.querySelector("input[name=assistant-name]").value'),'尚未保存的名称');
-    assert.equal(await read('document.querySelector("textarea[name=assistant-persona]").value'),'尚未保存的交流方式');
-    assert.equal(await read('document.querySelector(".assistant-view .topbar h1").textContent'),'assistant','file-picker cancellation does not save drafts');
-    const selectAvatar = async (kind = 'image') => {
-      await read(`(async()=>{const canvas=document.createElement('canvas');canvas.width=420;canvas.height=300;const ctx=canvas.getContext('2d');ctx.fillStyle='#7596ab';ctx.fillRect(0,0,420,300);ctx.fillStyle='#e9cc85';ctx.beginPath();ctx.arc(210,150,80,0,Math.PI*2);ctx.fill();const blob=await new Promise(resolve=>canvas.toBlob(resolve));const data=new DataTransfer();data.items.add(new File([${kind === 'image' ? 'blob' : kind === 'oversized' ? 'new Uint8Array(8*1024*1024+1)' : "'corrupted'"}], 'avatar.png',{type:'image/png'}));const input=document.querySelector('.assistant-settings-dialog input[type=file]');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-    };
-    await selectAvatar('corrupted'); await until('document.querySelector(".assistant-settings-error")?.textContent.includes("无法读取")');
-    await selectAvatar('oversized'); await until('document.querySelector(".assistant-settings-error")?.textContent.includes("8 MB")');
-    await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview .assistant-avatar img")');
-    assert.equal(await read('!!localStorage.cardbush_personal_assistant_avatar_v1'), false, 'selection remains a draft');
-    const draftAvatar = await read('document.querySelector(".assistant-avatar-preview .assistant-avatar img").src');
-    await cancelAvatarPicker();
-    assert.equal(await read('document.querySelector(".assistant-avatar-preview .assistant-avatar img").src'),draftAvatar,'cancelling another selection retains the draft avatar');
-    await fill(dialog+' input[name="assistant-name"]', 'Cancelled');
-    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
-    await until('!document.querySelector(".assistant-settings-dialog")');
-    assert.equal(await read('document.activeElement.title'), '个人资料', 'closing returns focus to the profile trigger');
-    assert.equal(await read('document.querySelector(".assistant-view .topbar h1").textContent'), 'assistant');
-    await openSettings(); await selectAvatar(); await until('document.querySelector(".assistant-avatar-preview .assistant-avatar img")');
-    await fill(dialog+' input[name="assistant-name"]', 'Lumi'); await fill(dialog+' textarea', '温和、可靠');
-    win.webContents.invalidate(); await pause(250);
-    fs.writeFileSync(path.join(directory, 'assistant-settings-dark.png'), (await win.webContents.capturePage()).toPNG());
-    await read('fixture.theme("bright");void 0'); win.webContents.invalidate(); await pause(250);
-    fs.writeFileSync(path.join(directory, 'assistant-settings-light.png'), (await win.webContents.capturePage()).toPNG());
-    await read('fixture.theme("dark");void 0'); await click(dialog+' button[type=submit]');
-    await until('document.querySelector(".assistant-view .topbar h1").textContent==="Lumi"');
-    await until('document.querySelectorAll(".assistant-avatar img").length===2');
-    assert.equal(await read('document.querySelector(".assistant-avatar img").src'), await read('localStorage.cardbush_personal_assistant_avatar_v1'));
-    assert.equal(await read('JSON.stringify(JSON.parse(localStorage.cardbush_personal_assistant_v1)).includes("data:image")'), false, 'avatar stays out of the inference profile');
-    await openSettings(); await click('.assistant-avatar-reset'); await click(dialog+' .assistant-settings-close');
-    assert.equal(await read('document.querySelectorAll(".assistant-avatar img").length'), 2, 'cancelled restore preserves saved avatar');
-    await openSettings(); assert.equal(await read('!!document.querySelector(".assistant-avatar-preview .assistant-avatar img")'), true);
-    await click('.assistant-avatar-reset'); await click(dialog+' button[type=submit]');
-    await until('!document.querySelector(".assistant-avatar")'); assert.equal(await read('localStorage.cardbush_personal_assistant_avatar_v1'), undefined);
-    await openSettings(); await read('fixture.hide();void 0'); assert.ok(await read('!!document.querySelector(".assistant-settings-dialog:modal")')); await click(dialog+' .assistant-settings-close');
-    await read('fixture.show();void 0'); await until('!document.querySelector(".assistant-view").hidden');
-    assert.equal(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label*="Lumi"]\')'), true);
-    assert.equal(await read('document.querySelector(".assistant-view .topbar [role=combobox]")===null'), true, 'Assistant no longer mixes local conversation with a separate execution-host selector');
-    assert.equal(await read('!!document.querySelector(".assistant-view button[aria-label=员工管理]")'), false, 'the Assistant does not offer team administration');
-    await read('fixture.hide();void 0'); await until('document.querySelector(".assistant-view").hidden');
-    await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-character[data-state=thinking]")');
-    const stage = '.sidebar-footer .assistant-stage';
-    const stageCue = cue => until(`document.querySelector('${stage} [data-cue=${cue}]')`);
-    await stageCue('thought');
-    await read('document.documentElement.dataset.motionPreference="off";fixture.activity="working";fixture.toolName="terminal_exec";void 0');
-    await until(`document.querySelector('${stage} [data-tool-prop=terminal]')`);
-    assert.deepEqual(await read(`(() => {
-      const actor = document.querySelector('${stage} .assistant-stage-actor');
-      const sprite = actor.querySelector('img');
-      const [gesture, loop] = sprite.getAnimations();
-      fixture.workLoop = loop;
-      const timing = loop.effect.getTiming();
-      gesture.finish(); loop.pause(); loop.currentTime = timing.delay + timing.duration * 0.5;
-      return [gesture.effect.getTiming().iterations, timing.iterations === Infinity, actor.getAnimations().length, getComputedStyle(sprite).translate];
-    })()`), [2, true, 0, '-12.5%'], 'two opening gestures lead into a small, repeating frame change without moving the actor');
-    await read('fixture.theme("bright");void 0');
-    await until('document.querySelector(".app.theme-bright")');
-    assert.ok(await read(`document.querySelector('${stage} img').getAnimations().includes(fixture.workLoop)`), 'a theme change does not restart the gesture');
-    await read('fixture.toolName="edit_file";fixture.expression={mood:"happy",replyId:"reply-1",expiresAt:Date.now()+3100};void 0');
-    await until(`document.querySelector('${stage}[data-state=working] [data-expression=happy]') && document.querySelector('${stage} [data-tool-prop=pencil]')`);
-    const propStyle = `getComputedStyle(document.querySelector('${stage} .assistant-tool-prop'))`;
-    await read('document.documentElement.dataset.windowVisible="false";void 0');
-    assert.equal(await read(`${propStyle}.animationPlayState`), 'paused', 'props pause in a hidden window');
-    await read('delete document.documentElement.dataset.windowVisible;document.documentElement.dataset.motionPreference="on";void 0');
-    assert.equal(await read(`${propStyle}.animationName`), 'none', 'the tool remains legible without motion');
-    await until(`!document.querySelector('${stage} .robot-expression') && document.querySelector('${stage}[data-state=working] [data-tool-prop=pencil]')`);
-    await read('fixture.changeSkin(true);void 0');
-    await until(`document.querySelector('${stage} .assistant-tool-prop[data-gesture=scan] [data-tool-prop=pencil] path')?.getAttribute('d')==='M1 1h3v3H1z'`);
-    assert.equal(await read(`${propStyle}.getPropertyValue('--prop-x')`), '10%', 'a replacement skin controls placement, drawing and gesture without changing the tool');
-    await read('fixture.changeSkin(false);void 0');
-    await read('delete document.documentElement.dataset.motionPreference;void 0');
-    await read('fixture.activity="waiting";void 0');
-    await stageCue('hourglass');
-    assert.equal(await read(`!!document.querySelector('${stage} .assistant-tool-prop')`), false, 'waiting does not pretend to execute a tool');
-    await read('delete fixture.activity;delete fixture.expression;delete fixture.toolName;fixture.theme("dark");void 0');
-    await stageCue('thought');
+    await require('./helpers/assistant-character.cjs')({read,until,fill,click,pause,win,directory});
     assert.equal(await read('document.querySelectorAll(".assistant-message").length'), 3);
     const dark = await read('getComputedStyle(document.querySelector(".assistant-view")).color');
     await read('fixture.theme("bright");void 0'); await until(`getComputedStyle(document.querySelector('.assistant-view')).color!==${JSON.stringify(dark)}`);
@@ -310,6 +223,8 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(directory, 'assistant-dark.png'), (await win.webContents.capturePage()).toPNG());
     await read('fixture.entries=[];fixture.busy=false;void 0');
     await until('document.querySelectorAll(".assistant-message").length===0');
+    await until('document.querySelector(".assistant-welcome .assistant-sprite img")?.naturalWidth>0');
+    assert.notEqual(await read('document.querySelector(".assistant-welcome .assistant-sprite img").src'), await read('fixture.legacyAvatar'), 'the welcome screen also ignores saved static avatars');
     await fill('.assistant-composer-dock textarea', '清空后继续'); await click('.assistant-composer-dock .send-button[aria-label="发送"]');
     await until('document.querySelectorAll(".assistant-message-user").length===1');
     await click('.assistant-composer-dock .model-select'); assert.equal(await read('fixture.configure'), true);

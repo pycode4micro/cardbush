@@ -85,3 +85,43 @@ test('desktop and chat edits share a durable revision and migrate legacy content
     try { assert.equal(reopened.snapshot().items[0].home,true); } finally { reopened.close(); }
   } finally { agent.close(); editor.close(); rmSync(profile,{recursive:true,force:true}); }
 });
+
+test('declared component websites load without another grant and legacy defaults remain scoped', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'cardbush-home-website-'));
+  const db = library.openLibrary(profile);
+  const site = 'https://media.example.org', url = site+'/directory?q=live#now';
+  const source = {id:'site',title:'Media',html:'<p>Preview</p>',embedDomains:[site]};
+  try {
+    const state = db.publish({...source,homeWebsiteUrl:url,approvedEmbedOrigins:[site]},true);
+    const card = state.items[0];
+    assert.equal(card.homeWebsiteUrl,undefined);
+    assert.deepEqual(c.approvedEmbedOrigins(card),[site]);
+    assert.deepEqual(card.approvedEmbedOrigins,[site]);
+    for (const target of ['blob:'+url,'https://another.example.org/', 'https://user@media.example.org/']) {
+      assert.throws(()=>db.save([{...card,approvedEmbedOrigins:[site],homeWebsiteUrl:target}],state.revision),/INVALID_COMPONENT_WEBSITE/);
+    }
+    db.save([{...card,approvedEmbedOrigins:[site],homeWebsiteUrl:url}],state.revision);
+    assert.equal(db.publish({...source,title:'Renamed',homeWebsiteUrl:null}).items[0].homeWebsiteUrl,url);
+    assert.equal(db.publish({...source,embedDomains:[]}).items[0].homeWebsiteUrl,undefined);
+    const again = db.publish(source);
+    db.save([{...again.items[0],approvedEmbedOrigins:[site],homeWebsiteUrl:url}],again.revision);
+    const updated = db.publish({...source,html:'<p>Changed</p>'}).items[0];
+    assert.equal(updated.homeWebsiteUrl,undefined);
+    assert.deepEqual(updated.approvedEmbedOrigins,[site]);
+    assert.deepEqual(c.approvedEmbedOrigins({...updated,approvedEmbedOrigins:[]}),[site],'old approval records do not add another gate');
+    assert.deepEqual(c.approvedEmbedOrigins({...updated,embedDomains:[]}),[],'only declared sites are allowed');
+  } finally { db.close(); rmSync(profile,{recursive:true,force:true}); }
+});
+
+test('component browser geometry stays inside its component and URLs stay within declarations', async () => {
+  const {componentBrowsers}=await import('../src/features/components/componentBrowsers.ts');
+  const site='https://media.example.org', slot={id:'browser-1',url:site+'/watch',revision:0,x:-10,y:20,width:300,height:200,
+    clipX:-10,clipY:20,clipWidth:300,clipHeight:200};
+  assert.deepEqual(componentBrowsers([slot],[site],250,150),[{...slot,clipX:0,clipY:20,clipWidth:250,clipHeight:130}]);
+  for(const url of ['file:///tmp/private','https://other.example.org/','https://u:p@media.example.org/'])
+    assert.deepEqual(componentBrowsers([{...slot,url}],[site],250,150),[]);
+  assert.deepEqual(componentBrowsers([slot],[],250,150),[]);
+  assert.deepEqual(componentBrowsers([{...slot,width:Infinity}],[site],250,150),[]);
+  assert.deepEqual(componentBrowsers([{...slot,clipWidth:-1}],[site],250,150),[]);
+  assert.equal(componentBrowsers([slot,slot],[site],250,150).length,1);
+});

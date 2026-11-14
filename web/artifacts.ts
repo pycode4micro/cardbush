@@ -9,9 +9,13 @@ const imageTools = new Set([
   'mcp__plugin_volcengine_images_images__image_convert',
   'mcp__plugin_volcengine_images_images__image_stitch',
 ]);
-export function generatedImagePath(source: string): string | null {
+export function generatedFilePath(source: string): string | null {
   const path = personalFilePath(source);
-  return path?.startsWith('/data/workspaces/generated/') && /\.(png|jpe?g|webp)$/i.test(path) ? path : null;
+  return path?.startsWith('/data/workspaces/generated/') ? path : null;
+}
+export function generatedImagePath(source: string): string | null {
+  const path = generatedFilePath(source);
+  return path && /\.(png|jpe?g|webp)$/i.test(path) ? path : null;
 }
 const record = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 
@@ -48,8 +52,8 @@ function scopedMessages(message: ChatMessage): ChatMessage {
 export function webTurnArtifacts(message: ChatMessage): ChatToolArtifact[] {
   const images = new Map<string, ChatToolArtifact>();
   for (const output of workSummaryOutputs([scopedMessages(message)], [], '/data/workspaces')) {
-    const path = generatedImagePath(output.path);
-    if (path && output.type === 'image') images.set(path, { id: path, path, name: output.name, type: 'image', display: 'attachment', readOnly: true });
+    const path = generatedFilePath(output.path);
+    if (path) images.set(path, { id: path, path, name: output.name, type: output.type === 'video' || output.type === 'audio' || output.type === 'image' ? output.type : 'document', display: 'attachment', readOnly: true });
   }
   return [...images.values()];
 }

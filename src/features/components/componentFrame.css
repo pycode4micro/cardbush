@@ -5,4 +5,6 @@ input,textarea,select,button{font:inherit;color:inherit}
 input,textarea,select{background:var(--cb-surface);border:1px solid var(--cb-border)}
 button{background:var(--cb-surface);border:1px solid var(--cb-border);border-radius:8px;padding:6px 12px}
 a{color:var(--cb-accent)}
+cardbush-browser{display:block;min-height:120px}
+cardbush-browser[hidden]{display:none}
 html[data-reduce-motion=true] *,html[data-reduce-motion=true] *::before,html[data-reduce-motion=true] *::after{animation-duration:.01ms!important;transition-duration:.01ms!important}

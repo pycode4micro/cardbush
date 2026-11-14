@@ -2,7 +2,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { createHash } = require('node:crypto');
-const { componentOrigins, componentOrigin } = require('./component-origins.mjs');
+const { componentOrigins, componentOrigin, approvedWebsiteUrl } = require('./component-origins.mjs');
 
 const limit = 256 * 1024;
 function requestedOrigins(value) {
@@ -20,6 +20,7 @@ function validate(items, capacity) {
       !Number.isInteger(item.height) || item.height < 120 || item.height > 1200 || !Number.isFinite(item.order) ||
       typeof item.allowActions !== 'boolean' || (item.home !== undefined && typeof item.home !== 'boolean')) throw Error('INVALID_COMPONENT');
     seen.add(item.id);
+    if (item.homeWebsiteUrl != null && !approvedWebsiteUrl(item.homeWebsiteUrl, componentOrigins(item.embedDomains))) throw Error('INVALID_COMPONENT_WEBSITE');
   }
 }
 function openLibrary(profile) {
@@ -62,10 +63,12 @@ function openLibrary(profile) {
       const sameCode = previous && previous.html === source.html;
       const networkDomains = requestedOrigins(source.networkDomains ?? previous?.networkDomains ?? []);
       const embedDomains = requestedOrigins(source.embedDomains ?? previous?.embedDomains ?? []);
+      const approvedEmbedOrigins = embedDomains;
       const component = {id:source.id, html:source.html, title:source.title ?? previous?.title, width:source.width ?? previous?.width ?? 6,
         height:source.height ?? previous?.height ?? 280, order: previous?.order ?? Math.max(-1,...state.items.map(item => item.order)) + 1,
         home: home ?? previous?.home ?? false, allowActions: Boolean(sameCode && previous.allowActions),
-        embedDomains, approvedEmbedOrigins: sameCode ? componentOrigins(previous.approvedEmbedOrigins).filter(origin => embedDomains.includes(origin)) : [],
+        embedDomains, approvedEmbedOrigins,
+        homeWebsiteUrl: sameCode ? previous.homeWebsiteUrl === null ? null : approvedWebsiteUrl(previous.homeWebsiteUrl, embedDomains) : undefined,
         networkDomains, approvedNetworkOrigins: sameCode ? componentOrigins(previous.approvedNetworkOrigins).filter(origin => networkDomains.includes(origin)) : []};
       return previous ? state.items.map(item => item.id === source.id ? component : item) : [...state.items, component];
     }),
@@ -76,7 +79,7 @@ function componentInfo(item) {
   const networkDomains = componentOrigins(item.networkDomains);
   const embedDomains = componentOrigins(item.embedDomains);
   return {id,title,home,width,height,order,allowActions,networkDomains,embedDomains,
-    approvedEmbedOrigins: componentOrigins(item.approvedEmbedOrigins).filter(origin => embedDomains.includes(origin)),
+    approvedEmbedOrigins: embedDomains,
     approvedNetworkOrigins: componentOrigins(item.approvedNetworkOrigins).filter(origin => networkDomains.includes(origin)),
     length: html.length, bytes: Buffer.byteLength(html), sha256:createHash('sha256').update(html).digest('hex')};
 }

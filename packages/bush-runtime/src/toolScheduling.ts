@@ -1,8 +1,17 @@
+import type { ToolCall } from '@cardbush/bush-protocol';
 import type { ToolHandlerContext, ToolRegistration, ToolResource } from './toolRegistry.js';
 import { resolveToolReferenceName } from './toolReferenceNames.js';
 
 export const TOOL_CONCURRENCY_LIMIT = 8;
 export const TOOL_SCRIPT_CALL_LIMIT = 32;
+
+/** Final-display signals run only after the batch's other tools have settled.
+ * Keep original ordinals so reordering execution never changes receipt identity. */
+export function toolExecutionPhases(calls: ToolCall[], nameFor: (call: ToolCall) => string = call => call.name): number[][] {
+  const work: number[] = [], summaries: number[] = [];
+  calls.forEach((call, ordinal) => (nameFor(call) === 'summary_for_user' ? summaries : work).push(ordinal));
+  return [work, summaries].filter(phase => phase.length);
+}
 
 /** A scheduling hint only. Invocation routes, schema authority and permissions
  * are still checked by the coordinator against the actual target. */

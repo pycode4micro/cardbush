@@ -2,6 +2,9 @@ import { RuntimeTaskTools } from '../dist/taskTools.js';
 import { RuntimeTurnSignals } from '../dist/turnSignals.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { InMemoryRuntimeHost, SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
 
 function fixture(run, { autoAccept = true, control } = {}) {
@@ -56,6 +59,55 @@ test('remote admission rejection is returned immediately without a running recei
   assert.match(receipt.result.errorMessage, /permission routing unsupported/);
   assert.equal(f.results.size, 0);
   assert.equal(f.tasks.get('parent-session', receipt.result.taskId).remoteAcceptedAt, undefined);
+});
+
+for (const scenario of [
+  { status: 'completed' }, { status: 'failed' }, { status: 'stopped' }, { status: 'unavailable' },
+  { status: 'completed', asynchronous: true }, { status: 'failed', asynchronous: true },
+]) test(`ordinary ${scenario.asynchronous ? 'asynchronous' : 'terminal'} ${scenario.status} receipt makes no duplicate model request`, async t => {
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), requests = [];
+  const finish = Promise.withResolvers(), replyStarted = Promise.withResolvers(), releaseReply = Promise.withResolvers();
+  const result = { status: scenario.status, finalResponse: scenario.status === 'completed' ? 'Verified probe result.' : '',
+    errorMessage: scenario.status === 'failed' ? 'credential_key_file_required' : '', usage: {} };
+  let dispatched = 0;
+  const host = new InMemoryRuntimeHost({ toolRegistry: registry, subagentTaskStore: tasks,
+    dataRoot: mkdtempSync(join(tmpdir(), 'ordinary-terminal-receipt-')),
+    remoteAgents: { list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
+      run: async (_input, _signal, onAccepted) => {
+        dispatched++;
+        if (!scenario.asynchronous) return result;
+        onAccepted(); return finish.promise;
+      } },
+    provider: { async *stream(request) {
+      const round = requests.length; requests.push(request);
+      const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+      if (round === 1) { replyStarted.resolve(); await releaseReply.promise; }
+      yield round === 0 ? { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'probe', nameDelta: 'subagent',
+        argumentsDelta: JSON.stringify({ target_agent: 'remote', prompt: 'Read-only probe' }) }
+        : { ...base, sequence: 0, kind: 'text_delta', delta: 'Receipt reported.' };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: round === 0 ? 'tool_calls' : 'stop' };
+    } } });
+  t.after(async () => { finish.resolve(result); releaseReply.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); });
+  const turn = turnId => ({ protocol: 'bush.session_turn_request.v1', requestId: `request-${turnId}`, sessionId: 'parent', turnId,
+    model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: `input-${turnId}`, message: { role: 'user', content: 'Check the probe' } }],
+    tools: registry.definitions(), permissionMode: 'task_free', metadata: {} });
+  const pending = host.runSessionTurn(turn('first'));
+  await replyStarted.promise;
+  const receipt = JSON.parse(requests[1].messages.find(message => message.toolCallId === 'probe').content);
+  assert.equal(receipt.status, scenario.asynchronous ? 'running' : scenario.status);
+  finish.resolve(result); await new Promise(resolve => setImmediate(resolve));
+  releaseReply.resolve();
+  assert.equal((await pending).payload.status, 'completed');
+  const expected = scenario.asynchronous ? 3 : 2;
+  assert.equal(requests.length, expected, 'terminal receipts do not schedule a second result response');
+  assert.equal(dispatched, 1);
+  const notices = requests.at(-1).messages.filter(message => message.name === 'subagent_result');
+  assert.equal(notices.length, scenario.asynchronous ? 1 : 0);
+  if (scenario.asynchronous) assert.match(notices[0].content, new RegExp(`status="${scenario.status}"`));
+  assert.equal((await host.runSessionTurn(turn('next'))).payload.status, 'completed');
+  assert.equal(requests.length, expected + 1, 'the next user turn must not replay a consumed completion');
+  assert.equal(requests.at(-1).messages.filter(message => message.name === 'subagent_result').length, notices.length);
+  assert.equal(dispatched, 1);
 });
 
 test('tasks inspect preserves a rejected submission without querying a nonexistent remote job', async t => {

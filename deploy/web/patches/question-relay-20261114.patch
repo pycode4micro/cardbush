@@ -1,0 +1,1296 @@
+--- /dev/null
++++ b/electron/webRemoteQuestions.mts
+@@ -0,0 +1,81 @@
++import { runtimeSolutionSelectionSchema, type RuntimeSolutionAnswer, type RuntimeSolutionSelection } from './webSolutionSelection.mjs';
++import type { AgentJob } from './agentTypes.js';
++import { remoteIdentity, type WebRemoteAgents } from './webRemoteAgents.mjs';
++import { WebError } from './webCommon.mjs';
++import { WebReadCache } from './webSessionReads.mjs';
++import { uiText } from '@cardbush/platform/i18n';
++
++type Pending = { question: RuntimeSolutionSelection; connectionId: string; job: AgentJob; remote: RuntimeSolutionSelection };
++const prefix = 'remote_solution_';
++
++/** Project only pending questions from owned remote jobs. The worker remains the
++ * authority: no duplicated wait, model request, task submission or stored answer. */
++export class WebRemoteQuestions {
++  readonly #reads = new WebReadCache();
++  readonly #answers = new Map<string, { value: string; result: Promise<RuntimeSolutionAnswer> }>();
++  constructor(readonly registry: WebRemoteAgents) {}
++  owns(selectionId: string) { return selectionId.startsWith(prefix); }
++  #key(user: string, session: string) { return JSON.stringify([user, session]); }
++  #owner(user: string, session: string) { return 'webparent_' + remoteIdentity(this.registry.secret, user, session); }
++
++  async #pending(user: string, session: string): Promise<Pending[]> {
++    const owner = this.#owner(user, session), pending: Pending[] = [];
++    // Bound SSH fan-out and never query connections the account cannot use.
++    for (const entry of await this.registry.list(user)) {
++      const connection = await this.registry.authorized(user, entry.id);
++      const client = await this.registry.clientFactory(connection);
++      try {
++        const info = await client.info();
++        if (info.id !== connection.agentId || !info.capabilities.delegation) throw new WebError(409, uiText()('web.remoteQuestionIdentityChanged'));
++        const jobs = await client.call('chat.jobs', {}) as AgentJob[];
++        const owned = jobs.filter(job => ['running', 'queued'].includes(job.status) && job.delegation?.parentSessionId === owner);
++        for (const job of owned) {
++          // Job ownership is assigned by delegation.submit, never by the browser.
++          // Avoid downloading a potentially large private transcript just to poll.
++          const questions = await client.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId: job.sessionId } }) as unknown[];
++          for (const raw of questions) {
++            const remote = runtimeSolutionSelectionSchema.parse(raw);
++            if (remote.sessionId !== job.sessionId || remote.turnId !== job.turnId) continue;
++            const identity = remoteIdentity(this.registry.secret, user, session, entry.id, job.id, remote.selectionId);
++            pending.push({ connectionId: entry.id, job, remote, question: { ...remote,
++              selectionId: prefix + identity, sessionId: session, turnId: 'remote_turn_' + identity, toolCallId: 'remote_question_' + identity } });
++          }
++        }
++        await this.registry.authorized(user, entry.id);
++      } finally { client.close(); }
++    }
++    return pending;
++  }
++
++  async list(user: string, session: string) {
++    const entries = await this.#reads.get(this.#key(user, session), 2_000, () => this.#pending(user, session));
++    // Recheck revocation even when another tab warmed the cache.
++    for (const id of new Set(entries.map(entry => entry.connectionId))) await this.registry.authorized(user, id);
++    return entries.map(entry => entry.question);
++  }
++
++  async answer(user: string, answer: RuntimeSolutionAnswer): Promise<RuntimeSolutionAnswer> {
++    const key = this.#key(user, answer.sessionId), identity = JSON.stringify([key, answer.selectionId]);
++    const value = JSON.stringify(answer), existing = this.#answers.get(identity);
++    if (existing) {
++      if (existing.value !== value) throw new WebError(409, uiText()('web.remoteQuestionAnswerInProgress'));
++      return existing.result;
++    }
++    const result = (async () => {
++      // Never trust a client-supplied child ID or a cached ownership decision.
++      const entry = (await this.#pending(user, answer.sessionId)).find(item => item.question.selectionId === answer.selectionId);
++      if (!entry || entry.question.turnId !== answer.turnId) throw new WebError(409, uiText()('web.remoteQuestionNotPending'));
++      const connection = await this.registry.authorized(user, entry.connectionId);
++      const client = await this.registry.clientFactory(connection);
++      try {
++        if ((await client.info()).id !== connection.agentId) throw new WebError(409, uiText()('web.remoteQuestionIdentityChanged'));
++        const mapped = { ...answer, selectionId: entry.remote.selectionId, sessionId: entry.remote.sessionId, turnId: entry.remote.turnId };
++        await client.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: mapped });
++        return answer;
++      } finally { client.close(); }
++    })();
++    this.#answers.set(identity, { value, result });
++    try { return await result; }
++    finally { this.#answers.delete(identity); this.#reads.invalidate(key); }
++  }
++}
+--- a/electron/webServer.mts
++++ b/electron/webServer.mts
+@@ -1,3 +1,4 @@
++import { runtimeSolutionAnswerSchema } from './webSolutionSelection.mjs';
+ import { FILE_TRANSFER_LIMIT } from '@cardbush/bush-protocol';
+ import { webFileResponse } from './webFileResponse.mjs';
+ import { uiText as transferText } from '@cardbush/platform/i18n';
+@@ -17,6 +18,7 @@
+ import { WebModelSettings, PostgresModelSettingsRepository } from './webModelSettings.mjs';
+ import { WebModelRequests, WEB_MODEL_REQUEST_MAX_BYTES } from './webModelRequests.mjs';
+ import { WebRemoteAgents, PostgresRemoteAgentRepository } from './webRemoteAgents.mjs';
++import { WebRemoteQuestions } from './webRemoteQuestions.mjs';
+ import { WebRemoteAgentBridge } from './webRemoteAgentBridge.mjs';
+ import type { SessionSnapshot } from '@cardbush/bush-protocol';
+ import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, readJson, WebError, type WebModel, type WebUser } from './webCommon.mjs';
+@@ -40,6 +42,7 @@
+   const reads = new WebReadCache();
+   const archives = new WebArtifactArchives(agents);
+   const modelRequests = new WebModelRequests();
++  const remoteQuestions = remoteAgents ? new WebRemoteQuestions(remoteAgents) : undefined;
+   const remoteBridge = remoteAgents ? new WebRemoteAgentBridge(remoteAgents, store, agents) : undefined;
+   const serial = async <T,>(key: string, work: () => Promise<T>) => {
+     const operation = (mutations.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
+@@ -317,9 +320,18 @@
+         json(response, 200, await store.update(user.id, sessionId, input)); return;
+       }
+       if (!action && method === 'DELETE') { await agent.call('sessions.delete', { sessionId }); await store.remove(user.id, sessionId); json(response, 200, { deleted: true }); return; }
++      if (action === 'solutions' && method === 'GET') {
++        const [local, remote] = await Promise.all([
++          agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } }),
++          remoteQuestions?.list(user.id, sessionId) ?? [],
++        ]);
++        json(response, 200, [...local as unknown[], ...remote]); return;
++      }
+       if (action === 'solutions' && method === 'POST') {
+-        const input = z.object({ selectionId: z.string().max(160), turnId: z.string().max(160), kind: z.enum(['option','text','cancel']), optionIndex: z.number().int().min(0).max(2).optional(), text: z.string().trim().min(1).max(8000).optional() }).strict().parse(await readJson(request, 10000));
+-        json(response, 200, await agent.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: { ...input, sessionId } })); return;
++        const input = runtimeSolutionAnswerSchema.parse({ ...await readJson(request, 100000), sessionId });
++        json(response, 200, remoteQuestions?.owns(input.selectionId)
++          ? await remoteQuestions.answer(user.id, input)
++          : await agent.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: input })); return;
+       }
+       if (action === 'messages' && method === 'POST') {
+         const input = messageSchema.parse(await readJson(request));
+--- /dev/null
++++ b/electron/webSolutionSelection.mts
+@@ -0,0 +1,64 @@
++import { z } from 'zod';
++
++export const LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND = 'runtime.list_solution_selections' as const;
++export const ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND = 'runtime.answer_solution_selection' as const;
++
++// Count Unicode characters rather than UTF-16 units; never truncate a decision.
++const briefText = (limit: number) => z.string().trim().min(1).refine(value => Array.from(value).length <= limit,
++  `Use at most ${limit} characters.`).refine(value => !/[\r\n]/u.test(value), 'Use one line of plain text.');
++const questionFields = {
++  prompt: briefText(500),
++  options: z.array(briefText(120)).max(3).refine(options => new Set(options).size === options.length,
++    'Offer distinct solutions.'),
++};
++export const solutionQuestionSchema = z.object({ id: briefText(80), ...questionFields }).strict();
++const selectionFields = {
++  // Keep the original single-question wire format for existing tools and sessions.
++  prompt: questionFields.prompt.optional(),
++  options: questionFields.options.optional(),
++  questions: z.array(solutionQuestionSchema).min(1).max(3)
++    .refine(questions => new Set(questions.map(question => question.id)).size === questions.length,
++      'Question IDs must be unique.').optional(),
++};
++const validSelection = (input: { prompt?: string; options?: string[]; questions?: unknown[] }) =>
++  input.questions !== undefined ? input.prompt === undefined && input.options === undefined
++    : input.prompt !== undefined && input.options !== undefined;
++export const solutionSelectionInputSchema = z.object(selectionFields).strict()
++  .refine(validSelection, 'Provide either questions or the single-question prompt and options, not both.');
++
++export const runtimeSolutionSelectionSchema = z.object({
++  selectionId: z.string().min(1),
++  sessionId: z.string().min(1),
++  turnId: z.string().min(1),
++  toolCallId: z.string().min(1),
++  createdAt: z.string().min(1),
++  blocking: z.boolean().optional(),
++  ...selectionFields,
++}).refine(validSelection, 'Provide either questions or the single-question prompt and options, not both.');
++const answerIdentity = z.object({
++  selectionId: z.string().min(1),
++  sessionId: z.string().min(1),
++  turnId: z.string().min(1),
++});
++export const solutionQuestionAnswerSchema = z.discriminatedUnion('kind', [
++  z.object({ questionId: briefText(80), kind: z.literal('option'), optionIndex: z.number().int().min(0).max(2) }).strict(),
++  z.object({ questionId: briefText(80), kind: z.literal('text'), text: z.string().trim().min(1).max(8000) }).strict(),
++]);
++export const runtimeSolutionAnswerSchema = z.discriminatedUnion('kind', [
++  answerIdentity.extend({ kind: z.literal('option'), optionIndex: z.number().int().min(0).max(2) }).strict(),
++  answerIdentity.extend({ kind: z.literal('text'), text: z.string().trim().min(1).max(8000) }).strict(),
++  answerIdentity.extend({ kind: z.literal('answers'), answers: z.array(solutionQuestionAnswerSchema).min(1).max(3)
++    .refine(answers => new Set(answers.map(answer => answer.questionId)).size === answers.length,
++      'Answer each question exactly once.') }).strict(),
++  answerIdentity.extend({ kind: z.literal('cancel') }).strict(),
++]);
++export type SolutionQuestion = z.infer<typeof solutionQuestionSchema>;
++export type SolutionQuestionAnswer = z.infer<typeof solutionQuestionAnswerSchema>;
++export type SolutionSelectionInput = z.infer<typeof solutionSelectionInputSchema>;
++export type RuntimeSolutionSelection = z.infer<typeof runtimeSolutionSelectionSchema>;
++export type RuntimeSolutionAnswer = z.infer<typeof runtimeSolutionAnswerSchema>;
++
++/** One normalized view for the runtime, desktop, web and native terminal. */
++export function solutionSelectionQuestions(input: SolutionSelectionInput): SolutionQuestion[] {
++  return input.questions ?? [{ id: 'solution', prompt: input.prompt!, options: input.options! }];
++}
+--- /dev/null
++++ b/scripts/test-web-remote-questions.mjs
+@@ -0,0 +1,114 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { WebRemoteQuestions } from '../dist-electron/webRemoteQuestions.mjs';
++import { remoteIdentity } from '../dist-electron/webRemoteAgents.mjs';
++import { serveWeb } from '../dist-electron/webServer.mjs';
++import { csrfToken, WebError } from '../dist-electron/webCommon.mjs';
++
++const session = 'web-' + 'a'.repeat(40), otherSession = 'web-' + 'b'.repeat(40), secret = 'questions-fixture-'.repeat(4);
++function fixture() {
++  const owner = 'webparent_' + remoteIdentity(secret, 'alice', session);
++  const job = { id: 'child-task', sessionId: 'delegated-child', turnId: 'turn-child', status: 'running', delegation: { parentSessionId: owner } };
++  const question = { selectionId: 'question-1', sessionId: job.sessionId, turnId: job.turnId, toolCallId: 'ask-1', createdAt: new Date().toISOString(), blocking: true, prompt: 'May I retry without the product image?', options: ['Retry', 'Keep blocked'] };
++  const state = { questions: [question], jobs: [job], calls: [], enabled: true, agentId: 'worker', failAnswer: false, gate: undefined };
++  const client = { info: async () => ({ id: state.agentId, capabilities: { delegation: true } }), close() {},
++    async call(operation, input) {
++      state.calls.push({ operation, input });
++      if (operation === 'chat.jobs') return state.jobs;
++      if (operation !== 'runtime.command') throw Error('Unexpected operation: ' + operation);
++      if (input.kind === 'runtime.list_solution_selections') return state.questions;
++      assert.equal(input.kind, 'runtime.answer_solution_selection');
++      if (state.gate) await state.gate;
++      if (state.failAnswer) throw Error('Transport unavailable');
++      const index = state.questions.findIndex(q => q.selectionId === input.payload.selectionId);
++      assert.notEqual(index, -1);
++      state.questions.splice(index, 1); return input.payload;
++    } };
++  const registry = { secret, async list(user) { return user === 'alice' && state.enabled ? [{ id: 'connection' }] : []; },
++    async authorized(user) { if (user !== 'alice' || !state.enabled) throw new WebError(403, 'Revoked'); return { agentId: 'worker' }; },
++    async clientFactory() { return client; } };
++  return { state, registry, relay: new WebRemoteQuestions(registry), question, job };
++}
++
++test('owned remote questions survive gateway reconstruction with stable IDs and no transcript or task replay', async () => {
++  const f = fixture(), items = await f.relay.list('alice', session);
++  assert.equal(items.length, 1); assert.equal(items[0].sessionId, session); assert.equal(items[0].prompt, f.question.prompt);
++  assert.deepEqual(items, await new WebRemoteQuestions(f.registry).list('alice', session));
++  assert.deepEqual(await f.relay.list('bob', session), []);
++  assert.deepEqual(await f.relay.list('alice', otherSession), []);
++  assert.ok(f.state.calls.every(c => ['chat.jobs', 'runtime.command'].includes(c.operation)));
++});
++
++for (const answer of [{ kind: 'option', optionIndex: 1 }, { kind: 'text', text: 'Keep this task blocked.' }, { kind: 'cancel' }]) {
++  test('forward exactly the user answer: ' + answer.kind, async () => {
++    const f = fixture(), [q] = await f.relay.list('alice', session);
++    const input = { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, ...answer };
++    await f.relay.answer('alice', input);
++    const writes = f.state.calls.filter(c => c.input.kind === 'runtime.answer_solution_selection');
++    assert.deepEqual(writes.map(c => c.input.payload), [{ ...answer, sessionId: f.question.sessionId, turnId: f.question.turnId, selectionId: f.question.selectionId }]);
++    assert.deepEqual(await f.relay.list('alice', session), []);
++    await assert.rejects(f.relay.answer('alice', input), e => e.status === 409);
++    assert.equal(f.state.calls.filter(c => c.input.kind === 'runtime.answer_solution_selection').length, 1);
++  });
++}
++
++test('multiple questions retain question IDs and the complete structured answer', async () => {
++  const f = fixture(); delete f.question.prompt; delete f.question.options;
++  f.question.questions = [{ id: 'retry', prompt: 'Retry?', options: ['Yes', 'No'] }, { id: 'account', prompt: 'Account?', options: [] }];
++  const [q] = await f.relay.list('alice', session), answers = [{ questionId: 'retry', kind: 'option', optionIndex: 1 }, { questionId: 'account', kind: 'text', text: 'Test account' }];
++  assert.deepEqual(q.questions, f.question.questions);
++  await f.relay.answer('alice', { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, kind: 'answers', answers });
++  assert.deepEqual(f.state.calls.at(-1).input.payload.answers, answers);
++});
++
++test('concurrent submits coalesce; conflicting, cross-session and revoked answers never reach the worker', async () => {
++  const f = fixture(), [q] = await f.relay.list('alice', session);
++  const input = { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, kind: 'text', text: 'No' };
++  await assert.rejects(f.relay.answer('alice', { ...input, sessionId: otherSession }), e => e.status === 409);
++  await assert.rejects(f.relay.answer('alice', { ...input, turnId: 'wrong' }), e => e.status === 409);
++  let release; f.state.gate = new Promise(r => { release = r; });
++  const first = f.relay.answer('alice', input), second = f.relay.answer('alice', input);
++  await assert.rejects(f.relay.answer('alice', { ...input, text: 'Yes' }), e => e.status === 409);
++  release(); await Promise.all([first, second]);
++  assert.equal(f.state.calls.filter(c => c.input.kind === 'runtime.answer_solution_selection').length, 1);
++  const revoked = fixture(); await revoked.relay.list('alice', session); revoked.state.enabled = false;
++  await assert.rejects(revoked.relay.list('alice', session), e => e.status === 403);
++  await assert.rejects(revoked.relay.answer('alice', input));
++  assert.ok(!revoked.state.calls.some(c => c.input.kind === 'runtime.answer_solution_selection'));
++});
++
++test('completed jobs, mismatched turn IDs and changed worker identity cannot produce actionable questions', async () => {
++  for (const change of [f => { f.job.status = 'completed'; }, f => { f.question.turnId = 'different-turn'; }]) {
++    const f = fixture(); change(f); assert.deepEqual(await f.relay.list('alice', session), []);
++  }
++  const f = fixture(); f.state.agentId = 'replacement';
++  await assert.rejects(f.relay.list('alice', session), e => e.status === 409);
++});
++
++test('failed delivery retains the question and never automatically repeats an answer', async () => {
++  const f = fixture(), [q] = await f.relay.list('alice', session); f.state.failAnswer = true;
++  await assert.rejects(f.relay.answer('alice', { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, kind: 'cancel' }));
++  assert.equal((await f.relay.list('alice', session)).length, 1);
++  assert.equal(f.state.calls.filter(c => c.input.kind === 'runtime.answer_solution_selection').length, 1);
++});
++
++test('authenticated web routes merge local questions and route remote answers without touching the parent wait', async t => {
++  const f = fixture(), token = 'alice'.padEnd(54, '_'), localCalls = [];
++  const local = { selectionId: 'local-question', sessionId: session, turnId: 'parent-turn', toolCallId: 'ask-local', createdAt: new Date().toISOString(), prompt: 'Local?', options: [] };
++  const store = { authenticate: async value => value === token ? { id: 'alice', is_active: true } : null,
++    conversation: async (user, id) => { if (user !== 'alice' || id !== session) throw new WebError(404, 'Not owned'); return { id }; } };
++  const agent = { async call(op, input) { localCalls.push({ op, input }); return input.kind === 'runtime.list_solution_selections' ? [local] : input.payload; } };
++  const server = await serveWeb({ modelSecret: secret, defaultModelId: 'm', models: [{ id: 'm' }], origin: 'http://fixture.test', host: '127.0.0.1', port: 0, staticRoot: 'dist-web' }, store, { get: async () => agent, close() {} }, undefined, f.registry);
++  t.after(() => server.close());
++  const endpoint = `http://127.0.0.1:${server.port}/api/web/v1/sessions/${session}/solutions`;
++  const headers = { Cookie: 'cardbush_web=' + token, Origin: 'http://fixture.test', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(token) };
++  assert.equal((await fetch(endpoint)).status, 401);
++  const response = await fetch(endpoint, { headers }); assert.equal(response.status, 200);
++  const questions = await response.json(); assert.equal(questions.length, 2);
++  const q = questions.find(q => q.selectionId.startsWith('remote_solution_'));
++  const body = JSON.stringify({ selectionId: q.selectionId, turnId: q.turnId, kind: 'text', text: 'No retry' });
++  assert.equal((await fetch(endpoint, { method: 'POST', headers: { ...headers, 'X-CSRF-Token': '' }, body })).status, 403);
++  assert.equal((await fetch(endpoint, { method: 'POST', headers, body })).status, 200);
++  assert.deepEqual(await (await fetch(endpoint, { headers })).json(), [local]);
++  assert.ok(localCalls.every(c => c.input.kind === 'runtime.list_solution_selections'));
++});
+--- a/src/features/interactions/solutionSelection.css
++++ b/src/features/interactions/solutionSelection.css
+@@ -1,29 +1,36 @@
+-.interaction-card.solution-selection-card {
+-  gap: 8px;
+-  overflow: auto;
+-  background: var(--surface-strong);
+-}
+-.solution-selection-card > header { gap: 8px; color: var(--text-soft); font-size: 12px; }
+-.solution-selection-card > header > span { flex: 1; }
+-.solution-selection-card .solution-selection-prompt { color: var(--text); font-weight: 650; font-size: 13px; }
+-.solution-selection-options { display: grid; gap: 3px; }
+-.solution-selection-options > button {
+-  display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 5px 8px;
+-  color: var(--text); background: transparent; border: 0; border-radius: 10px; text-align: left; font-size: 13px;
+-}
+-.solution-selection-options > button > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; }
+-.solution-selection-options > button > svg { color: var(--text-soft); }
+-.solution-selection-options > button:hover:not(:disabled),
+-.solution-selection-options > button:focus-visible { background: color-mix(in srgb, var(--text) 7%, transparent); }
+-.solution-selection-number { display: grid; place-items: center; flex: 0 0 24px; height: 24px;
+-  border-radius: 50%; color: var(--text-soft); background: color-mix(in srgb, var(--text) 6%, transparent); font-size: 12px; }
+-.solution-selection-custom { display: flex; align-items: end; gap: 8px; padding: 5px 2px 0; }
+-.solution-selection-custom textarea { flex: 1; min-width: 0; min-height: 30px; max-height: 100px; field-sizing: content;
+-  padding: 6px; resize: none; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
+-.solution-selection-custom textarea::placeholder { color: var(--text-soft); }
+-.solution-selection-custom > button { display: grid; place-items: center; flex: 0 0 28px; height: 28px;
+-  color: var(--surface-strong); background: var(--text); border-radius: 50%; }
+-.solution-selection-card button:disabled { opacity: .5; cursor: default; }
+-.solution-selection-card :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+-.solution-selection-card .solution-selection-error { color: var(--danger); }
+-.permission-request-card .permission-request-error { color: var(--danger); }
++.interaction-card.solution-selection-card {
++  gap: 8px;
++  overflow: auto;
++  background: var(--surface-strong);
++}
++.solution-selection-card > header { gap: 8px; color: var(--text-soft); font-size: 12px; }
++.solution-selection-card > header > span { flex: 1; }
++.solution-selection-card .solution-selection-prompt { color: var(--text); font-weight: 650; font-size: 13px; }
++.solution-selection-options { display: grid; gap: 3px; }
++.solution-selection-options > button {
++  display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 5px 8px;
++  color: var(--text); background: transparent; border: 0; border-radius: 10px; text-align: left; font-size: 13px;
++}
++.solution-selection-options > button > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; }
++.solution-selection-options > button > svg { color: var(--text-soft); }
++.solution-selection-options > button:hover:not(:disabled),
++.solution-selection-options > button[aria-pressed="true"],
++.solution-selection-options > button:focus-visible { background: color-mix(in srgb, var(--text) 7%, transparent); }
++.solution-selection-number { display: grid; place-items: center; flex: 0 0 24px; height: 24px;
++  border-radius: 50%; color: var(--text-soft); background: color-mix(in srgb, var(--text) 6%, transparent); font-size: 12px; }
++.solution-selection-custom { display: flex; align-items: end; gap: 8px; padding: 5px 2px 0; }
++.solution-selection-custom textarea { flex: 1; min-width: 0; min-height: 30px; max-height: 100px; field-sizing: content;
++  padding: 6px; resize: none; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
++.solution-selection-custom textarea::placeholder { color: var(--text-soft); }
++.solution-selection-custom > button { display: grid; place-items: center; flex: 0 0 28px; height: 28px;
++  color: var(--surface-strong); background: var(--text); border-radius: 50%; }
++.solution-selection-card button:disabled { opacity: .5; cursor: default; }
++.solution-selection-card :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
++.solution-selection-card .solution-selection-error { color: var(--danger); }
++.solution-selection-steps { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
++.solution-selection-steps > span { min-width: 36px; text-align: center; font-variant-numeric: tabular-nums; }
++.solution-selection-steps > button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; color: var(--text-soft); background: transparent; }
++.solution-selection-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
++.solution-selection-actions > span { color: var(--text-soft); font-size: 12px; }
++.solution-selection-actions > button { display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 16px; background: var(--text); color: var(--surface-strong); font-size: 12px; }
++.permission-request-card .permission-request-error { color: var(--danger); }
+--- a/src/features/interactions/SolutionSelectionCard.tsx
++++ b/src/features/interactions/SolutionSelectionCard.tsx
+@@ -1,49 +1,88 @@
+-import { useId, useRef, useState } from 'react';
+-import { ArrowRight, ArrowUp, Lightbulb, LoaderCircle, X } from 'lucide-react';
+-import type { AppLanguage, InteractionReplyAnswer, PendingInteraction } from '../../types';
+-import './solutionSelection.css';
+-
+-// Preserve an unfinished alternative when its conversation is temporarily hidden.
+-const drafts = new Map<string, string>();
+-export function SolutionSelectionCard({ language, interaction, onReply, onCancel }: {
+-  language: AppLanguage; interaction: PendingInteraction;
+-  onReply: (answers: InteractionReplyAnswer[]) => Promise<void>; onCancel: () => Promise<void>;
+-}) {
+-  const zh = language === 'zh';
+-  const question = interaction.questions?.[0];
+-  const promptId = useId();
+-  const key = JSON.stringify([interaction.sessionId, interaction.id]);
+-  const [draft, setDraft] = useState(() => drafts.get(key) ?? '');
+-  const [busy, setBusy] = useState(false);
+-  const [error, setError] = useState('');
+-  const submitting = useRef(false);
+-  const submit = async (answer?: InteractionReplyAnswer) => {
+-    if (submitting.current) return;
+-    submitting.current = true; setBusy(true); setError('');
+-    try {
+-      if (answer) await onReply([answer]); else await onCancel();
+-      drafts.delete(key);
+-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+-    finally { submitting.current = false; setBusy(false); }
+-  };
+-  return <section className="interaction-dialog interaction-card solution-selection-card" data-no-floating-input="true"
+-    role="group" aria-labelledby={promptId} aria-busy={busy}>
+-    <header><Lightbulb size={15} aria-hidden="true"/><span>Solution Selection</span>
+-      <button type="button" aria-label={zh ? '取消方案选择' : 'Dismiss solution selection'} title={zh ? '取消方案选择' : 'Dismiss solution selection'} disabled={busy} onClick={() => void submit()}><X size={15}/></button>
+-    </header>
+-    <p className="solution-selection-prompt" id={promptId}>{question?.question}</p>
+-    <div className="solution-selection-options">
+-      {question?.options.slice(0, 3).map((option, index) => <button key={option.id} type="button" disabled={busy}
+-        onClick={() => void submit({ questionId: question.id, selectedOptionId: option.id })}>
+-        <span className="solution-selection-number" aria-hidden="true">{index + 1}</span><span>{option.label}</span><ArrowRight size={15} aria-hidden="true"/>
+-      </button>)}
+-    </div>
+-    <form className="solution-selection-custom" onSubmit={event => { event.preventDefault(); if (draft.trim() && question) void submit({ questionId: question.id, text: draft.trim() }); }}>
+-      <textarea rows={1} maxLength={8000} value={draft} disabled={busy} aria-label={zh ? '填写其他方案' : 'Write another solution'} placeholder={zh ? '或填写其他方案…' : 'Or write another solution…'}
+-        onChange={event => { const value = event.target.value; setDraft(value); drafts.set(key, value); if (drafts.size > 50) drafts.delete(drafts.keys().next().value!); }}
+-        onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (draft.trim() && question) void submit({ questionId: question.id, text: draft.trim() }); } }}/>
+-      <button type="submit" disabled={busy || !draft.trim()} aria-label={zh ? '提交方案' : 'Submit solution'}>{busy ? <LoaderCircle size={16} className="spin"/> : <ArrowUp size={16}/>}</button>
+-    </form>
+-    {error && <p className="solution-selection-error" role="alert">{error}</p>}
+-  </section>;
+-}
++import { uiText } from '@cardbush/platform/i18n';
++import { useId, useRef, useState } from 'react';
++import { ArrowRight, ArrowUp, ChevronLeft, ChevronRight, Lightbulb, LoaderCircle, X } from 'lucide-react';
++import type { InteractionReplyAnswer, PendingInteraction } from '../../types';
++import './solutionSelection.css';
++
++// Preserve every answer and the current step when the conversation is hidden.
++type Draft = { index: number; answers: InteractionReplyAnswer[] };
++const drafts = new Map<string, Draft>();
++export function SolutionSelectionCard({ language, interaction, onReply, onCancel }: {
++  language: string; interaction: PendingInteraction;
++  onReply: (answers: InteractionReplyAnswer[]) => Promise<void>; onCancel: () => Promise<void>;
++}) {
++
++  const questions = interaction.questions ?? [];
++  const multi = questions.length > 1;
++  const promptId = useId();
++  const key = JSON.stringify([interaction.sessionId, interaction.id]);
++  const [draft, setDraft] = useState<Draft>(() => drafts.get(key) ?? { index: 0, answers: [] });
++  const question = questions[draft.index];
++  const answer = draft.answers.find(answer => answer.questionId === question?.id);
++  const text = answer?.text ?? '';
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState('');
++  const submitting = useRef(false);
++  const save = (next: Draft) => {
++    setDraft(next); drafts.set(key, next);
++    if (drafts.size > 50) drafts.delete(drafts.keys().next().value!);
++    setError('');
++  };
++  const choose = (answer: InteractionReplyAnswer) => {
++    save({ ...draft, answers: [...draft.answers.filter(item => item.questionId !== answer.questionId), answer] });
++  };
++  const answered = (id: string) => {
++    const value = draft.answers.find(answer => answer.questionId === id);
++    return Boolean(value?.text?.trim() || questions.find(question => question.id === id)?.options.some(option => option.id === value?.selectedOptionId));
++  };
++  const complete = questions.length > 0 && questions.every(question => answered(question.id));
++  const last = draft.index === questions.length - 1;
++  const submit = async (answers?: InteractionReplyAnswer[]) => {
++    if (submitting.current) return;
++    submitting.current = true; setBusy(true); setError('');
++    try {
++      if (answers) await onReply(answers); else await onCancel();
++      drafts.delete(key);
++    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
++    finally { submitting.current = false; setBusy(false); }
++  };
++  const advance = () => {
++    if (!question || !answered(question.id) || submitting.current) return;
++    if (!last) save({ ...draft, index: draft.index + 1 });
++    else if (complete) void submit(questions.map(question => draft.answers.find(answer => answer.questionId === question.id)!));
++  };
++  return <section className="interaction-dialog interaction-card solution-selection-card" data-no-floating-input="true"
++    role="group" aria-labelledby={promptId} aria-busy={busy}>
++    <header><Lightbulb size={15} aria-hidden="true"/><span>{uiText(language)('solutionSelectionCard.solution_selection')}</span>
++      {multi && <nav className="solution-selection-steps" aria-label={uiText(language)('solutionSelectionCard.questionNavigation')}>
++        <button type="button" disabled={busy || draft.index === 0} aria-label={uiText(language)('solutionSelectionCard.previousQuestion')}
++          onClick={() => save({ ...draft, index: draft.index - 1 })}><ChevronLeft size={15}/></button>
++        <span aria-live="polite">{draft.index + 1} / {questions.length}</span>
++        <button type="button" disabled={busy || last} aria-label={uiText(language)('solutionSelectionCard.nextQuestion')}
++          onClick={() => save({ ...draft, index: draft.index + 1 })}><ChevronRight size={15}/></button>
++      </nav>}
++      <button type="button" aria-label={uiText(language)('solutionSelectionCard.dismissSolutionSelection')} title={uiText(language)('solutionSelectionCard.dismissSolutionSelection')} disabled={busy} onClick={() => void submit()}><X size={15}/></button>
++    </header>
++    <p className="solution-selection-prompt" id={promptId}>{question?.question}</p>
++    <div className="solution-selection-options">
++      {question?.options.slice(0, 3).map((option, index) => <button key={option.id} type="button" disabled={busy}
++        aria-pressed={multi ? answer?.selectedOptionId === option.id : undefined}
++        onClick={() => { const value = { questionId: question.id, selectedOptionId: option.id }; if (multi) choose(value); else void submit([value]); }}>
++        <span className="solution-selection-number" aria-hidden="true">{index + 1}</span><span>{option.label}</span><ArrowRight size={15} aria-hidden="true"/>
++      </button>)}
++    </div>
++    <form className="solution-selection-custom" onSubmit={event => { event.preventDefault(); advance(); }}>
++      <textarea rows={1} maxLength={8000} value={text} disabled={busy} aria-label={uiText(language)('solutionSelectionCard.writeAnotherSolution')} placeholder={uiText(language)('solutionSelectionCard.orWriteAnotherSolution')}
++        onChange={event => { if (question) choose({ questionId: question.id, text: event.target.value }); }}
++        onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); advance(); } }}/>
++      {!multi && <button type="submit" disabled={busy || !text.trim()} aria-label={uiText(language)('solutionSelectionCard.submitSolution')}>{busy ? <LoaderCircle size={16} className="spin"/> : <ArrowUp size={16}/>}</button>}
++    </form>
++    {multi && <footer className="solution-selection-actions">
++      <span>{uiText(language)('solutionSelectionCard.answered', { value1: questions.filter(question => answered(question.id)).length, value2: questions.length })}</span>
++      <button type="button" disabled={busy || !question || !answered(question.id) || (last && !complete)} onClick={advance}>
++        {busy && <LoaderCircle size={14} className="spin"/>}{last ? (uiText(language)('solutionSelectionCard.submitAll')) : (uiText(language)('solutionSelectionCard.next'))}
++      </button>
++    </footer>}
++    {error && <p className="solution-selection-error" role="alert">{error}</p>}
++  </section>;
++}
+--- a/src/i18n/locales/en.json
++++ b/src/i18n/locales/en.json
+@@ -4477,6 +4477,10 @@
+     "web.sessionHistoryTooLarge": "This conversation entry is too large to preview. Original messages and results have been preserved.",
+     "web.transferMessageLimit": "Each message supports up to 4 images and 2 GB of attachments.",
+     "web.mediaFileTooLarge": "Media exceeds 2 GB. Split the file before uploading.",
+-    "web.transferUploadError": "Upload is incomplete or unsupported. Images and documents: 16 MB; video and audio: 2 GB."
++    "web.transferUploadError": "Upload is incomplete or unsupported. Images and documents: 16 MB; video and audio: 2 GB.",
++    "web.remoteQuestionsUnavailable": "Pending questions are temporarily unavailable. Reconnecting; existing tasks are preserved. Do not submit the task again.",
++    "web.remoteQuestionNotPending": "This question has already been answered or closed. Refresh the conversation for its current state.",
++    "web.remoteQuestionAnswerInProgress": "An answer to this question is being submitted. Please wait.",
++    "web.remoteQuestionIdentityChanged": "The remote Agent identity has changed. Ask an administrator to check the connection."
+   }
+ }
+--- a/src/i18n/locales/zh.json
++++ b/src/i18n/locales/zh.json
+@@ -4434,6 +4434,10 @@
+     "web.sessionHistoryTooLarge": "这条会话记录过大，暂时无法预览，原始内容和生成结果均已保留。",
+     "web.transferMessageLimit": "每条消息最多 4 张图片，附件总计不超过 2 GB。",
+     "web.mediaFileTooLarge": "媒体文件超过 2 GB，请分段上传。",
+-    "web.transferUploadError": "上传未完成或格式不受支持。图片和文档限 16 MB，视频和音频限 2 GB。"
++    "web.transferUploadError": "上传未完成或格式不受支持。图片和文档限 16 MB，视频和音频限 2 GB。",
++    "web.remoteQuestionsUnavailable": "暂时无法获取待答问题，正在重连。已有任务会保留，请勿重复提交。",
++    "web.remoteQuestionNotPending": "这个问题已被回答或已结束，请刷新会话查看最新状态。",
++    "web.remoteQuestionAnswerInProgress": "正在提交这个问题的回答，请稍候。",
++    "web.remoteQuestionIdentityChanged": "远程 Agent 身份已改变，请联系管理员核对连接。"
+   }
+ }
+--- a/web/AgentWidgets.tsx
++++ b/web/AgentWidgets.tsx
+@@ -1,3 +1,4 @@
++import { solutionSelectionQuestions, type RuntimeSolutionSelection } from '../electron/webSolutionSelection.mjs';
+ import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
+ import { useCallback, useEffect, useRef, useState } from 'react';
+ import { FileText, Paperclip, X } from 'lucide-react';
+@@ -62,10 +63,20 @@
+   const input = useRef<HTMLInputElement>(null);
+   return <><input ref={input} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.txt,.md,.csv,.tsv,.json,.log,.pdf,.docx,.xlsx,.pptx,.mp4,.m4v,.mov,.webm,.mp3,.wav,.ogg,.m4a" onChange={event => { void upload.add(Array.from(event.target.files ?? [])); event.target.value = ''; }}/><button className="icon-button" type="button" aria-label={uiText(language)("web.uploadImagesOrFiles")} title={uiText(language)("web.largeImagesAreOptimizedAutomaticallyDocumentsMustBeUnder16MbVideo")} disabled={upload.busy} onClick={() => input.current?.click()}><Paperclip size={18}/></button></>;
+ }
+-export type Solution = { selectionId: string; sessionId: string; turnId: string; prompt: string; options: string[] };
++export type Solution = RuntimeSolutionSelection;
+ export function Solutions({ items, refresh }: { items: Solution[]; refresh: () => Promise<void> }) {
+-  return <>{items.map(item => <SolutionSelectionCard key={item.selectionId} language="zh" interaction={{ id: item.selectionId, sessionId: item.sessionId, turnId: item.turnId, raw: item, questions: [{ id: item.selectionId, label: item.prompt, question: item.prompt, options: item.options.map((label,index) => ({ id: String(index), label })) }] }} onReply={async answers => { const answer = answers[0]; await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, ...(answer.selectedOptionId !== undefined ? { kind: 'option', optionIndex: Number(answer.selectedOptionId) } : { kind: 'text', text: answer.text }) }); await refresh(); }} onCancel={async () => { await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh(); }}/>)}</>;
++  const language = resolveUiLanguage(document.documentElement.lang);
++  return <>{items.map(item => <SolutionSelectionCard key={item.selectionId} language={language}
++    interaction={{ id: item.selectionId, sessionId: item.sessionId, turnId: item.turnId, raw: item,
++      questions: solutionSelectionQuestions(item).map(q => ({ id: q.id, label: q.prompt, question: q.prompt, options: q.options.map((label,index) => ({ id: String(index), label })) })) }}
++    onReply={async answers => {
++      const value = item.questions ? { kind: 'answers', answers: answers.map(a => ({ questionId: a.questionId,
++        ...(a.selectedOptionId !== undefined ? { kind: 'option', optionIndex: Number(a.selectedOptionId) } : { kind: 'text', text: a.text }) })) }
++        : answers[0].selectedOptionId !== undefined ? { kind: 'option', optionIndex: Number(answers[0].selectedOptionId) } : { kind: 'text', text: answers[0].text };
++      await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, ...value }); await refresh();
++    }} onCancel={async () => { await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh(); }}/>)}</>;
+ }
++
+ type Plugin = { installed: boolean; enabled: boolean; grants: string[] };
+ export function PluginAdmin({ users }: { users: User[] }) {
+   const [plugin, setPlugin] = useState<Plugin | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+--- a/web/main.tsx
++++ b/web/main.tsx
+@@ -1,332 +1,335 @@
+-import { uiText } from '@cardbush/platform/i18n';
+-import { isSessionServiceFailure, recoverSessionSubmission, sessionServiceError } from './sessionService';
+-import { SessionConnectionStatus } from './templates/SessionConnectionStatus.template';
+-import { createFrameStreamBuffers, type FrameStreamCheckpoint } from '../src/features/chatMessages/transcript/frameStreamBuffer';
+-import { AttachmentDrafts, Solutions, UploadButton, useAttachments, type Attachment } from './AgentWidgets';
+-import { NativeTranscript } from './NativeTranscript';
+-import { applyTranscriptEvent, writeLiveSegment, type LiveTranscript } from './transcript';
+-import { observeConversationReflow } from '../src/features/chat/conversationReflow';
+-import { ScrollBottomButton } from '../src/features/chat/ScrollBottomButton';
+-import { useScrollBottomPresence } from '../src/hooks/useScrollBottomPresence';
+-import { activateBrowserCache, type AccountCache } from './browserCache';
+-import { BrowserCacheContext, useAccountCache } from './BrowserCacheProvider';
+-import { OrganizationAdmin as Admin } from './OrganizationAdmin';
+-import { useConversationList } from './useConversationList';
+-import { mergeConversationPage } from './conversationPages';
+-import React, { useCallback, useEffect, useRef, useState } from 'react';
+-import { createRoot } from 'react-dom/client';
+-import { ArrowUp, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PenLine, Plus, Search, ShieldCheck, Sparkles, Square, X } from 'lucide-react';
+-import { api, ApiError, requestId, setIdentity, watch, type Conversation, type Frame, type Identity, type State, type Department, type Job } from './api';
+-import './styles.css';
+-import './nativeTranscript.css';
+-
+-const errorText = (error: unknown) => error instanceof Error ? sessionServiceError(error) : '暂时无法完成操作。';
+-const isWorking = (status: string) => status === 'queued' || status === 'running';
+-const accountChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('cardbush-web-identity');
+-function Brand({ small = false }: { small?: boolean }) { return <div className={`brand ${small ? 'small' : ''}`}><span className="brand-symbol">兆</span><span>招财<span className="brand-subtitle">兆君服饰</span></span></div>; }
+-
+-function App() {
+-  const [identity, updateIdentity] = useState<Identity | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState('');
+-  const revision = useRef(0);
+-  const cache = useRef<AccountCache | null>(null);
+-  const apply = useCallback((next: Identity | null) => { revision.current++; cache.current = activateBrowserCache(next?.user.id ?? null); setIdentity(next); updateIdentity(next); setLoading(false); }, []);
+-  useEffect(() => {
+-    let alive = true;
+-    const refresh = () => { const started = revision.current; void api<Identity>('/auth/me').then(next => { if (alive && revision.current === started) { apply(next); setError(''); } }).catch(failure => { if (alive && revision.current === started) { if (failure instanceof ApiError && failure.status === 401) apply(null); else { setLoading(false); setError('连接暂时中断，请稍后重试。'); } } }); };
+-    const logout = () => apply(null);
+-    const accountChanged = () => { revision.current++; cache.current?.close(); cache.current = null; setIdentity(null); updateIdentity(null); setLoading(true); refresh(); };
+-    refresh(); window.addEventListener('cardbush:logged-out', logout); window.addEventListener('focus', refresh); window.addEventListener('cardbush:models-changed', refresh);
+-    if (accountChannel) accountChannel.onmessage = accountChanged;
+-    const storage = (event: StorageEvent) => { if (event.key === 'cardbush-cache-identity-v1' && cache.current && !cache.current.valid()) accountChanged(); };
+-    window.addEventListener('storage', storage);
+-    return () => { alive = false; window.removeEventListener('storage', storage); window.removeEventListener('cardbush:logged-out', logout); window.removeEventListener('focus', refresh); window.removeEventListener('cardbush:models-changed', refresh); if (accountChannel) accountChannel.onmessage = null; };
+-  }, [apply]);
+-  const logout = async () => { try { await api('/auth/logout', 'POST', {}); apply(null); accountChannel?.postMessage('changed'); } catch (failure) { setError(errorText(failure)); } };
+-  if (loading) return <div className="splash"><Brand/><span className="loading-dot"/>正在打开对话空间</div>;
+-  return identity ? <BrowserCacheContext.Provider value={cache.current}><Workspace key={identity.user.id} identity={identity} logout={logout} externalError={error}/></BrowserCacheContext.Provider>
+-    : <Auth onLogin={next => { apply(next); accountChannel?.postMessage('changed'); }}/>;
+-}
+-
+-function Auth({ onLogin }: { onLogin: (identity: Identity) => void }) {
+-  const [register, setRegister] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+-  const [departments, setDepartments] = useState<Department[]>([]), [company,setCompany] = useState(''), [department,setDepartment] = useState('');
+-  useEffect(() => { void api<typeof departments>('/auth/departments').then(setDepartments).catch(() => {}); }, []);
+-  async function submit(event: React.FormEvent<HTMLFormElement>) {
+-    event.preventDefault(); const values = new FormData(event.currentTarget); setBusy(true); setError(''); setNotice('');
+-    try {
+-      const credentials = { username: String(values.get('username')), password: String(values.get('password')) };
+-      if (register) {
+-        const result = await api<{ message: string }>('/auth/register', 'POST', { ...credentials, display_name: String(values.get('display_name')), department_id: values.get('department_id') || null });
+-        setNotice(result.message); setRegister(false);
+-      } else onLogin(await api<Identity>('/auth/login', 'POST', credentials));
+-    } catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
+-  }
+-  return <main className="auth-page"><section className="auth-story"><Brand/><div className="auth-intro"><span className="eyebrow">让思考，自然发生</span><h1>每个想法，<br/>都值得聊一聊。</h1><p>从一句话开始，整理思路、打磨表达，<br/>在持续的对话中找到更好的答案。</p></div><div className="auth-orbit" aria-hidden="true"><span>想法</span><span>灵感</span><span>答案</span></div><footer>兆君 · Powered by CardBush</footer></section>
+-    <section className="auth-form-area"><form onSubmit={submit}><span className="eyebrow">你的专属对话空间</span><h2>{register ? '创建账号' : '欢迎回来'}</h2><p className="muted">{register ? '注册后，请等待管理员启用账号。' : '登录后，继续属于你的对话。'}</p>
+-      <label>用户名<input name="username" autoComplete="username" required minLength={register ? 3 : 1} maxLength={80} pattern={register ? '[A-Za-z0-9_.-]+' : undefined} placeholder="输入用户名"/></label>
+-      {register && <label>姓名<input name="display_name" autoComplete="name" required maxLength={120} placeholder="如何称呼你"/></label>}
+-      <label>密码<input name="password" type="password" autoComplete={register ? 'new-password' : 'current-password'} minLength={register ? 8 : 1} maxLength={128} required placeholder={register ? '至少 8 位字符' : '输入密码'}/></label>
+-      {register && departments.length > 0 && <><label>公司<select aria-label="注册公司" value={company} onChange={event=>{setCompany(event.target.value);setDepartment('');}}><option value="">暂不选择</option>{[...new Map(departments.map(item=>[item.company_id,item.company_name])).entries()].map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label><label>部门<select name="department_id" aria-label="注册部门" disabled={!company} required={Boolean(company)} value={department} onChange={event=>setDepartment(event.target.value)}><option value="">{company?'请选择部门':'先选择公司'}</option>{departments.filter(item=>item.company_id===company).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}
+-      {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-notice" role="status">{notice}</p>}
+-      <button className="primary auth-submit" disabled={busy}>{busy ? '请稍候…' : register ? '注册账号' : '登录'}<span>→</span></button>
+-      <p className="auth-switch">{register ? '已有账号？' : '还没有账号？'}<button type="button" onClick={() => { setRegister(!register); setError(''); setNotice(''); }}>{register ? '立即登录' : '创建账号'}</button></p>
+-    </form></section></main>;
+-}
+-
+-function Workspace({ identity, logout, externalError }: { identity: Identity; logout: () => Promise<void>; externalError: string }) {
+-  const cache = useAccountCache();
+-  const [selected, setSelected] = useState<string | null>(null), [state, setState] = useState<State | null>(null);
+-  const [draft, setDraft] = useState(''), [model, setModel] = useState(identity.defaultModelId), [query, setQuery] = useState(''), [error, setError] = useState(externalError);
+-  useEffect(() => { setModel(previous => identity.models.some(item => item.id === previous) ? previous : identity.defaultModelId); }, [identity.models, identity.defaultModelId]);
+-  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(false), [sidebar, setSidebar] = useState(true), [admin, setAdmin] = useState(false), [archive, setArchive] = useState(false);
+-  const list = useConversationList(archive, query, setError), conversations = list.items, setConversations = list.setItems, refreshList = list.refresh;
+-  const [olderLoading, setOlderLoading] = useState(false);
+-  const stateRef = useRef(state); stateRef.current = state;
+-  const controllers = useRef(new Map<string, AbortController>()), olderRequest = useRef<AbortController | null>(null);
+-  const [menu, setMenu] = useState<string | null>(null), [edit, setEdit] = useState<{ id: string; title: string } | null>(null), [deleting, setDeleting] = useState<string | null>(null);
+-  const [live, setLive] = useState<LiveTranscript>({}), [reconnecting, setReconnecting] = useState(false);
+-  const [connectionError, setConnectionError] = useState('');
+-  const [submitting, setSubmitting] = useState<{ sessionId: string; id: string; text: string; attachments: Attachment[] } | null>(null);
+-  const selectedRef = useRef(selected), mounted = useRef(true), editor = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), atBottom = useRef(true);
+-  const [scrollBottomRequested, setScrollBottomRequested] = useState(false);
+-  const scrollBottomVisible = useScrollBottomPresence({ scrollerRef: transcript, requestedVisible: scrollBottomRequested,
+-    scope: selected ?? '', enabled: Boolean(selected) && !admin && !loading });
+-  const updateScrollPosition = useCallback(() => {
+-    const element = transcript.current;
+-    if (!element) return;
+-    atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+-    setScrollBottomRequested(!atBottom.current);
+-  }, []);
+-  const upload = useAttachments();
+-  const [compacting, setCompacting] = useState(false);
+-  const pending = useRef<{ text: string; modelId: string; requestId: string; attachments: string[]; sessionId: string | null } | null>(null);
+-  const sending = useRef(false), creationRequest = useRef<string | null>(null);
+-  type StreamView = { live: LiveTranscript; checkpoint?: FrameStreamCheckpoint; cursors: Map<string, number>; scroll?: number };
+-  const views = useRef(new Map<string, StreamView>());
+-  const viewFor = useCallback((id: string) => { let view = views.current.get(id); if (!view) { view = { live: {}, cursors: new Map() }; views.current.set(id, view); } return view; }, []);
+-  const requests = useRef(new Map<string, Promise<void>>()), versions = useRef(new Map<string, number>()), selectionRevision = useRef(0);
+-  const restoredScroll = useRef<string | null>(null);
+-  selectedRef.current = selected;
+-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; controllers.current.forEach(controller => controller.abort()); olderRequest.current?.abort(); }; }, []);
+-  const refresh = useCallback(async (id: string, force = false) => {
+-    const existing = requests.current.get(id); if (existing) { try { await existing; } catch (error) { if (!force) throw error; } if (!force) return; }
+-    const version = versions.current.get(id);
+-    const controller = new AbortController(); controllers.current.set(id, controller);
+-    const request = api<State>(`/sessions/${id}?limit=20${force ? '&fresh=1' : ''}`, 'GET', undefined, controller.signal).then(page => {
+-      if (controller.signal.aborted || !mounted.current || !cache.valid() || versions.current.get(id) !== version) return;
+-      const prior = stateRef.current?.conversation.id === id ? stateRef.current : cache.peek<State>(`state:${id}`);
+-      const next = mergeConversationPage(prior, page);
+-      cache.put(`state:${id}`, next, 'state');
+-      if (selectedRef.current === id) { setState(next); setLoading(false); setConnectionError(''); }
+-    }).catch(failure => {
+-      if (controller.signal.aborted) return;
+-      if (failure instanceof ApiError && failure.status === 404) { cache.removeSession(id); if (selectedRef.current === id) { setSelected(null); setState(null); } }
+-      throw failure;
+-    });
+-    requests.current.set(id, request);
+-    try { await request; } finally { if (requests.current.get(id) === request) requests.current.delete(id); if (controllers.current.get(id) === controller) controllers.current.delete(id); }
+-  }, [cache]);
+-  useEffect(() => {
+-    const revision = selectionRevision.current;
+-    void cache.get<string>('selection').then(last => {
+-      if (!mounted.current || !cache.valid()) return;
+-      if (last && selectionRevision.current === revision) setSelected(last);
+-    });
+-  }, [cache]);
+-  useEffect(() => {
+-    setCompacting(false); setError(''); setConnectionError(''); setReconnecting(false); atBottom.current = true; setScrollBottomRequested(false);
+-    if (!selected) { setState(null); setLive({}); setLoading(false); return; }
+-    cache.put('selection', selected, 'selection');
+-    const view = viewFor(selected), stored = cache.peek<State>(`state:${selected}`), cached = stored?.history ? stored : undefined;
+-    setState(cached ?? null); setLive(view.live); setLoading(!cached);
+-    if (view.scroll !== undefined) atBottom.current = false;
+-    // Bound retained partial streams while keeping the most recently opened conversations warm.
+-    views.current.delete(selected); views.current.set(selected, view);
+-    while (views.current.size > 8) views.current.delete(views.current.keys().next().value!);
+-    let alive = true;
+-    void cache.get<State>(`state:${selected}`).then(value => { if (alive && value?.history && cache.valid()) { setState(value); setLoading(false); } });
+-    void refresh(selected).catch(failure => { if (alive && cache.valid()) { if (isSessionServiceFailure(failure)) setConnectionError(errorText(failure)); else setError(errorText(failure)); setLoading(false); } });
+-    return () => { alive = false; controllers.current.get(selected)?.abort(); controllers.current.delete(selected); requests.current.delete(selected); olderRequest.current?.abort(); olderRequest.current = null; setOlderLoading(false); };
+-  }, [cache, selected, refresh, viewFor]);
+-  const working = state?.conversation.id === selected ? state.jobs.filter(job => isWorking(job.status)) : [];
+-  const workingIds = working.map(job => job.turnId).join('|');
+-  useEffect(() => {
+-    if (!selected || !workingIds) return;
+-    let alive = true;
+-    const statusAbort = new AbortController();
+-    let lastEventAt = Date.now();
+-    const view = viewFor(selected);
+-    const writeLive = (content: string, route: { turnId?: string; messageId?: string; segmentId?: string }, replace = false) => { const key = route.messageId || route.segmentId || 'reply'; view.live = writeLiveSegment(view.live, route.turnId!, key, content, replace); if (alive && selectedRef.current === selected) setLive(view.live); };
+-    const buffer = createFrameStreamBuffers((delta, route) => writeLive(delta, route), { checkpoint: view.checkpoint, replace: (content, route) => writeLive(content, route, true) });
+-    const stops = workingIds.split('|').map(turnId => watch(selected, turnId, (frame: Frame) => {
+-      if (!alive || selectedRef.current !== selected) return;
+-      if (frame.event) lastEventAt = Date.now();
+-      if (frame.type === 'reconnecting') { setReconnecting(true); return; }
+-      if (frame.type === 'error') { setReconnecting(true); setConnectionError(sessionServiceError(frame.error)); }
+-      else { setReconnecting(false); if (frame.type === 'ready' || frame.event) setConnectionError(''); }
+-      const event = frame.event;
+-      if (event) view.cursors.set(turnId, event.sequence);
+-      if (event && ['tool_queued','tool_running','tool_returned','tool_failed','tool_cancelled'].includes(event.kind)) {
+-        buffer.flushToolBoundary(); view.live = applyTranscriptEvent(view.live, event); setLive(view.live);
+-      }
+-      if (event?.kind.startsWith('context_compaction_')) setCompacting(['context_compaction_started','context_compaction_retrying'].includes(event.kind));
+-      if (event?.kind.startsWith('solution_selection_')) void refresh(selected).catch(() => {});
+-      if (event && event.kind.startsWith('assistant_segment_') && event.payload.segmentId) {
+-        view.live = applyTranscriptEvent(view.live, event);
+-        const route = { turnId, messageId: event.payload.messageId ?? event.payload.segmentId, segmentId: event.payload.segmentId, segmentOrdinal: event.payload.ordinal, eventId: String(event.sequence) };
+-        if (event.kind === 'assistant_segment_completed') void buffer.completeSegment(event.payload.content ?? '', route);
+-        else if (event.kind === 'assistant_segment_delta') buffer.push(event.payload.delta ?? '', route);
+-        else setLive(view.live);
+-      }
+-      if (frame.type === 'end' || frame.type === 'error') { void buffer.releaseTerminal(); void refresh(selected, true).catch(() => {}); void refreshList(true).catch(() => {}); }
+-    }, view.cursors.get(turnId)));
+-    // SSE is authoritative; a light, non-overlapping status check recovers lost terminal events.
+-    let poll: ReturnType<typeof setTimeout>;
+-    const check = async () => {
+-      try {
+-        if (!document.hidden && Date.now() - lastEventAt >= 10_000) {
+-          const params = new URLSearchParams(workingIds.split('|').map(id => ['turnId', id]));
+-          const status = await api<{ jobs: Job[] }>(`/sessions/${selected}/status?${params}`, 'GET', undefined, statusAbort.signal);
+-          const prior = stateRef.current;
+-          if (alive && selectedRef.current === selected && prior?.conversation.id === selected &&
+-            workingIds.split('|').some(id => status.jobs.find(job => job.turnId === id)?.status !== prior.jobs.find(job => job.turnId === id)?.status)) await refresh(selected, true);
+-        }
+-      } catch (failure) { if (alive && !statusAbort.signal.aborted && isSessionServiceFailure(failure)) { setReconnecting(true); setConnectionError(errorText(failure)); } }
+-      finally { if (alive) poll = setTimeout(check, 12_000 + Math.random() * 3_000); }
+-    };
+-    poll = setTimeout(check, 12_000 + Math.random() * 3_000);
+-    return () => { alive = false; statusAbort.abort(); view.checkpoint = buffer.checkpoint(); buffer.dispose(); stops.forEach(stop => stop()); clearTimeout(poll); };
+-  }, [selected, workingIds, refresh, refreshList, viewFor]);
+-  useEffect(() => {
+-    if (state?.conversation.id !== selected || !selected) return;
+-    const view = viewFor(selected);
+-    if (restoredScroll.current !== selected && view.scroll !== undefined) transcript.current?.scrollTo({ top: view.scroll, behavior: 'auto' });
+-    else if (atBottom.current) transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'auto' });
+-    restoredScroll.current = selected;
+-  }, [state, live, selected, viewFor]);
+-  useEffect(() => {
+-    const scroller = transcript.current, column = scroller?.querySelector<HTMLElement>('.message-column');
+-    if (!scroller || !column) return;
+-    const reflow = observeConversationReflow(scroller, () => ({
+-      paused: () => false, following: () => atBottom.current,
+-      beforeRestore: () => {}, followTop: () => scroller.scrollHeight, restored: () => {},
+-    }));
+-    const observer = new ResizeObserver(() => {
+-      if (atBottom.current && !scroller.dataset.cardbushPreserveScroll) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' });
+-      setScrollBottomRequested(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight >= 120);
+-    });
+-    observer.observe(column);
+-    return () => { observer.disconnect(); reflow.dispose(); };
+-  }, [selected, admin]);
+-  const jumpToBottom = () => {
+-    const element = transcript.current;
+-    if (!element) return;
+-    atBottom.current = true; setScrollBottomRequested(false);
+-    if (selected) viewFor(selected).scroll = undefined;
+-    element.focus({ preventScroll: true });
+-    element.scrollTo({ top: element.scrollHeight, behavior: 'instant' });
+-  };
+-  const choose = (id: string | null) => {
+-    selectionRevision.current++;
+-    if (selectedRef.current && transcript.current) viewFor(selectedRef.current).scroll = atBottom.current ? undefined : transcript.current.scrollTop;
+-    const cached = id ? cache.peek<State>(`state:${id}`) : undefined;
+-    selectedRef.current = id; setSelected(id); setState(cached?.history ? cached : null); setLive(id ? viewFor(id).live : {});
+-    upload.clear(); setAdmin(false); setMenu(null); setDraft(''); pending.current = null;
+-    if (id) cache.put('selection', id, 'selection'); else cache.forget('selection');
+-  };
+-  async function loadOlder() {
+-    const id = selectedRef.current, before = stateRef.current?.history?.nextCursor;
+-    if (!id || !before || olderRequest.current) return;
+-    const controller = new AbortController(); olderRequest.current = controller; setOlderLoading(true);
+-    try {
+-      const page = await api<State>(`/sessions/${id}?limit=20&before=${encodeURIComponent(before)}`, 'GET', undefined, controller.signal);
+-      if (controller.signal.aborted || !cache.valid() || selectedRef.current !== id) return;
+-      const element = transcript.current, height = element?.scrollHeight ?? 0, top = element?.scrollTop ?? 0;
+-      atBottom.current = false;
+-      const next = mergeConversationPage(stateRef.current ?? undefined, page, true);
+-      cache.put(`state:${id}`, next, 'state'); setState(next);
+-      requestAnimationFrame(() => { if (element && selectedRef.current === id) element.scrollTop = top + element.scrollHeight - height; });
+-    } catch (failure) { if (!controller.signal.aborted) setError(errorText(failure)); }
+-    finally { if (olderRequest.current === controller) { olderRequest.current = null; setOlderLoading(false); } }
+-  }
+-  const newChat = () => { choose(null); pending.current = null; creationRequest.current = null; setError(''); editor.current?.focus(); };
+-  useEffect(() => { const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') { event.preventDefault(); newChat(); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [newChat]);
+-  async function send(event?: React.FormEvent) {
+-    event?.preventDefault(); const text = draft.trim() || (upload.items.length ? '请查看这些附件。' : ''); if (!text || busy || upload.busy || sending.current) return;
+-    sending.current = true;
+-    const attachments = [...upload.items], startedSelection = selectionRevision.current;
+-    let submission = pending.current?.sessionId === selected && pending.current.text === text && pending.current.modelId === model && JSON.stringify(pending.current.attachments) === JSON.stringify(attachments.map(item => item.id)) ? pending.current : { text, modelId: model, requestId: requestId(), attachments: attachments.map(item => item.id), sessionId: selected };
+-    setBusy(true); setError(''); let id = selected;
+-    try {
+-      if (!id) {
+-        creationRequest.current ??= requestId();
+-        const conversation = await api<Conversation>('/sessions', 'POST', { requestId: creationRequest.current });
+-        creationRequest.current = null;
+-        if (!mounted.current || !cache.valid()) return;
+-        cache.allowSession(conversation.id);
+-        cache.put(`state:${conversation.id}`, { conversation, jobs: [], snapshot: null, history: { nextCursor: null } }, 'state');
+-        setConversations(previous => [conversation, ...previous]);
+-        id = conversation.id;
+-        if (selectionRevision.current === startedSelection) { selectionRevision.current++; selectedRef.current = id; setSelected(id); }
+-      }
+-      submission.sessionId = id;
+-      submission = recoverSessionSubmission(await cache.get(`outbox:${id}`), submission);
+-      if (!mounted.current || !cache.valid()) return;
+-      pending.current = submission;
+-      cache.put(`outbox:${id}`, submission, 'state'); await cache.settled();
+-      setSubmitting({ sessionId: id, id: submission.requestId, text, attachments }); atBottom.current = true;
+-      const job = await api<Job>(`/sessions/${id}/messages`, 'POST', { text: submission.text, modelId: submission.modelId, requestId: submission.requestId, attachments: submission.attachments });
+-      if (!mounted.current || !cache.valid()) return;
+-      versions.current.set(id, (versions.current.get(id) ?? 0) + 1);
+-      const prior = cache.peek<State>(`state:${id}`);
+-      if (prior) { const next = { ...prior, jobs: [...prior.jobs.filter(item => item.id !== job.id), { ...job, attachments: job.attachments ?? attachments }] }; cache.put(`state:${id}`, next, 'state'); if (selectedRef.current === id) setState(next); }
+-      cache.forget(`outbox:${id}`); setSubmitting(null);
+-      void refresh(id, true).catch(failure => { if (mounted.current && selectedRef.current === id) setError(errorText(failure)); });
+-      void refreshList(true).catch(() => {});
+-      if (!mounted.current || selectedRef.current !== id) return;
+-      pending.current = null; upload.clear(); setDraft(''); atBottom.current = true;
+-    } catch (failure) { if (mounted.current) { setSubmitting(null); setError(errorText(failure)); if (failure instanceof ApiError && failure.message === '模型未启用。') window.dispatchEvent(new Event('cardbush:models-changed')); } } finally { sending.current = false; if (mounted.current) { setBusy(false); editor.current?.focus(); } }
+-  }
+-  async function patch(id: string, value: Record<string, unknown>) {
+-    try { await api(`/sessions/${id}`, 'PATCH', value); setMenu(null); setEdit(null); await refreshList(true); } catch (failure) { setError(errorText(failure)); }
+-  }
+-  async function remove(id: string) {
+-    try { await api(`/sessions/${id}`, 'DELETE', {}); versions.current.set(id, (versions.current.get(id) ?? 0) + 1); cache.removeSession(id); views.current.delete(id); setDeleting(null); if (id === selected) newChat(); await refreshList(true); } catch (failure) { setError(errorText(failure)); }
+-  }
+-  async function stop() {
+-    if (!selected) return;
+-    try { for (const job of working) await api(`/sessions/${selected}/jobs/${job.id}/stop`, 'POST', {}); await refresh(selected, true); } catch (failure) { setError(errorText(failure)); }
+-  }
+-  const visible = conversations.filter(item => item.archived === archive && item.title.toLowerCase().includes(query.toLowerCase()));
+-  const title = conversations.find(item => item.id === selected)?.title ?? state?.conversation.title ?? '新对话';
+-  return <div className={`workspace ${sidebar ? '' : 'sidebar-closed'}`}>
+-    {sidebar && <aside className="sidebar"><div className="sidebar-brand"><Brand small/><button className="icon-button" aria-label="收起侧栏" onClick={() => setSidebar(false)}><PanelLeftClose size={18}/></button></div>
+-      <button className="new-chat" onClick={newChat}><Plus size={18}/>新对话<span>⌘ ⇧ O</span></button>
+-      <div className="search"><Search size={15}/><input aria-label="搜索对话" placeholder="搜索对话" value={query} onChange={event => setQuery(event.target.value)}/></div>
+-      <div className="list-label"><span>{archive ? '已归档' : '我的对话'}</span><button onClick={() => setArchive(!archive)}>{archive ? '返回列表' : '归档'}</button></div>
+-      <nav className="conversation-list" aria-label="对话列表">{visible.length === 0 && !list.loading && <p className="empty-list">{query ? '没有找到相关对话' : archive ? '还没有归档的对话' : '新的想法，从这里开始'}</p>}{visible.map(item => <div key={item.id} className={`conversation ${selected === item.id && !admin ? 'selected' : ''}`}>
+-        <button className="conversation-title" onClick={() => { choose(item.id); if (innerWidth < 760) setSidebar(false); }}><MessageSquare size={15}/><span>{item.pinned ? '· ' : ''}{item.title}</span></button><button aria-label={`${item.title}的更多操作`} className="icon-button more-button" onClick={() => setMenu(menu === item.id ? null : item.id)}><MoreHorizontal size={16}/></button>
+-        {menu === item.id && <div className="dropdown"><button onClick={() => { setEdit({ id: item.id, title: item.title }); setMenu(null); }}>重命名</button><button onClick={() => void patch(item.id, { pinned: !item.pinned })}>{item.pinned ? '取消置顶' : '置顶'}</button><button onClick={() => void patch(item.id, { archived: !item.archived })}>{item.archived ? '取消归档' : '归档'}</button><button className="danger" onClick={() => { setDeleting(item.id); setMenu(null); }}>删除对话</button></div>}
+-      </div>)}{(list.nextCursor || list.loading) && <button className="load-more-conversations" disabled={list.loading} onClick={() => void list.more()}>{list.loading ? '正在加载…' : '加载更多对话'}</button>}</nav>
+-      <div className="account">{identity.user.role === 'admin' && <button className={`admin-link ${admin ? 'active' : ''}`} onClick={() => { setAdmin(true); }}><ShieldCheck size={17}/>管理中心</button>}<div className="account-row"><span className="avatar">{identity.user.display_name.slice(0, 1)}</span><div><strong>{identity.user.display_name}</strong><span>{identity.user.department_name || '个人对话空间'}</span></div><button className="icon-button" aria-label="退出登录" title="退出登录" onClick={() => void logout()}><LogOut size={17}/></button></div></div>
+-    </aside>}
+-    <main className="main"><header className="topbar"><div>{!sidebar && <button className="icon-button" aria-label="展开侧栏" onClick={() => setSidebar(true)}><Menu size={20}/></button>}<span>{admin ? '管理中心' : selected ? title : '对话'}</span></div><span className="mode-badge"><span/>对话模式</span></header>
+-      {admin ? <Admin currentUserId={identity.user.id}/> : <><div className="conversation-transcript"><div className="transcript message-list" ref={transcript} tabIndex={-1} onScroll={updateScrollPosition}>
+-        {!selected && <div className="welcome"><div className="welcome-mark"><Sparkles size={26}/></div><span className="eyebrow">你好，{identity.user.display_name}</span><h1>今天，想聊些什么？</h1><p>一个问题、一点灵感，或者一个还没想清楚的想法。</p><div className="suggestions">{[{ icon: <PenLine size={19}/>, title: '打磨一段表达', text: '我有一段文字，想请你帮我整理和润色。' }, { icon: <Sparkles size={19}/>, title: '寻找新的灵感', text: '我们一起头脑风暴。请先了解我的目标，再帮我拓展思路。' }, { icon: <MessageSquare size={19}/>, title: '把问题想清楚', text: '我想和你讨论一个问题，请通过对话帮我梳理思路。' }].map(item => <button key={item.title} onClick={() => { setDraft(item.text); editor.current?.focus(); }}>{item.icon}<span>{item.title}</span><span>↗</span></button>)}</div></div>}
+-        {loading && <div className="status-line"><span className="loading-dot"/>正在打开对话…</div>}
+-        <div className="message-column">{state?.history?.nextCursor && <button className="load-older-messages" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? '正在加载…' : '加载更早的消息'}</button>}<NativeTranscript state={state} live={live} selected={selected} submitting={submitting} connectionUnavailable={reconnecting || Boolean(connectionError)} modelName={identity.models.find(item => item.id === model)?.name ?? model} onError={setError} onRetry={text => { setDraft(text); editor.current?.focus(); }}>
+-          {compacting && <div className="status-line"><span className="loading-dot"/>正在整理上下文，对话会继续…</div>}
+-          <Solutions items={state?.solutions ?? []} refresh={() => selected ? refresh(selected) : Promise.resolve()}/>
+-        </NativeTranscript></div>
+-      </div><ScrollBottomButton language="zh" visible={scrollBottomVisible} onClick={jumpToBottom}/></div><div className="composer-area">{error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setError('')}><X size={15}/></button></div>}{(loading || reconnecting || connectionError) && <SessionConnectionStatus phase={connectionError ? 'failed' : loading ? 'starting' : 'reconnecting'} message={connectionError || uiText()(loading ? 'web.sessionPreparing' : 'web.sessionReconnecting')}/> }
+-        <form className="composer" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void upload.add(Array.from(event.dataTransfer.files)); }} onSubmit={event => void send(event)}><AttachmentDrafts upload={upload}/><textarea ref={editor} onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); void upload.add(Array.from(event.clipboardData.files)); } }} aria-label="输入消息" placeholder="输入你的想法…" rows={3} value={draft} maxLength={100000} disabled={busy} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}/><div className="composer-bottom"><div><UploadButton upload={upload}/><select aria-label="选择模型" value={model} onChange={event => setModel(event.target.value)}>{identity.models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><div>{working.length > 0 && <button className="stop-button" type="button" onClick={() => void stop()}><Square size={12} fill="currentColor"/>停止</button>}<button className="send-button" aria-label="发送消息" disabled={(!draft.trim() && !upload.items.length) || busy || upload.busy}>{busy ? <span className="loading-dot"/> : <ArrowUp size={20}/>}</button></div></div></form><div className="composer-note"><span>Enter 发送 · Shift + Enter 换行</span><span>Powered by CardBush</span></div>
+-      </div></>}
+-    </main>
+-    {edit && <Modal title="重命名对话" close={() => setEdit(null)}><form onSubmit={event => { event.preventDefault(); void patch(edit.id, { title: edit.title }); }}><input aria-label="对话名称" autoFocus required maxLength={200} value={edit.title} onChange={event => setEdit({ ...edit, title: event.target.value })}/><button className="primary">保存</button></form></Modal>}
+-    {deleting && <Modal title="删除这段对话？" close={() => setDeleting(null)}><p>删除后，对话记录将无法从列表中恢复。</p><div className="modal-actions"><button onClick={() => setDeleting(null)}>取消</button><button className="primary destructive" onClick={() => void remove(deleting)}>删除对话</button></div></Modal>}
+-  </div>;
+-}
+-
+-function Modal({ title, close, children }: { title: string; close: () => void; children: React.ReactNode }) { return <div className="modal-backdrop" onClick={close}><section className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}><header><h2>{title}</h2><button className="icon-button" aria-label="关闭" onClick={close}><X size={18}/></button></header>{children}</section></div>; }
+-
+-createRoot(document.getElementById('root')!).render(<App/>);
++import { uiText } from '@cardbush/platform/i18n';
++import { isSessionServiceFailure, recoverSessionSubmission, sessionServiceError } from './sessionService';
++import { SessionConnectionStatus } from './templates/SessionConnectionStatus.template';
++import { createFrameStreamBuffers, type FrameStreamCheckpoint } from '../src/features/chatMessages/transcript/frameStreamBuffer';
++import { AttachmentDrafts, Solutions, UploadButton, useAttachments, type Attachment } from './AgentWidgets';
++import { NativeTranscript } from './NativeTranscript';
++import { applyTranscriptEvent, writeLiveSegment, type LiveTranscript } from './transcript';
++import { observeConversationReflow } from '../src/features/chat/conversationReflow';
++import { ScrollBottomButton } from '../src/features/chat/ScrollBottomButton';
++import { useScrollBottomPresence } from '../src/hooks/useScrollBottomPresence';
++import { activateBrowserCache, type AccountCache } from './browserCache';
++import { BrowserCacheContext, useAccountCache } from './BrowserCacheProvider';
++import { OrganizationAdmin as Admin } from './OrganizationAdmin';
++import { useConversationSolutions } from './useConversationSolutions';
++import { useConversationList } from './useConversationList';
++import { mergeConversationPage } from './conversationPages';
++import React, { useCallback, useEffect, useRef, useState } from 'react';
++import { createRoot } from 'react-dom/client';
++import { ArrowUp, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PenLine, Plus, Search, ShieldCheck, Sparkles, Square, X } from 'lucide-react';
++import { api, ApiError, requestId, setIdentity, watch, type Conversation, type Frame, type Identity, type State, type Department, type Job } from './api';
++import './styles.css';
++import './nativeTranscript.css';
++
++const errorText = (error: unknown) => error instanceof Error ? sessionServiceError(error) : '暂时无法完成操作。';
++const isWorking = (status: string) => status === 'queued' || status === 'running';
++const accountChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('cardbush-web-identity');
++function Brand({ small = false }: { small?: boolean }) { return <div className={`brand ${small ? 'small' : ''}`}><span className="brand-symbol">兆</span><span>招财<span className="brand-subtitle">兆君服饰</span></span></div>; }
++
++function App() {
++  const [identity, updateIdentity] = useState<Identity | null>(null), [loading, setLoading] = useState(true), [error, setError] = useState('');
++  const revision = useRef(0);
++  const cache = useRef<AccountCache | null>(null);
++  const apply = useCallback((next: Identity | null) => { revision.current++; cache.current = activateBrowserCache(next?.user.id ?? null); setIdentity(next); updateIdentity(next); setLoading(false); }, []);
++  useEffect(() => {
++    let alive = true;
++    const refresh = () => { const started = revision.current; void api<Identity>('/auth/me').then(next => { if (alive && revision.current === started) { apply(next); setError(''); } }).catch(failure => { if (alive && revision.current === started) { if (failure instanceof ApiError && failure.status === 401) apply(null); else { setLoading(false); setError('连接暂时中断，请稍后重试。'); } } }); };
++    const logout = () => apply(null);
++    const accountChanged = () => { revision.current++; cache.current?.close(); cache.current = null; setIdentity(null); updateIdentity(null); setLoading(true); refresh(); };
++    refresh(); window.addEventListener('cardbush:logged-out', logout); window.addEventListener('focus', refresh); window.addEventListener('cardbush:models-changed', refresh);
++    if (accountChannel) accountChannel.onmessage = accountChanged;
++    const storage = (event: StorageEvent) => { if (event.key === 'cardbush-cache-identity-v1' && cache.current && !cache.current.valid()) accountChanged(); };
++    window.addEventListener('storage', storage);
++    return () => { alive = false; window.removeEventListener('storage', storage); window.removeEventListener('cardbush:logged-out', logout); window.removeEventListener('focus', refresh); window.removeEventListener('cardbush:models-changed', refresh); if (accountChannel) accountChannel.onmessage = null; };
++  }, [apply]);
++  const logout = async () => { try { await api('/auth/logout', 'POST', {}); apply(null); accountChannel?.postMessage('changed'); } catch (failure) { setError(errorText(failure)); } };
++  if (loading) return <div className="splash"><Brand/><span className="loading-dot"/>正在打开对话空间</div>;
++  return identity ? <BrowserCacheContext.Provider value={cache.current}><Workspace key={identity.user.id} identity={identity} logout={logout} externalError={error}/></BrowserCacheContext.Provider>
++    : <Auth onLogin={next => { apply(next); accountChannel?.postMessage('changed'); }}/>;
++}
++
++function Auth({ onLogin }: { onLogin: (identity: Identity) => void }) {
++  const [register, setRegister] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
++  const [departments, setDepartments] = useState<Department[]>([]), [company,setCompany] = useState(''), [department,setDepartment] = useState('');
++  useEffect(() => { void api<typeof departments>('/auth/departments').then(setDepartments).catch(() => {}); }, []);
++  async function submit(event: React.FormEvent<HTMLFormElement>) {
++    event.preventDefault(); const values = new FormData(event.currentTarget); setBusy(true); setError(''); setNotice('');
++    try {
++      const credentials = { username: String(values.get('username')), password: String(values.get('password')) };
++      if (register) {
++        const result = await api<{ message: string }>('/auth/register', 'POST', { ...credentials, display_name: String(values.get('display_name')), department_id: values.get('department_id') || null });
++        setNotice(result.message); setRegister(false);
++      } else onLogin(await api<Identity>('/auth/login', 'POST', credentials));
++    } catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
++  }
++  return <main className="auth-page"><section className="auth-story"><Brand/><div className="auth-intro"><span className="eyebrow">让思考，自然发生</span><h1>每个想法，<br/>都值得聊一聊。</h1><p>从一句话开始，整理思路、打磨表达，<br/>在持续的对话中找到更好的答案。</p></div><div className="auth-orbit" aria-hidden="true"><span>想法</span><span>灵感</span><span>答案</span></div><footer>兆君 · Powered by CardBush</footer></section>
++    <section className="auth-form-area"><form onSubmit={submit}><span className="eyebrow">你的专属对话空间</span><h2>{register ? '创建账号' : '欢迎回来'}</h2><p className="muted">{register ? '注册后，请等待管理员启用账号。' : '登录后，继续属于你的对话。'}</p>
++      <label>用户名<input name="username" autoComplete="username" required minLength={register ? 3 : 1} maxLength={80} pattern={register ? '[A-Za-z0-9_.-]+' : undefined} placeholder="输入用户名"/></label>
++      {register && <label>姓名<input name="display_name" autoComplete="name" required maxLength={120} placeholder="如何称呼你"/></label>}
++      <label>密码<input name="password" type="password" autoComplete={register ? 'new-password' : 'current-password'} minLength={register ? 8 : 1} maxLength={128} required placeholder={register ? '至少 8 位字符' : '输入密码'}/></label>
++      {register && departments.length > 0 && <><label>公司<select aria-label="注册公司" value={company} onChange={event=>{setCompany(event.target.value);setDepartment('');}}><option value="">暂不选择</option>{[...new Map(departments.map(item=>[item.company_id,item.company_name])).entries()].map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label><label>部门<select name="department_id" aria-label="注册部门" disabled={!company} required={Boolean(company)} value={department} onChange={event=>setDepartment(event.target.value)}><option value="">{company?'请选择部门':'先选择公司'}</option>{departments.filter(item=>item.company_id===company).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}
++      {error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-notice" role="status">{notice}</p>}
++      <button className="primary auth-submit" disabled={busy}>{busy ? '请稍候…' : register ? '注册账号' : '登录'}<span>→</span></button>
++      <p className="auth-switch">{register ? '已有账号？' : '还没有账号？'}<button type="button" onClick={() => { setRegister(!register); setError(''); setNotice(''); }}>{register ? '立即登录' : '创建账号'}</button></p>
++    </form></section></main>;
++}
++
++function Workspace({ identity, logout, externalError }: { identity: Identity; logout: () => Promise<void>; externalError: string }) {
++  const cache = useAccountCache();
++  const [selected, setSelected] = useState<string | null>(null), [state, setState] = useState<State | null>(null);
++  const [draft, setDraft] = useState(''), [model, setModel] = useState(identity.defaultModelId), [query, setQuery] = useState(''), [error, setError] = useState(externalError);
++  useEffect(() => { setModel(previous => identity.models.some(item => item.id === previous) ? previous : identity.defaultModelId); }, [identity.models, identity.defaultModelId]);
++  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(false), [sidebar, setSidebar] = useState(true), [admin, setAdmin] = useState(false), [archive, setArchive] = useState(false);
++  const solutions = useConversationSolutions(admin ? null : selected);
++  const list = useConversationList(archive, query, setError), conversations = list.items, setConversations = list.setItems, refreshList = list.refresh;
++  const [olderLoading, setOlderLoading] = useState(false);
++  const stateRef = useRef(state); stateRef.current = state;
++  const controllers = useRef(new Map<string, AbortController>()), olderRequest = useRef<AbortController | null>(null);
++  const [menu, setMenu] = useState<string | null>(null), [edit, setEdit] = useState<{ id: string; title: string } | null>(null), [deleting, setDeleting] = useState<string | null>(null);
++  const [live, setLive] = useState<LiveTranscript>({}), [reconnecting, setReconnecting] = useState(false);
++  const [connectionError, setConnectionError] = useState('');
++  const [submitting, setSubmitting] = useState<{ sessionId: string; id: string; text: string; attachments: Attachment[] } | null>(null);
++  const selectedRef = useRef(selected), mounted = useRef(true), editor = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), atBottom = useRef(true);
++  const [scrollBottomRequested, setScrollBottomRequested] = useState(false);
++  const scrollBottomVisible = useScrollBottomPresence({ scrollerRef: transcript, requestedVisible: scrollBottomRequested,
++    scope: selected ?? '', enabled: Boolean(selected) && !admin && !loading });
++  const updateScrollPosition = useCallback(() => {
++    const element = transcript.current;
++    if (!element) return;
++    atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
++    setScrollBottomRequested(!atBottom.current);
++  }, []);
++  const upload = useAttachments();
++  const [compacting, setCompacting] = useState(false);
++  const pending = useRef<{ text: string; modelId: string; requestId: string; attachments: string[]; sessionId: string | null } | null>(null);
++  const sending = useRef(false), creationRequest = useRef<string | null>(null);
++  type StreamView = { live: LiveTranscript; checkpoint?: FrameStreamCheckpoint; cursors: Map<string, number>; scroll?: number };
++  const views = useRef(new Map<string, StreamView>());
++  const viewFor = useCallback((id: string) => { let view = views.current.get(id); if (!view) { view = { live: {}, cursors: new Map() }; views.current.set(id, view); } return view; }, []);
++  const requests = useRef(new Map<string, Promise<void>>()), versions = useRef(new Map<string, number>()), selectionRevision = useRef(0);
++  const restoredScroll = useRef<string | null>(null);
++  selectedRef.current = selected;
++  useEffect(() => { mounted.current = true; return () => { mounted.current = false; controllers.current.forEach(controller => controller.abort()); olderRequest.current?.abort(); }; }, []);
++  const refresh = useCallback(async (id: string, force = false) => {
++    const existing = requests.current.get(id); if (existing) { try { await existing; } catch (error) { if (!force) throw error; } if (!force) return; }
++    const version = versions.current.get(id);
++    const controller = new AbortController(); controllers.current.set(id, controller);
++    const request = api<State>(`/sessions/${id}?limit=20${force ? '&fresh=1' : ''}`, 'GET', undefined, controller.signal).then(page => {
++      if (controller.signal.aborted || !mounted.current || !cache.valid() || versions.current.get(id) !== version) return;
++      const prior = stateRef.current?.conversation.id === id ? stateRef.current : cache.peek<State>(`state:${id}`);
++      const next = mergeConversationPage(prior, page);
++      cache.put(`state:${id}`, next, 'state');
++      if (selectedRef.current === id) { setState(next); setLoading(false); setConnectionError(''); }
++    }).catch(failure => {
++      if (controller.signal.aborted) return;
++      if (failure instanceof ApiError && failure.status === 404) { cache.removeSession(id); if (selectedRef.current === id) { setSelected(null); setState(null); } }
++      throw failure;
++    });
++    requests.current.set(id, request);
++    try { await request; } finally { if (requests.current.get(id) === request) requests.current.delete(id); if (controllers.current.get(id) === controller) controllers.current.delete(id); }
++  }, [cache]);
++  useEffect(() => {
++    const revision = selectionRevision.current;
++    void cache.get<string>('selection').then(last => {
++      if (!mounted.current || !cache.valid()) return;
++      if (last && selectionRevision.current === revision) setSelected(last);
++    });
++  }, [cache]);
++  useEffect(() => {
++    setCompacting(false); setError(''); setConnectionError(''); setReconnecting(false); atBottom.current = true; setScrollBottomRequested(false);
++    if (!selected) { setState(null); setLive({}); setLoading(false); return; }
++    cache.put('selection', selected, 'selection');
++    const view = viewFor(selected), stored = cache.peek<State>(`state:${selected}`), cached = stored?.history ? stored : undefined;
++    setState(cached ?? null); setLive(view.live); setLoading(!cached);
++    if (view.scroll !== undefined) atBottom.current = false;
++    // Bound retained partial streams while keeping the most recently opened conversations warm.
++    views.current.delete(selected); views.current.set(selected, view);
++    while (views.current.size > 8) views.current.delete(views.current.keys().next().value!);
++    let alive = true;
++    void cache.get<State>(`state:${selected}`).then(value => { if (alive && value?.history && cache.valid()) { setState(value); setLoading(false); } });
++    void refresh(selected).catch(failure => { if (alive && cache.valid()) { if (isSessionServiceFailure(failure)) setConnectionError(errorText(failure)); else setError(errorText(failure)); setLoading(false); } });
++    return () => { alive = false; controllers.current.get(selected)?.abort(); controllers.current.delete(selected); requests.current.delete(selected); olderRequest.current?.abort(); olderRequest.current = null; setOlderLoading(false); };
++  }, [cache, selected, refresh, viewFor]);
++  const working = state?.conversation.id === selected ? state.jobs.filter(job => isWorking(job.status)) : [];
++  const workingIds = working.map(job => job.turnId).join('|');
++  useEffect(() => {
++    if (!selected || !workingIds) return;
++    let alive = true;
++    const statusAbort = new AbortController();
++    let lastEventAt = Date.now();
++    const view = viewFor(selected);
++    const writeLive = (content: string, route: { turnId?: string; messageId?: string; segmentId?: string }, replace = false) => { const key = route.messageId || route.segmentId || 'reply'; view.live = writeLiveSegment(view.live, route.turnId!, key, content, replace); if (alive && selectedRef.current === selected) setLive(view.live); };
++    const buffer = createFrameStreamBuffers((delta, route) => writeLive(delta, route), { checkpoint: view.checkpoint, replace: (content, route) => writeLive(content, route, true) });
++    const stops = workingIds.split('|').map(turnId => watch(selected, turnId, (frame: Frame) => {
++      if (!alive || selectedRef.current !== selected) return;
++      if (frame.event) lastEventAt = Date.now();
++      if (frame.type === 'reconnecting') { setReconnecting(true); return; }
++      if (frame.type === 'error') { setReconnecting(true); setConnectionError(sessionServiceError(frame.error)); }
++      else { setReconnecting(false); if (frame.type === 'ready' || frame.event) setConnectionError(''); }
++      const event = frame.event;
++      if (event) view.cursors.set(turnId, event.sequence);
++      if (event && ['tool_queued','tool_running','tool_returned','tool_failed','tool_cancelled'].includes(event.kind)) {
++        buffer.flushToolBoundary(); view.live = applyTranscriptEvent(view.live, event); setLive(view.live);
++      }
++      if (event?.kind.startsWith('context_compaction_')) setCompacting(['context_compaction_started','context_compaction_retrying'].includes(event.kind));
++      if (event?.kind.startsWith('solution_selection_')) void refresh(selected).catch(() => {});
++      if (event && event.kind.startsWith('assistant_segment_') && event.payload.segmentId) {
++        view.live = applyTranscriptEvent(view.live, event);
++        const route = { turnId, messageId: event.payload.messageId ?? event.payload.segmentId, segmentId: event.payload.segmentId, segmentOrdinal: event.payload.ordinal, eventId: String(event.sequence) };
++        if (event.kind === 'assistant_segment_completed') void buffer.completeSegment(event.payload.content ?? '', route);
++        else if (event.kind === 'assistant_segment_delta') buffer.push(event.payload.delta ?? '', route);
++        else setLive(view.live);
++      }
++      if (frame.type === 'end' || frame.type === 'error') { void buffer.releaseTerminal(); void refresh(selected, true).catch(() => {}); void refreshList(true).catch(() => {}); }
++    }, view.cursors.get(turnId)));
++    // SSE is authoritative; a light, non-overlapping status check recovers lost terminal events.
++    let poll: ReturnType<typeof setTimeout>;
++    const check = async () => {
++      try {
++        if (!document.hidden && Date.now() - lastEventAt >= 10_000) {
++          const params = new URLSearchParams(workingIds.split('|').map(id => ['turnId', id]));
++          const status = await api<{ jobs: Job[] }>(`/sessions/${selected}/status?${params}`, 'GET', undefined, statusAbort.signal);
++          const prior = stateRef.current;
++          if (alive && selectedRef.current === selected && prior?.conversation.id === selected &&
++            workingIds.split('|').some(id => status.jobs.find(job => job.turnId === id)?.status !== prior.jobs.find(job => job.turnId === id)?.status)) await refresh(selected, true);
++        }
++      } catch (failure) { if (alive && !statusAbort.signal.aborted && isSessionServiceFailure(failure)) { setReconnecting(true); setConnectionError(errorText(failure)); } }
++      finally { if (alive) poll = setTimeout(check, 12_000 + Math.random() * 3_000); }
++    };
++    poll = setTimeout(check, 12_000 + Math.random() * 3_000);
++    return () => { alive = false; statusAbort.abort(); view.checkpoint = buffer.checkpoint(); buffer.dispose(); stops.forEach(stop => stop()); clearTimeout(poll); };
++  }, [selected, workingIds, refresh, refreshList, viewFor]);
++  useEffect(() => {
++    if (state?.conversation.id !== selected || !selected) return;
++    const view = viewFor(selected);
++    if (restoredScroll.current !== selected && view.scroll !== undefined) transcript.current?.scrollTo({ top: view.scroll, behavior: 'auto' });
++    else if (atBottom.current) transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'auto' });
++    restoredScroll.current = selected;
++  }, [state, live, selected, viewFor]);
++  useEffect(() => {
++    const scroller = transcript.current, column = scroller?.querySelector<HTMLElement>('.message-column');
++    if (!scroller || !column) return;
++    const reflow = observeConversationReflow(scroller, () => ({
++      paused: () => false, following: () => atBottom.current,
++      beforeRestore: () => {}, followTop: () => scroller.scrollHeight, restored: () => {},
++    }));
++    const observer = new ResizeObserver(() => {
++      if (atBottom.current && !scroller.dataset.cardbushPreserveScroll) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'auto' });
++      setScrollBottomRequested(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight >= 120);
++    });
++    observer.observe(column);
++    return () => { observer.disconnect(); reflow.dispose(); };
++  }, [selected, admin]);
++  const jumpToBottom = () => {
++    const element = transcript.current;
++    if (!element) return;
++    atBottom.current = true; setScrollBottomRequested(false);
++    if (selected) viewFor(selected).scroll = undefined;
++    element.focus({ preventScroll: true });
++    element.scrollTo({ top: element.scrollHeight, behavior: 'instant' });
++  };
++  const choose = (id: string | null) => {
++    selectionRevision.current++;
++    if (selectedRef.current && transcript.current) viewFor(selectedRef.current).scroll = atBottom.current ? undefined : transcript.current.scrollTop;
++    const cached = id ? cache.peek<State>(`state:${id}`) : undefined;
++    selectedRef.current = id; setSelected(id); setState(cached?.history ? cached : null); setLive(id ? viewFor(id).live : {});
++    upload.clear(); setAdmin(false); setMenu(null); setDraft(''); pending.current = null;
++    if (id) cache.put('selection', id, 'selection'); else cache.forget('selection');
++  };
++  async function loadOlder() {
++    const id = selectedRef.current, before = stateRef.current?.history?.nextCursor;
++    if (!id || !before || olderRequest.current) return;
++    const controller = new AbortController(); olderRequest.current = controller; setOlderLoading(true);
++    try {
++      const page = await api<State>(`/sessions/${id}?limit=20&before=${encodeURIComponent(before)}`, 'GET', undefined, controller.signal);
++      if (controller.signal.aborted || !cache.valid() || selectedRef.current !== id) return;
++      const element = transcript.current, height = element?.scrollHeight ?? 0, top = element?.scrollTop ?? 0;
++      atBottom.current = false;
++      const next = mergeConversationPage(stateRef.current ?? undefined, page, true);
++      cache.put(`state:${id}`, next, 'state'); setState(next);
++      requestAnimationFrame(() => { if (element && selectedRef.current === id) element.scrollTop = top + element.scrollHeight - height; });
++    } catch (failure) { if (!controller.signal.aborted) setError(errorText(failure)); }
++    finally { if (olderRequest.current === controller) { olderRequest.current = null; setOlderLoading(false); } }
++  }
++  const newChat = () => { choose(null); pending.current = null; creationRequest.current = null; setError(''); editor.current?.focus(); };
++  useEffect(() => { const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') { event.preventDefault(); newChat(); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [newChat]);
++  async function send(event?: React.FormEvent) {
++    event?.preventDefault(); const text = draft.trim() || (upload.items.length ? '请查看这些附件。' : ''); if (!text || busy || upload.busy || sending.current) return;
++    sending.current = true;
++    const attachments = [...upload.items], startedSelection = selectionRevision.current;
++    let submission = pending.current?.sessionId === selected && pending.current.text === text && pending.current.modelId === model && JSON.stringify(pending.current.attachments) === JSON.stringify(attachments.map(item => item.id)) ? pending.current : { text, modelId: model, requestId: requestId(), attachments: attachments.map(item => item.id), sessionId: selected };
++    setBusy(true); setError(''); let id = selected;
++    try {
++      if (!id) {
++        creationRequest.current ??= requestId();
++        const conversation = await api<Conversation>('/sessions', 'POST', { requestId: creationRequest.current });
++        creationRequest.current = null;
++        if (!mounted.current || !cache.valid()) return;
++        cache.allowSession(conversation.id);
++        cache.put(`state:${conversation.id}`, { conversation, jobs: [], snapshot: null, history: { nextCursor: null } }, 'state');
++        setConversations(previous => [conversation, ...previous]);
++        id = conversation.id;
++        if (selectionRevision.current === startedSelection) { selectionRevision.current++; selectedRef.current = id; setSelected(id); }
++      }
++      submission.sessionId = id;
++      submission = recoverSessionSubmission(await cache.get(`outbox:${id}`), submission);
++      if (!mounted.current || !cache.valid()) return;
++      pending.current = submission;
++      cache.put(`outbox:${id}`, submission, 'state'); await cache.settled();
++      setSubmitting({ sessionId: id, id: submission.requestId, text, attachments }); atBottom.current = true;
++      const job = await api<Job>(`/sessions/${id}/messages`, 'POST', { text: submission.text, modelId: submission.modelId, requestId: submission.requestId, attachments: submission.attachments });
++      if (!mounted.current || !cache.valid()) return;
++      versions.current.set(id, (versions.current.get(id) ?? 0) + 1);
++      const prior = cache.peek<State>(`state:${id}`);
++      if (prior) { const next = { ...prior, jobs: [...prior.jobs.filter(item => item.id !== job.id), { ...job, attachments: job.attachments ?? attachments }] }; cache.put(`state:${id}`, next, 'state'); if (selectedRef.current === id) setState(next); }
++      cache.forget(`outbox:${id}`); setSubmitting(null);
++      void refresh(id, true).catch(failure => { if (mounted.current && selectedRef.current === id) setError(errorText(failure)); });
++      void refreshList(true).catch(() => {});
++      if (!mounted.current || selectedRef.current !== id) return;
++      pending.current = null; upload.clear(); setDraft(''); atBottom.current = true;
++    } catch (failure) { if (mounted.current) { setSubmitting(null); setError(errorText(failure)); if (failure instanceof ApiError && failure.message === '模型未启用。') window.dispatchEvent(new Event('cardbush:models-changed')); } } finally { sending.current = false; if (mounted.current) { setBusy(false); editor.current?.focus(); } }
++  }
++  async function patch(id: string, value: Record<string, unknown>) {
++    try { await api(`/sessions/${id}`, 'PATCH', value); setMenu(null); setEdit(null); await refreshList(true); } catch (failure) { setError(errorText(failure)); }
++  }
++  async function remove(id: string) {
++    try { await api(`/sessions/${id}`, 'DELETE', {}); versions.current.set(id, (versions.current.get(id) ?? 0) + 1); cache.removeSession(id); views.current.delete(id); setDeleting(null); if (id === selected) newChat(); await refreshList(true); } catch (failure) { setError(errorText(failure)); }
++  }
++  async function stop() {
++    if (!selected) return;
++    try { for (const job of working) await api(`/sessions/${selected}/jobs/${job.id}/stop`, 'POST', {}); await refresh(selected, true); } catch (failure) { setError(errorText(failure)); }
++  }
++  const visible = conversations.filter(item => item.archived === archive && item.title.toLowerCase().includes(query.toLowerCase()));
++  const title = conversations.find(item => item.id === selected)?.title ?? state?.conversation.title ?? '新对话';
++  return <div className={`workspace ${sidebar ? '' : 'sidebar-closed'}`}>
++    {sidebar && <aside className="sidebar"><div className="sidebar-brand"><Brand small/><button className="icon-button" aria-label="收起侧栏" onClick={() => setSidebar(false)}><PanelLeftClose size={18}/></button></div>
++      <button className="new-chat" onClick={newChat}><Plus size={18}/>新对话<span>⌘ ⇧ O</span></button>
++      <div className="search"><Search size={15}/><input aria-label="搜索对话" placeholder="搜索对话" value={query} onChange={event => setQuery(event.target.value)}/></div>
++      <div className="list-label"><span>{archive ? '已归档' : '我的对话'}</span><button onClick={() => setArchive(!archive)}>{archive ? '返回列表' : '归档'}</button></div>
++      <nav className="conversation-list" aria-label="对话列表">{visible.length === 0 && !list.loading && <p className="empty-list">{query ? '没有找到相关对话' : archive ? '还没有归档的对话' : '新的想法，从这里开始'}</p>}{visible.map(item => <div key={item.id} className={`conversation ${selected === item.id && !admin ? 'selected' : ''}`}>
++        <button className="conversation-title" onClick={() => { choose(item.id); if (innerWidth < 760) setSidebar(false); }}><MessageSquare size={15}/><span>{item.pinned ? '· ' : ''}{item.title}</span></button><button aria-label={`${item.title}的更多操作`} className="icon-button more-button" onClick={() => setMenu(menu === item.id ? null : item.id)}><MoreHorizontal size={16}/></button>
++        {menu === item.id && <div className="dropdown"><button onClick={() => { setEdit({ id: item.id, title: item.title }); setMenu(null); }}>重命名</button><button onClick={() => void patch(item.id, { pinned: !item.pinned })}>{item.pinned ? '取消置顶' : '置顶'}</button><button onClick={() => void patch(item.id, { archived: !item.archived })}>{item.archived ? '取消归档' : '归档'}</button><button className="danger" onClick={() => { setDeleting(item.id); setMenu(null); }}>删除对话</button></div>}
++      </div>)}{(list.nextCursor || list.loading) && <button className="load-more-conversations" disabled={list.loading} onClick={() => void list.more()}>{list.loading ? '正在加载…' : '加载更多对话'}</button>}</nav>
++      <div className="account">{identity.user.role === 'admin' && <button className={`admin-link ${admin ? 'active' : ''}`} onClick={() => { setAdmin(true); }}><ShieldCheck size={17}/>管理中心</button>}<div className="account-row"><span className="avatar">{identity.user.display_name.slice(0, 1)}</span><div><strong>{identity.user.display_name}</strong><span>{identity.user.department_name || '个人对话空间'}</span></div><button className="icon-button" aria-label="退出登录" title="退出登录" onClick={() => void logout()}><LogOut size={17}/></button></div></div>
++    </aside>}
++    <main className="main"><header className="topbar"><div>{!sidebar && <button className="icon-button" aria-label="展开侧栏" onClick={() => setSidebar(true)}><Menu size={20}/></button>}<span>{admin ? '管理中心' : selected ? title : '对话'}</span></div><span className="mode-badge"><span/>对话模式</span></header>
++      {admin ? <Admin currentUserId={identity.user.id}/> : <><div className="conversation-transcript"><div className="transcript message-list" ref={transcript} tabIndex={-1} onScroll={updateScrollPosition}>
++        {!selected && <div className="welcome"><div className="welcome-mark"><Sparkles size={26}/></div><span className="eyebrow">你好，{identity.user.display_name}</span><h1>今天，想聊些什么？</h1><p>一个问题、一点灵感，或者一个还没想清楚的想法。</p><div className="suggestions">{[{ icon: <PenLine size={19}/>, title: '打磨一段表达', text: '我有一段文字，想请你帮我整理和润色。' }, { icon: <Sparkles size={19}/>, title: '寻找新的灵感', text: '我们一起头脑风暴。请先了解我的目标，再帮我拓展思路。' }, { icon: <MessageSquare size={19}/>, title: '把问题想清楚', text: '我想和你讨论一个问题，请通过对话帮我梳理思路。' }].map(item => <button key={item.title} onClick={() => { setDraft(item.text); editor.current?.focus(); }}>{item.icon}<span>{item.title}</span><span>↗</span></button>)}</div></div>}
++        {loading && <div className="status-line"><span className="loading-dot"/>正在打开对话…</div>}
++        <div className="message-column">{state?.history?.nextCursor && <button className="load-older-messages" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? '正在加载…' : '加载更早的消息'}</button>}<NativeTranscript state={state} live={live} selected={selected} submitting={submitting} connectionUnavailable={reconnecting || Boolean(connectionError)} modelName={identity.models.find(item => item.id === model)?.name ?? model} onError={setError} onRetry={text => { setDraft(text); editor.current?.focus(); }}>
++          {compacting && <div className="status-line"><span className="loading-dot"/>正在整理上下文，对话会继续…</div>}
++          <Solutions items={solutions.items ?? state?.solutions ?? []} refresh={solutions.refresh}/>
++          {solutions.unavailable && <p className="form-error" role="alert">{uiText()('web.remoteQuestionsUnavailable')}</p>}
++        </NativeTranscript></div>
++      </div><ScrollBottomButton language="zh" visible={scrollBottomVisible} onClick={jumpToBottom}/></div><div className="composer-area">{error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setError('')}><X size={15}/></button></div>}{(loading || reconnecting || connectionError) && <SessionConnectionStatus phase={connectionError ? 'failed' : loading ? 'starting' : 'reconnecting'} message={connectionError || uiText()(loading ? 'web.sessionPreparing' : 'web.sessionReconnecting')}/> }
++        <form className="composer" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void upload.add(Array.from(event.dataTransfer.files)); }} onSubmit={event => void send(event)}><AttachmentDrafts upload={upload}/><textarea ref={editor} onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); void upload.add(Array.from(event.clipboardData.files)); } }} aria-label="输入消息" placeholder="输入你的想法…" rows={3} value={draft} maxLength={100000} disabled={busy} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}/><div className="composer-bottom"><div><UploadButton upload={upload}/><select aria-label="选择模型" value={model} onChange={event => setModel(event.target.value)}>{identity.models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><div>{working.length > 0 && <button className="stop-button" type="button" onClick={() => void stop()}><Square size={12} fill="currentColor"/>停止</button>}<button className="send-button" aria-label="发送消息" disabled={(!draft.trim() && !upload.items.length) || busy || upload.busy}>{busy ? <span className="loading-dot"/> : <ArrowUp size={20}/>}</button></div></div></form><div className="composer-note"><span>Enter 发送 · Shift + Enter 换行</span><span>Powered by CardBush</span></div>
++      </div></>}
++    </main>
++    {edit && <Modal title="重命名对话" close={() => setEdit(null)}><form onSubmit={event => { event.preventDefault(); void patch(edit.id, { title: edit.title }); }}><input aria-label="对话名称" autoFocus required maxLength={200} value={edit.title} onChange={event => setEdit({ ...edit, title: event.target.value })}/><button className="primary">保存</button></form></Modal>}
++    {deleting && <Modal title="删除这段对话？" close={() => setDeleting(null)}><p>删除后，对话记录将无法从列表中恢复。</p><div className="modal-actions"><button onClick={() => setDeleting(null)}>取消</button><button className="primary destructive" onClick={() => void remove(deleting)}>删除对话</button></div></Modal>}
++  </div>;
++}
++
++function Modal({ title, close, children }: { title: string; close: () => void; children: React.ReactNode }) { return <div className="modal-backdrop" onClick={close}><section className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}><header><h2>{title}</h2><button className="icon-button" aria-label="关闭" onClick={close}><X size={18}/></button></header>{children}</section></div>; }
++
++createRoot(document.getElementById('root')!).render(<App/>);
+--- /dev/null
++++ b/web/useConversationSolutions.ts
+@@ -0,0 +1,45 @@
++import { useCallback, useEffect, useRef, useState } from 'react';
++import type { RuntimeSolutionSelection } from '../electron/webSolutionSelection.mjs';
++import { api } from './api';
++
++/** Questions can arrive while the parent's SSE is idle in await_subagents.
++ * Poll only this small resource; never reload the transcript or replay a task. */
++export function useConversationSolutions(sessionId: string | null) {
++  const [state, setState] = useState<{ sessionId: string; items: RuntimeSolutionSelection[]; unavailable: boolean }>();
++  const trigger = useRef<() => Promise<void>>(async () => {});
++  useEffect(() => {
++    if (!sessionId) { trigger.current = async () => {}; return; }
++    const controller = new AbortController();
++    let pending: Promise<void> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
++    const read = () => {
++      if (pending) return pending;
++      pending = api<RuntimeSolutionSelection[]>(`/sessions/${sessionId}/solutions`, 'GET', undefined,
++        AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
++        .then(items => {
++          if (!controller.signal.aborted) setState(prior => prior?.sessionId === sessionId && !prior.unavailable && JSON.stringify(prior.items) === JSON.stringify(items)
++            ? prior : { sessionId, items, unavailable: false });
++        }).catch(() => {
++          if (!controller.signal.aborted) setState(prior => ({ sessionId, items: prior?.sessionId === sessionId ? prior.items : [], unavailable: true }));
++        }).finally(() => { pending = undefined; });
++      return pending;
++    };
++    const poll = async () => {
++      if (!document.hidden) await read();
++      if (!controller.signal.aborted) timer = setTimeout(poll, 5_000);
++    };
++    const refresh = async () => {
++      // A read started before an answer must not restore the answered question.
++      await pending;
++      if (!controller.signal.aborted) await read();
++    };
++    trigger.current = refresh;
++    const focus = () => { if (!document.hidden) void read(); };
++    document.addEventListener('visibilitychange', focus);
++    window.addEventListener('focus', focus);
++    void poll();
++    return () => { controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); };
++  }, [sessionId]);
++  return { items: state?.sessionId === sessionId ? state.items : undefined,
++    unavailable: state?.sessionId === sessionId && state.unavailable,
++    refresh: useCallback(() => trigger.current(), []) };
++}

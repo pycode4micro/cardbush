@@ -14,3 +14,10 @@ export function componentOrigins(value) {
   return Array.isArray(value) && value.length <= 8
     ? [...new Set(value.map(componentOrigin).filter(Boolean))].sort() : [];
 }
+
+// A page is usable only while its exact origin remains in the component declaration.
+export function approvedWebsiteUrl(value, origins) {
+  if (typeof value !== 'string' || value.length > 4096) return;
+  const url = URL.parse(value);
+  if (url?.protocol === 'https:' && !url.username && !url.password && componentOrigin(url.origin) && origins.includes(url.origin)) return url.href;
+}

@@ -108,6 +108,27 @@ const workerInput = (taskId, extra = {}) => ({ taskId, sessionId: `delegated-${t
 const workerControl = (service, request, control, parentSessionId = request.parentSessionId) => service.call('delegation.control', {
   parentSessionId, control: { profile: 'subagent-remote-proton', version: '0.1', contextId: request.sessionId, taskId: request.taskId, ...control } });
 
+test('service turns use saved child approval routing and preserve explicit per-turn choices', async t => {
+  const f = await openService(t, 'saved-child-routing');
+  const requests = [];
+  const run = f.service.runtime.runOwnedCommand.bind(f.service.runtime);
+  f.service.runtime.runOwnedCommand = (command, signal) => {
+    if (command.kind === 'runtime.run_session_turn') requests.push(structuredClone(command.payload));
+    return run(command, signal);
+  };
+  const config = await f.service.call('product.command', { kind: 'subagents.get' });
+  try {
+    for (const [saved, explicit, expected] of [['parent', undefined, 'parent'], ['parent', 'user', 'user'], ['user', undefined, 'user']]) {
+      await writeFile(join(f.root, 'config', 'subagents.json'), JSON.stringify({ ...config, permissionRouting: saved }));
+      const sessionId = `routing-${requests.length}`;
+      await f.service.call('sessions.create', { sessionId });
+      await f.service.call('chat.send', { ...input(sessionId, sessionId), ...(explicit ? { subagentPermissionRouting: explicit } : {}) });
+      await until(() => f.service.call('chat.jobs', { sessionId }), jobs => jobs[0]?.status === 'completed');
+      assert.equal(requests.at(-1).metadata.subagentPermissionRouting, expected);
+    }
+  } finally { await f.service.close(); }
+});
+
 for (const remote of [false, true]) test(`unified child lifecycle through ${remote ? 'real HTTP worker' : 'local Runtime'}: queue, cancel, insert, question, resume`, { timeout: 40000 }, async t => {
   const f = remote ? await openService(t, 'unified-worker', 20, { name: 'ask_parent', arguments: { text: 'Which date?' } }) : undefined;
   let http, manager, connection;
@@ -1653,5 +1674,24 @@ test('remote Source snapshots survive queueing and preserve the provider prefix 
     assert.match(snapshot.turns[1].messages.find(item => item.message.name === 'source_preference').message.content, /Source is disabled/);
     assert.deepEqual(f.model.calls[1].input.slice(0, f.model.calls[0].input.length), f.model.calls[0].input);
     assert.deepEqual(f.model.calls[1].tools, f.model.calls[0].tools);
+  } finally { await f.service.close(); }
+});
+
+test('delegated files are prepared without a model call and bound to the owning workspace', async t => {
+  const f = await openService(t, 'files-delegation');
+  const owner = { sessionId:'delegated-files-test',parentSessionId:'parent-files',parentTurnId:'parent-turn' };
+  try {
+    await f.service.call('delegation.prepare',owner);
+    assert.equal(f.model.calls.length,0);assert.deepEqual(await f.service.call('chat.jobs',{}),[]);
+    await assert.rejects(f.service.call('delegation.prepare',{...owner,parentSessionId:'other-parent'}),/another parent/);
+    const uploaded = await f.service.call('files.upload',{sessionId:owner.sessionId,uploadId:randomUUID(),name:'reference.txt',offset:0,content:Buffer.from('selected reference').toString('base64')});
+    const request={...owner,taskId:'file-task',turnId:'turn-file-task',prompt:'Read the attached reference.',permissionMode:'all_free',language:'en'};
+    await assert.rejects(f.service.call('delegation.submit',{...request,files:[join(f.service.root,'secret.txt')]}));
+    await f.service.call('delegation.submit',{...request,files:[uploaded.path]});
+    await until(()=>f.service.call('chat.jobs',{}),jobs=>jobs[0]?.status==='completed');
+    const state=JSON.parse(await readFile(join(f.service.root,'agent.json'),'utf8'));
+    assert.deepEqual(state.jobs[0].input.files,[uploaded.path]);
+    assert.ok(JSON.stringify(f.model.calls).includes('reference.txt'));
+    await assert.rejects(f.service.call('delegation.submit',{...request,files:[]}),/different files/);
   } finally { await f.service.close(); }
 });

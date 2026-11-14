@@ -9,7 +9,7 @@ import { personalFilePath } from './personalFiles';
 import { pendingTranscript, persistedTranscript, webAttachments, webToolExecution, type LiveTranscript } from './transcript';
 import { api, type Job, type State } from './api';
 import type { ToolExecutionRecord } from '@cardbush/bush-protocol';
-import { generatedImagePath, hasDeferredImageArtifacts, webTurnArtifacts } from './artifacts';
+import { hasDeferredImageArtifacts, webTurnArtifacts } from './artifacts';
 import { downloadArtifactArchive } from './artifactDownload';
 
 const noAction = async () => {};
@@ -71,27 +71,28 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
         return { name: path.split('/').at(-1) || uiText(language)("image.scope.attachments"), blob };
       } finally { off?.(); }
     };
+    const fileUrl = (source: string, download = false) => {
+      const path = personalFilePath(source);
+      if (!path || !cache.valid()) throw new Error(uiText(language)('web.onlyThisAccountSPersonalFilesCanBeRead'));
+      return new URL(`/api/web/v1/files/view?path=${encodeURIComponent(path)}&owner=${encodeURIComponent(cache.owner)}${download ? '&download=1' : ''}`, window.location.origin).href;
+    };
+    const downloadFile = async (source: string) => {
+      const anchor = document.createElement('a');
+      anchor.href = fileUrl(source, true); anchor.download = source.split('/').at(-1) ?? '';
+      document.body.append(anchor); try { anchor.click(); } finally { anchor.remove(); }
+    };
+    const fileSource = async (source: string) => /\.(png|jpe?g|webp)$/i.test(source)
+      ? acquireCachedImage(cache, source) : { source: fileUrl(source), dispose() {} };
     return {
       id: `web:${cache.owner}:${selected ?? ''}`, sessionId: selected ?? undefined, plugins: [], pluginCommands: [], messageFeedbackAvailable: false,
       uploadFiles: async () => { throw new Error(uiText(language)("web.uploadAttachmentsUsingTheMessageComposer")); },
       readFile,
       fileReferencePath: source => personalFilePath(source) ?? undefined,
       openExternal: url => { if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer'); },
-      resolveFileSource: path => acquireCachedImage(cache, path),
+      resolveFileSource: fileSource,
       peekFileSource: path => peekCachedImage(cache, path),
-      previewFile: path => acquireCachedImage(cache, path),
-      downloadFile: async source => {
-        const path = generatedImagePath(source);
-        if (!path || !cache.valid()) throw new Error(uiText(language)("web.onlyImagesGeneratedByThisAccountCanBeDownloaded"));
-        const image = await acquireCachedImage(cache, path);
-        try {
-          if (!cache.valid()) throw new Error(uiText(language)("web.theAccountChanged"));
-          const anchor = document.createElement('a');
-          anchor.href = image.source; anchor.download = path.split('/').at(-1)!;
-          document.body.append(anchor);
-          try { anchor.click(); } finally { anchor.remove(); }
-        } finally { setTimeout(image.dispose, 30_000); }
-      },
+      previewFile: fileSource,
+      downloadFile,
       downloadFiles: async (paths, progress) => {
         if (!selected) throw new Error(uiText(language)("web.openAConversationFirst"));
         const controller = new AbortController(), off = cache.onClose(() => controller.abort());
@@ -108,11 +109,7 @@ export function NativeTranscript({ state, live, selected, modelName, children, s
           return items;
         } };
       },
-      openFile: path => { void readFile(path).then(({ name, blob }) => {
-        if (!cache.valid()) return;
-        const url = URL.createObjectURL(blob), anchor = document.createElement('a');
-        anchor.href = url; anchor.download = name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      }).catch(error => onError(error instanceof Error ? error.message : uiText(language)("web.theFileCannotBeReadRightNow"))); },
+      openFile: path => { void downloadFile(path).catch(error => onError(error instanceof Error ? error.message : uiText(language)('web.theFileCannotBeReadRightNow'))); },
       toolDetails,
     };
   }, [cache, selected, onError, language]);

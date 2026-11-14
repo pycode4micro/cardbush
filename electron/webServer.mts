@@ -1,3 +1,6 @@
+import { FILE_TRANSFER_LIMIT } from '@cardbush/bush-protocol';
+import { webFileResponse } from './webFileResponse.mjs';
+import { uiText as transferText } from '@cardbush/platform/i18n';
 import { webToolAllowed, normalizeWebImage } from '@cardbush/bush-runtime/web-policy';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile, realpath } from 'node:fs/promises';
@@ -15,6 +18,7 @@ import { WebModelSettings, PostgresModelSettingsRepository } from './webModelSet
 import { WebModelRequests, WEB_MODEL_REQUEST_MAX_BYTES } from './webModelRequests.mjs';
 import { WebRemoteAgents, PostgresRemoteAgentRepository } from './webRemoteAgents.mjs';
 import { WebRemoteAgentBridge } from './webRemoteAgentBridge.mjs';
+import { WebRemoteQuestions } from './webRemoteQuestions.mjs';
 import { runtimeSolutionAnswerSchema, type SessionSnapshot } from '@cardbush/bush-protocol';
 import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, readJson, WebError, type WebModel, type WebUser } from './webCommon.mjs';
 
@@ -37,7 +41,8 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
   const reads = new WebReadCache();
   const archives = new WebArtifactArchives(agents);
   const modelRequests = new WebModelRequests();
-  const remoteBridge = remoteAgents ? new WebRemoteAgentBridge(remoteAgents, store) : undefined;
+  const remoteBridge = remoteAgents ? new WebRemoteAgentBridge(remoteAgents, store, agents) : undefined;
+  const remoteQuestions = remoteAgents ? new WebRemoteQuestions(remoteAgents) : undefined;
   const serial = async <T,>(key: string, work: () => Promise<T>) => {
     const operation = (mutations.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
     mutations.set(key, operation);
@@ -63,7 +68,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
   const server = createServer((request, response) => {
     response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer'); response.setHeader('X-Frame-Options', 'DENY');
-    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     const abort = new AbortController(); response.once('close', () => { if (!response.writableFinished) abort.abort(); });
     void (async () => {
       const url = new URL(request.url ?? '/', publicOrigin), path = url.pathname;
@@ -204,10 +209,10 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       }
       if (path === `${prefix}/files` && method === 'POST') {
         throttle(`upload:${user.id}`, 1500);
-        const input = z.object({ uploadId: z.string().uuid(), name: z.string().max(160), offset: z.number().int().min(0).max(16*1024*1024), size: z.number().int().min(1).max(16*1024*1024), content: z.string().max(710000), done: z.boolean() }).strict().parse(await readJson(request, 720000));
+        const input = z.object({ uploadId: z.string().uuid(), name: z.string().max(160), offset: z.number().int().min(0).max(FILE_TRANSFER_LIMIT), size: z.number().int().min(1).max(FILE_TRANSFER_LIMIT), content: z.string().max(710000), done: z.boolean() }).strict().parse(await readJson(request, 720000));
         const agent = await agents.get(user.id);
         try { json(response, 200, await agent.call('web.files', { action: 'upload', ...input })); }
-        catch { throw new WebError(400, '上传未完成或文件不受支持。仅接受静态 PNG/JPG/WebP、UTF-8 文本、PDF 和无视频/宏的 Office 文档，单个文件不超过 16 MB。'); } return;
+        catch { throw new WebError(400, transferText()('web.transferUploadError')); } return;
       }
       if (path === `${prefix}/files/archives` && method === 'POST') {
         throttle(`archive:${user.id}`, 120);
@@ -223,21 +228,12 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         await store.conversation(user.id, ticket.sessionId);
         await archives.download(ticket, response, abort.signal, async () => (await store.authenticate(token))?.id === user.id); return;
       }
-      if (path === `${prefix}/files/view` && method === 'GET') {
-        const filePath = z.string().min(1).max(1000).parse(url.searchParams.get('path'));
+      if (path === `${prefix}/files/view` && ['GET', 'HEAD'].includes(method)) {
+        if (url.searchParams.has('owner') && url.searchParams.get('owner') !== user.id) throw new WebError(401, transferText()('web.theAccountChanged'));
+        const filePath = z.string().min(1).max(4000).parse(url.searchParams.get('path'));
         const agent = await agents.get(user.id);
-        let first: any;
-        try { first = await agent.call('web.files', { action: 'read', path: filePath, offset: 0 }); } catch { throw new WebError(404, '文件不存在。'); }
-        response.writeHead(200, { 'Content-Type': first.mime, 'Content-Length': first.size, 'Content-Disposition': `${first.mime.startsWith('image/') ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(first.name)}` });
-        let chunk = first;
-        while (true) {
-          abort.signal.throwIfAborted();
-          const bytes = Buffer.from(chunk.content, 'base64');
-          if (!response.write(bytes)) await once(response, 'drain', { signal: abort.signal });
-          if (chunk.done) break;
-          chunk = await agent.call('web.files', { action: 'read', path: filePath, offset: chunk.offset + bytes.length });
-        }
-        response.end(); return;
+        await webFileResponse(request, response, agent, filePath, url.searchParams.get('download') === '1', abort.signal);
+        return;
       }
       if (path === `${prefix}/sessions` && method === 'GET') {
         json(response, 200, url.searchParams.has('limit') ? await store.listPage(user.id, conversationPageQuery.parse(Object.fromEntries(url.searchParams))) : await store.list(user.id)); return;
@@ -323,16 +319,25 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         json(response, 200, await store.update(user.id, sessionId, input)); return;
       }
       if (!action && method === 'DELETE') { await agent.call('sessions.delete', { sessionId }); await store.remove(user.id, sessionId); json(response, 200, { deleted: true }); return; }
+      if (action === 'solutions' && method === 'GET') {
+        const [local, remote] = await Promise.all([
+          agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } }),
+          remoteQuestions?.list(user.id, sessionId) ?? [],
+        ]);
+        json(response, 200, [...local as unknown[], ...remote]); return;
+      }
       if (action === 'solutions' && method === 'POST') {
         const input = runtimeSolutionAnswerSchema.parse({ ...await readJson(request, 100000), sessionId });
-        json(response, 200, await agent.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: input })); return;
+        json(response, 200, remoteQuestions?.owns(input.selectionId)
+          ? await remoteQuestions.answer(user.id, input)
+          : await agent.call('runtime.command', { kind: 'runtime.answer_solution_selection', payload: input })); return;
       }
       if (action === 'messages' && method === 'POST') {
         const input = messageSchema.parse(await readJson(request));
         if (!config.models.some(model => model.id === input.modelId)) throw new WebError(400, '模型未启用。');
         throttle(`message:${user.id}`, 100);
         const attachments = await Promise.all(input.attachments.map(id => agent.call('web.files', { action: 'describe', id }) as Promise<{ path: string; textPath?: string; mime: string; name: string; size: number }>));
-        if (attachments.filter(item => item.mime.startsWith('image/')).length > 4 || attachments.reduce((sum, item) => sum + item.size, 0) > 24*1024*1024) throw new WebError(400, '每条消息最多 4 张图片，附件总计不超过 24 MB。');
+        if (attachments.filter(item => item.mime.startsWith('image/')).length > 4 || attachments.reduce((sum, item) => sum + item.size, 0) > FILE_TRANSFER_LIMIT) throw new WebError(400, transferText()('web.transferMessageLimit'));
         const { attachments: _ids, ...message } = input;
         // Vision is a turn capability, independent of this message's attachments:
         // text follow-ups must still inspect prior uploads and generated images.
