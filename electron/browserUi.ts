@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { BrowserBookmarkImporter, browserWebUrl, type BookmarkImportResult, type BrowserProfile } from './browserImport';
 import { BrowserLibrary, type BrowserDownload, type BrowserLibraryPage, type BrowserVisit, type BrowserFrequentSite } from './browserLibrary';
 import { readBrowserIcon, readBrowserSiteIcon } from './browserIcon';
+import { isHomeWebsiteGuest } from './homeWebsiteGuest';
 import type { WebApplicationInfo } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 export type BrowserPageCommand = { action: 'status' | 'print' | 'screenshot' }
@@ -52,7 +53,7 @@ export class BrowserUiService {
     owner.once('destroyed', () => this.owners.delete(owner));
     // A URL may download before dom-ready. Attach before the first navigation,
     // while keeping URL filtering in the history store (local previews are excluded).
-    owner.on('did-attach-webview', (_event, guest) => this.track(owner, guest.id));
+    owner.on('did-attach-webview', (_event, guest) => { if (!isHomeWebsiteGuest(guest)) this.track(owner, guest.id); });
   }
   guest(owner: WebContents, id: number) {
     const guest = Number.isSafeInteger(id) ? webContents.fromId(id) : undefined;

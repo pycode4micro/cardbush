@@ -119,6 +119,9 @@ async function verifyEmbeds({library,item,card,win,read,click,wait,inFrame}) {
     const configure=card+' [data-embed-settings]', open=card+' [data-embed-open]';
     await wait(()=>read('!!document.querySelector('+JSON.stringify(configure)+')'),'detect live iframe without a manifest');
     assert.ok(!requests.some(r=>r.url===page));
+    await verifyCardWebsite({site,page,card,win,read,click,wait});
+    await wait(()=>read('!!document.querySelector('+JSON.stringify(configure)+')'),'return to widget without granting iframe access');
+    assert.ok(!requests.some(r=>r.url===page));
     await click(configure);
     const grant='dialog[open] input[value="'+site+'"]';
     assert.equal(await read('document.querySelector('+JSON.stringify(grant)+').checked'),false);
@@ -137,6 +140,38 @@ async function verifyEmbeds({library,item,card,win,read,click,wait,inFrame}) {
     await wait(()=>read('!!document.querySelector(".right-inspector webview[src='+JSON.stringify(site+'/private').replaceAll('"','\\"')+']")'),'fallback opens the actual page in a browser tab');
     console.log('Website embeds passed: dynamic discovery, consent, Chromium rendering, origin isolation, browser fallback.');
   } finally {protocol.unhandle('https');}
+}
+
+async function verifyCardWebsite({site,page,card,win,read,click,wait}) {
+  const {session,webContents}=require('electron');
+  const isolated=session.fromPartition('cardbush-home-site:'+site);
+  const markup='<title>Standalone player</title><button onclick="this.textContent=42">Play</button><a href="/room" target="_blank">Room</a>';
+  let failFirst = true;
+  isolated.protocol.handle('https',req=>{
+    if (failFirst && req.url === page) {
+      failFirst = false;
+      return Response.error();
+    }
+    return new Response(markup,{headers:{'Content-Type':'text/html',"Content-Security-Policy":"frame-ancestors 'none'"}});
+  });
+  try {
+    await win.webContents.session.cookies.set({url:site,name:'owner',value:'desktop'});
+    await click(card+' [data-embed-website]');
+    await click(card+' .component-site-error button');
+    const guest=await wait(()=>webContents.getAllWebContents().find(w=>w.session===isolated && w.getURL()===page),'isolated website in the card');
+    await wait(()=>guest.executeJavaScript('!!document.querySelector("button")'),'standalone document loaded');
+    assert.deepEqual(await guest.executeJavaScript('[window.top===self,frames.length,!!window.cardbushDesktop,document.cookie]'),[true,0,false,'']);
+    assert.equal(await guest.executeJavaScript('document.querySelector("button").click();document.querySelector("button").textContent'),'42');
+    assert.ok(await read('document.querySelector('+JSON.stringify(card+' webview')+').getBoundingClientRect().height>100'));
+    assert.equal(await read('!!document.querySelector('+JSON.stringify(card+' iframe')+')'),false);
+    await guest.executeJavaScript('document.querySelector("a").click()',true);
+    await wait(()=>guest.getURL()===site+'/room','same-site new-window link stays in the card');
+    await click(card+' [data-embed-back]');
+    await wait(()=>guest.isDestroyed(),'return releases the website');
+  } finally {
+    isolated.protocol.unhandle('https');
+    await win.webContents.session.cookies.remove(site,'owner');
+  }
 }
 
 async function requestPreview(project,library,item) {

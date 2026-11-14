@@ -8,9 +8,9 @@
     const send = parent.postMessage.bind(parent);
     // Report iframe destinations, not load success: cross-origin pages cannot
     // be inspected reliably. The host validates every address independently.
-    let pulse = 0, last;
+    let scheduled = false, last;
     const report = () => {
-      pulse = 0;
+      scheduled = false;
       const sites = new Map();
       for (const frame of document.querySelectorAll('iframe[src]')) {
         if (frame.hasAttribute('srcdoc')) continue;
@@ -22,7 +22,13 @@
       const urls = [...sites.values()], value = JSON.stringify(urls);
       if (value !== last) { last = value; send({protocol, token, topic:'home.embedTargets', urls}, '*'); }
     };
-    const schedule = () => { if (!pulse) pulse = requestAnimationFrame(report); };
+    // Address discovery reads the DOM, not its layout. A background or occluded
+    // frame may never receive an animation frame.
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      queueMicrotask(report);
+    };
     addEventListener('DOMContentLoaded', () => {
       new MutationObserver(changes => {
         if (changes.some(change => change.type === 'attributes' ? change.target.localName === 'iframe' :

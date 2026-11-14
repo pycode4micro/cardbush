@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron';
 import { installBrowserPopupHandler, type BrowserPopupEvent } from './browserPopup';
+import { attachHomeWebsite, configureHomeWebsite } from './homeWebsiteGuest';
 
 const installed = new WeakSet<WebContents>();
 
@@ -7,7 +8,8 @@ const installed = new WeakSet<WebContents>();
 export function installInspectorWindowOpen(owner: WebContents, onPopupEvent?: (event: BrowserPopupEvent) => void): void {
   if (installed.has(owner)) return;
   installed.add(owner);
-  owner.on('will-attach-webview', (_event, preferences, params) => {
+  owner.on('will-attach-webview', (event, preferences, params) => {
+    if (configureHomeWebsite(event, preferences, params)) return;
     if (!params.src?.startsWith('cardbush-agent://')) return;
     delete preferences.preload;
     preferences.nodeIntegration = false;
@@ -15,6 +17,7 @@ export function installInspectorWindowOpen(owner: WebContents, onPopupEvent?: (e
     preferences.sandbox = true;
   });
   owner.on('did-attach-webview', (_event, guest) => {
+    if (attachHomeWebsite(guest)) return;
     const activate = () => {
       if (!owner.isDestroyed() && !guest.isDestroyed() && guest.hostWebContents?.id === owner.id) {
         owner.send('inspector:guest-activated', { guestWebContentsId: guest.id });

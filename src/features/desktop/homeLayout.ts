@@ -1,4 +1,6 @@
 import type { HtmlComponent } from '../components/componentModel';
+import { websiteAddress } from '../../../electron/homeWebsiteAddress';
+export { websiteAddress };
 
 export const nativeSections = ['featured', 'events', 'projects', 'recent'] as const;
 export type NativeSection = typeof nativeSections[number];
@@ -11,14 +13,6 @@ export type HomeBlock = HomeDimensions & (
 export const homeLayoutKey = 'cardbush.home-layout.v1';
 export const blockKey = (block: HomeBlock) => block.kind + ':' + block.id;
 const defaults = (): HomeBlock[] => nativeSections.map(id => ({kind: 'native', id}));
-
-export function websiteAddress(text: string) {
-  try {
-    const url = new URL(text);
-    if (url.username || url.password) return;
-    if (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost','127.0.0.1','[::1]'].includes(url.hostname))) return url.href;
-  } catch { /* The form keeps incomplete addresses editable. */ }
-}
 
 export function readHomeLayout(): HomeBlock[] | undefined {
   try {

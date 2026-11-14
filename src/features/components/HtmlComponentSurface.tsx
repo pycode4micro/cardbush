@@ -1,10 +1,11 @@
 import { uiText } from '../../i18n';
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { HtmlComponentContext } from './HtmlComponentContext';
 import { componentDocument } from './componentDocument';
 import { approvedEmbedOrigins, componentProtocol, validateComponentText, type HtmlComponent } from './componentModel';
 import { componentOrigin, componentOrigins } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
 import { ComponentEmbedBar } from './ComponentEmbedBar';
+import { HomeWebsiteView } from './HomeWebsiteView';
 import { bookmarkUrl } from '../inspector/browserBookmarks';
 import { componentId } from './componentId';
 import { approvedOrigins, fetchComponentJson } from './componentNetwork';
@@ -16,9 +17,16 @@ type SurfaceProps = { component: HtmlComponent; active?: boolean; eventPage?: Ev
   onEditEmbeds?:(origins:string[])=>void };
 export function HtmlComponentSurface(props: SurfaceProps) {
   // A hidden iframe still runs its own JavaScript independently of React.
-  return useContext(FeaturePageVisible) ? <ComponentFrame {...props}/> : null;
+  return useContext(FeaturePageVisible) ? <ComponentDisplay key={props.component.id} {...props}/> : null;
 }
-function ComponentFrame({ component, active = true, eventPage, onHome = false, onReady, onEditEmbeds }: SurfaceProps) {
+function ComponentDisplay(props: SurfaceProps) {
+  const host = useContext(HtmlComponentContext);
+  const [website, setWebsite] = useState<string>();
+  const canBrowse = props.onHome && props.active !== false && !props.eventPage && !!window.cardbushDesktop?.homeComponentLibrary;
+  if (canBrowse && host && website) return <HomeWebsiteView url={website} back={() => setWebsite(undefined)} open={host.openBrowser}/>;
+  return <ComponentFrame {...props} showWebsite={canBrowse ? setWebsite : undefined}/>;
+}
+function ComponentFrame({ component, active = true, eventPage, onHome = false, onReady, onEditEmbeds, showWebsite }: SurfaceProps & {showWebsite?:(url:string)=>void}) {
   const frame = useRef<HTMLIFrameElement>(null), host = useContext(HtmlComponentContext), latest = useRef(host);
   latest.current = host;
   const page = useRef(eventPage); page.current = eventPage;
@@ -44,7 +52,7 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
     }
     return current ? { revision: current.revision, sessionId: current.sessionId, language: current.language, running: current.running } : null; };
   const publish = useRef(() => {});
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true; loads.current = 0; setError('');
     const requests = new AbortController();
     const replay = new Map<string, { input: string; result: Promise<unknown> }>(); let inFlight = 0;
@@ -149,7 +157,7 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
     onLoad={() => { if (++loads.current > 1) { setError(uiText(host?.language)('htmlComponentSurface.componentNavigatedAwayFromItsSandboxDocument')); return; } publish.current(); onReady?.(); }} />;
   if (!liveHome || !onEditEmbeds || !host) return surface;
   return <div className="component-embed-layout">
-    <ComponentEmbedBar targets={targets} missing={missing} configure={() => onEditEmbeds(candidates)} open={host.openBrowser}/>
+    <ComponentEmbedBar targets={targets} missing={missing} configure={() => onEditEmbeds(candidates)} open={host.openBrowser} showWebsite={showWebsite}/>
     {surface}
   </div>;
 }

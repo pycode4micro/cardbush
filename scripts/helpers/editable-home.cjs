@@ -98,6 +98,11 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     await poll(() => guest()?.url.endsWith('/next'), 'same-site links work in the website card');
     assert.equal(requests[0].referer, undefined);
     assert.ok(requests.every(request => !request.cookie));
+    await click(web+' [data-embed-website]');
+    const standalone = () => require('electron').webContents.getAllWebContents().find(w=>w.getType()==='webview' && w.getURL()===origin+'/');
+    await poll(()=>standalone()?.executeJavaScript('window.top===self && !!document.querySelector("button")'),'manually added website opens in the same card');
+    await click(web+' [data-embed-back]');
+    await poll(()=>guest()?.executeJavaScript('!!document.querySelector("button")'),'back restores the embedded preview');
     await js(`document.querySelector('${html}').scrollIntoView()`);
     await wait('!!document.querySelector("[data-kind=html] iframe")');
     const custom = () => win.webContents.mainFrame.frames.find(frame => frame.url === 'about:srcdoc');
