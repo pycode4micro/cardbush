@@ -30,7 +30,7 @@ async function fixture(t, options = {}) {
   const http = httpServer(async (req, res) => {
     if (req.headers.authorization !== 'Bearer ' + token) { res.writeHead(401).end(); return; }
     if (req.headers['x-cardbush-agent-id'] && req.headers['x-cardbush-agent-id'] !== remoteId) {
-      res.writeHead(409, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Agent identity changed.' } })); return;
+      res.writeHead(409, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { code: 'agent_identity_changed', message: 'Agent identity changed.' } })); return;
     }
     res.setHeader('content-type', 'application/json'); res.setHeader('x-cardbush-agent-id', remoteId);
     if (req.url.includes('/events?')) {
@@ -149,7 +149,8 @@ test('an uncertain mutation is never replayed when the tunnel reconnects', async
 
 test('health checks detect a changed remote Agent identity and never adopt it', async t => {
   const f = await fixture(t, { healthIntervalMs: 20 }); await f.first.connect(f.agent.id); f.identity('other-agent');
-  await until(async () => (await f.first.list())[0].connectionState === 'disconnected', 'identity failure stops automatic retries');
+  await until(async () => (await f.first.list())[0].connectionState === 'failed', 'identity failure stops automatic retries');
+  assert.equal((await f.first.list())[0].connectionErrorCode, 'identity_changed');
   await assert.rejects(f.first.connect(f.agent.id), /identity changed/);
   assert.equal((await f.first.list())[0].agentId, 'stable-agent'); assert.equal(f.stats().mutations, 0);
 });

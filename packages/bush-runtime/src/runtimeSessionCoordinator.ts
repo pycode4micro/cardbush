@@ -30,6 +30,12 @@ import { isConversationPreference, latestConversationPreference } from "./conver
 import { findPreparedToolHandoff } from './preparedToolHandoff.js';
 import { findRecordedToolHandoff } from './recordedToolHandoff.js';
 
+function inputMessageMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  // Input metadata cannot claim delivery on behalf of runtime-generated context.
+  const { taskResultReferences: _hostOwned, ...input } = metadata;
+  return input;
+}
+
 export interface GeneratedMessageFact {
   messageId: string;
   createdAt: string;
@@ -283,7 +289,7 @@ export class RuntimeSessionCoordinator {
           messageId: item.messageId,
           createdAt: item.createdAt ?? createdAt,
           message: item.message,
-          ...(item.metadata ? { metadata: item.metadata } : {}),
+          ...(item.metadata ? { metadata: inputMessageMetadata(item.metadata) } : {}),
         })),
         generatedMessages: [],
         usage: {},
@@ -333,7 +339,7 @@ export class RuntimeSessionCoordinator {
           messageIndex: index,
           createdAt: item.createdAt,
           message: item.message,
-          ...(item.metadata ? { metadata: item.metadata } : {}),
+          ...(item.metadata ? { metadata: inputMessageMetadata(item.metadata) } : {}),
         }));
         const generated = generatedMessages.map((item, index) => ({
           messageId: item.messageId,

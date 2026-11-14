@@ -12,6 +12,7 @@ import { workerObservation } from './remoteWorkerObservation.mjs';
 import { openHeadlessWorkers } from './headlessWorkerStore.mjs';
 import { openLocalWorkers } from './localWorkerStore.mjs';
 import { callRemoteWorker } from './remoteWorkers.mjs';
+import { workerConnectionStatus } from './workerConnectionStatus.mjs';
 import { compactConversationTitle, readUserPrompt, remoteWorkerSchema, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
 import { ModelImageStore } from '@cardbush/bush-runtime';
 import { sessionSummarySchema, sessionHistoryPageSchema } from '@cardbush/bush-protocol';
@@ -204,10 +205,10 @@ export class AgentService {
       const data = payload as Record<string, unknown>;
       if (operation === 'webhook.bot' && this.#webhooks) return this.#webhooks.botRequest(payload, signal);
       if (operation === 'environment.snapshot') return { browser: { integrated: { available: false }, external: browserConnectionEnvironment(this.#browserConnector?.status().connector) },
-        workers: (await (await this.#workers)?.list() ?? []).map(({ id, name, connected, connectionState }) => ({ id, name, connected, connectionState })) };
+        workers: (await (await this.#workers)?.list() ?? []).map(workerConnectionStatus) };
       if (this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
         return callWebRemoteAgent(this.#webPolicy?.remoteAgents, operation, payload, signal, onAccepted);
-      if (this.#local && !this.#webRestricted && ['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
+      if (this.#local && !this.#webRestricted && ['agents.list', 'agents.verify', 'agents.reconnect', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation))
         return callRemoteWorker(await this.#workerConnections(), operation, payload, signal, onAccepted);
       if (operation === 'agent.desktop.tool' && this.#desktop) return this.#desktop.tool(payload, signal);
       if (operation === 'network.configuration') {
@@ -504,7 +505,7 @@ export class AgentService {
         switch (data.action) {
           case 'list': return workers.list();
           case 'save': return workers.save(data.connection as import('./agentTypes.js').AgentConnectionInput);
-          case 'verify': return workers.connect(id.parse(data.id));
+          case 'verify': return workers.verify(id.parse(data.id));
           case 'remove': return workers.remove(id.parse(data.id));
           default: throw new Error('Unknown worker registration command.');
         }

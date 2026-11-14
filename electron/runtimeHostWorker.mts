@@ -991,6 +991,10 @@ host = new InMemoryRuntimeHost({
   subagentPermissionPolicy,
   remoteAgents: process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_WEB_REMOTE_AGENTS !== '1' && process.env.CARDBUSH_LOCAL_WORKERS !== '1' ? undefined : {
     list: signal => mcpHost.request('agents.list', {}, signal),
+    ...(process.env.CARDBUSH_WEB_REMOTE_AGENTS !== '1' ? {
+      connection: (input: { action: 'verify' | 'reconnect'; connectionId: string }, signal?: AbortSignal) =>
+        mcpHost.request<import('@cardbush/bush-protocol').WorkerConnectionSnapshot>(input.action === 'verify' ? 'agents.verify' : 'agents.reconnect', { connectionId: input.connectionId }, signal),
+    } : {}),
     run: (input, signal, onAccepted) => mcpHost.request('agents.delegate', input, signal, true, onAccepted),
     read: (input, signal) => mcpHost.request('agents.read-child', input, signal),
     guide: (input, signal) => mcpHost.request('agents.guide-child', input, signal),

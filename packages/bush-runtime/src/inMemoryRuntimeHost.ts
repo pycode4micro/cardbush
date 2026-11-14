@@ -10,6 +10,8 @@ import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks }
 import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
+import { taskResultReferenceSchema } from './taskResultDelivery.js';
+import { registerWorkerConnectionTool } from './workerConnectionTool.js';
 import { AssistantEvents } from './assistantEvents.js';
 import { EventCollector } from './eventCollector.js';
 import { FRIENDS_COMMAND, FRIENDS_SESSION, type FriendsSnapshot } from '@cardbush/bush-protocol';
@@ -529,6 +531,7 @@ export class InMemoryRuntimeHost {
         return undefined;
       }
     };
+    this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
     this.#assistant = new AssistantConversation(new ConversationJournal(join(runtimeDataRoot, 'conversation-journal'), (session, entry) => {
       if (session === PERSONAL_ASSISTANT_SESSION && entry.role === 'assistant' && entry.visibility === 'conversation' && entry.content)
         options.onAssistantAttention?.({ id: entry.id, text: entry.content.slice(0, 500), interaction: false });
@@ -536,6 +539,7 @@ export class InMemoryRuntimeHost {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
+      resultDelivery: this.#subagentTasks.delivery,
       runningTaskCount: id => this.#subagentTasks.runningCount(id),
       childTool: id => {
         let recent: string | undefined;
@@ -547,8 +551,8 @@ export class InMemoryRuntimeHost {
         return recent;
       },
       eventRunning: () => this.#assistantEvents.executingAssistantEvent,
-      delegate: payload => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }),
-      delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks'].includes(tool.name)),
+      delegate: (payload, signal) => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }, signal),
+      delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks', 'worker_connection'].includes(tool.name)),
       eventNeedsResponse: () => {
         const turnId = this.#assistantEvents.store.select(state => state.active?.turnId);
         return Boolean(turnId && this.#agentExecutions.get(FRIENDS_SESSION, turnId)?.status === 'waiting');
@@ -727,7 +731,6 @@ export class InMemoryRuntimeHost {
         onTerminalStarted: (context, result) => this.#terminalNotifications.watch(context, result),
         ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
     }
-    this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
     this.#subagentResume = new SubagentResumeStore(options.dataRoot ? join(runtimeDataRoot, 'subagent-context') : undefined);
     this.#registeredAgents = new RegisteredAgentStore(options.dataRoot ? join(runtimeDataRoot, 'registered-agents') : undefined);
     this.#backgroundTools = new BackgroundToolCalls(this.#toolRegistry, (session, turn, id, result) =>
@@ -829,6 +832,7 @@ export class InMemoryRuntimeHost {
     taskTools.addSource(context => this.#teams.taskHandles(context.sessionId));
     taskTools.addSource(context => { subagents?.reconcile(context.sessionId); return this.#subagentTasks.list(context.sessionId).filter(task => task.origin !== 'team').map(task => ({
       task_id: task.taskId, kind: 'subagent' as const, status: task.status, revision: String(task.revision), summary: task.agentName ?? task.prompt.slice(0, 160),
+      reserveResult: () => this.#subagentTasks.delivery.reserve(context.sessionId, task),
       ...(!task.remote ? { readProgress: () => {
         const progress = this.#eventLog.taskProgress(task.childSessionId, task.childTurnId);
         // Child approvals may be presented in the parent's event stream. Read
@@ -882,6 +886,7 @@ export class InMemoryRuntimeHost {
     if (options.remoteWorkspace) taskTools.addSource(async context => terminalHandles(context,
       (await options.remoteWorkspace!.request('terminals', { owner: context.sessionId }, context.signal)).sessions, false));
     taskTools.register(this.#toolRegistry);
+    registerWorkerConnectionTool(this.#toolRegistry, options.remoteAgents);
     this.#environment.register('services', async ({ request, signal }) => {
       const refs = Array.isArray(request.metadata.botSourceRefs) ? request.metadata.botSourceRefs.filter((ref): ref is string => typeof ref === 'string') : [];
       const sourceRef = typeof request.metadata.botSourceRef === 'string' ? request.metadata.botSourceRef : undefined;
@@ -1736,7 +1741,7 @@ export class InMemoryRuntimeHost {
         const input = realtimeAgentToolRequestSchema.parse(command.payload);
         this.#realtimeAgents ??= new RealtimeAgentDispatcher({ sessions: this.#sessions, tasks: this.#subagentTasks, registry: this.#toolRegistry, remote: this.#remoteAgents,
           read: id => this.#childConversation(id) });
-        return this.#withTurnAdmission(input.sessionId, () => this.#realtimeAgents!.execute(input));
+        return this.#withTurnAdmission(input.sessionId, () => this.#realtimeAgents!.execute(input, signal));
       }
       case REALTIME_TASK_SUMMARY_COMMAND: {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
@@ -2557,6 +2562,10 @@ export class InMemoryRuntimeHost {
       ? structuredClone(input.sessionCommit.activeContextCheckpoint)
       : undefined;
     const priorSession = input.sessionCommit ? this.#sessions.snapshot(request.sessionId) : undefined;
+    for (const fact of [...priorSession?.turns.flatMap(turn => turn.messages) ?? [], ...generatedMessages]) {
+      const references = taskResultReferenceSchema.array().safeParse(fact.metadata?.taskResultReferences);
+      if (references.success) this.#subagentTasks.delivery.restore(request.sessionId, references.data);
+    }
     const previousCommittedUsage = priorSession?.turns.at(-1)?.usage;
     const usage: SessionUsage = {
       ...(input.sessionCommit ? input.sessionCommit.usage : {}),
@@ -2983,7 +2992,7 @@ export class InMemoryRuntimeHost {
         const readyAtRoundBoundary = compactionTransaction || activeContextCompaction ? [] : this.#takeSettledAgentGuidance(turnKey);
         if (readyAtRoundBoundary.length > 0) {
           messages = this.#appendAgentGuidance(
-            request.turnId,
+            request.sessionId, request.turnId,
             messages,
             generatedMessages,
             readyAtRoundBoundary,
@@ -4075,7 +4084,7 @@ export class InMemoryRuntimeHost {
           const readyAgentResults = this.#takeSettledAgentGuidance(turnKey);
           if (readyAgentResults.length > 0) {
             messages = this.#appendAgentGuidance(
-              request.turnId,
+              request.sessionId, request.turnId,
               messages,
               generatedMessages,
               readyAgentResults,
@@ -4086,7 +4095,7 @@ export class InMemoryRuntimeHost {
             const joinedAgentResults = await this.#joinPendingAgentGuidance(turnKey);
             if (input.signal?.aborted) return await stop(completedProjector.finalMessageId);
             messages = this.#appendAgentGuidance(
-              request.turnId,
+              request.sessionId, request.turnId,
               messages,
               generatedMessages,
               joinedAgentResults,
@@ -4210,6 +4219,7 @@ export class InMemoryRuntimeHost {
           message: assistantMessage,
         });
         toolRound.messages.forEach((message, index) => {
+          const references = toolRound.taskResultReferences?.[index];
           generatedMessages.push({
             messageId:
               message.role === "tool"
@@ -4217,8 +4227,10 @@ export class InMemoryRuntimeHost {
                 : `msg_guidance_${request.turnId}_${round}_${index}`,
             createdAt: this.#sessionNow(),
             message,
+            ...(references?.length ? { metadata: { taskResultReferences: references } } : {}),
           });
         });
+        toolRound.commitDeliveries?.();
         if (toolRound.hookStopTurn) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: toolRound.hookStopTurn } });
         if (completedRound.finishReason === 'length' && !input.signal?.aborted) {
           // Real tool receipts precede this notification. Never rewrite the
@@ -4240,7 +4252,7 @@ export class InMemoryRuntimeHost {
         const readyAgentResults = this.#takeSettledAgentGuidance(turnKey);
         if (readyAgentResults.length > 0) {
           messages = this.#appendAgentGuidance(
-            request.turnId,
+            request.sessionId, request.turnId,
             messages,
             generatedMessages,
             readyAgentResults,
@@ -4532,7 +4544,7 @@ export class InMemoryRuntimeHost {
   #takeSettledAgentGuidance(turnKey: string): SettledAgentGuidance[] {
     const [sessionId, turnId] = JSON.parse(turnKey) as [string, string];
     const peers = this.#conversations.take(sessionId, turnId);
-    const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
+    const pending = this.#undeliveredAgentGuidance(turnKey);
     if (pending.length === 0) return peers;
     const settled = pending.filter(
       (entry): entry is PendingAgentGuidance & { message: JoinedSubagentResult["message"] } =>
@@ -4543,7 +4555,7 @@ export class InMemoryRuntimeHost {
     const remaining = pending.filter((entry) => !settledSet.has(entry));
     if (remaining.length > 0) this.#pendingAgentGuidance.set(turnKey, remaining);
     else this.#pendingAgentGuidance.delete(turnKey);
-    return [...peers, ...settled.map((entry) => ({ taskId: entry.taskId, message: entry.message }))];
+    return [...peers, ...settled.filter(entry => this.#resultPending(sessionId, entry.taskId)).map((entry) => ({ taskId: entry.taskId, message: entry.message }))];
   }
 
   async #joinPendingAgentGuidance(
@@ -4552,7 +4564,7 @@ export class InMemoryRuntimeHost {
     mode: 'any' | 'all' = 'any',
     yieldTimeMs?: number,
   ): Promise<JoinedSubagentResult[]> {
-    const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
+    const pending = this.#undeliveredAgentGuidance(turnKey);
     const joining = taskIds.length > 0
       ? taskIds.map((taskId) => {
           const entry = pending.find((candidate) => candidate.taskId === taskId);
@@ -4570,10 +4582,24 @@ export class InMemoryRuntimeHost {
       .filter((entry) => !joiningSet.has(entry));
     if (remaining.length > 0) this.#pendingAgentGuidance.set(turnKey, remaining);
     else this.#pendingAgentGuidance.delete(turnKey);
-    return ready.map(entry => ({ taskId: entry.taskId, message: entry.message! }));
+    return ready.filter(entry => this.#resultPending(sessionId, entry.taskId)).map(entry => ({ taskId: entry.taskId, message: entry.message! }));
+  }
+
+  #resultPending(sessionId: string, taskId: string) {
+    const task = this.#subagentTasks.get(sessionId, taskId);
+    return !task || task.origin === 'team' || this.#subagentTasks.delivery.phase(sessionId, task) !== 'delivered';
+  }
+
+  #undeliveredAgentGuidance(turnKey: string) {
+    const [sessionId] = JSON.parse(turnKey) as [string, string];
+    const pending = (this.#pendingAgentGuidance.get(turnKey) ?? []).filter(entry => this.#resultPending(sessionId, entry.taskId));
+    if (pending.length) this.#pendingAgentGuidance.set(turnKey, pending);
+    else this.#pendingAgentGuidance.delete(turnKey);
+    return pending;
   }
 
   #appendAgentGuidance(
+    sessionId: string,
     turnId: string,
     messages: ModelMessage[],
     generatedMessages: GeneratedMessageFact[],
@@ -4584,11 +4610,15 @@ export class InMemoryRuntimeHost {
       ...result.message, visibility: 'internal' as const,
     } }));
     for (const result of internalResults) {
+      const task = this.#subagentTasks.get(sessionId, result.taskId);
+      const lease = task && task.origin !== 'team' ? this.#subagentTasks.delivery.reserve(sessionId, task) : undefined;
       generatedMessages.push({
         messageId: `msg_subagent_result_${turnId}_${result.taskId}`,
         createdAt: this.#sessionNow(),
         message: result.message,
+        ...(lease ? { metadata: { taskResultReferences: [lease.reference] } } : {}),
       });
+      lease?.commit();
     }
     return [...messages, ...internalResults.map((result) => result.message)];
   }
@@ -4918,6 +4948,7 @@ export class InMemoryRuntimeHost {
   async #deleteSession(sessionId: string) {
     if (sessionId === FRIENDS_SESSION) await this.#assistantEvents.disconnect();
     this.#assistant.forget(sessionId);
+    this.#subagentTasks.delivery.forget(sessionId);
     this.#conversations.forget(sessionId);
     await this.#subagentResume.remove(sessionId);
     for (const task of this.#subagentTasks.list(sessionId)) await this.#subagentResume.remove(task.childSessionId);

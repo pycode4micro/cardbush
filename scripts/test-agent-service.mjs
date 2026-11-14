@@ -1079,7 +1079,7 @@ test('send retries deduplicate, same-session messages queue, and directory switc
     await f.service.call('chat.send', input('queue', 'after-switch'));
     await until(() => f.service.call('chat.jobs'), jobs => jobs.at(-1).status === 'completed');
     assert.ok(JSON.stringify(f.model.calls.at(-1)).includes(p2.replaceAll('\\', '\\\\')));
-    await assert.rejects(AgentService.open({ dataRoot: f.root }), /already owns/);
+    await assert.rejects(AgentService.open({ dataRoot: f.root }), { code: 'AGENT_DATA_DIRECTORY_BUSY' });
   } finally { await f.service.close(); }
 });
 

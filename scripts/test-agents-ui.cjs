@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { join, resolve } = require('node:path');
 const { app, BrowserWindow } = require('electron');
+const messages = require('../src/i18n/locales/en.json').messages;
 const directory = resolve(process.argv[2]); app.disableHardwareAcceleration(); app.setPath('userData', join(directory, 'profile'));
 const deadline = setTimeout(() => app.exit(1), 40000);
 app.whenReady().then(async () => {
@@ -14,8 +15,14 @@ app.whenReady().then(async () => {
     await set('.agents-form select','direct'); await until('document.querySelector(".agents-form input[type=url]")');
     await set('.agents-form input','Rendering worker'); await set('.agents-form input[type=url]','https://worker.example'); await set('.agents-form input[type=password]','fixture-token');
     await read('document.querySelector(".agents-form").requestSubmit()'); await until('document.querySelector(".agents-form [role=alert]")');
-    assert.equal(await read('records.length'),1); await read('window.fail=false;document.querySelector(".agents-form").requestSubmit()');
+    assert.equal(await read('records.length'),1);
+    assert.equal(await read('document.querySelector(".remote-workers article small").textContent'),messages['workerConnection.state.failed']);
+    assert.ok(await read('document.querySelector(".remote-workers article [role=status]").textContent.length > 0'));
+    await read('window.fail=false;document.querySelector(".agents-form").requestSubmit()');
     await until('!document.querySelector(".agents-form")'); assert.equal(await read('records.length'),1,'retry edits the saved record');
+    assert.equal(await read('document.querySelector(".remote-workers article small").textContent'),messages['workerConnection.state.connected']);
+    const checkedAt = await read('new Intl.DateTimeFormat("en",{dateStyle:"short",timeStyle:"medium"}).format(new Date(records[0].lastCheckedAt))');
+    assert.equal(await read('document.querySelector(".remote-workers article small").title'),messages['workerConnection.lastChecked'].replace('{time}',checkedAt));
     assert.equal(await read('saved[1].id'),'worker-1'); await until('!document.querySelector(".remote-workers article button").disabled');
     await read('document.querySelector(".remote-workers article button").click()'); assert.equal(await read('registered.agentId'),'service-1');
     await read('window.workerVersion="0.0";document.querySelectorAll(".remote-workers article button")[1].click()');

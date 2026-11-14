@@ -25,6 +25,7 @@ import { completeContextUnits } from './contextCompactionTransaction.js';
 import type { AssistantMemory } from './assistantMemory.js';
 import type { AssistantManagement } from './assistantManagement.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
+import { TaskResultDelivery, resultDelivery, taskReceiptDelivery, type TaskResultLease } from './taskResultDelivery.js';
 import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
@@ -78,8 +79,8 @@ export class AssistantConversation {
   private timer?: ReturnType<typeof setTimeout>;
   private configured?: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile };
   private retryRequested = false;
-  private watched = new Set<string>();
-  private announced = new Set<string>();
+  private readonly results: TaskResultDelivery;
+  private notification?: TaskResultLease;
   private requestIds = new Set<string>();
   private generation = 0;
   constructor(readonly journal: ConversationJournal, private deps: {
@@ -87,9 +88,10 @@ export class AssistantConversation {
     provider: ModelProvider; checkpoint: () => ToolDefinition;
     exists(id: string): boolean;
     tasks(id: string): SubagentTask[];
+    resultDelivery?: TaskResultDelivery;
     runningTaskCount?(id: string): number;
     childTool?(id: string): string | undefined;
-    delegate(input: unknown): Promise<unknown>;
+    delegate(input: unknown, signal?: AbortSignal): Promise<unknown>;
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
     environment?: RuntimeEnvironment;
@@ -103,7 +105,7 @@ export class AssistantConversation {
     snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
     botContext?: (sourceRef: string | undefined, signal: AbortSignal) => Promise<BotContext>;
     wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
-  }) {}
+  }) { this.results = deps.resultDelivery ?? new TaskResultDelivery(); }
   private runningTasks(sessionId: string) {
     return this.deps.runningTaskCount?.(sessionId) ?? this.deps.tasks(sessionId).filter(task => task.status === 'running').length;
   }
@@ -185,6 +187,15 @@ export class AssistantConversation {
   }
   private async pump() {
     if (this.busy || this.paused || this.stopped || !this.configured || !this.pending) return;
+    try {
+      const sessionId = this.configured.parent.sessionId, history = this.journal.modelHistory(sessionId).read();
+      this.results.restore(sessionId, history.taskResults);
+      if (!this.retryRequested && !this.results.ready(sessionId).length &&
+        !this.journal.read(sessionId).some(entry => !history.entryIds.has(entry.id))) {
+        this.pending = false;
+        return;
+      }
+    } catch (error) { this.pending = false; this.error = retainedRuntimeError(error); return; }
     this.busy = true; this.pending = false; this.error = ''; this.retry = undefined;
     const configured = this.configured, retryRequested = this.retryRequested;
     this.retryRequested = false;
@@ -207,6 +218,7 @@ export class AssistantConversation {
         this.deps.observeOutcome?.({ nowMs: Date.now(), kind: 'turn_terminal', status }, execution.turnId);
       if (this.controller === controller) {
       this.webhookTurn = undefined; this.busy = false; this.retry = undefined; this.controller = undefined;
+      this.notification?.release(); this.notification = undefined;
       try { if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent); }
       catch (error) { this.error ||= retainedRuntimeError(error); }
       if (this.pending && !this.stopped) void this.pump();
@@ -245,6 +257,24 @@ export class AssistantConversation {
     const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...nativeTools, ...memoryTools, ...managementTools];
     const entries = this.journal.read(id);
     const history = this.journal.modelHistory(id);
+    // Foreground work owns its reply. Completion delivery is selected only once
+    // that work has committed its results, never queued as a second user input.
+    const readIds = history.read().entryIds;
+    if (!entries.some(entry => !readIds.has(entry.id)) && !retryRequested) {
+      for (const task of this.deps.tasks(id)) this.results.observe(id, task);
+      const task = this.results.ready(id)[0];
+      if (task) {
+        const lease = this.results.reserve(id, task);
+        if (lease) {
+          this.notification = lease;
+          const entry: ConversationEntry = { id: `task-${task.taskId}-${randomUUID()}`, role: 'user', source: 'task', visibility: 'internal',
+            responseTo: task.originMessageIds ?? entries.filter(entry => entry.role === 'user' && entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256),
+            createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId,
+              status: task.status, result: task.finalResponse, error: task.errorMessage }) };
+          entries.push(entry);
+        }
+      }
+    }
     // Migrate the old visible-only journal once. Missing historical tool exchanges
     // cannot be reconstructed; every new exchange is retained losslessly below.
     if (!history.read().entryIds.size) {
@@ -275,6 +305,7 @@ export class AssistantConversation {
     const redundantIds = new Set(redundant.map(item => item.id));
     if (redundant.length) history.append([], [...redundantIds]);
     const pending = queued.filter(item => !redundantIds.has(item.id));
+    if (!pending.length && !retryRequested) return;
     // Give fresh instructions (including cancellations) their own reply. A
     // completion belongs to one assignment, even when several finish together.
     const foreground = pending.filter(item => item.source !== 'task');
@@ -350,7 +381,12 @@ export class AssistantConversation {
     signal.throwIfAborted();
     // Commit the reference and consumed input together. Retries/restart keep the
     // same delivered prefix; reset cannot resurrect an in-flight recall.
-    history.append(incoming, remaining.map(item => item.id));
+    const notificationEntry = this.notification ? remaining.find(item => item.source === 'task') : undefined;
+    history.append(incoming, remaining.map(item => item.id), this.notification ? [this.notification.reference] : []);
+    this.notification?.commit(); this.notification = undefined;
+    // The visible journal is a projection; the durable context owns delivery.
+    if (notificationEntry) this.journal.append(id, notificationEntry);
+    if (this.results.ready(id).length) this.pending = true;
     const preferences = this.deps.eventPreferences?.() ?? profile.proactive;
     const system: ModelMessage = { role: 'system', content: renderPromptTemplate('assistant-system', {
       name: profile.name, persona: profile.persona.trim() ? profile.persona : renderPromptTemplate('assistant-default-persona'),
@@ -506,6 +542,7 @@ export class AssistantConversation {
       let delegationQueue: Promise<unknown> = Promise.resolve();
       let managementQueue: Promise<unknown> = Promise.resolve();
       const failures = new Set<string>();
+      const nativeResults = new Map<number, unknown>();
       this.executingTools = signal;
       const execute = async (ordinal: number) => {
         const call = toolCalls[ordinal]!;
@@ -540,8 +577,14 @@ export class AssistantConversation {
               signal.throwIfAborted();
             } else {
               const selected = tasks.filter(task => !task_ids?.length || task_ids.includes(task.taskId));
-              await run(() => { selected.forEach(task => this.watched.add(task.taskId)); this.schedule(); });
+              await run(() => { selected.forEach(task => this.results.watch(id, task)); this.schedule(); });
               output = { status: selected.some(task => task.status === 'running') ? 'watching' : 'settled', tasks: selected.map(task => ({ taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 8000) })) };
+              const value = output as { tasks: Array<{ taskId: string; status: string; result: string }> };
+              const leases = selected.flatMap(task => task.finalResponse.length <= 8000 ? [this.results.reserve(id, task)].filter((lease): lease is TaskResultLease => Boolean(lease)) : []);
+              if (leases.length) {
+                // This compatibility receipt has camel-case IDs; its whole body is delivered.
+                output = taskReceiptDelivery(value, leases.map(lease => ({ lease, value })));
+              }
             }
           } else if (managementTools.some(tool => tool.name === call.name)) {
             const execution = managementQueue.then(async () => {
@@ -566,18 +609,21 @@ export class AssistantConversation {
           } else if (nativeTools.some(tool => tool.name === call.name)) {
             // Preserve registration-before-assembly order within one model batch.
             // Dispatch receipts are immediate; the child work remains independent.
-            const execution = delegationQueue.then(() => run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args })));
+            const execution = delegationQueue.then(() => run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args }, signal)));
             delegationQueue = execution.catch(() => undefined);
             output = await execution;
+            nativeResults.set(ordinal, output);
             signal.throwIfAborted();
             this.watchDelegation(output);
           } else {
             const input = conversationalSubagentInput.parse(args);
             output = await run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
-              parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined }));
+              parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined }, signal));
+            nativeResults.set(ordinal, output);
             signal.throwIfAborted();
             this.watchDelegation(output);
           }
+          nativeResults.set(ordinal, output);
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify(output) };
         } catch (error) {
           failures.add(call.id);
@@ -591,9 +637,14 @@ export class AssistantConversation {
         for (const phase of toolExecutionPhases(toolCalls)) {
           await Promise.all(phase.map(async ordinal => { results[ordinal] = await execute(ordinal); }));
         }
-      } finally { if (this.executingTools === signal) this.executingTools = undefined; }
-      signal.throwIfAborted();
-      history.append(results);
+        signal.throwIfAborted();
+        const deliveries = [...nativeResults].flatMap(([ordinal, output]) => resultDelivery(output)?.references(String(results[ordinal]?.content ?? '')) ?? []);
+        history.append(results, [], deliveries);
+        for (const [ordinal, output] of nativeResults) resultDelivery(output)?.commit(String(results[ordinal]?.content ?? ''));
+      } finally {
+        for (const output of nativeResults.values()) resultDelivery(output)?.release();
+        if (this.executingTools === signal) this.executingTools = undefined;
+      }
       if (!activeSources.size) for (const call of toolCalls) {
         const failed = failures.has(call.id);
         this.deps.observeOutcome?.({ nowMs: Date.now(), kind: failed ? 'tool_failed' : 'tool_returned',
@@ -605,25 +656,22 @@ export class AssistantConversation {
   }
   private watchDelegation(output: unknown) {
     const receipt = output as { taskId?: string; status?: string } | undefined;
-    // A settled receipt already delivers this attempt's outcome. Check the receipt,
-    // not the live task: a running receipt may race a genuine background completion.
-    if (!receipt?.taskId || ['completed', 'failed', 'stopped', 'unavailable'].includes(receipt.status ?? '')) return;
-    this.watched.add(receipt.taskId); this.announced.delete(receipt.taskId); this.schedule();
+    // Native terminal receipts stay watched until projection/context commits.
+    // Standalone adapters without lifecycle ownership retain their direct receipt contract.
+    if (!receipt?.taskId || (!resultDelivery(output) && ['completed', 'failed', 'stopped', 'unavailable'].includes(receipt.status ?? ''))) return;
+    const task = this.deps.tasks(PERSONAL_ASSISTANT_SESSION).find(task => task.taskId === receipt.taskId);
+    if (task) this.results.watch(PERSONAL_ASSISTANT_SESSION, task);
+    this.schedule();
   }
   private schedule() {
     if (this.timer || this.stopped) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       try {
-      for (const task of this.deps.tasks(PERSONAL_ASSISTANT_SESSION)) if (this.watched.has(task.taskId) && task.status !== 'running' && !this.announced.has(task.taskId)) {
-        this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `task-${task.taskId}`, role: 'user', source: 'task', visibility: 'internal',
-          responseTo: task.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.role === 'user' && entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256),
-          createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId, status: task.status, result: task.finalResponse.slice(0, 12000), error: task.errorMessage }) });
-        this.announced.add(task.taskId);
-        this.pending = true;
-      }
+      for (const task of this.deps.tasks(PERSONAL_ASSISTANT_SESSION)) this.results.observe(PERSONAL_ASSISTANT_SESSION, task);
+      if (this.results.ready(PERSONAL_ASSISTANT_SESSION).length) this.pending = true;
       void this.pump();
-      if (this.deps.tasks(PERSONAL_ASSISTANT_SESSION).some(task => this.watched.has(task.taskId) && task.status === 'running')) this.schedule();
+      if (this.results.watching(PERSONAL_ASSISTANT_SESSION)) this.schedule();
       } catch (error) { this.error = retainedRuntimeError(error); }
     }, 1200);
     this.timer.unref?.();
@@ -640,7 +688,7 @@ export class AssistantConversation {
   forget(sessionId: string) {
     this.deps.agents?.forget(sessionId);
     if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.replyExpression = undefined; this.directTools.clear(); }
-    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.webhookTurn = undefined; this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.watched.clear(); this.announced.clear(); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
+    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.webhookTurn = undefined; this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.notification?.release(); this.notification = undefined; this.results.forget(sessionId); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
     if (sessionId === PERSONAL_ASSISTANT_SESSION) this.deps.management?.reset();
     this.journal.forget(sessionId);
   }

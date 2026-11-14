@@ -2,12 +2,37 @@ import { z } from 'zod';
 import { remoteControlSchema, supportsRemoteInteraction, subagentInteractionCapabilitiesSchema, SUBAGENT_INTERACTION_OPERATIONS, type SessionSnapshot, type RemoteSubagentRequest } from '@cardbush/bush-protocol';
 import type { AgentConnectionManager } from './agentConnections.mjs';
 import { runRemoteSubagent } from './remoteSubagent.mjs';
+import { workerConnectionStatus } from './workerConnectionStatus.mjs';
+import { uiText } from '@cardbush/platform/i18n';
+
+function connectionManagementFailure() {
+  return Object.assign(new Error(uiText('en')('workerConnection.error.verification_failed')), { code: 'worker_connection_failed' });
+}
 
 const identity = z.object({ connectionId: z.string().min(1), agentId: z.string().min(1).optional(), parentSessionId: z.string().min(1) });
 /** CardBush host adapter. Protocol operations do not expose Runtime commands or tool names. */
 export async function callRemoteWorker(manager: AgentConnectionManager, operation: string, payload: unknown, signal?: AbortSignal, onAccepted?: () => void): Promise<unknown> {
-  if (operation === 'agents.list') return (await manager.list()).filter(item => item.hasToken && !item.migrationIssue).map(({ id, name, agentId, info }) => ({ id, name, agentId,
-    ...(supportsRemoteInteraction(info?.capabilities.workerInteraction) ? { interactionCapabilities: subagentInteractionCapabilitiesSchema.parse({ operations: info!.capabilities.workerInteraction!.operations ?? [...SUBAGENT_INTERACTION_OPERATIONS] }) } : {}) }));
+  if (operation === 'agents.verify' || operation === 'agents.reconnect') {
+    const input = z.object({ connectionId: z.string().min(1).max(200) }).strict().parse(payload);
+    signal?.throwIfAborted();
+    const list = () => manager.list().catch(() => { signal?.throwIfAborted(); throw connectionManagementFailure(); });
+    const registered = await list();
+    signal?.throwIfAborted();
+    if (!registered.some(item => item.id === input.connectionId)) throw new Error('Unknown worker connection.');
+    try { await (operation === 'agents.verify' ? manager.verify(input.connectionId) : manager.reconnect(input.connectionId)); }
+    catch {
+      // The boundary owns failure text, including unexpected cleanup/store errors.
+      signal?.throwIfAborted();
+      if (!(await list()).find(item => item.id === input.connectionId)?.connectionErrorCode) throw connectionManagementFailure();
+    }
+    signal?.throwIfAborted();
+    const connection = (await list()).find(item => item.id === input.connectionId);
+    signal?.throwIfAborted();
+    if (!connection) throw new Error('Worker registration was removed.');
+    return workerConnectionStatus(connection);
+  }
+  if (operation === 'agents.list') return (await manager.list()).filter(item => item.hasToken && !item.migrationIssue).map(item => ({ ...workerConnectionStatus(item),
+    ...(supportsRemoteInteraction(item.info?.capabilities.workerInteraction) ? { interactionCapabilities: subagentInteractionCapabilitiesSchema.parse({ operations: item.info!.capabilities.workerInteraction!.operations ?? [...SUBAGENT_INTERACTION_OPERATIONS] }) } : {}) }));
   if (operation === 'agents.delegate') return runRemoteSubagent(manager, payload as RemoteSubagentRequest, signal, { onAccepted });
   if (operation === 'agents.control') {
     const input = identity.extend({ control: remoteControlSchema, worker: z.unknown().optional() }).strict().parse(payload);

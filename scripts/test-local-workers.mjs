@@ -84,6 +84,20 @@ test('CLI Runtime discovers the App registry and validates remote roles through 
   const service = await AgentService.open({ dataRoot: f.legacyRoot, local: true, localProfileRoot: f.profile });
   try {
     assert.equal((await service.call('workers.command', { action: 'list' }))[0].id, connection.id);
+    const tools = await service.call('runtime.command', { kind: 'runtime.get_tool_catalog', payload: {} });
+    assert.ok(tools.some(tool => tool.name === 'worker_connection'));
+    for (const action of ['verify', 'reconnect']) {
+      const receipt = await service.call('runtime.command', { kind: 'runtime.realtime_agent_tool', payload: {
+        sessionId: 'connection-parent', callId: `fixture-${action}`, action: 'worker_connection',
+        nativeArguments: { action, connection_id: connection.id },
+        parent: { protocol: 'bush.session_turn_request.v1', requestId: 'fixture', sessionId: 'connection-parent', turnId: 'fixture-turn', model: 'fixture',
+          prefixMessages: [], inputMessages: [{ messageId: 'fixture-user', message: { role: 'user', content: 'Verify the saved worker' } }],
+          tools, permissionMode: 'all_free', metadata: {} },
+      } });
+      assert.equal(receipt.connectionState, 'connected'); assert.ok(receipt.lastCheckedAt);
+      assert.equal(receipt.agentId, 'worker-instance'); assert.equal(receipt.url, undefined);
+      assert.doesNotMatch(JSON.stringify(receipt), /isolated-worker-token/);
+    }
     const saved = await service.call('runtime.command', { kind: 'runtime.agent_registry', payload: { action: 'save', expected_revision: 0,
       definition: { id: 'shared-role', name: 'Shared role', system_prompt: 'Read-only verification', remote: { connection_id: connection.id, agent_id: 'worker-instance' } } } });
     assert.equal(saved.definition.remote.connection_id, connection.id);

@@ -99,6 +99,7 @@ export class AgentHttpClient {
     }
     if (!response.ok) {
       const data = await response.json().catch(() => null) as { error?: { message?: string; code?: string } } | null;
+      if (response.status === 409 && data?.error?.code === 'agent_identity_changed') throw new AgentIdentityError('Agent identity changed. Add a new connection after verifying the server.');
       throw new AgentHttpError(data?.error?.message || `Agent HTTP request failed (${response.status}).`, response.status, data?.error?.code);
     }
     if (this.#agentId && response.headers.get('x-cardbush-agent-id') !== this.#agentId) {

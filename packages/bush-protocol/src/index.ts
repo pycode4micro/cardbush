@@ -64,3 +64,4 @@ export * from './childAgentAssignment.js';
 export * from './friends.js';
 
 export * from './fileTransfer.js';
+export * from './workerConnection.js';

@@ -2643,7 +2643,7 @@ ipcMain.handle('agents:command', async (event, action: string, input: unknown) =
     case 'list': return manager.list();
     case 'save': return manager.save(input as Parameters<typeof manager.save>[0]);
     case 'remove': return manager.remove(String(input));
-    case 'connect': return manager.connect(String(input));
+    case 'connect': return manager.verify(String(input));
     case 'disconnect': return manager.disconnect(String(input));
     case 'call': {
       const request = input as { id: string; operation: Parameters<typeof manager.call>[1]; input?: Record<string, unknown> };
@@ -4282,7 +4282,7 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
           const [browser, ssh, agents] = await Promise.all([browserUseRouterPromise, sshConnectionsPromise, agentConnectionsPromise]);
           return { browser: { ...browser?.environment(sessionId), external: browserConnectionEnvironment(browserConnectorBroker?.status()) },
             terminals: (ssh?.listTerminals(sessionId).sessions ?? []).map(({ terminalSessionId, uri, state, cwd }) => ({ terminalSessionId, uri, state, cwd })),
-            workers: (await agents?.list() ?? []).map(({ id, name, connected, connectionState }) => ({ id, name, connected, connectionState })) };
+            workers: (await agents?.list() ?? []).map((await import('./workerConnectionStatus.mjs')).workerConnectionStatus) };
         }
         if (operation === 'webhook.bot') return (await contextWebhookHost()).botRequest(payload, signal);
         if (operation === 'browser.inherit-scope') {
@@ -4309,7 +4309,7 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
           if (!productHostController) throw new Error('Product Host is not ready.');
           return productHostController.resolveAutomationModel(String((payload as { modelId?: unknown })?.modelId ?? ''));
         }
-        if (['agents.list', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation)) {
+        if (['agents.list', 'agents.verify', 'agents.reconnect', 'agents.delegate', 'agents.read-child', 'agents.guide-child', 'agents.control'].includes(operation)) {
           const { callRemoteWorker } = await import('./remoteWorkers.mjs');
           return callRemoteWorker(await agentConnections(), operation, payload, signal, onAccepted);
         }

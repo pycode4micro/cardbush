@@ -26,7 +26,7 @@ export async function main(args = process.argv.slice(3)): Promise<number> {
   const workers = await openLocalWorkers();
   try {
     if (action === 'verify') {
-      const info = await workers.connect(id!);
+      const info = await workers.verify(id!);
       if (!supportsRemoteInteraction(info.capabilities.workerInteraction)) throw new Error('This service needs an update before worker interactions are available.');
       process.stdout.write(terminalText(`Verified ${info.name} (${info.id})`) + '\n');
     } else {

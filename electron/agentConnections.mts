@@ -10,13 +10,18 @@ import { assertConnectorFile } from './browserConnectorFiles.js';
 import type { AgentInfo, AgentJob, AgentOperation, AgentConnection, AgentConnectionInput, AgentDesktopApi, AgentEventRequest } from './agentTypes.js';
 import type { SshConnectionManager } from './sshConnections.mjs';
 import type { SshTunnel } from './sshTunnel.mjs';
-type Saved = Omit<AgentConnection, 'hasToken' | 'connected' | 'info' | 'connectionState' | 'connectionError'> & { token?: string; legacyLaunch?: Record<string, unknown> };
+import { uiText } from '@cardbush/platform/i18n';
+type Saved = Omit<AgentConnection, 'hasToken' | 'connected' | 'info' | 'connectionState' | 'connectionError' | 'connectionErrorCode' | 'lastCheckedAt' | 'verifiedAt'> & { token?: string; legacyLaunch?: Record<string, unknown> };
 type Live = { client: AgentHttpClient; info: AgentInfo };
-type Entry = { promise: Promise<Live>; abort: AbortController; fingerprint: string; client?: AgentHttpClient; tunnel?: SshTunnel };
+type Entry = { promise: Promise<Live>; abort: AbortController; fingerprint: string; client?: AgentHttpClient; tunnel?: SshTunnel; verification?: Promise<AgentInfo> };
 type DeferredConfiguration = { live: Live; error: Error; timer?: ReturnType<typeof setTimeout>; checking?: Promise<void> };
 const tunnelSchema = z.object({ connectionId: z.string().min(1), remoteHost: z.enum(['127.0.0.1', 'localhost', '::1']), remotePort: z.number().int().min(1).max(65535) }).strict();
 const connectionFingerprint = (item: Saved) => JSON.stringify([item.url, item.token, item.sshTunnel, item.migrationIssue, item.agentId]);
 const storeIdentity = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+const connectionFailureCode = (error: unknown): NonNullable<AgentConnection['connectionErrorCode']> =>
+  error instanceof AgentIdentityError ? 'identity_changed'
+    : error instanceof AgentHttpError && [401, 403].includes(error.status) ? 'authentication_failed'
+      : error instanceof AgentNetworkError ? 'network_unavailable' : 'verification_failed';
 function sshAgentUrl(tunnel: z.infer<typeof tunnelSchema>, previousUrl?: string) {
   const url = new URL(`http://${tunnel.remoteHost === '::1' ? '[::1]' : tunnel.remoteHost}:${tunnel.remotePort}/`);
   // Preserve an existing service path while discarding the obsolete local port.
@@ -32,6 +37,12 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   #timers = new Map<string, ReturnType<typeof setTimeout>>();
   #attempts = new Map<string, number>();
   #errors = new Map<string, string>();
+  #errorCodes = new Map<string, NonNullable<AgentConnection['connectionErrorCode']>>();
+  #checkedAt = new Map<string, string>();
+  #verifiedAt = new Map<string, string>();
+  #disconnected = new Set<string>();
+  #reconnecting = new Map<string, Promise<AgentInfo>>();
+  #generations = new Map<string, number>();
   #writes: Promise<unknown> = Promise.resolve();
   #closing = false;
   #configuration = new Map<string, { promise: Promise<SharedConfigurationReceipt> }>();
@@ -103,8 +114,12 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     return (await this.#read()).map(item => ({ id: item.id, name: item.name, transport: 'http', url: item.url,
       sshTunnel: item.sshTunnel, agentId: item.agentId, migrationIssue: item.migrationIssue, hasToken: Boolean(item.token), configurationError: this.#configurationErrors.get(item.id), configurationWarnings: this.#configurationWarnings.get(item.id),
       connected: this.#live.has(item.id), info: this.#live.get(item.id)?.info,
-      connectionState: this.#live.has(item.id) ? 'connected' : this.#desired.has(item.id) && this.#managed.has(item.id) && this.#errors.has(item.id)
-        ? 'reconnecting' : this.#clients.has(item.id) ? 'connecting' : 'disconnected', connectionError: this.#errors.get(item.id) }));
+      connectionState: this.#reconnecting.has(item.id) ? 'reconnecting' : this.#clients.get(item.id)?.verification ? 'verifying'
+        : this.#live.has(item.id) ? 'connected' : this.#clients.has(item.id) ? 'connecting'
+          : this.#desired.has(item.id) && this.#managed.has(item.id) && this.#errors.has(item.id) ? 'reconnecting'
+            : this.#errors.has(item.id) ? 'failed' : this.#disconnected.has(item.id) ? 'disconnected' : 'unverified',
+      connectionError: this.#errors.get(item.id), connectionErrorCode: this.#errorCodes.get(item.id),
+      lastCheckedAt: this.#checkedAt.get(item.id), verifiedAt: this.#verifiedAt.get(item.id) }));
   }
   async save(input: AgentConnectionInput) {
     const value = z.object({ id: z.string().optional(), name: z.string().trim().min(1).max(100), transport: z.literal('http'),
@@ -131,10 +146,14 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
   async remove(id: string) { await this.disconnect(id); await this.#change(items => items.filter(item => item.id !== id)); return this.list(); }
   async #connection(id: string): Promise<Live> {
     if (this.#closing) throw new Error('Agent connections are closing.');
+    const generation = this.#generations.get(id) ?? 0;
+    const assertCurrentGeneration = () => {
+      if (this.#closing || generation !== (this.#generations.get(id) ?? 0)) throw Error('worker_connection_superseded');
+    };
     // Another host may remove or rotate a registration while this host keeps a
     // live client. Recheck persisted authority before reusing any credentials.
     const saved = (await this.#read()).find(item => item.id === id);
-    if (this.#closing) throw new Error('Agent connections are closing.');
+    assertCurrentGeneration();
     if (!saved) { await this.disconnect(id); throw new Error('Unknown Agent connection.'); }
     const fingerprint = connectionFingerprint(saved);
     const current = this.#clients.get(id);
@@ -146,7 +165,8 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
       if (live.info.id !== saved.agentId) throw new AgentIdentityError('Agent identity changed.');
       return live;
     }
-    if (current) await this.disconnect(id);
+    if (current) await this.#disconnect(id);
+    assertCurrentGeneration();
     this.#desired.add(id);
     this.#clearTimer(id);
     const entry: Entry = { abort: new AbortController(), fingerprint, promise: undefined! };
@@ -166,7 +186,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
         assertCurrent();
       }
       const client = entry.client = new AgentHttpClient(endpoint.href, this.cipher.decrypt(saved.token), saved.agentId, entry.tunnel?.connect);
-      const info = await client.info();
+      const info = await client.info(entry.abort.signal);
       assertCurrent();
       await this.#change(items => {
         const current = items.find(item => item.id === id);
@@ -176,7 +196,7 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
       });
       entry.fingerprint = connectionFingerprint({ ...saved, agentId: info.id });
       assertCurrent();
-      const live = { client, info }; this.#live.set(id, live); this.#errors.delete(id); this.#attempts.delete(id);
+      const live = { client, info }; this.#live.set(id, live); this.#verified(id); this.#attempts.delete(id);
       this.#health(id, entry);
       const deferred = this.#deferredConfiguration.get(id);
       if (deferred) this.#deferConfiguration(id, live, deferred.error);
@@ -190,11 +210,11 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     const timer = setTimeout(() => { this.#timers.delete(id); run(); }, delay); timer.unref(); this.#timers.set(id, timer);
   }
   #health(id: string, entry: Entry) {
-    if (!this.#managed.has(id) || !this.#desired.has(id) || this.#closing) return;
+    if (!this.#desired.has(id) || this.#closing) return;
     this.#timer(id, this.options.healthIntervalMs ?? 15_000, () => {
-      void entry.client!.info().then(() => {
+      void this.#verifyLive(id, entry).then(() => {
         if (this.#clients.get(id) === entry) this.#health(id, entry);
-      }, error => this.#failed(id, entry, error));
+      }, () => undefined);
     });
   }
   #failed(id: string, entry: Entry, error: unknown) {
@@ -204,7 +224,10 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     clearTimeout(this.#deferredConfiguration.get(id)?.timer);
     entry.abort.abort(); entry.client?.close();
     const closed = entry.tunnel?.close() ?? Promise.resolve();
-    this.#errors.set(id, error instanceof Error ? error.message : String(error));
+    const code = connectionFailureCode(error);
+    this.#errorCodes.set(id, code);
+    this.#errors.set(id, uiText('en')(`workerConnection.error.${code}`));
+    this.#checkedAt.set(id, new Date().toISOString());
     const detail = error as { fingerprint?: string; level?: string; code?: string } | undefined;
     if (error instanceof AgentIdentityError || error instanceof z.ZodError || detail?.fingerprint ||
         detail?.level === 'client-authentication' || detail?.code === 'ENOENT' ||
@@ -222,8 +245,64 @@ export class AgentConnectionManager implements Omit<AgentDesktopApi, 'watchEvent
     }
   }
   async connect(id: string) { if (this.#closing) throw Error('Agent connections are closing.'); if (!this.#desired.has(id)) this.#attempts.delete(id); this.#desired.add(id); return (await this.#connection(id)).info; }
+  #verified(id: string) {
+    const now = new Date().toISOString();
+    this.#checkedAt.set(id, now); this.#verifiedAt.set(id, now);
+    this.#errors.delete(id); this.#errorCodes.delete(id); this.#disconnected.delete(id);
+  }
+  #verifyLive(id: string, entry: Entry): Promise<AgentInfo> {
+    if (entry.verification) return entry.verification;
+    const verification = (async () => {
+      const info = await entry.client!.info(entry.abort.signal);
+      if (this.#clients.get(id) !== entry || this.#closing) throw Error('worker_connection_superseded');
+      const saved = (await this.#read()).find(item => item.id === id);
+      if (!saved || connectionFingerprint(saved) !== entry.fingerprint) throw Error('worker_registration_changed');
+      if (this.#clients.get(id) !== entry || this.#closing) throw Error('worker_connection_superseded');
+      this.#live.set(id, { client: entry.client!, info }); this.#verified(id);
+      return info;
+    })().catch(error => { this.#failed(id, entry, error); throw error; }).finally(() => {
+      if (entry.verification === verification) entry.verification = undefined;
+    });
+    entry.verification = verification;
+    return verification;
+  }
+  async verify(id: string): Promise<AgentInfo> {
+    try {
+      const previous = this.#clients.get(id), wasLive = this.#live.has(id);
+      const live = await this.#connection(id);
+      const current = this.#clients.get(id);
+      if (!current || this.#closing) throw Error('worker_connection_superseded');
+      return await (wasLive && current === previous ? this.#verifyLive(id, current) : live.info);
+    } catch (error) {
+      // A superseded probe cannot update current state, but its HTTP error body
+      // must still never escape through IPC or a model-facing tool failure.
+      if (error instanceof Error && ['worker_connection_superseded', 'Unknown Agent connection.', 'Agent connections are closing.'].includes(error.message)) throw error;
+      const code = this.#errorCodes.get(id) ?? connectionFailureCode(error);
+      throw Object.assign(new Error(uiText('en')(`workerConnection.error.${code}`)), { code });
+    }
+  }
+  reconnect(id: string): Promise<AgentInfo> {
+    const existing = this.#reconnecting.get(id);
+    if (existing) return existing;
+    const disconnected = this.disconnect(id);
+    const generation = this.#generations.get(id);
+    const operation = disconnected.then(() => {
+      if (this.#closing || this.#generations.get(id) !== generation) throw Error('worker_connection_superseded');
+      return this.verify(id);
+    }).finally(() => {
+      if (this.#reconnecting.get(id) === operation) this.#reconnecting.delete(id);
+    });
+    this.#reconnecting.set(id, operation);
+    return operation;
+  }
   async disconnect(id: string) {
+    this.#generations.set(id, (this.#generations.get(id) ?? 0) + 1);
+    this.#reconnecting.delete(id);
+    await this.#disconnect(id);
+  }
+  async #disconnect(id: string) {
     this.#desired.delete(id); this.#managed.delete(id); this.#clearTimer(id); this.#attempts.delete(id); this.#errors.delete(id);
+    this.#errorCodes.delete(id); this.#disconnected.add(id);
     this.#cancelDeferredConfiguration(id); this.#configuration.delete(id);
     const entry = this.#clients.get(id); this.#clients.delete(id); this.#live.delete(id);
     entry?.abort.abort(); entry?.client?.close(); await entry?.tunnel?.close();

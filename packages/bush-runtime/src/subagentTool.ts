@@ -1,4 +1,5 @@
 import { assistantDelegationOrigins } from './assistantDelegationOrigins.js';
+import { taskReceiptDelivery } from './taskResultDelivery.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
 import { randomUUID, createHash } from "node:crypto";
@@ -53,6 +54,7 @@ function fallbackSubagentName(sessionId: string, language: unknown) {
 }
 
 export interface RemoteSubagentBridge {
+  connection?(input: { action: import('@cardbush/bush-protocol').WorkerConnectionAction; connectionId: string }, signal?: AbortSignal): Promise<import('@cardbush/bush-protocol').WorkerConnectionSnapshot>;
   list(signal?: AbortSignal): Promise<Array<{ id: string; name: string; agentId?: string; interactionCapabilities?: SubagentInteractionCapabilities }>>;
   /** Acknowledge only after the remote service durably accepts this task. */
   run(input: RemoteSubagentRequest, signal?: AbortSignal, onAccepted?: () => void): Promise<RemoteSubagentResult>;
@@ -364,11 +366,11 @@ export function registerSubagentTool(
           // direct failed receipt, not a successful dispatch plus a later error.
           await Promise.race([accepted, completion]);
           const current = tasks.get(context.sessionId, taskId)!;
-          if (current.status !== 'running') return taskResult(current);
+          if (current.status !== 'running') return taskResult(current, tasks, context.signal);
           options.onAsyncResult?.({ parentSessionId: context.sessionId, parentTurnId: context.turnId, taskId, result: completion.then(asyncResultMessage) });
           return { ...submittedResult(current), remote };
         }
-        return taskResult(await completion);
+        return taskResult(await completion, tasks, context.signal);
       }
       const saved = previous ? localRuns.get(running?.taskId ?? previous.taskId)?.request ?? await options.loadChildRequest?.(previous.childSessionId) : undefined;
       if (previous && (!saved || saved.metadata.parentSessionId !== context.sessionId)) throw new Error('The original child execution configuration is unavailable. Start a new subagent with the needed context.');
@@ -517,7 +519,7 @@ export function registerSubagentTool(
         });
         return submittedResult(tasks.get(context.sessionId, taskId)!);
       }
-      return taskResult(await completion);
+      return taskResult(await completion, tasks, context.signal);
   }
 
   async function watchChild(context: ToolHandlerContext<unknown>, taskId: string, signal: AbortSignal) {
@@ -609,8 +611,8 @@ function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<s
   };
 }
 
-function taskResult(task: ReturnType<SubagentTaskStore["finish"]>): Record<string, unknown> {
-  return {
+function taskResult(task: ReturnType<SubagentTaskStore["finish"]>, tasks: SubagentTaskStore, signal?: AbortSignal): Record<string, unknown> {
+  const result = {
     ...(task.agentProfileId ? { agentProfileId: task.agentProfileId } : {}),
     ...(task.agentName ? { agentName: task.agentName } : {}),
     taskId: task.taskId,
@@ -624,6 +626,8 @@ function taskResult(task: ReturnType<SubagentTaskStore["finish"]>): Record<strin
     errorMessage: task.errorMessage,
     usage: task.usage,
   };
+  const lease = tasks.delivery.reserve(task.parentSessionId, task);
+  return taskReceiptDelivery(result, lease ? [{ lease, value: result }] : [], signal);
 }
 
 export function decodeSubagentInput(input: unknown): SubagentInput {

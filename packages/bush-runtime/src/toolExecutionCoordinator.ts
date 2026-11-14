@@ -30,6 +30,7 @@ import { toolFailureFacts, withToolFailureFacts } from './toolFailureFacts.js';
 import { resolveToolReferenceName } from './toolReferenceNames.js';
 import { annotateToolRouteRecovery } from './toolRouteRecovery.js';
 import { mcpSchedulingResources } from './toolScheduling.js';
+import { resultDelivery, transferResultDelivery, type ResultDelivery } from './taskResultDelivery.js';
 
 interface ExecutionTrace {
   dispatched: boolean;
@@ -389,6 +390,7 @@ export class ToolExecutionCoordinator {
     const nestedHookMessages: string[] = [], nestedHookFeedback: string[] = [];
     let nestedHookStopTurn: string | undefined;
     const workspaceChanges: WorkspaceChange[] = [];
+    const nestedDeliveries = new Set<ResultDelivery>();
     try {
       let nestedOrdinal = 0;
       const resources = [...mcpSchedulingResources(registration),
@@ -452,6 +454,10 @@ export class ToolExecutionCoordinator {
                 nestedOptions?.record ? undefined : lifecycle, () => nestedHookStopTurn ?? dispatchStop?.(),
                 nestedOptions?.onPermissionWait ?? onPermissionWait);
               trace.nestedDispatched ||= nested.execution?.dispatch !== 'not_started';
+              if (nested.kind === 'returned') {
+                const delivery = resultDelivery(nested.result);
+                if (delivery) nestedDeliveries.add(delivery);
+              }
               if (nested.execution?.effects === 'recorded' || trace.nestedEffects === 'none' && nested.execution?.effects === 'possible') trace.nestedEffects = nested.execution.effects;
               trace.nestedUncertain ||= nested.execution?.result === 'unknown';
               trace.denied ||= nested.kind !== 'returned' && nested.error.kind === 'permission';
@@ -485,7 +491,11 @@ export class ToolExecutionCoordinator {
       // resource lease until the actual handler settles, even if it ignores abort.
       const release = releaseResources;
       releaseResources = undefined;
-      void execution.then(() => release?.(), () => release?.());
+      void execution.then(value => {
+        release?.();
+        for (const delivery of nestedDeliveries) if (delivery !== resultDelivery(value)) delivery.release();
+        if (signal?.aborted) resultDelivery(value)?.release();
+      }, () => { release?.(); for (const delivery of nestedDeliveries) delivery.release(); });
       nativeResult = await settleAtAbort(
         execution,
         signal,
@@ -522,10 +532,12 @@ export class ToolExecutionCoordinator {
     let stableWorkspaceChanges: WorkspaceChange[];
     try {
       stableResult = snapshotJsonValue(nativeResult);
+      transferResultDelivery(nativeResult, stableResult);
       stableWorkspaceChanges = workspaceChanges.map(
         (change) => snapshotJsonValue(change) as WorkspaceChange,
       );
     } catch (error) {
+      resultDelivery(nativeResult)?.release();
       return failedResult(
         "tool_native_result_not_json_serializable",
         errorMessage(error),

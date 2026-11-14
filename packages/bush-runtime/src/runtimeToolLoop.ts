@@ -1,4 +1,5 @@
 import { projectMcpDiscoveryResult } from "./mcpToolDiscovery.js";
+import { resultDelivery, type ResultDelivery, type TaskResultReference } from './taskResultDelivery.js';
 import { projectArchivedToolResult } from './archivedToolResultProjection.js';
 import { withFileSourceLocator } from './fileSourceReceipt.js';
 import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
@@ -56,6 +57,8 @@ export interface RuntimeToolLoopOptions {
 
 export interface RuntimeToolRoundResult {
   messages: ModelMessage[];
+  commitDeliveries?: () => void;
+  taskResultReferences?: TaskResultReference[][];
   hookStopTurn?: string;
 }
 
@@ -203,6 +206,8 @@ export class RuntimeToolLoop {
       modelContextIngressBudgetTokens?: number;
     },
   ): Promise<RuntimeToolRoundResult> {
+    const pendingDeliveries = new Set<ResultDelivery>();
+    try {
     const schedulingTurn = input.request ? { request: input.request, contextMessages: input.contextMessages ?? [], toolNameScope: input.toolNameScope } : undefined;
     const targetFor = (call: ToolCall) => scheduledToolName(call, schedulingTurn);
     const executionIdentities = toolCalls.map((toolCall, ordinal) => ({
@@ -251,6 +256,10 @@ export class RuntimeToolLoop {
           undefined,
           () => hookStopTurn,
         );
+        if (outcome.kind === 'returned') {
+          const delivery = resultDelivery(outcome.result);
+          if (delivery) pendingDeliveries.add(delivery);
+        }
         hookStopTurn ??= outcome.hookStopTurn;
         // Forwarded calls keep their wire identity; result handling and journals
         // use the native executor, including Team activity and bounded previews.
@@ -403,8 +412,19 @@ export class RuntimeToolLoop {
     })));
     return {
       messages: [...toolMessages, ...hookMessages],
+      taskResultReferences: outcomes.map((outcome, index) => outcome.kind === 'returned'
+        ? resultDelivery(outcome.result)?.references(String(toolMessages[index]?.content ?? '')) ?? [] : []),
+      commitDeliveries: () => {
+        try { outcomes.forEach((outcome, index) => {
+          if (outcome.kind === 'returned') resultDelivery(outcome.result)?.commit(String(toolMessages[index]?.content ?? ''));
+        }); } finally { for (const delivery of pendingDeliveries) delivery.release(); }
+      },
       hookStopTurn: outcomes.find(outcome => outcome.hookStopTurn)?.hookStopTurn,
     };
+    } catch (error) {
+      for (const delivery of pendingDeliveries) delivery.release();
+      throw error;
+    }
   }
 
   #hasConcurrentPermissionAdmission(toolCall: ToolCall, toolCalls: ToolCall[], targetFor: (call: ToolCall) => string): boolean {

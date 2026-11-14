@@ -31,9 +31,10 @@ export function RemoteWorkers({ language, connections, refresh, onRegister }: {
   const [error, setError] = useState(''), [busy, setBusy] = useState('');
   const api = () => { const value = window.cardbushDesktop?.agents; if (!value) throw Error(uiText(language)('agentsView.agent_connections_are_unavailable')); return value; };
   const verify = async (id: string) => {
-    const info = await api().connect(id);
-    await refresh();
-    if (!info.capabilities.delegation || !supportsRemoteInteraction(info.capabilities.workerInteraction)) throw Error(uiText(language)('remoteWorkers.unavailable'));
+    try {
+      const info = await api().connect(id);
+      if (!info.capabilities.delegation || !supportsRemoteInteraction(info.capabilities.workerInteraction)) throw Error(uiText(language)('remoteWorkers.unavailable'));
+    } finally { await refresh(); }
   };
   const save = async (input: AgentConnectionInput) => {
     const before = new Set(connections.map(item => item.id));
@@ -52,7 +53,10 @@ export function RemoteWorkers({ language, connections, refresh, onRegister }: {
     {error && <p role="alert">{error}</p>}
     {!connections.length && <p>{uiText(language)('remoteWorkers.empty')}</p>}
     {connections.map(connection => <article key={connection.id}>
-      <div><strong>{connection.name}</strong><small>{canRegisterWorker(connection) ? uiText(language)('remoteWorkers.verified') : uiText(language)('remoteWorkers.notVerified')}</small></div>
+      <div><strong>{connection.name}</strong><small title={connection.lastCheckedAt
+        ? uiText(language)('workerConnection.lastChecked', { time: new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(connection.lastCheckedAt)) }) : undefined}>
+        {uiText(language)(`workerConnection.state.${busy === connection.id ? 'verifying' : connection.connectionState ?? (connection.connected ? 'connected' : 'unverified')}`)}
+      </small>{connection.connectionErrorCode && <small role="status">{uiText(language)(`workerConnection.error.${connection.connectionErrorCode}`)}</small>}</div>
       <button type="button" disabled={!canRegisterWorker(connection)} onClick={() => onRegister(connection)}>{uiText(language)('remoteWorkers.registerRole')}</button>
       <button type="button" disabled={busy === connection.id} aria-label={uiText(language)('remoteWorkers.test')} title={uiText(language)('remoteWorkers.test')} onClick={() => {
         setBusy(connection.id); setError(''); void verify(connection.id).catch(failure => setError(agentErrorText(failure))).finally(() => setBusy(''));

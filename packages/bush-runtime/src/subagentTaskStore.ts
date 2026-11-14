@@ -1,5 +1,6 @@
 import { memoryCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import { randomUUID } from "node:crypto";
+import { TaskResultDelivery } from './taskResultDelivery.js';
 
 import {
   BUSH_SUBAGENT_EVENT_PROTOCOL,
@@ -23,6 +24,7 @@ type ParentTasks = {
 };
 
 export class SubagentTaskStore {
+  readonly delivery = new TaskResultDelivery();
   readonly #persistence?: SubagentTaskPersistence;
   readonly #createEventId: () => string;
   readonly #now: () => string;
@@ -235,6 +237,7 @@ export class SubagentTaskStore {
     validateTransition(parentSessionId, state, event);
     this.#persistence?.append(event);
     apply(state, event);
+    this.delivery.observe(parentSessionId, task);
     for (const listener of this.#listeners) listener();
   }
 }

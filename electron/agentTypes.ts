@@ -1,5 +1,5 @@
 /** Wire-facing types shared by the renderer and service. No host imports. */
-import type { RuntimeEvent, ReasoningEffort, RuntimeSessionTurnRequest, IndividuationSettings } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
+import type { RuntimeEvent, ReasoningEffort, RuntimeSessionTurnRequest, IndividuationSettings, WorkerConnectionSnapshot } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 export const agentApiPath = '/api/agent/v1';
 export type AgentEventRequest = { sessionId: string; turnId: string; afterSequence?: number };
 export type AgentEventFrame = { type: 'ready'; agentId: string } | { type: 'event'; event: RuntimeEvent }
@@ -32,8 +32,11 @@ export type AgentConnection = {
   id: string; name: string; transport: 'http'; url: string; migrationIssue?: string;
   hasToken: boolean; agentId?: string; connected: boolean; info?: AgentInfo;
   sshTunnel?: AgentSshTunnel;
-  connectionState?: 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+  connectionState?: WorkerConnectionSnapshot['connectionState'];
   connectionError?: string;
+  connectionErrorCode?: WorkerConnectionSnapshot['connectionErrorCode'];
+  lastCheckedAt?: string;
+  verifiedAt?: string;
   configurationError?: string;
   configurationWarnings?: string[];
 };

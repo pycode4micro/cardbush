@@ -4,6 +4,7 @@ import { TEAM_WORKFLOW_MAX_NODES } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { briefText, projectCatalogPage } from './catalogPage.js';
+import { taskReceiptDelivery, type TaskResultLease } from './taskResultDelivery.js';
 
 export interface RuntimeTaskHandle {
   task_id: string;
@@ -20,6 +21,7 @@ export interface RuntimeTaskHandle {
   wait?: (signal: AbortSignal) => Promise<unknown>;
   stop?: (context: ToolHandlerContext<unknown>) => Promise<unknown>;
   cancelObservation?: () => void;
+  reserveResult?: () => TaskResultLease | undefined;
 }
 export type TaskSource = (context: ToolHandlerContext<unknown>) => Promise<RuntimeTaskHandle[]> | RuntimeTaskHandle[];
 export const taskPending = (task: RuntimeTaskHandle) => ['running', 'pending', 'waiting_user', 'stopping'].includes(task.status);
@@ -49,6 +51,7 @@ export class RuntimeTaskTools {
   constructor(private readonly waitForWork: (context: ToolHandlerContext<unknown>, promises: Promise<unknown>[], mode: 'any' | 'all', signal: AbortSignal, duration?: number) => Promise<string>) {}
   addSource(source: TaskSource) { this.sources.push(source); }
   async snapshot(context: ToolHandlerContext<unknown>) {
+    context.signal?.throwIfAborted();
     const results = await Promise.allSettled(this.sources.map(async source => {
       const observer = new AbortController(), signal = context.signal ? AbortSignal.any([context.signal, observer.signal]) : observer.signal;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -114,8 +117,14 @@ export class RuntimeTaskTools {
     if (input.action === 'stop' && selected.some(task => !task.stop)) throw new Error('One or more selected tasks do not support stopping. No stop was dispatched.');
     if (input.action === 'cancel_observation' && selected.some(task => !task.cancelObservation)) throw new Error('One or more tasks have no cancellable subscription. No subscription was cancelled.');
     const controls: unknown[] = [];
-    if (input.action === 'stop') for (const task of selected) controls.push({ task_id: task.task_id, result: await task.stop!(context) });
-    if (input.action === 'cancel_observation') selected.forEach(task => task.cancelObservation!());
+    if (input.action === 'stop') for (const task of selected) {
+      context.signal?.throwIfAborted();
+      controls.push({ task_id: task.task_id, result: await task.stop!(context) });
+    }
+    if (input.action === 'cancel_observation') for (const task of selected) {
+      context.signal?.throwIfAborted();
+      task.cancelObservation!();
+    }
     let wake: string | undefined;
     if (input.action === 'await') {
       const pending = selected.filter(taskPending), observedCompletion = selected.some(task => !taskPending(task) && input.after?.[task.task_id] !== task.revision);
@@ -135,7 +144,7 @@ export class RuntimeTaskTools {
       }
     }
     if (input.action !== 'list' && !messagesOnly) { snapshot = await this.snapshot(context); selected = select(snapshot.handles, selected.map(task => task.task_id)); }
-    return { ...(wake ? { wake_reason: wake } : {}), ...(controls.length ? { controls } : {}),
+    const result = { ...(wake ? { wake_reason: wake } : {}), ...(controls.length ? { controls } : {}),
       ...(snapshot.unavailable_sources.length ? { complete: false, unavailable_sources: snapshot.unavailable_sources, note: 'Unavailable sources do not prove tasks ended or never started. Inspect the original handles before retrying.' } : {}),
       ...(input.action === 'await' && !input.task_ids && all.filter(taskPending).length > selected.length ? { selection_limited: true, pending_count: snapshot.handles.filter(taskPending).length } : {}),
       ...(input.action === 'list' && !input.task_ids ? { total: all.length, offset: input.offset, next_offset: input.offset + selected.length < all.length ? input.offset + selected.length : null } : {}),
@@ -150,5 +159,12 @@ export class RuntimeTaskTools {
       after: Object.fromEntries(selected.map(task => [task.task_id, task.revision])),
       ...(selected.some(taskPending) ? { next_step: 'Continue independent work. Pending tasks have not completed; they may be running or waiting for user input. Waiting does not restart or stop them.' } : {}),
     };
+    context.signal?.throwIfAborted();
+    return taskReceiptDelivery(result, selected.flatMap((task, index) => {
+      const value = result.tasks[index]!;
+      if (taskPending(task) || !('result' in value)) return [];
+      const lease = task.reserveResult?.();
+      return lease ? [{ lease, value, taskId: task.task_id }] : [];
+    }), context.signal);
   }
 }
