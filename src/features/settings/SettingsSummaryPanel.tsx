@@ -77,7 +77,7 @@ export function SettingsSummaryPanel({language,settings,onSettingsChange,modelId
     <SettingsCard title={uiText(language)(settingsLabels.summary_for_user)} subtitle={uiText(language)('settingsSummaryPanel.keepConcisePreferencesAndPossibleFollowUps')}>
       <SettingsSwitch title={uiText(language)('settingsSummaryPanel.rememberAndUseHabits')} checked={memory.habits} onChange={habits=>update({habits})}
         subtitle={uiText(language)('settingsSummaryPanel.saveSupportedPreferencesAndCorrectionsWhenUseful')}/>
-      <SettingsSwitch title={uiText(language)('settingsSummaryPanel.predictNextActions')} checked={memory.predictions} onChange={predictions=>update({predictions})}
+      <SettingsSwitch title={uiText(language)('settingsSummaryPanel.predictUserMessages')} checked={memory.predictions} onChange={predictions=>update({predictions})}
         subtitle={uiText(language)('settingsSummaryPanel.offerEditableNextMessageSuggestionsAndExclude')}/>
       <SettingsSelect name="memory-recall-mode" title={uiText(language)('settingsSummaryPanel.memoryRecallMode')} value={memory.recallMode} onChange={value=>update({recallMode:value==='hint'?'hint':'context'})}
         subtitle={uiText(language)('settingsSummaryPanel.explicitLookupAlwaysAllowsRepeatReadsOnly')}>

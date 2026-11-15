@@ -1,5 +1,3 @@
-import { computerUseTakeoverRecovery } from './computerUseTakeover.js';
-
 const maxErrorCharacters = 1600;
 
 export type ComputerUseExecution = 'not_dispatched' | 'dispatched' | 'unknown';
@@ -11,27 +9,8 @@ export interface ComputerUseFailureInfo {
   code: ComputerUseErrorCode;
   message: string;
   execution: ComputerUseExecution;
-  recovery: string;
   details?: Record<string, unknown>;
 }
-
-const recovery: Record<ComputerUseErrorCode, string> = {
-  user_takeover: computerUseTakeoverRecovery,
-  user_stopped: 'Desktop control ended for this turn. Return to the user; do not bypass the stop.',
-  window_changed: 'Inspect the returned observation or observe the exact target. A foreground change alone is not user input. Do not replay an action whose execution is unknown.',
-  window_unavailable: 'Discover windows and select the intended target again. Do not assume a same-process window is the same task.',
-  stale_state: 'Observe the exact target again and use the new one-use state_id.',
-  display_changed: 'The connected displays, their layout or DPI changed. Observe connected displays and the target window again; do not reuse earlier screenshot coordinates.',
-  observation_failed: 'The action may already have run. Obtain a fresh observation before further input; do not repeat the action to recover its screenshot.',
-  control_unavailable: 'Release conflicting control or report the unavailable native worker. Do not send input through another route to bypass control.',
-  timeout: 'Observe the target to determine what completed before deciding whether to retry.',
-  application_control_blocked: 'Windows Application Control rejected a native component. Stop Computer Use for this turn and report the component and original error. The publisher must supply a trusted signed build permitted by the device policy. Do not retry another window, recompile the component, disable security, or switch execution routes to bypass the block. After the component is repaired, retry in a new turn.',
-  policy_blocked: 'Desktop input is blocked for this turn. Finish and return to the user; observing another window or calling finish does not reset the block.',
-  observation_required: 'Let any user interaction finish, then observe the exact target once before further input.',
-  progress_unverified: 'Observe the same target once and inspect the result. One different corrective action is allowed; stop if it still produces no verified progress. Do not replay input or change APIs to evade the guard.',
-  invalid_action: 'Correct the action using fresh observed capabilities.',
-  computer_use_failed: 'Inspect the error and obtain a fresh observation before deciding whether another action is appropriate.',
-};
 
 export class ComputerUseFailure extends Error {
   readonly info: ComputerUseFailureInfo;
@@ -39,7 +18,7 @@ export class ComputerUseFailure extends Error {
   constructor(code: ComputerUseErrorCode, message: string, execution: ComputerUseExecution = 'not_dispatched', details?: Record<string, unknown>) {
     super(message);
     this.name = 'ComputerUseFailure';
-    this.info = { code, message, execution, recovery: recovery[code], ...(details ? { details } : {}) };
+    this.info = { code, message, execution, ...(details ? { details } : {}) };
   }
 }
 
@@ -71,10 +50,10 @@ export function formatComputerUseError(error: unknown): string {
     ? error as { message?: unknown; stderr?: unknown; killed?: boolean; code?: unknown }
     : {};
   if (source.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-    return 'Computer Use exceeded its native output limit. The action may have partially completed; observe the target before retrying.';
+    return 'Computer Use exceeded its native output limit. The action may have partially completed.';
   }
   if (source.killed) {
-    return 'Computer Use timed out. The action may have partially completed; observe the target before deciding whether to retry.';
+    return 'Computer Use timed out. The action may have partially completed.';
   }
   const message = typeof source.message === 'string' ? source.message : String(error);
   const stderr = typeof source.stderr === 'string' ? source.stderr

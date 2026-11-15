@@ -15,12 +15,7 @@ function startupFailure(error: unknown) {
     : /component is missing/.test(message) ? 'browser_connector_component_missing'
     : /EPERM|EACCES|denied|Cannot verify the previous/.test(message) ? 'browser_connector_access_denied'
     : /Invalid|JSON|configuration must/.test(message) ? 'browser_connector_config_invalid' : 'browser_connector_start_failed';
-  const nextStep = code === 'browser_connector_legacy_active'
-    ? 'Close the older CardBush App and CLI normally, then retry /browser status. Saved browser connections are retained.'
-    : code === 'browser_connector_component_missing'
-      ? 'For a source checkout, run npm run build:agent and reopen the CLI. Otherwise reinstall the complete Agent package.'
-      : 'Check /browser status and the current CLI /logs for this host error. Fix the reported host failure, then retry; reinstalling or re-pairing the browser extension will not fix host startup.';
-  return { code, message, nextStep };
+  return { code, message };
 }
 
 /** The Agent owns the same connector as the desktop app, under its own account
@@ -76,7 +71,7 @@ export class AgentBrowserConnector {
           ? join(dirname(installation), 'chrome-native-host', 'CardBushBrowserHost.exe')
           : join(installation, 'dist-native', 'chrome-connector', 'CardBushBrowserHost.exe');
         if (process.platform === 'win32' && !await stat(nativeHostPath).then(file => file.isFile(), () => false))
-          throw Error('Agent browser connector component is missing. Install the complete Agent package.');
+          throw Error('Agent browser connector component is missing.');
         const broker = this.shared ? new SharedBrowserConnector(this.root, nativeHostPath, join(this.configurationRoot, 'config', 'apps.json')) : new BrowserConnectorBroker(this.root, { nativeHostPath });
         try { await broker.start();
           if (broker instanceof SharedBrowserConnector && this.legacyRoot) await broker.discardLegacy(this.legacyRoot);
@@ -92,12 +87,12 @@ export class AgentBrowserConnector {
       if (this.#broker?.status().recoveryPaused) this.#failureCount = 3;
       else { this.#broker?.stop(); this.#broker = undefined; this.#failureCount++; }
       this.#failure = startupFailure(error); this.#error = this.#failure.message;
-      if (this.#failureCount >= 3) this.#failure.nextStep += ' Automatic recovery has stopped after repeated failures. Use /browser retry when ready.';
     } finally {
       if (!this.#closed) {
         const health = { protocol: 'cardbush.browser_connector_health.v1', configPath: join(this.root, 'browser-connector', 'bridge.json'),
-          updatedAt: new Date().toISOString(), state: this.status().state, ...(this.#failure ? { error: this.#failure } : {}) };
-        const signature = JSON.stringify([health.state, health.error]);
+          updatedAt: new Date().toISOString(), state: this.status().state, recoveryPaused: this.status().recoveryPaused,
+          ...(this.#failure ? { error: this.#failure } : {}) };
+        const signature = JSON.stringify([health.state, health.recoveryPaused, health.error]);
         if (signature !== this.#lastDiagnostic) {
           this.#lastDiagnostic = signature;
           this.#report(JSON.stringify({ type: 'browser_connector_health', ...health }) + '\n');
@@ -117,7 +112,7 @@ export class AgentBrowserConnector {
     return { state: this.#error ? 'unavailable' : this.#broker ? 'running' : 'disabled', enabled: this.#enabled,
       shared: this.shared, extensionPath: join(this.bundledRoot, 'plugins', 'browser', 'extension'),
       recoveryPaused: this.#failureCount >= 3 || this.#broker?.status().recoveryPaused === true,
-      ...(this.#error ? { error: this.#error, errorCode: this.#failure?.code, nextStep: this.#failure?.nextStep } : {}),
+      ...(this.#error ? { error: this.#error, errorCode: this.#failure?.code } : {}),
       ...(this.#broker ? { connector: this.#broker.status() } : {}) };
   }
   call(input: Record<string, unknown>) {

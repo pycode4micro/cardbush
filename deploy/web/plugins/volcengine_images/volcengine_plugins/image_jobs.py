@@ -144,8 +144,7 @@ class ImageJobs:
         worker = asyncio.create_task(self._run(task_id, client, body, warnings, options))
         self.workers.add(worker)
         worker.add_done_callback(self.workers.discard)
-        return {**receipt, 'reused': False,
-                'next_step': 'Accepted into the local plugin queue, not a completed image. Use generation_wait_tasks with kind=seedream and this task.id. Reuse request_id to recover a lost receipt; never create another key merely to poll.'}
+        return {**receipt, 'reused': False}
 
     def _claim(self, task_id):
         with closing(self._db()) as db, db:

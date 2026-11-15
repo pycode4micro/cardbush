@@ -86,7 +86,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   const [canRetry, setCanRetry] = useState(false);
   const [submission, setSubmission] = useState<'send' | 'retry'>();
   const submitting = submission !== undefined;
-  const [nextStepPrediction, setNextStepPrediction] = useState<ConversationJournalSnapshot['nextStepPrediction']>();
+  const [userMessagePrediction, setUserMessagePrediction] = useState<ConversationJournalSnapshot['userMessagePrediction']>();
   const [eventNeedsResponse, setEventNeedsResponse] = useState(false);
   const [management, setManagement] = useState<ConversationJournalSnapshot['management']>();
   const overallPlan = management?.plan?.plan;
@@ -164,7 +164,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       setEventNeedsResponse(result.eventNeedsResponse === true);
       setBusy(result.busy); setAssistantActivity(result.activity ?? (result.busy ? 'thinking' : result.workingTasks ? 'working' : 'idle'), result.expression, result.toolName);
       setRuntimeError(result.error); setRetry(result.retry);
-      setNextStepPrediction(current => JSON.stringify(current) === JSON.stringify(result.nextStepPrediction) ? current : result.nextStepPrediction);
+      setUserMessagePrediction(current => JSON.stringify(current) === JSON.stringify(result.userMessagePrediction) ? current : result.userMessagePrediction);
       setManagement(current => JSON.stringify(current) === JSON.stringify(result.management) ? current : result.management);
       setCanRetry(result.canRetry === true);
     })().finally(() => { refreshing.current = undefined; });
@@ -418,7 +418,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
               language={language} assistantName={profile.name} onJump={() => jumpToMessage(quote.messageId)} onCancel={() => { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); focusComposer(); }}/>}
             interaction={management?.permissions[0] && <AssistantPermissionCard key={management.permissions[0].permissionId}
               permission={management.permissions[0]} language={language} onResolved={refresh}/>}
-            nextStepPrediction={nextStepPrediction} predictionPending={busy || submitting || Boolean(error || runtimeError)}
+            userMessagePrediction={userMessagePrediction} predictionPending={busy || submitting || Boolean(error || runtimeError)}
             ready={ready} submitting={submitting} onSend={send} fileDropTarget={chatBody} messages={pageMessages} browserTabs={browserTabs}/>
           </ComposerPortalContext.Provider>
         </div>

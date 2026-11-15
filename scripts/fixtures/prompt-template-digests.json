@@ -113,7 +113,7 @@
   {
     "name": "assistant-management",
     "slots": [],
-    "sha256": "5f2b331e5385ba424da535db1b38f93afe6baea0a5cada9cffe1d7d38d62efbe"
+    "sha256": "556638d687cee32fd182e16d6b017d3f413248d5c48dcc2e23c407f3847437a0"
   },
   {
     "name": "tone-natural",
@@ -173,7 +173,7 @@
     "sha256": "18b664d87ae07e365fd6268d31e17390f0d71af34e03b2e151f67cdb1aaf746e"
   },
   {
-    "name": "next-step-prediction-text-description",
+    "name": "user-message-prediction-text-description",
     "slots": [],
     "sha256": "6a248feaa688541f21d30c55849050ef59ef31b974ba8f2d84c971203574e338"
   },
@@ -183,7 +183,7 @@
       "name",
       "persona"
     ],
-    "sha256": "1f006a19aa09c20516b92796fe3afcd750b2e05f668d015c477e593d54b08e39"
+    "sha256": "10df9d9475c7a7cada7410eda867c3e60173ad8612605bb28d7390c5dac08790"
   },
   {
     "name": "realtime-default-instructions",
@@ -205,7 +205,7 @@
   {
     "name": "friends-bridge-delivery",
     "slots": [],
-    "sha256": "26ece682497c3465d7fc270dd7de7d71f03f6a8cf847bb06cacf1db021f3ccba"
+    "sha256": "e542429d8f0b4870d04956d1ba0810dbad2d484519714966522e7770f6de5df4"
   },
   {
     "name": "friends-system",
@@ -218,5 +218,25 @@
     "name": "friends-startup",
     "slots": [],
     "sha256": "b1d80f3270c687e5283e27ec72d53152b03b628a14b30e356681d8b8982d9258"
+  },
+  {
+    "name": "tool-display-instructions",
+    "slots": [],
+    "sha256": "9b021374b6f58fe730bf23a050b595d90243b44d03aae66ad7f67458542e8745"
+  },
+  {
+    "name": "coordination-tool-boundaries",
+    "slots": [],
+    "sha256": "3bd7ae93fc7b25d501c5d170515fae05ebd4e0d4032fa8ede2f79bb611c96432"
+  },
+  {
+    "name": "runtime-environment-observation",
+    "slots": [],
+    "sha256": "5a611729828babef1c058cd1e45fffbb2528d388e2d79cf1c10435c97b3a6afa"
+  },
+  {
+    "name": "assistant-tool-disclosure",
+    "slots": [],
+    "sha256": "befbbee7360e62d870653ecd9a38ce52b307af756b1f7d488de8558f146844b4"
   }
 ]

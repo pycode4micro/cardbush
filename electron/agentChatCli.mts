@@ -360,7 +360,7 @@ Commands: /model [ID] selects a model and reasoning effort; /settings shows conf
           Model selection: Up/Down selects, Tab fills, Enter confirms, Esc goes back; /cancel discards changes.
           Effort: Model setting follows App config; Provider default lets the provider choose.
           Available reasoning levels follow the model's API protocol. App defaults stay unchanged.
-          /habit [on|off|status] controls user habit memory; /prediction [on|off|status] controls next-step predictions.
+          /habit [on|off|status] controls user habit memory; /prediction [on|off|status] controls user message predictions.
           Omit the argument to show the current setting. Saved per session; new sessions default to off.
           Resume keeps these settings; a fork inherits them and can change them independently.
           /new starts a session; /plan shows the plan; /logs shows the log path;

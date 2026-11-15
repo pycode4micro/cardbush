@@ -24,6 +24,5 @@ export async function userDirectories(signal?: AbortSignal) {
   }
   return { executionEnvironment: { kind: 'local' }, directories,
     unavailable: ['home', 'desktop', 'documents'].filter(key => !directories[key]),
-    accessGranted: false,
-    nextStep: 'Use these OS account paths when the user refers to their desktop or documents. Missing folders are unavailable; do not guess. File access and moves still require the normal path authorization. Sandboxed HOME/USERPROFILE refers to a private task profile.' };
+    accessGranted: false };
 }

@@ -1,12 +1,12 @@
 import { BUSH_MODEL_REQUEST_PROTOCOL, BUSH_TOOL_CALL_PROTOCOL, modelRequestSchema,
-  realtimeAgentToolRequestSchema, type RealtimeAgentToolRequest } from '@cardbush/bush-protocol';
+  realtimeAgentToolRequestSchema, type RealtimeAgentToolRequest, type ModelRequest } from '@cardbush/bush-protocol';
 import type { RuntimeSessionCoordinator } from './runtimeSessionCoordinator.js';
 import type { SubagentTaskStore } from './subagentTaskStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
-import { ToolExecutionCoordinator } from './toolExecutionCoordinator.js';
+import { ToolExecutionCoordinator, type ToolExecutionHooks, type ToolExecutionOutcome } from './toolExecutionCoordinator.js';
 import { childConversationPage, type ChildConversationSource } from './subagentConversation.js';
 import { createHash } from 'node:crypto';
-import { transferResultDelivery } from './taskResultDelivery.js';
+import { resultDelivery, transferResultDelivery } from './taskResultDelivery.js';
 
 /** Runtime-owned delegation for a realtime parent, independent of the parent's text turn lock. */
 export class RealtimeAgentDispatcher {
@@ -15,8 +15,9 @@ export class RealtimeAgentDispatcher {
     sessions: RuntimeSessionCoordinator; tasks: SubagentTaskStore; registry: ToolRegistry;
     read(sessionId: string): ChildConversationSource | undefined;
     remote?: import('./subagentTool.js').RemoteSubagentBridge;
+    hooks?: (request: ModelRequest) => ToolExecutionHooks;
   }) {}
-  execute(value: unknown, signal?: AbortSignal): Promise<unknown> {
+  execute(value: unknown, signal?: AbortSignal, onOutcome?: (outcome: ToolExecutionOutcome) => void): Promise<unknown> {
     signal?.throwIfAborted();
     const input = realtimeAgentToolRequestSchema.parse(value);
     const key = JSON.stringify([input.sessionId, input.callId]);
@@ -29,7 +30,7 @@ export class RealtimeAgentDispatcher {
     const entry = { fingerprint, result: Promise.resolve<unknown>(undefined), settled: false };
     // Connection management belongs to this caller. Delegated work keeps its
     // independent lifetime: hanging up must not cancel an admitted child task.
-    entry.result = this.run(input, input.action === 'worker_connection' ? signal : undefined).finally(() => { entry.settled = true; });
+    entry.result = this.run(input, input.action === 'worker_connection' ? signal : undefined, onOutcome).finally(() => { entry.settled = true; });
     this.receipts.set(key, entry);
     if (this.receipts.size > 512) for (const [id, old] of this.receipts) {
       if (old.settled && id !== key) this.receipts.delete(id);
@@ -37,7 +38,7 @@ export class RealtimeAgentDispatcher {
     }
     return entry.result;
   }
-  private async run(input: RealtimeAgentToolRequest, signal?: AbortSignal): Promise<unknown> {
+  private async run(input: RealtimeAgentToolRequest, signal?: AbortSignal, onOutcome?: (outcome: ToolExecutionOutcome) => void): Promise<unknown> {
     const { sessions, tasks, registry } = this.deps;
     if (sessions.snapshot(input.sessionId)?.metadata?.agentRole === 'child') throw delegationError('realtime_parent_required', 'Only a parent conversation can delegate.');
     const task = input.taskId ? tasks.get(input.sessionId, input.taskId) : undefined;
@@ -55,7 +56,7 @@ export class RealtimeAgentDispatcher {
     const context = sessions.assemble({ sessionId: input.sessionId, prefix: parent.prefixMessages,
       current: parent.inputMessages.map(item => item.message) });
     const request = modelRequestSchema.parse({ ...parent, protocol: BUSH_MODEL_REQUEST_PROTOCOL, messages: context.messages });
-    const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => {
+    const coordinator = new ToolExecutionCoordinator({ registry, hooks: this.deps.hooks?.(request), permissions: { request: async () => {
       throw Error('Delegation cannot request extra permission; the child retains the configured execution policy.');
     } } });
     const native = input.nativeArguments && { ...input.nativeArguments };
@@ -67,7 +68,12 @@ export class RealtimeAgentDispatcher {
       { requestId: request.requestId, sessionId: request.sessionId, turnId: request.turnId, round: 1, ordinal: 0 },
       signal, { request, contextMessages: context.messages });
     signal?.throwIfAborted();
+    onOutcome?.(outcome);
+    if (outcome.kind === 'returned' && (outcome.hookStopTurn || outcome.hookFeedback !== undefined || outcome.rejectToolResult)) resultDelivery(outcome.result)?.release();
+    if (outcome.hookStopTurn) throw delegationError('plugin_hook_stopped', outcome.hookStopTurn);
+    if (outcome.rejectToolResult) throw delegationError('plugin_hook_result_blocked', `The tool ran, but its result was withheld by policy. Do not repeat the action. ${outcome.hookFeedback ?? ''}`);
     if (outcome.kind !== 'returned') throw delegationError(outcome.error.code, outcome.error.message);
+    if (outcome.hookFeedback !== undefined) return outcome.hookFeedback;
     if (native) return outcome.result;
     if (outcome.result && typeof outcome.result === 'object' && 'status' in outcome.result &&
       ['completed', 'failed', 'stopped', 'unavailable'].includes(String(outcome.result.status))) return outcome.result;

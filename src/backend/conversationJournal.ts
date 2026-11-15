@@ -1,5 +1,5 @@
 import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
-import { ASSISTANT_CONVERSATION_COMMAND, type ConversationEntry, type NextStepPrediction, type AssistantManagementSnapshot, type AssistantActivitySnapshot } from '@cardbush/bush-protocol';
+import { ASSISTANT_CONVERSATION_COMMAND, type ConversationEntry, type UserMessagePrediction, type AssistantManagementSnapshot, type AssistantActivitySnapshot } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 import type { ChatMessage } from '../types';
 
@@ -7,7 +7,7 @@ export interface ConversationJournalSnapshot extends Partial<AssistantActivitySn
   reactions?: Record<string, import('@cardbush/bush-protocol').AssistantReaction>;
   eventNeedsResponse?: boolean;
   management?: AssistantManagementSnapshot;
-  nextStepPrediction?: NextStepPrediction;
+  userMessagePrediction?: UserMessagePrediction;
   retry?: { attempt: number; maxAttempts: number; nextRetryMs: number; code: string; createdAt: string } | null }
 export async function conversationJournalCommand<T = unknown>(payload: unknown): Promise<T> {
   const runtime = createDesktopRuntimeSession();

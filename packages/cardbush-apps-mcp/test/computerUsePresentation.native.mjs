@@ -214,7 +214,7 @@ $handles.Length`,{env:{...process.env},timeoutMs:10000});
   assert.equal(observed.output.is_foreground,false);
   assert.equal(observed.output.actionable,false);
   assert.equal(observed.output.window_action_available,true);
-  assert.match(observed.output.next_step,/window\/activate/);
+  assert.equal(observed.output.next_step,undefined);
   assert.notEqual((await inspect()).foreground,hwnd,'observation must not steal focus');
   for(const input of [{action:'type',text:'must not be sent'},{action:'click',x:20,y:20}]) {
     await assert.rejects(executeComputerUse({...input,hwnd,state_id:observed.output.state_id},config,undefined,'runtime-smoke'),/not foreground; no input was sent.*operation=activate/);

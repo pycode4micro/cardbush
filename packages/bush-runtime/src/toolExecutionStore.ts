@@ -8,7 +8,7 @@ import {
   terminalToolOutcome,
   toolExecutionError,
   returnedToolError,
-  savedNextStepPrediction,
+  savedUserMessagePrediction,
   WORKSPACE_REVIEW_TURN_LIMIT,
   parseSourceMemoReference,
   sourceMemoSchema,
@@ -392,7 +392,7 @@ function imagePathKey(path: string): string {
 
 function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<object>): ToolExecutionSummary {
   const activity = agentToolActivity(record);
-  const nextStepPrediction = record.outcome === 'returned' ? savedNextStepPrediction(record.toolCall, record.result, record.recordedAt) : undefined;
+  const userMessagePrediction = record.outcome === 'returned' ? savedUserMessagePrediction(record.toolCall, record.result, record.recordedAt) : undefined;
   const terminalOutcome = record.outcome === 'returned' ? terminalToolOutcome(record.toolCall.name, record.result) : undefined;
   const resultError = record.outcome === 'returned' ? toolExecutionError(record) : undefined;
   return {
@@ -411,7 +411,7 @@ function toolExecutionSummary(record: ToolExecutionRecord, deferred?: WeakSet<ob
     outcome: record.outcome,
     execution: record.execution,
     ...(activity ? { agentActivity: activity } : {}),
-    ...(nextStepPrediction ? { nextStepPrediction } : {}),
+    ...(userMessagePrediction ? { userMessagePrediction } : {}),
     ...(terminalOutcome ? { terminalOutcome } : {}),
     display: record.display,
     actionManifest: record.actionManifest,

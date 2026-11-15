@@ -1,15 +1,20 @@
 import { ASSISTANT_MANAGEMENT_TOOLS, PERSONAL_ASSISTANT_SESSION, type AssistantManagementSnapshot, type ModelRequest,
-  type RuntimeSessionTurnRequest, type RuntimePermissionAnswer, type ToolCall } from '@cardbush/bush-protocol';
+  type RuntimeSessionTurnRequest, type RuntimePermissionAnswer, type ToolCall, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
-import { ToolExecutionCoordinator, type RuntimeCapabilityStore, type ToolExecutionIdentity, type ToolExecutionHooks } from './toolExecutionCoordinator.js';
+import { ToolExecutionCoordinator, type RuntimeCapabilityStore, type ToolExecutionIdentity, type ToolExecutionHooks, type ToolExecutionOutcome } from './toolExecutionCoordinator.js';
+import { resultDelivery } from './taskResultDelivery.js';
 import { RuntimePermissionBroker } from './runtimePermissionBroker.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import type { CoordinationStore } from './coordinationStore.js';
 import type { AutomationScheduler } from './automationScheduler.js';
 import { projectMcpDiscoveryResult } from './mcpToolDiscovery.js';
 import { presentExistingScheduleActions } from './extendedBuiltins.js';
+import { projectBuiltinDefinitions } from './builtinToolDisclosure.js';
+import { stripToolDisplayTitle } from './toolDisplay.js';
+import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 
 const allowed = new Set<string>(ASSISTANT_MANAGEMENT_TOOLS);
+const disclosureNames = ['get_tool_schema', 'call_tool'] as const;
 
 /** Uses the ordinary validators, permission grants and receipts, without a child or a second scheduler. */
 export class AssistantManagement {
@@ -49,19 +54,55 @@ export class AssistantManagement {
   definitions(parent: RuntimeSessionTurnRequest) {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' || parent.metadata.toolExecutionPolicy === 'none') return [];
     const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [] };
-    const unified = parent.tools.some(tool => tool.name === 'search_plugins');
     const catalog = this.options.registry.definitions().filter(tool => allowed.has(tool.name));
-    if (!unified) for (const name of ['mcp_search', 'search_skills']) {
-      const previous = this.options.registry.resolve(name);
-      if (previous) catalog.push(previous.definition);
-    }
     return catalog.filter(tool => parent.tools.some(item => item.name === tool.name) &&
       this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
         if (tool.name === 'search_plugins') return { ...tool, description: 'Discover MCP tools, Skills and local packages (bundled or user-installed) on this Runtime before delegation. Start with query, default mode=all. Narrow with mcp, skill or plugins. Use * to browse; pass a standby server ID in mcp mode or continue with cursor alone. Give the child the matched Skill mainResource or exact tool/package identity. The child reads instructions and executes on its own host.' };
-        if (tool.name === 'mcp_search') return { ...tool, description: 'Discover MCP tool names and summaries available on this Runtime for delegation. Start with query keywords or *; pass an ID from available_servers as server to load that plugin on demand. Continue with next_cursor as cursor without query/server. Try alternate queries before concluding a capability is unavailable. This query executes no target and grants no permission. Delegate actual execution to a child; schema loading and generic invocation are not available in this assistant scope. Local results do not establish remote worker capabilities.' };
-        if (tool.name === 'search_skills') return { ...tool, description: 'Discover installed Skills on this Runtime by capability or name; query=* lists visible Skills. Results include descriptions, mainResource and optional plugin invocation IDs. Continue with next_offset as offset and the same query. Use these facts to choose a child for execution; reading instructions and invoking Skills belong to that child. Local results do not establish remote worker capabilities.' };
         return presentExistingScheduleActions(tool);
       });
+  }
+  private disclosureDefinitions(parent: RuntimeSessionTurnRequest) {
+    if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' ||
+        ['none', 'web_restricted'].includes(String(parent.metadata.toolExecutionPolicy))) return [];
+    const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [] };
+    const definitions = disclosureNames.flatMap(name => {
+      const registration = this.options.registry.resolve(name);
+      return registration && parent.tools.some(tool => tool.name === name) && registration.modelAvailable?.(request) !== false
+        ? [registration.definition] : [];
+    });
+    return definitions.length === disclosureNames.length ? definitions : [];
+  }
+  /** Reuse the normal presentation once per response. Memory keeps its own contract. */
+  projectDelegation(parent: RuntimeSessionTurnRequest, nativeTools: ToolDefinition[]) {
+    if (!nativeTools.length) return nativeTools;
+    const tools = [...nativeTools, ...this.disclosureDefinitions(parent)];
+    return projectBuiltinDefinitions(this.options.registry, { ...parent, protocol: 'bush.model_request.v1', messages: [], tools }, tools);
+  }
+  private disclosureRequest(parent: RuntimeSessionTurnRequest, request: ModelRequest, nativeTools: ToolDefinition[]): ModelRequest {
+    // The child's execution catalog remains on parent. It must never become the
+    // Assistant's schema lookup/invocation scope, even after plugin discovery.
+    const candidates = [...nativeTools, ...this.definitions(parent), ...this.disclosureDefinitions(parent)];
+    const tools = candidates.flatMap(tool => {
+      const registration = this.options.registry.resolve(tool.name);
+      return registration && !registration.mcpHook && parent.tools.some(item => item.name === tool.name) &&
+        request.tools.some(item => item.name === tool.name) && registration.modelAvailable?.(request) !== false
+        ? [registration.definition] : [];
+    });
+    return { ...request, tools, metadata: { ...request.metadata }, requestCapabilities: parent.requestCapabilities };
+  }
+  /** Resolve only the envelope with the ordinary decoder/revision gate. The
+   * selected tool still runs through its existing dispatcher and coordinator. */
+  resolveInvocation(call: ToolCall, parent: RuntimeSessionTurnRequest, request: ModelRequest, nativeTools: ToolDefinition[]) {
+    if (call.name !== 'call_tool' && !nativeTools.some(tool => tool.name === call.name)) return call;
+    const scoped = this.disclosureRequest(parent, request, nativeTools);
+    if (!scoped.tools.some(tool => tool.name === call.name)) throw Object.assign(Error('This tool is not available to the assistant.'), { code: 'tool_not_exposed' });
+    if (call.name !== 'call_tool') return call;
+    if (pluginCommandDeniesTool(scoped, call.name)) throw Object.assign(Error('Invocation is disabled by the active plugin Command.'), { code: 'plugin_command_tool_disallowed' });
+    const registration = this.options.registry.resolve(call.name)!;
+    const input = registration.decodeInput(stripToolDisplayTitle(JSON.parse(call.argumentsText), registration.definition));
+    const target = registration.forwardToolCall!({ input, sessionId: request.sessionId,
+      turn: { request: scoped, contextMessages: request.messages } });
+    return { ...call, name: target.name, argumentsText: JSON.stringify(target.input) };
   }
   snapshot(): AssistantManagementSnapshot {
     return { plan: this.options.coordination().getPlan(PERSONAL_ASSISTANT_SESSION), permissions: [...this.pending.values()] };
@@ -70,12 +111,15 @@ export class AssistantManagement {
   hasPermission(id: string) { return this.permissions.pendingIds().includes(id); }
   answerPermission(answer: RuntimePermissionAnswer) { return this.permissions.answer(answer); }
   reset() { this.options.coordination().clearPlan(PERSONAL_ASSISTANT_SESSION); }
-  async execute(call: ToolCall, parent: RuntimeSessionTurnRequest, request: ModelRequest, round: number, ordinal: number, signal: AbortSignal) {
+  async execute(call: ToolCall, parent: RuntimeSessionTurnRequest, request: ModelRequest, round: number, ordinal: number, signal: AbortSignal, nativeTools: ToolDefinition[] = [], onOutcome?: (outcome: ToolExecutionOutcome) => void) {
     signal.throwIfAborted();
-    if (!this.definitions(parent).some(tool => tool.name === call.name)) throw Object.assign(Error('This tool is not available to the assistant.'), { code: 'tool_not_exposed' });
+    const disclosure = call.name === 'get_tool_schema';
+    if (!(disclosure ? nativeTools.length && this.disclosureDefinitions(parent).some(tool => tool.name === call.name) && request.tools.some(tool => tool.name === call.name)
+      : this.definitions(parent).some(tool => tool.name === call.name))) throw Object.assign(Error('This tool is not available to the assistant.'), { code: 'tool_not_exposed' });
     // Catalog queries need the caller's actual execution capabilities, not just
-    // the small conversational schema. No generic invocation tool is exposed.
-    const executionRequest: ModelRequest = { ...request, tools: [...parent.tools, ...this.definitions(parent).filter(tool => !parent.tools.some(item => item.name === tool.name))], requestCapabilities: parent.requestCapabilities };
+    // the small conversational schema. Schema lookup alone uses the restricted scope.
+    const executionRequest: ModelRequest = disclosure ? this.disclosureRequest(parent, request, nativeTools)
+      : { ...request, tools: [...parent.tools, ...this.definitions(parent).filter(tool => !parent.tools.some(item => item.name === tool.name))], requestCapabilities: parent.requestCapabilities };
     if (call.name === 'schedule_task') {
       const action = JSON.parse(call.argumentsText).action;
       if (action === 'update') {
@@ -83,7 +127,7 @@ export class AssistantManagement {
         signal.throwIfAborted();
       }
     }
-    if (call.name === 'search_plugins' || call.name === 'mcp_search') executionRequest.metadata = { ...executionRequest.metadata, mcpToolDiscovery: true };
+    if (call.name === 'search_plugins') executionRequest.metadata = { ...executionRequest.metadata, mcpToolDiscovery: true };
     const identity = { requestId: request.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: round + 1, ordinal };
     this.identities.set(call.id, identity);
     if (typeof parent.metadata.environmentExecutionId === 'string') this.executions.set(call.id, parent.metadata.environmentExecutionId);
@@ -93,10 +137,15 @@ export class AssistantManagement {
       const outcome = await coordinator.execute(call, identity, signal, { request: executionRequest, contextMessages: request.messages, signal });
       this.options.executions.record(call, identity, outcome);
       signal.throwIfAborted();
+      onOutcome?.(outcome);
+      if (outcome.kind === 'returned' && (outcome.hookStopTurn || outcome.hookFeedback !== undefined || outcome.rejectToolResult)) resultDelivery(outcome.result)?.release();
       if (outcome.hookStopTurn) throw Object.assign(Error(outcome.hookStopTurn), { code: 'assistant_management_stopped' });
       if (outcome.rejectToolResult) throw Object.assign(Error(`The tool ran, but its result was withheld by policy. Do not repeat the action. ${outcome.hookFeedback ?? ''}`), { code: 'plugin_hook_result_blocked' });
       if (outcome.kind !== 'returned') throw Object.assign(Error(outcome.error.message), { code: outcome.error.code });
-      if (call.name === 'search_plugins' || call.name === 'mcp_search') {
+      if (outcome.hookFeedback !== undefined) return outcome.hookFeedback;
+      // Complete schemas are prerequisites, not pageable search summaries.
+      if (disclosure) return outcome.result;
+      if (call.name === 'search_plugins') {
         const localTools = new Set(parent.tools.filter(tool => !this.options.registry.resolve(tool.name)?.mcpHook).map(tool => tool.name));
         parent.tools = executionRequest.tools.filter(tool => localTools.has(tool.name) || this.options.registry.resolve(tool.name)?.mcpHook);
       }

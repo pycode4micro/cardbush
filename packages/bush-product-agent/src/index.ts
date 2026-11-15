@@ -15,7 +15,8 @@ import {
   type ToolDefinition,
 } from "@cardbush/bush-protocol";
 
-const COMMUNICATION_INSTRUCTIONS = renderPromptTemplate('communication-instructions', { conversationStyleInstructions: CONVERSATION_STYLE_INSTRUCTIONS });
+const COMMUNICATION_INSTRUCTIONS = renderPromptTemplate('communication-instructions', { conversationStyleInstructions: CONVERSATION_STYLE_INSTRUCTIONS })
+  + '\n\n' + renderPromptTemplate('tool-display-instructions') + '\n\n' + renderPromptTemplate('coordination-tool-boundaries');
 
 const LOCAL_DELIVERABLE_INSTRUCTIONS = renderPromptTemplate('local-deliverable-instructions', { reportDeliveryInstructions: REPORT_DELIVERY_INSTRUCTIONS });
 

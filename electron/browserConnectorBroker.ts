@@ -434,12 +434,11 @@ export class BrowserConnectorBroker {
         if (!extension) {
           const paired = this.#webSocket.connections().some(connection => connection.id === connectionId);
           this.#reply(peer, id, undefined, 'browser_unavailable', paired
-            ? 'The paired browser is offline. Open the same browser profile with its Browser Use extension; it will reconnect automatically. Pairing is retained and saved website permissions do not need to be granted again.'
-            : 'This session’s browser pairing was removed. Select another connected browser explicitly or pair this profile again.',
+            ? 'The paired browser is offline. Its pairing and saved website permissions are retained.'
+            : 'This session’s browser pairing was removed.',
           { retryable: paired, execution: 'not_dispatched', connectionId, selectionSource,
             defaultConnectionId: this.#webSocket.defaultConnectionId,
-            availableConnections: this.status().connections.filter(connection => connection.connected),
-            nextStep: 'Only this selected connection is unavailable. Call list_browsers to inspect live connections. Ask the user to reselect another browser/profile before select_browser; no automatic fallback was used.' }); return;
+            availableConnections: this.status().connections.filter(connection => connection.connected) }); return;
         }
         // An unavailable default is not a successful session selection. Preserve
         // explicit bindings, but do not pin a new session to an offline default.

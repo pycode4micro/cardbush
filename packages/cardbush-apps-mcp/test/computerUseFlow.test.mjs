@@ -37,7 +37,7 @@ test('errors retain dispatch uncertainty and bounded native diagnostics', () => 
   assert.equal(before.info.execution, 'not_dispatched');
   const dispatched = new ComputerUseFailure('observation_failed', 'Capture unavailable', 'dispatched');
   assert.equal(computerUseFailure(dispatched).info.execution, 'dispatched');
-  assert.match(dispatched.info.recovery, /do not repeat/i);
+  assert.deepEqual(dispatched.info, { code: 'observation_failed', message: 'Capture unavailable', execution: 'dispatched' });
 });
 
 test('state and guard rejections retain presentation without ending the session', { skip: process.platform !== 'win32' }, async t => {
@@ -104,7 +104,9 @@ test('observations deliver model-only MCP image bytes and one saved UI artifact'
     artifacts: [{ ...native.artifacts[0], path: join(root, 'missing.png') }] }, 'click');
   assert.equal(missing.structuredContent.output.execution, 'dispatched');
   assert.equal(missing.structuredContent.image_delivery.status, 'unavailable');
-  assert.match(missing.structuredContent.image_delivery.next_step, /without repeating input/);
+  assert.equal(missing.structuredContent.image_delivery.count, 0);
+  assert.equal(missing.structuredContent.image_delivery.errors.length, 1);
+  assert.equal(missing.structuredContent.image_delivery.next_step, undefined);
   assert.equal(missing.content.filter(item => item.type === 'image').length, 0);
 });
 

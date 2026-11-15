@@ -20,14 +20,8 @@ export function withToolDisplayTitle(definition: ToolDefinition): ToolDefinition
   return { ...definition, inputSchema: { ...definition.inputSchema, properties: {
     ...(definition.inputSchema.properties as Record<string, unknown> | undefined),
     [TOOL_DISPLAY_TITLE]: {
-      type: 'object',
-      description: 'Bilingual UI action purpose; no status, reasoning, counters, secrets or success claims. Reuse for repeated checks; batches: outer call only, never third-party arguments.',
-      properties: {
-        zh: { type: 'string', description: 'Simplified Chinese, usually 6–16 characters.' },
-        en: { type: 'string', description: 'Equivalent English, 2–8 words.' },
-      },
-      required: ['zh', 'en'],
-      additionalProperties: false,
+      type: 'string',
+      description: 'Brief UI action purpose in the user’s current language. No status, reasoning, counters, secrets or success claims. Reuse for repeated checks; batches: outer call only, never third-party arguments.',
     },
   }, required: [...(Array.isArray(definition.inputSchema.required) ? definition.inputSchema.required : []), TOOL_DISPLAY_TITLE] } };
 }

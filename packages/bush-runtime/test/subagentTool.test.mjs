@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve, dirname } from 'node:path';
+import { createProductAgentTurnRequest } from '@cardbush/bush-product-agent';
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 
 import {
   SubagentTaskStore,
@@ -9,6 +14,56 @@ import {
   registerCoordinationTools,
   registerSubagentTool,
 } from "../dist/index.js";
+
+for (const clean of [false, true]) test(`ordinary conversation ${clean ? 'recalls clean configuration' : 'delegates with compact defaults'} without a correction round`, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-clean-delegation-'));
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), parents = [], children = [];
+  const systemPrompt = 'You independently verify the assigned inventory.';
+  const host = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry, subagentTaskStore: tasks,
+    provider: { async *stream(request) {
+      const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+      if (request.metadata.agentRole === 'child') {
+        children.push(structuredClone(request));
+        yield { ...base, sequence: 0, kind: 'text_delta', delta: 'Inventory verified.' };
+        yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'stop' }; return;
+      }
+      parents.push(structuredClone(request));
+      const step = parents.length;
+      const args = { prompt: 'Verify the inventory.', name: 'Inventory check', ...(clean ? { mode: 'clean', system_prompt: systemPrompt } : {}) };
+      const call = clean && step === 1 ? { name: 'get_tool_schema', input: { name: 'subagent' } }
+        : step === (clean ? 2 : 1) ? { name: clean ? 'call_tool' : 'subagent', input: clean ? { name: 'subagent', arguments: args } : args } : undefined;
+      if (call) yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `dispatch-${step}`, nameDelta: call.name, argumentsDelta: JSON.stringify(call.input) };
+      else yield { ...base, sequence: 0, kind: 'text_delta', delta: 'Dispatched.' };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: call ? 'tool_calls' : 'stop' };
+    } },
+  });
+  t.after(async () => {
+    await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    assert.equal(dirname(resolve(root)), resolve(tmpdir())); await rm(root, { recursive: true, force: true });
+  });
+  const result = await host.runSessionTurn(createProductAgentTurnRequest({
+    requestId: 'ordinary-request', sessionId: 'ordinary', turnId: 'ordinary-turn', messageId: 'ordinary-input', createdAt: new Date().toISOString(),
+    userText: 'Delegate the inventory check.', model: 'fixture', tools: registry.definitions(), workspaceDir: root,
+    permissionMode: 'task_free', planEnabled: false, individuation: { habits: false, predictions: false },
+  }));
+  assert.equal(result.payload.status, 'completed', JSON.stringify(result));
+  const completionRequests = parents.filter(request => request.messages.some(message => message.name === 'subagent_result'));
+  assert.equal(completionRequests.length, 1, 'the child result triggers one normal completion round');
+  assert.equal(completionRequests[0].messages.filter(message => message.name === 'subagent_result').length, 1);
+  assert.equal(parents.length - completionRequests.length, clean ? 3 : 2, 'schema lookup is the only extra foreground round');
+  assert.equal(children.length, 1); assert.equal(tasks.list('ordinary').length, 1);
+  assert.equal(parents[0].tools.find(tool => tool.name === 'subagent').inputSchema.properties.mode, undefined);
+  assert.ok(parents[0].messages.some(message => message.role === 'system' && message.content.includes(renderPromptTemplate('coordination-tool-boundaries'))));
+  assert.deepEqual(parents.at(-1).tools, parents[0].tools);
+  if (clean) {
+    const receipt = JSON.parse(parents[1].messages.findLast(message => message.role === 'tool').content);
+    assert.ok(receipt.matches[0].inputSchema.properties.mode.enum.includes('clean'));
+    assert.equal(receipt.matches[0].inputSchema.properties.system_prompt.minLength, 1);
+    assert.ok(children[0].messages.some(message => message.role === 'system' && message.content === systemPrompt));
+  }
+  assert.equal(children[0].metadata.subagentMode, clean ? 'clean' : 'fork');
+  assert.ok(!host.events('ordinary', 'ordinary-turn').some(event => event.kind === 'tool_failed'));
+});
 
 test("forks the exact pre-dispatch context and tool declarations and returns the native child result", async () => {
   let childRequest;
@@ -86,7 +141,7 @@ test("forks the exact pre-dispatch context and tool declarations and returns the
   ]);
   assert.equal(childRequest.inputMessages.at(-1).message.content, 'You are currently a child Agent.\n\nbounded assignment');
   assert.match(childRequest.inputMessages.find(item => item.message.name === 'individuation_preference').message.content,
-    /habits disabled; next-step prediction disabled/);
+    /habits disabled; user message prediction disabled/);
   assert.deepEqual(childRequest.tools, parentRequest.tools);
   assert.equal(childRequest.model, "reviewer-model");
   assert.equal(childRequest.providerBinding.bindingId, "binding_reviewer");
@@ -322,7 +377,7 @@ test("tunnels a child permission request through the active parent Turn", async 
   assert.equal(requested.payload.parentSessionId, "parent");
   assert.match(requested.payload.sourceSessionId, /^subagent_session_/);
   const taskTool = registry.resolve('tasks');
-  const readTasks = () => taskTool.execute({ sessionId: 'parent', turnId: 'parent_turn', input: taskTool.decodeInput({ action: 'list' }) });
+  const readTasks = scope => taskTool.execute({ sessionId: 'parent', turnId: 'parent_turn', input: taskTool.decodeInput({ action: 'list', ...(scope ? { scope } : {}) }) });
   const pendingTask = (await readTasks()).tasks.find(task => task.kind === 'subagent');
   assert.equal(pendingTask.progress.phase, 'waiting_user', 'parent-routed approvals remain visible in child progress');
   assert.equal(pendingTask.progress.active_tool_calls, 1);
@@ -338,7 +393,8 @@ test("tunnels a child permission request through the active parent Turn", async 
   });
   const terminal = await running;
   assert.equal(terminal.payload.status, "completed");
-  assert.equal((await readTasks()).tasks.find(task => task.kind === 'subagent').progress.phase, 'completed');
+  assert.equal((await readTasks()).tasks.some(task => task.task_id === pendingTask.task_id), false, 'completed work leaves the default active list');
+  assert.equal((await readTasks('all')).tasks.find(task => task.kind === 'subagent').progress.phase, 'completed');
   assert.ok(host.events("parent", "parent_turn").some((event) =>
     event.kind === "permission_answered" && event.payload.sourceSessionId?.startsWith("subagent_session_")
   ));
@@ -617,10 +673,15 @@ test('a short child join returns pending so the parent can execute independent w
     const call = rounds === 1 ? { name: 'subagent', args: { prompt: 'independent child' } }
       : rounds === 2 ? { name: 'await', args: { yield_time_ms: 10 } }
       : rounds === 3 ? { name: 'independent_step', args: {} } : undefined;
+    if (rounds === 2) {
+      const submitted = JSON.parse(request.messages.findLast(message => message.role === 'tool').content);
+      assert.equal(submitted.status, 'running'); assert.ok(submitted.taskId);
+      assert.equal(submitted.next_step, undefined);
+    }
     if (rounds === 3) {
       const joined = JSON.parse(request.messages.findLast(message => message.role === 'tool').content);
       assert.equal(joined.wake_reason, 'yield_timeout'); assert.equal(joined.tasks.filter(task => task.status === 'running').length, 1);
-      assert.match(joined.next_step, /Continue independent work/);
+      assert.equal(joined.next_step, undefined);
     }
     if (call) yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `call-${rounds}`, nameDelta: call.name, argumentsDelta: JSON.stringify(call.args) };
     else { finalRequest = request; yield { ...base, sequence: 0, kind: 'text_delta', delta: 'parent done' }; }

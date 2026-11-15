@@ -24,6 +24,8 @@ export const runtimeEnvironmentSectionsSchema = z.object({
   host: z.object({ platform: z.string(), architecture: z.string() }).optional(),
   workspace: z.object({ projectDir: z.string().nullable(), workspaceDir: z.string().nullable() }).optional(),
   agents: z.object({ self: runtimeAgentFactSchema.optional(), items: z.array(runtimeAgentFactSchema),
+    lastKnown: z.array(runtimeAgentFactSchema).optional(), lastKnownTotal: z.number().int().nonnegative().optional(),
+    historicalCount: z.number().int().nonnegative().optional(),
     total: z.number().int().nonnegative(), coordination: z.array(z.string()).optional(), coordinationTruncated: z.boolean().optional() }).optional(),
   capabilities: z.object({ permissionMode: z.string().nullable(), interactiveRequests: z.boolean().nullable(), readOnly: z.boolean().nullable() }).optional(),
 }).catchall(z.unknown());

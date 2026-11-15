@@ -31,7 +31,7 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
   voice: 'settingsNavigation.configureTranscriptionVoiceCallsAndTheAgent',
   ssh: 'settingsNavigation.manageRemoteHostsForProjectsAndReferences',
   profile: 'settingsNavigation.setTheResponseStyleAndSharedInstructions',
-  summary_for_user: 'settingsNavigation.manageHabitsNextStepPredictionsAndMemory',
+  summary_for_user: 'settingsNavigation.manageHabitsUserMessagePredictionsAndMemory',
   appearance: 'settingsNavigation.adjustThemesColorsTypographyAndDisplayEffects',
   shortcuts: 'settingsNavigation.viewAndCustomizeKeyboardShortcuts',
   usage: 'settingsNavigation.reviewRecordedTokenUsageAndActivity',

@@ -120,8 +120,8 @@ test('real tool work finishes directly; prefixes remain append-only except at pr
   assert.ok(host.events(sessionId, 'compact').some(e => e.kind === 'cache_chain_observed' && e.payload.frozenPrefixBreak));
 });
 
-test('keeps user corrections in order, exact final prose, and original action titles', () => {
-  const messages = projected([user('Use V-1'), call('one', 'read_file', { _display_title: { zh: '检查配置', en: 'Inspect config' } }),
+for (const title of ['检查配置', { zh: '检查配置', en: 'Inspect config' }]) test(`keeps corrections, exact final prose and ${typeof title} action titles`, () => {
+  const messages = projected([user('Use V-1'), call('one', 'read_file', { _display_title: title }),
     receipt('one', { version: 'V-1', log }), assistant('Intermediate commentary'), user('Correction: V-2; do not publish'),
     call('two', 'inspect'), receipt('two', { version: 'V-2' }), assistant('  Exact final.\n')]);
   assert.equal(entries(messages)[0].reason, '检查配置');

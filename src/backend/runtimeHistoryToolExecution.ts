@@ -1,4 +1,4 @@
-import { agentToolActivity, savedNextStepPrediction, toolExecutionError, type ToolExecutionRecord as RuntimeToolExecutionRecord, type ToolExecutionSummary as RuntimeToolExecutionSummary } from '@cardbush/bush-protocol';
+import { agentToolActivity, savedUserMessagePrediction, toolExecutionError, type ToolExecutionRecord as RuntimeToolExecutionRecord, type ToolExecutionSummary as RuntimeToolExecutionSummary } from '@cardbush/bush-protocol';
 import type { ChatToolExecution } from '../types';
 import { configuredMcpServerId } from './mcpConfigurationFact';
 import { toolArtifactsFromPayload } from './toolArtifacts';
@@ -8,9 +8,9 @@ export function runtimeHistoryToolExecution(
 ): ChatToolExecution {
   const hasNativeResult = 'result' in record && record.result !== undefined;
   const error = toolExecutionError(record);
-  const nextStepPrediction = 'result' in record && 'argumentsText' in record.toolCall
-    ? savedNextStepPrediction(record.toolCall, record.result, record.recordedAt)
-    : 'nextStepPrediction' in record ? record.nextStepPrediction : undefined;
+  const userMessagePrediction = 'result' in record && 'argumentsText' in record.toolCall
+    ? savedUserMessagePrediction(record.toolCall, record.result, record.recordedAt)
+    : 'userMessagePrediction' in record ? record.userMessagePrediction : undefined;
   const activity = 'agentActivity' in record ? record.agentActivity : agentToolActivity(record);
   const mcpServerId = configuredMcpServerId(record.toolCall);
   const artifacts = record.outcome === 'returned' && hasNativeResult
@@ -37,7 +37,7 @@ export function runtimeHistoryToolExecution(
     ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata: {
       actionManifest: record.actionManifest,
-      ...(nextStepPrediction ? { nextStepPrediction } : {}),
+      ...(userMessagePrediction ? { userMessagePrediction } : {}),
       ...(activity ? { agentActivity: activity } : {}),
       ...('terminalOutcome' in record ? { terminalOutcome: record.terminalOutcome } : {}),
       ...(record.display?.title ? { displayTitle: record.display.title } : {}),

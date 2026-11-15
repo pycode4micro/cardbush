@@ -41,7 +41,7 @@ Windows uses AppContainer and Job Objects for supported command and process prot
 | Remote attachments | Uploaded to the chosen Agent when needed. A local path is not a remote path. |
 | Voice | Realtime services receive audio and relevant context. Local transcripts and summaries may be retained; encrypted voice history uses system secure storage. That feature does not archive raw call audio. Provider retention is separate. |
 
-Worker registration and connection do not automatically copy configuration or credentials. Existing service owner tokens retain administrative power; the experimental interaction protocol is not a scoped multi-tenant credential system. ChatGPT / SIWC credentials stay in the local app and are not copied to remote Agents. Habit memory and next-step prediction are separate, optional features, off by default in new sessions.
+Worker registration and connection do not automatically copy configuration or credentials. Existing service owner tokens retain administrative power; the experimental interaction protocol is not a scoped multi-tenant credential system. ChatGPT / SIWC credentials stay in the local app and are not copied to remote Agents. Habit memory and user message prediction are separate, optional features, off by default in new sessions.
 
 Keep credentials out of examples, shared screenshots, exports and public reports. Back up needed data before deleting conversations, resetting an assistant or uninstalling MSIX. An npm binary update does not itself erase service data; restarting the correct service is a separate step.
 

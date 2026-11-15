@@ -161,7 +161,8 @@ export function recordedToolHandoffMessages(turn: CommittedTurn, handoff: Record
       const receipt = receipts.find(item => item.role === 'tool' && item.toolCallId === call.id)!;
       const args = record(json(call.argumentsText));
       const title = record(args?._display_title);
-      const reason = typeof args?.reason === 'string' ? args.reason : title?.zh ?? title?.en;
+      const reason = typeof args?.reason === 'string' ? args.reason
+        : typeof args?._display_title === 'string' ? args._display_title : title?.zh ?? title?.en;
       // This labels observations, never promotes a successful dispatch to task
       // success. Keep every receipt, including denied, failed and pending work.
       return { tool: call.name, call_id: call.id, ...(reason === undefined ? {} : { reason }),

@@ -8,15 +8,14 @@ import { computerUseFailure } from '../dist/plugins/computerUseErrors.js';
 import { ComputerUseSafetyGuard } from '../dist/plugins/computerUseRuntime.js';
 import { prepareComputerUsePresentation } from '../dist/plugins/computerUsePresentation.js';
 
-test('application control has a terminal recovery message, with no generic retry advice', () => {
+test('application control retains its error and dispatch facts without action advice', () => {
   for (const message of ['Add-Type: An Application Control policy has blocked this file. (HRESULT:0x800711C7)',
     '本地组件无法加载，HRESULT:0x800704EC', 'Windows rejected the signature (0x80070241)']) {
     const error = computerUseFailure(new Error(message), 'unknown');
     assert.equal(error.info.code, 'application_control_blocked');
     assert.equal(error.info.execution, 'unknown');
     assert.equal(error.info.message, message);
-    assert.match(error.info.recovery, /Do not retry/);
-    assert.doesNotMatch(error.info.recovery, /obtain a fresh observation/i);
+    assert.deepEqual(error.info, { code: 'application_control_blocked', execution: 'unknown', message });
   }
   for (const message of ['Access denied', 'spawn UNKNOWN', 'DLL not found', 'The window requires focus']) {
     assert.notEqual(computerUseFailure(new Error(message)).info.code, 'application_control_blocked');

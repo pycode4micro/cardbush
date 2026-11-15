@@ -1,5 +1,5 @@
 import { createContext } from 'react';
-import type { NextStepPrediction } from '@cardbush/bush-protocol';
+import type { UserMessagePrediction } from '@cardbush/bush-protocol';
 import type { ChatMessage, ProjectItem } from '../../types';
 import type { BrowserPromptReference } from '../../shared/promptReferences';
 import { isBrowserReferenceUrl } from '../../shared/promptReferences';
@@ -11,7 +11,7 @@ export const ComposerReferenceContext = createContext<{
   sessionId: string;
   browserTabs: BrowserPromptReference[];
   messages: ChatMessage[];
-  nextStepPrediction?: NextStepPrediction;
+  userMessagePrediction?: UserMessagePrediction;
   predictionPending?: boolean;
   projects?: ProjectItem[];
   onWorkspaceSelect?: (root: string | null, reference?: string) => Promise<void>;

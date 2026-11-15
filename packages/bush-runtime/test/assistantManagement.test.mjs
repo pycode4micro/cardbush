@@ -75,7 +75,8 @@ test('assistant manages existing schedules using saved execution settings, reads
   assert.equal((await f.invoke('schedule_task', { action: 'list' })).jobs[0].id, created.id);
   const schemas = f.requests[0].tools.map(tool => tool.name);
   for (const name of ASSISTANT_MANAGEMENT_TOOLS) assert.ok(schemas.includes(name), name);
-  for (const name of ['mcp_search', 'search_skills', 'call_tool', 'get_tool_schema', 'mcp__fixture__report', 'terminal_exec', 'update_goal']) assert.ok(!schemas.includes(name), name);
+  for (const name of ['call_tool', 'get_tool_schema']) assert.ok(schemas.includes(name), name);
+  for (const name of ['mcp_search', 'search_skills', 'mcp__fixture__report', 'terminal_exec', 'update_goal']) assert.ok(!schemas.includes(name), name);
   const saved = JSON.parse(await readFile(join(f.root, 'automations.json'), 'utf8')).jobContexts[created.id];
   assert.equal(saved.model, 'fixture-model'); assert.equal(saved.permissionMode, 'task_free'); assert.equal(saved.metadata.workspaceDir, f.root);
   assert.ok(saved.tools.some(tool => tool.name === 'mcp__fixture__report'), 'timer retains execution tools');
@@ -164,7 +165,7 @@ test('capability discovery respects enabled tools and visibility without executi
   assert.equal((await f.invoke('list_plugin_commands', {})).commands[0].id, 'fixture:report');
   const found = await f.invoke('search_plugins', { mode: 'mcp', query: '*' });
   assert.deepEqual(found.matches.map(item => item.name), ['mcp__fixture__report']); assert.equal(found._page, undefined);
-  assert.equal((await f.invoke('call_tool', { name: 'mcp__fixture__report', arguments: {} })).code, 'tool_unavailable');
+  assert.equal((await f.invoke('call_tool', { name: 'mcp__fixture__report', arguments: {} })).code, 'tool_not_exposed');
   assert.equal(f.executed(), 0);
   const metadata = { ...f.parent().metadata, disabledSkills: ['sheets'], builtinPluginCommandsAvailable: false };
   assert.deepEqual((await f.invoke('search_plugins', { mode: 'skill', query: '*' }, { metadata })).matches, []);

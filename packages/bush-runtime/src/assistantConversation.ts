@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, isAssistantPageMessage, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalTaskInput, conversationalSubagentTools,
-  savedNextStepPrediction, assistantExpressionSchema, type AssistantExpression, type AssistantReplyExpression, type AssistantActivitySnapshot, type ConversationEntry, type AssistantWorkActivity,
+  savedUserMessagePrediction, assistantExpressionSchema, type AssistantExpression, type AssistantReplyExpression, type AssistantActivitySnapshot, type ConversationEntry, type AssistantWorkActivity,
   individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition, type TeamRun } from '@cardbush/bush-protocol';
 import { executeBufferedModelRound, type BufferedModelRetryStatus } from './bufferedModelRetry.js';
 import type { ModelProvider } from './modelProvider.js';
@@ -20,6 +20,7 @@ import { ConversationJournal } from './conversationJournal.js';
 import { compactRealtimeContext } from './realtimeContextCompaction.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
 import { toolExecutionPhases } from './toolScheduling.js';
+import { toolHookMessages, type ToolExecutionOutcome } from './toolExecutionCoordinator.js';
 import { estimateContextPressure, requiresContextCompactionBeforeRound } from './contextCompaction.js';
 import { completeContextUnits } from './contextCompactionTransaction.js';
 import type { AssistantMemory } from './assistantMemory.js';
@@ -30,7 +31,7 @@ import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 
-const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source) && !entry.id.startsWith('memory-');
+const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source);
 
 function quotedMessageContext(entry: ConversationEntry, entries: ConversationEntry[]) {
   if (!entry.replyTo) return '';
@@ -91,7 +92,7 @@ export class AssistantConversation {
     resultDelivery?: TaskResultDelivery;
     runningTaskCount?(id: string): number;
     childTool?(id: string): string | undefined;
-    delegate(input: unknown, signal?: AbortSignal): Promise<unknown>;
+    delegate(input: unknown, signal?: AbortSignal, onOutcome?: (outcome: ToolExecutionOutcome) => void): Promise<unknown>;
     delegationTools?: () => ToolDefinition[];
     memory?: AssistantMemory;
     environment?: RuntimeEnvironment;
@@ -138,8 +139,8 @@ export class AssistantConversation {
       const unanswered = entries.filter(entry => entry.visibility !== 'internal' && entry.source !== 'voice').at(-1)?.role === 'user';
       const retained = this.error instanceof RuntimeUiError ? this.error.localize(language) : this.error;
       const error = retained || (!this.stopped && !this.configured && unanswered ? uiText(language)('assistantRuntime.unfinished') : '');
-      const nextStepPrediction = input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && !error
-        ? this.nextStepPrediction(input.sessionId, entries) : undefined;
+      const userMessagePrediction = input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && !error
+        ? this.userMessagePrediction(input.sessionId, entries) : undefined;
       const workingTasks = this.runningTasks(input.sessionId);
       const eventNeedsResponse = input.sessionId === PERSONAL_ASSISTANT_SESSION && this.deps.eventNeedsResponse?.() === true;
       return { entries: entries.slice(input.after), cursor: entries.length, generation: this.generation,
@@ -147,7 +148,7 @@ export class AssistantConversation {
         eventNeedsResponse,
         ...(input.sessionId === PERSONAL_ASSISTANT_SESSION ? this.activitySnapshot(workingTasks, eventNeedsResponse) : {}),
         ...(input.sessionId === PERSONAL_ASSISTANT_SESSION && this.deps.management ? { management: this.deps.management.snapshot() } : {}),
-        ...(nextStepPrediction ? { nextStepPrediction } : {}),
+        ...(userMessagePrediction ? { userMessagePrediction } : {}),
         workingTasks,
         busy: input.sessionId === PERSONAL_ASSISTANT_SESSION && this.busy, error: input.sessionId === PERSONAL_ASSISTANT_SESSION ? error : '',
         canRetry: input.sessionId === PERSONAL_ASSISTANT_SESSION && !this.busy && Boolean(error) && entries.some(entry => entry.role === 'user' && ['text', 'voice'].includes(entry.source)),
@@ -224,7 +225,7 @@ export class AssistantConversation {
       if (this.pending && !this.stopped) void this.pump();
     } }
   }
-  private nextStepPrediction(sessionId: string, entries: ConversationEntry[]) {
+  private userMessagePrediction(sessionId: string, entries: ConversationEntry[]) {
     const latest = entries.filter(entry => entry.visibility !== 'internal').at(-1);
     if (!latest || latest.role !== 'assistant' || latest.source === 'voice') return;
     const history = this.journal.modelHistory(sessionId).read();
@@ -242,7 +243,7 @@ export class AssistantConversation {
       if (message.role !== 'assistant') continue;
       const call = [...message.toolCalls].reverse().find(tool => tool.name === 'summary_for_user');
       if (!call) continue;
-      const prediction = savedNextStepPrediction(call, results.get(call.id), latest.createdAt);
+      const prediction = savedUserMessagePrediction(call, results.get(call.id), latest.createdAt);
       return prediction && prediction.expiresAt > Date.now() ? { ...prediction, id: `${latest.id}:${prediction.id}` } : undefined;
     }
   }
@@ -254,7 +255,8 @@ export class AssistantConversation {
     const spoken = parent.metadata.assistantOutputMode === 'voice';
     const nativeTools = !profile.targetAgent && !spoken
       ? (this.deps.delegationTools?.() ?? []).filter(tool => parent.tools.some(allowed => allowed.name === tool.name)) : [];
-    const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...nativeTools, ...memoryTools, ...managementTools];
+    const presentedNative = this.deps.management?.projectDelegation(parent, nativeTools) ?? nativeTools;
+    const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...presentedNative, ...memoryTools, ...managementTools];
     const entries = this.journal.read(id);
     const history = this.journal.modelHistory(id);
     // Foreground work owns its reply. Completion delivery is selected only once
@@ -273,19 +275,6 @@ export class AssistantConversation {
               status: task.status, result: task.finalResponse, error: task.errorMessage }) };
           entries.push(entry);
         }
-      }
-    }
-    // Migrate the old visible-only journal once. Missing historical tool exchanges
-    // cannot be reconstructed; every new exchange is retained losslessly below.
-    if (!history.read().entryIds.size) {
-      const checkpointEntry = entries.filter(entry => entry.id.startsWith('memory-')).at(-1);
-      if (checkpointEntry) {
-        try {
-          const saved = JSON.parse(checkpointEntry.content);
-          if (typeof saved.summary === 'string' && Number.isInteger(saved.through) && saved.through >= 0 && saved.through <= entries.length) {
-            history.checkpoint(0, saved.summary, entries.slice(0, saved.through).map(item => item.id));
-          }
-        } catch { /* Keep original records when the legacy checkpoint cannot be read. */ }
       }
     }
     // Never redispatch a persisted call after a crash. Its side effect may have
@@ -359,7 +348,7 @@ export class AssistantConversation {
     if (!this.deps.environment && this.deps.botContext) for (const ref of new Set(remaining.filter(item => item.role === 'user').flatMap(sourceRefs))) {
       botContexts.set(ref, await this.deps.botContext(ref, signal));
     }
-    const incoming: ModelMessage[] = remaining.filter(item => !item.id.startsWith('memory-')).flatMap((item): ModelMessage[] => item.role === 'assistant' ? [{ role: 'assistant', content: item.eventId ? JSON.stringify({ eventId: item.eventId, result: item.content }) : item.content, toolCalls: [] }] : [{
+    const incoming: ModelMessage[] = remaining.flatMap((item): ModelMessage[] => item.role === 'assistant' ? [{ role: 'assistant', content: item.eventId ? JSON.stringify({ eventId: item.eventId, result: item.content }) : item.content, toolCalls: [] }] : [{
         role: 'user', name: 'turn_runtime_context', visibility: 'internal',
         content: createTurnTimeContext({ createdAt: item.createdAt }) + (this.deps.environment ? '\nMessage source (routing data): ' + JSON.stringify({ sourceRefs: sourceRefs(item).map(ref => ref ?? null) }) : ''),
       }, ...(item === completion && brief && brief.content !== previousBrief?.content ? [brief] : []), ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
@@ -401,11 +390,13 @@ export class AssistantConversation {
     }] : [];
     const preferredName = await this.deps.preferredName?.(signal);
     if (preferredName !== undefined) incomingPreferences.push({ role: 'user', name: 'registered_user_profile', visibility: 'internal', content: JSON.stringify({ preferredName }) });
+    system.content += '\n' + renderPromptTemplate('tool-display-instructions') + '\n' + renderPromptTemplate('coordination-tool-boundaries');
     if (this.deps.memory) system.content += renderPromptTemplate('assistant-memory');
     system.content += '\n' + REPORT_DELIVERY_INSTRUCTIONS + renderPromptTemplate('assistant-report');
     if (activeSources.size || parent.prefixMessages.some(message => message.role === 'developer' && message.name === 'webhook_delivery_policy')) system.content += '\n' + WEBHOOK_FINAL_REPLY_INSTRUCTIONS;
     system.content += renderPromptTemplate('assistant-execution');
     if (managementTools.length) system.content += renderPromptTemplate('assistant-management');
+    if (tools.some(tool => tool.name === 'call_tool')) system.content += '\n' + renderPromptTemplate('assistant-tool-disclosure');
     const context = async (): Promise<ModelMessage[]> => {
       if (this.deps.memory) {
         const changes = await this.deps.memory.changes(parent, history.read().messages, signal);
@@ -490,7 +481,7 @@ export class AssistantConversation {
     };
     let published = false;
     const directTools = this.directTools;
-    let managementStopped: Error | undefined;
+    let hookStopped: Error | undefined;
     for (let round = 0; round < 10; round++) {
       signal.throwIfAborted();
       consumeGuidance();
@@ -542,12 +533,19 @@ export class AssistantConversation {
       let delegationQueue: Promise<unknown> = Promise.resolve();
       let managementQueue: Promise<unknown> = Promise.resolve();
       const failures = new Set<string>();
+      const executedNames = new Map<number, string>();
       const nativeResults = new Map<number, unknown>();
+      const outcomes = new Map<number, ToolExecutionOutcome>();
       this.executingTools = signal;
       const execute = async (ordinal: number) => {
-        const call = toolCalls[ordinal]!;
+        let call = toolCalls[ordinal]!;
+        const onOutcome = (outcome: ToolExecutionOutcome) => outcomes.set(ordinal, outcome);
         try {
           signal.throwIfAborted();
+          if (hookStopped) throw hookStopped;
+          if (!tools.some(tool => tool.name === call.name)) throw Object.assign(Error('Tool is not available.'), { code: 'tool_unavailable' });
+          call = this.deps.management?.resolveInvocation(call, parent, request, nativeTools) ?? call;
+          executedNames.set(ordinal, call.name);
           const definition = tools.find(tool => tool.name === call.name);
           if (!definition) throw Object.assign(Error('Tool is not available.'), { code: 'tool_unavailable' });
           // Providers add presentation metadata to every function schema. Use the
@@ -586,14 +584,10 @@ export class AssistantConversation {
                 output = taskReceiptDelivery(value, leases.map(lease => ({ lease, value })));
               }
             }
-          } else if (managementTools.some(tool => tool.name === call.name)) {
+          } else if (call.name === 'get_tool_schema' || managementTools.some(tool => tool.name === call.name)) {
             const execution = managementQueue.then(async () => {
-              if (managementStopped) throw managementStopped;
-              try { return await run(() => this.deps.management!.execute({ ...call, argumentsText: JSON.stringify(args) }, parent, request, round, ordinal, signal)); }
-              catch (error) {
-                if (error instanceof Error && 'code' in error && error.code === 'assistant_management_stopped') managementStopped = error;
-                throw error;
-              }
+              if (hookStopped) throw hookStopped;
+              return await run(() => this.deps.management!.execute({ ...call, argumentsText: JSON.stringify(args) }, parent, request, round, ordinal, signal, nativeTools, onOutcome));
             });
             managementQueue = execution.catch(() => undefined);
             output = await execution;
@@ -609,7 +603,10 @@ export class AssistantConversation {
           } else if (nativeTools.some(tool => tool.name === call.name)) {
             // Preserve registration-before-assembly order within one model batch.
             // Dispatch receipts are immediate; the child work remains independent.
-            const execution = delegationQueue.then(() => run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args }, signal)));
+            const execution = delegationQueue.then(() => {
+              if (hookStopped) throw hookStopped;
+              return run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name, parent, nativeArguments: args }, signal, onOutcome));
+            });
             delegationQueue = execution.catch(() => undefined);
             output = await execution;
             nativeResults.set(ordinal, output);
@@ -618,7 +615,7 @@ export class AssistantConversation {
           } else {
             const input = conversationalSubagentInput.parse(args);
             output = await run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
-              parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined }, signal));
+              parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined }, signal, onOutcome));
             nativeResults.set(ordinal, output);
             signal.throwIfAborted();
             this.watchDelegation(output);
@@ -626,6 +623,7 @@ export class AssistantConversation {
           nativeResults.set(ordinal, output);
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify(output) };
         } catch (error) {
+          if (error instanceof Error && 'code' in error && ['assistant_management_stopped', 'plugin_hook_stopped'].includes(String(error.code))) hookStopped ??= error;
           failures.add(call.id);
           const code = error instanceof z.ZodError || error instanceof SyntaxError ? 'invalid_tool_arguments'
             : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'assistant_tool_failed';
@@ -639,18 +637,18 @@ export class AssistantConversation {
         }
         signal.throwIfAborted();
         const deliveries = [...nativeResults].flatMap(([ordinal, output]) => resultDelivery(output)?.references(String(results[ordinal]?.content ?? '')) ?? []);
-        history.append(results, [], deliveries);
+        history.append([...results, ...toolHookMessages([...outcomes].sort(([a], [b]) => a - b).map(([, outcome]) => outcome))], [], deliveries);
         for (const [ordinal, output] of nativeResults) resultDelivery(output)?.commit(String(results[ordinal]?.content ?? ''));
       } finally {
         for (const output of nativeResults.values()) resultDelivery(output)?.release();
         if (this.executingTools === signal) this.executingTools = undefined;
       }
-      if (!activeSources.size) for (const call of toolCalls) {
+      if (!activeSources.size) for (const [ordinal, call] of toolCalls.entries()) {
         const failed = failures.has(call.id);
         this.deps.observeOutcome?.({ nowMs: Date.now(), kind: failed ? 'tool_failed' : 'tool_returned',
-          toolName: call.name, status: failed ? 'failed' : 'completed' }, executionId + ':' + call.id);
+          toolName: executedNames.get(ordinal) ?? call.name, status: failed ? 'failed' : 'completed' }, executionId + ':' + call.id);
       }
-      if (managementStopped) throw managementStopped;
+      if (hookStopped) throw hookStopped;
     }
     throw new RuntimeUiError('assistantRuntime.roundLimit');
   }

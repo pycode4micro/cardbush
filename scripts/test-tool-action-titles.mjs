@@ -103,13 +103,15 @@ test('specific descriptions follow the UI language through live updates and arch
   }
 });
 
-test('legacy descriptions remain available in their language with localized fallback in the other', () => {
+test('single conversation-language titles survive interface language changes without translation', () => {
   const row = api.runtimeHistoryToolExecution({ ...record, toolCall: { ...record.toolCall, name: 'terminal_exec' } });
   assert.equal(api.toolActionTitle(row, 'zh'), '核对产品资料');
-  assert.equal(api.toolActionTitle(row, 'en'), 'Run command');
+  assert.equal(api.toolActionTitle(row, 'en'), '核对产品资料');
   row.metadata.displayTitle = 'Check product information';
   assert.equal(api.toolActionTitle(row, 'en'), 'Check product information');
-  assert.equal(api.toolActionTitle(row, 'zh'), '执行命令');
+  assert.equal(api.toolActionTitle(row, 'zh'), 'Check product information');
+  row.metadata.displayTitle = 'Vérifier les fichiers';
+  for (const language of ['zh', 'en']) assert.equal(api.toolActionTitle(row, language), 'Vérifier les fichiers');
 });
 
 test('parallel selection is sticky and permission requests remain visible', () => {

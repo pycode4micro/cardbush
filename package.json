@@ -130,7 +130,7 @@
     "test:individuation": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && node --test packages/bush-runtime/test/individuation.test.mjs packages/bush-runtime/test/individuationRecall.test.mjs packages/bush-runtime/test/individuationStages.test.mjs packages/bush-runtime/test/individuationFeedback.test.mjs packages/bush-product-agent/test/individuation.test.mjs packages/bush-product-agent/test/conversationPreferencesLifecycle.test.mjs && node scripts/test-summary-for-user-ui.mjs && node scripts/test-summary-for-user-render-ui.mjs && node scripts/run-app-views-test.mjs assistant-feedback",
     "test:composer-actions": "node --test scripts/test-composer-quick-actions-contract.mjs scripts/test-plugin-prompts.mjs",
     "test:composer-memory": "node scripts/run-app-views-test.mjs composer-memory",
-    "test:composer-prediction": "npm run build:runtime && node --test scripts/test-next-step-prediction.mjs && node scripts/run-app-views-test.mjs composer-prediction",
+    "test:composer-prediction": "npm run build:runtime && node --test scripts/test-user-message-prediction.mjs && node scripts/run-app-views-test.mjs composer-prediction",
     "test:composer-layout": "node --test scripts/test-html-components-layout.mjs && node scripts/run-app-views-test.mjs composer-layout",
     "test:welcome-ui": "node scripts/run-welcome-ui.mjs",
     "test:first-submission": "node scripts/run-app-views-test.mjs first-submission",

@@ -18,7 +18,7 @@ import type {
 import {
   ASSISTANT_CONVERSATION_COMMAND,
   agentToolActivity,
-  savedNextStepPrediction,
+  savedUserMessagePrediction,
   toolExecutionError,
   planStateSchema,
   reasoningEffortSchema,
@@ -828,7 +828,7 @@ function toolRecord(
 ): ChatToolExecution {
   const returned = record.outcome === 'returned';
   const error = toolExecutionError(record);
-  const nextStepPrediction = returned ? savedNextStepPrediction(record.toolCall, record.result, record.recordedAt) : undefined;
+  const userMessagePrediction = returned ? savedUserMessagePrediction(record.toolCall, record.result, record.recordedAt) : undefined;
   const mcpServerId = configuredMcpServerId(record.toolCall);
   const activity = agentToolActivity(record);
   const artifacts = returned
@@ -843,7 +843,7 @@ function toolRecord(
     metadata: {
       actionManifest: record.actionManifest,
       nativeResult: record.result,
-      ...(nextStepPrediction ? { nextStepPrediction } : {}),
+      ...(userMessagePrediction ? { userMessagePrediction } : {}),
       ...(activity ? { agentActivity: activity } : {}),
       lifecycleSequence: event.sequence,
       ...((record.display ?? event.payload.display)?.title ? { displayTitle: (record.display ?? event.payload.display)!.title } : {}),

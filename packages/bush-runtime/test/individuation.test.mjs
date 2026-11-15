@@ -526,12 +526,13 @@ async function until(predicate) {
   throw Error('Expected runtime event did not arrive');
 }
 
-test('summary runs with parallel tools; next answer is final before done, while lifecycle remains running', async t => {
+test('summary waits for parallel work; next answer is final before done, while lifecycle remains running', async t => {
   const f = await fixture(t), sibling = Promise.withResolvers(), finish = Promise.withResolvers();
+  let probeStarted = false;
   const registry = new ToolRegistry();
   registry.register({ definition: { name: 'slow_probe', description: 'Independent work', inputSchema: { type: 'object' } },
     manifest: { effect_kind: 'observation', operation: 'probe', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
-    parallelSafe: true, decodeInput: x => x, execute: () => sibling.promise });
+    parallelSafe: true, decodeInput: x => x, execute: () => { probeStarted = true; return sibling.promise; } });
   let rounds = 0;
   const host = new InMemoryRuntimeHost({ dataRoot: f.root, toolRegistry: registry, registerDefaultWorkspaceTools: false,
     provider: { async *stream(request) {
@@ -551,11 +552,16 @@ test('summary runs with parallel tools; next answer is final before done, while 
     tools: registry.definitions(), prefixMessages: [], inputMessages: [{ messageId: 'u', message: { role: 'user', content: 'Work' } }], metadata: {} };
   const running = host.runSessionTurn(request);
   try {
-    await until(() => host.events('s', 't').some(e => e.kind === 'tool_returned' && e.payload.toolName === 'summary_for_user'));
-    assert.equal(rounds, 1, 'a successful summary must not cancel or skip its sibling');
+    await until(() => probeStarted);
+    assert.ok(!host.events('s', 't').some(e => e.kind === 'tool_returned' && e.payload.toolName === 'summary_for_user'),
+      'the summary cannot finish while work in its batch is pending');
+    assert.equal(rounds, 1, 'pending work must not be cancelled or skipped to obtain a final answer');
     assert.ok(!host.events('s', 't').some(e => e.kind === 'turn_terminal'));
     sibling.resolve({ ok: true });
     await until(() => host.events('s', 't').some(e => e.kind === 'assistant_segment_delta'));
+    assert.deepEqual(host.events('s', 't').filter(e => e.kind === 'tool_returned').map(e => e.payload.toolName),
+      ['slow_probe', 'summary_for_user'], 'the summary receipt follows the completed work exactly once');
+    assert.equal(rounds, 2, 'the batch has only one follow-up model request');
     assert.equal(host.events('s', 't').find(e => e.kind === 'assistant_segment_delta').payload.finalResponse, true);
     assert.ok(!host.events('s', 't').some(e => e.kind === 'turn_terminal'), 'text can render final while provider is still streaming');
   } finally { sibling.resolve({ ok: true }); finish.resolve(); }

@@ -113,6 +113,11 @@ test('assistant journals keep authored text and selection identity while the mod
     await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
     assert.equal(assistant.command({ action: 'read', sessionId: id }).error, '');
     assert.ok(requests[0].messages.some(message => message.role === 'user' && message.content.includes(promptContext[0].content)));
+    const system = requests[0].messages.find(message => message.role === 'system').content;
+    assert.match(system, /one concise action title in the user's current conversation language/);
+    assert.match(system, /Do not generate a second translation/);
+    assert.match(system, /Use team for a saved dependency workflow/);
+    assert.match(system, /Use worker_connection verify for a fresh authenticated check/);
     const saved = new ConversationJournal(directory).read(id)[0];
     assert.equal(saved.content, '修改这一处'); assert.deepEqual(saved.promptContext, promptContext);
     assert.throws(() => journal.append(id, { ...input, promptContext: [{ ...promptContext[0], content: 'different target' }] }), /different content/);

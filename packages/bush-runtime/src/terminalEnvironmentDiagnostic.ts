@@ -30,16 +30,11 @@ export function terminalEnvironmentDiagnostic(value: Record<string, unknown>, lo
   const executable = typeof value.shellExecutable === 'string' ? value.shellExecutable : '';
   const shellLaunchFailed = failed && value.commandStarted === false && win32.isAbsolute(executable) && /^pwsh\.exe$/i.test(win32.basename(executable));
   if (shellLaunchFailed) {
-    const packaged = /[\\/]WindowsApps[\\/]Microsoft\.PowerShell_[^\\/]+[\\/]pwsh\.exe$/i.test(executable);
-    const packagedSandboxFailure = sandbox?.backend === 'windows-appcontainer' && packaged && value.nativeErrorCode === 87;
     return {
       execution_boundary: isolated ? 'sandbox' : 'host', availability: 'shell_launch_failed',
       host_command: { command: 'pwsh', status: 'found', path: executable }, installation: 'executable_found_on_host',
       command_started: false, access_granted: false,
       ...(typeof value.nativeErrorCode === 'number' ? { native_error_code: value.nativeErrorCode } : {}),
-      next_step: packagedSandboxFailure
-        ? 'PowerShell was found, but Windows rejected this packaged executable in the current AppContainer (error 87). No command ran. Select an installed MSI or portable PowerShell 7 via the host CARDBUSH_TERMINAL_SHELL setting, or correct the host launch configuration. Keep isolation enabled; do not bypass it through cmd or an unsandboxed retry.'
-        : 'PowerShell was resolved on the host but could not be started. No command ran. Inspect the native launch error and host configuration; do not infer that PowerShell is absent or bypass the active sandbox.',
     };
   }
   if (!missing && !denied && !(isolated && failed)) return;
@@ -49,6 +44,5 @@ export function terminalEnvironmentDiagnostic(value: Record<string, unknown>, lo
     host_command: lookup ?? { status: 'not_checked' },
     installation: lookup?.status === 'found' ? 'executable_found_on_host' : 'unknown',
     access_granted: false,
-    next_step: 'Shell lookup, Test-Path and interpreter errors describe this execution environment, not host installation. A venv launcher may exist while its base interpreter is outside the sandbox. Inspect the returned scope and request only the necessary additional_permissions before a diagnostic retry. Do not reinstall, change launchers or repeat completed side effects based on this receipt.',
   };
 }

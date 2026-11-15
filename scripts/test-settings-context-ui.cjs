@@ -251,24 +251,30 @@ app.whenReady().then(async () => {
       return;
     }
     if (process.env.CARDBUSH_SETTINGS_CASE === 'individuation') {
-      await click('个性化');
-      await until("document.body.innerText.includes('个性化记忆')");
+      await goTo('summary_for_user');
+      await until("!!document.querySelector('.summary-settings')");
       const checkbox = title => `Array.from(document.querySelectorAll('.settings-switch')).find(label => label.querySelector('strong').textContent === ${JSON.stringify(title)}).querySelector('input')`;
-      for (const title of ['记住并参考用户习惯', '预测下一步行为']) assert.equal(await run(`${checkbox(title)}.checked`), false);
-      await run(`${checkbox('记住并参考用户习惯')}.click()`);
+      const habitTitle = await run("views.uiText(settingsProps.language)('settingsSummaryPanel.rememberAndUseHabits')");
+      const predictionTitle = await run("views.uiText(settingsProps.language)('settingsSummaryPanel.predictUserMessages')");
+      for (const title of [habitTitle, predictionTitle]) assert.equal(await run(`${checkbox(title)}.checked`), false);
+      await run(`${checkbox(habitTitle)}.click()`);
       await until('settingsProps.settings.individuation?.habits === true');
-      assert.equal(await run(`${checkbox('预测下一步行为')}.checked`), false);
-      await run(`${checkbox('预测下一步行为')}.click()`);
+      assert.equal(await run(`${checkbox(predictionTitle)}.checked`), false);
+      await run(`${checkbox(predictionTitle)}.click()`);
       await until('settingsProps.settings.individuation?.predictions === true');
-      await run(`${checkbox('记住并参考用户习惯')}.click()`);
+      await run(`${checkbox(habitTitle)}.click()`);
       await until('settingsProps.settings.individuation?.habits === false');
       await run('styleFixture.saveIndividuation(settingsProps.settings.individuation); settingsProps.settings.individuation=styleFixture.readIndividuation(); renderSettings()');
-      assert.deepEqual(await run('settingsProps.settings.individuation'), { habits: false, predictions: true });
+      assert.deepEqual(await run('settingsProps.settings.individuation'), {
+        habits: false, predictions: true, eventTokenThreshold:10000, habitTokenThreshold:10000, recallMode:'context',
+      });
       fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
       fs.writeFileSync(path.join(root, 'tmp/settings-individuation.png'), (await win.webContents.capturePage()).toPNG());
       await run("settingsProps.language='en'; renderSettings()");
-      await until("document.body.innerText.includes('Personalization memory')");
-      assert.equal(await run(`${checkbox('Predict next actions')}.checked`), true);
+      await until("document.body.innerText.includes(views.uiText(settingsProps.language)(views.settingsLabels.summary_for_user))");
+      const englishPredictionTitle = await run("views.uiText(settingsProps.language)('settingsSummaryPanel.predictUserMessages')");
+      assert.notEqual(englishPredictionTitle, predictionTitle);
+      assert.equal(await run(`${checkbox(englishPredictionTitle)}.checked`), true);
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
       console.log('Individuation settings UI passed: default off, independent switches, persistence and bilingual labels.');
       win.destroy(); app.exit(0); return;

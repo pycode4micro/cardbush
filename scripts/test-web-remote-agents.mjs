@@ -267,6 +267,11 @@ test('real restricted tenant uses the private gateway and native HTTP delegation
       res.end('data: ' + JSON.stringify({ type: 'response.completed', response: { id: 'title', object: 'response', status: 'completed', model: body.model, output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Remote test', annotations: [] }] }] } }) + '\n\n'); return;
     }
     parentRound++;
+    if (parentRound === 1) {
+      const policy = [body.instructions, ...(body.input ?? []).filter(item => ['system', 'developer'].includes(item.role)).map(item => item.content)].filter(Boolean).map(value => typeof value === 'string' ? value : JSON.stringify(value)).join('\n');
+      assert.match(policy, /Before deciding whether a requested capability is available, use list_subagent_options/);
+      assert.doesNotMatch(policy, /auto-video-slicing|Baiying|Qianchuan|切片|百应|千川|login_mobile|login phone number/);
+    }
     const names = body.tools.map(item => item.name ?? item.function?.name);
     assert.ok(names.includes('subagent')); assert.ok(names.includes('tasks')); assert.ok(!names.includes('terminal_exec'));
     const schema = body.tools.find(item => (item.name ?? item.function?.name) === 'subagent');

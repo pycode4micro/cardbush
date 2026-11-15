@@ -22,6 +22,7 @@ import type {
 import { RuntimePermissionBroker } from "./runtimePermissionBroker.js";
 import {
   ToolExecutionCoordinator,
+  toolHookMessages,
   type ToolExecutionIdentity,
   type ToolExecutionOutcome,
   type RuntimeCapabilityStore,
@@ -407,11 +408,8 @@ export class RuntimeToolLoop {
         ...(delivery.images.length ? { images: delivery.images } : {}),
       });
     }
-    const hookMessages: ModelMessage[] = outcomes.flatMap(outcome => (outcome.hookMessages ?? []).map(content => ({
-      role: 'developer' as const, name: 'plugin_hook_feedback', content,
-    })));
     return {
-      messages: [...toolMessages, ...hookMessages],
+      messages: [...toolMessages, ...toolHookMessages(outcomes)],
       taskResultReferences: outcomes.map((outcome, index) => outcome.kind === 'returned'
         ? resultDelivery(outcome.result)?.references(String(toolMessages[index]?.content ?? '')) ?? [] : []),
       commitDeliveries: () => {

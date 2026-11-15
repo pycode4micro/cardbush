@@ -22,7 +22,7 @@ export async function chatBrowserCommand(text: string, client: Pick<AgentHttpCli
     const input = pairing ? { action: 'pair', browser: pairing[1], ...(pairing[2] ? { label: pairing[2] } : {}) }
       : manage ? { action: manage[1] === 'default' ? 'select-default' : 'revoke', id: manage[2] } : { action: args === 'retry' ? 'retry' : 'status' };
     const result = await client.call('browser.connector', input, AbortSignal.any([signal, AbortSignal.timeout(15_000)])) as {
-      code?: string; expiresAt?: string; browser?: string; extensionPath?: string; state?: string; error?: string; shared?: boolean; nextStep?: string;
+      code?: string; expiresAt?: string; browser?: string; extensionPath?: string; state?: string; error?: string; shared?: boolean;
       connector?: { defaultConnectionId: string; connections: Array<{ id: string; browser: string; label: string; connected: boolean }>;
         connectionAttempt?: { at: string; stage: string; reason?: string; connectionId?: string } };
     };
@@ -33,7 +33,7 @@ export async function chatBrowserCommand(text: string, client: Pick<AgentHttpCli
     } else {
       io.status(`Browser connector: ${terminalText(result.state ?? 'unavailable')}${result.error ? ` — ${terminalText(result.error)}` : ''}\n`);
       if (result.state === 'unavailable') {
-        io.status(`${terminalText(result.nextStep ?? 'Check the current CLI /logs for the host startup error, then retry /browser status.')}\n`);
+        io.status('Check the current CLI /logs for the host startup error, then retry /browser status.\n');
         return true;
       }
       if (result.state === 'disabled') {

@@ -76,6 +76,25 @@ test('Team definition editing stays discoverable without per-Team observation ac
   assert.deepEqual(modelToolDefinitions(f.registry, scoped).find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
 });
 
+test('compact delegation does not offer clean mode without its required system prompt', async () => {
+  const f = fixture(['subagent']);
+  const initial = structuredClone(f.definitions());
+  const compact = initial.find(tool => tool.name === 'subagent');
+  assert.equal(compact.inputSchema.properties.mode, undefined);
+  assert.equal(compact.inputSchema.properties.system_prompt, undefined);
+  assert.ok(compact.inputSchema.properties.agent_id, 'saved clean employees remain directly selectable');
+  const loaded = await f.load('subagent');
+  assert.deepEqual(loaded.matches[0].inputSchema.properties.mode.enum, ['fork', 'clean']);
+  assert.equal(loaded.matches[0].inputSchema.properties.system_prompt.minLength, 1);
+  assert.equal(loaded.invocation.tool, 'call_tool');
+  assert.deepEqual(f.definitions(), initial, 'reading the full definition does not mutate the compact catalog');
+  const withoutRecall = fixture(['subagent']);
+  withoutRecall.request.tools = withoutRecall.request.tools.filter(tool => tool.name !== 'call_tool');
+  const full = withoutRecall.definitions().find(tool => tool.name === 'subagent');
+  assert.deepEqual(full.inputSchema.properties.mode.enum, ['fork', 'clean']);
+  assert.equal(full.inputSchema.properties.system_prompt.minLength, 1, 'full definitions keep mode and its required configuration together');
+});
+
 test('task guidance has no alternate legacy observer even in restricted scopes', () => {
   for (const name of ['terminal_exec', 'terminal_poll', 'start_mcp_tool']) {
     assert.match(nativeRegistry.resolve(name).definition.description, /await/);

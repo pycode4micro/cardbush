@@ -54,8 +54,6 @@ const viewportSchema = z.object({ width: z.number().int().min(64).max(4096), hei
   deviceScaleFactor: z.number().min(0.5).max(3).optional() });
 
 const browserConnectionGuidance = 'For local Chrome/Edge, the user approves the first connection once in the CardBush extension window; no pairing code is needed. The local App and CLI share authenticated connections and reconnect automatically after disconnects or restarts. The CLI can use Chrome/Edge without the App running. Use /browser pair chrome or /browser pair edge only for manual connection or remote Agent pairing; remote Agents keep connections separate from the local App/CLI. Do not generate a new pairing code for a temporary disconnect. Integrated CardBush tabs require the desktop App, but no extension or pairing.';
-const bridgeSetupGuidance = 'Browser Use supports CardBush, Chrome and Edge. For Chrome/Edge, enable the Browser Use plugin and install or reload its extension. ' + browserConnectionGuidance
-  + ' Use /browser status to check connection health. The user must confirm connection consent; do not approve it on their behalf. For manual pairing, the user pastes the code directly into the intended extension, never into the model conversation. Call list_browsers again and select_browser with the returned connectionId. Keep the requested browser identity; do not launch a replacement browser or retry a mutation automatically.';
 function bridgeAvailability(code: string): string | undefined {
   if (['bridge_config_missing', 'bridge_config_unavailable'].includes(code)) return 'needs_setup';
   if (code === 'bridge_config_invalid') return 'misconfigured';
@@ -126,8 +124,7 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
       ...(onDiagnostics ? { onDiagnostics } : {}),
     }).catch(error => {
       if (error instanceof BrowserConnectorError && bridgeAvailability(error.code)) {
-        const health = record(error.details.connector);
-        throw new BrowserConnectorError(error.code, typeof health.nextStep === 'string' ? `${error.message} ${health.nextStep}` : bridgeSetupGuidance, { ...error.details, availability: bridgeAvailability(error.code),
+        throw new BrowserConnectorError(error.code, error.message, { ...error.details, availability: bridgeAvailability(error.code),
           ...(error.code.startsWith('bridge_config_') ? { execution: 'not_dispatched' } : {}) });
       }
       if (method.startsWith('downloads.') && error instanceof BrowserConnectorError && error.code === 'unsupported_method') {
@@ -213,24 +210,13 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
       const result = record(await request('browser.list', {}, context));
       if (!Array.isArray(result.connections) || !result.connections.some(connection => record(connection).connected === true)) {
         result.availability = 'needs_connection';
-        result.nextStep = Array.isArray(result.connections) && result.connections.length
-          ? 'Open the already paired Chrome/Edge profile and let its CardBush Browser Use extension reconnect automatically; if the user explicitly disabled the extension connection, they must click Connect to resume. After three fast attempts, a saved connection keeps retrying every 30 seconds; browser suspension may delay recovery. The user can click Connect to retry immediately. Then call list_browsers again. Existing pairings and the session selection are preserved; do not generate a new pairing code for a temporary disconnect.'
-          : bridgeSetupGuidance;
-        const attempt = record(result.connectionAttempt);
-        const age = Date.now() - Date.parse(String(attempt.at ?? ''));
-        if (attempt.stage === 'rejected' && Number.isFinite(age) && age >= 0 && age <= 30_000
-          && ['pairing_not_found', 'pairing_proof_mismatch', 'pairing_revoked'].includes(String(attempt.reason))) {
-          result.nextStep = 'The latest browser handshake was rejected by this host (' + attempt.reason
-            + '). The observation does not prove that the saved target should be changed. If the user intends to connect to this local App/CLI, they can choose “重新申请本机连接” in the Browser Use extension and confirm once in its CardBush window. Existing credentials are kept until consent succeeds; do not reset credentials, approve on the user’s behalf, or switch browsers automatically.';
-        }
       }
       return { text: JSON.stringify(result), structured: result };
     } catch (error) {
       if (!(error instanceof BrowserConnectorError) || !bridgeAvailability(error.code)) throw error;
       const health = record(error.details.connector);
       const result = { connections: [], availability: bridgeAvailability(error.code), reason: error.code,
-        ...(Object.keys(health).length ? { connector: health } : {}),
-        nextStep: typeof health.nextStep === 'string' ? health.nextStep : bridgeSetupGuidance };
+        ...(Object.keys(health).length ? { connector: health } : {}) };
       return { text: JSON.stringify(result), structured: result };
     }
   }));

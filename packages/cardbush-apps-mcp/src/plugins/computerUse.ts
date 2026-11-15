@@ -278,7 +278,7 @@ export async function computerUseMcpResult(native: ComputerUseResult, action: st
     ...(native.timings ? { timings: native.timings } : {}),
     ...(images.length || failures.length ? { image_delivery: {
       status: failures.length ? 'unavailable' : 'attached', count: images.length,
-      ...(failures.length ? { errors: failures, next_step: 'The screenshot was not delivered. Do not infer pixels from its path; observe again without repeating input.' } : {}),
+      ...(failures.length ? { errors: failures } : {}),
     } } : {}),
     paths: native.paths,
     // Standard MCP images are the sole model-input route. Preserve file artifacts

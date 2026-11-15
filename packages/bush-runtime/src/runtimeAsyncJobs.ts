@@ -76,7 +76,7 @@ export class RuntimeAsyncJobs {
     job.completion = message.then(() => {});
     try { this.deliver(context.sessionId, context.turnId, id, message); }
     catch (error) { controller.abort(); throw error; }
-    return { task_id: id, status: job.status, next_step: 'Continue independent work. The result will arrive automatically; dependent work must wait for its actual result.' };
+    return { task_id: id, status: job.status };
   }
   endTurn(session: string, turn: string) {
     for (const [id, job] of this.jobs) if (job.session === session && job.turn === turn) { job.controller.abort(); this.jobs.delete(id); }

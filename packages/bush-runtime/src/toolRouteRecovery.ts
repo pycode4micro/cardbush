@@ -46,10 +46,6 @@ export function annotateToolRouteRecovery(error: RuntimeToolError, call: ToolCal
   const corrected = error.details?.corrected_call as { name?: string; arguments?: unknown } | undefined;
   if (attempts > 1 && corrected?.name) {
     const { definition: _definition, ...details } = error.details ?? {};
-    error.details = { route_recovery: {
-      attempts,
-      next_step: { name: 'get_tool_schema', arguments: { name: corrected.name } },
-      instruction: 'Stop repeating this rejected envelope. Read the entry-point schema, then submit corrected_call with the preserved arguments. This does not retry or resubmit a target operation.',
-    }, ...details };
+    error.details = { route_recovery: { attempts }, ...details };
   }
 }

@@ -551,7 +551,7 @@ export class InMemoryRuntimeHost {
         return recent;
       },
       eventRunning: () => this.#assistantEvents.executingAssistantEvent,
-      delegate: (payload, signal) => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }, signal),
+      delegate: (payload, signal, onOutcome) => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }, signal, onOutcome),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks', 'worker_connection'].includes(tool.name)),
       eventNeedsResponse: () => {
         const turnId = this.#assistantEvents.store.select(state => state.active?.turnId);
@@ -1326,6 +1326,7 @@ export class InMemoryRuntimeHost {
   async sendCommand(
     command: RuntimeHostCommand,
     signal?: AbortSignal,
+    onToolOutcome?: (outcome: import('./toolExecutionCoordinator.js').ToolExecutionOutcome) => void,
   ): Promise<unknown> {
     // Keep deletion receipts transactional, but never queue foreground work
     // behind an idle cache scan. Session reads do not alter its reference roots.
@@ -1740,8 +1741,8 @@ export class InMemoryRuntimeHost {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
         const input = realtimeAgentToolRequestSchema.parse(command.payload);
         this.#realtimeAgents ??= new RealtimeAgentDispatcher({ sessions: this.#sessions, tasks: this.#subagentTasks, registry: this.#toolRegistry, remote: this.#remoteAgents,
-          read: id => this.#childConversation(id) });
-        return this.#withTurnAdmission(input.sessionId, () => this.#realtimeAgents!.execute(input, signal));
+          read: id => this.#childConversation(id), hooks: request => this.#managementToolHooks(request) });
+        return this.#withTurnAdmission(input.sessionId, () => this.#realtimeAgents!.execute(input, signal, onToolOutcome));
       }
       case REALTIME_TASK_SUMMARY_COMMAND: {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');

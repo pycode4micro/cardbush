@@ -30,6 +30,16 @@ Batch loading accepts at most 16 names and deduplicates them. Successful entries
 
 ## Results and history
 
+First-party tool receipts no longer generate `next_step` / `nextStep` action hints. Task IDs, states, revisions, pagination, error codes, dispatch facts and observations retain their existing structures; Runtime manages waiting, cancellation and completion delivery. Tool usage rules stay in definitions rather than returning removed hints under another name. Browser host health records project only state, diagnostic time, error code, error message and whether automatic recovery is paused; action hints from older records are not forwarded to the model. Saved conversation history and external plugins' original business data are not subject to global field removal.
+
+The equivalent repeated advice in `route_recovery.instruction` and Computer Use error `recovery` text is also removed. Repeated-call counts, corrected call structures, user-takeover timing, dispatch facts, permission checks and stop enforcement remain.
+
+User message prediction uses `userMessagePrediction` across protocol types, derived Runtime snapshots and the shared ordinary/assistant composer. The module, Hook, prompt resource, test entry and CSS state class are renamed without old entry points or export aliases; the unused prediction-button language key is removed. Package exports, CLI, build and release test references are updated. `summary_for_user.prediction`, the `prediction` memory category, personalization switches and accepted-draft state keys remain unchanged. Restart restores predictions from original calls and receipts without rewriting history. Accepting a suggestion still inserts an editable draft without sending it.
+
+The cleanup audit retains old-receipt filters in `mcpToolDiscovery` and Provider `modelInputs`: they still consume historical and archive-restored data and prevent old `next_step` instructions from reaching the model. Historical fixtures, absence assertions and invalid-prediction text checks remain valid coverage, not retired guidance generators.
+
+Local `dist/assets` retains historical content-addressed assets under the existing Vite policy because open windows may still need their lazy imports. This cleanup does not clear those windows' resources. Current build outputs contain no old prediction names; standalone compiled files for the old module are removed.
+
 `read_archived_tool_result` accepts a case-insensitive literal `query`, `context_chars` and `limit`, returning match `offset`, `end_offset`, `context_offset` and context. Follow `next_offset`; omit query and use a match offset to read exact original text. Fragments are not complete schemas.
 
 `search_execution_history` pages at most five summaries, with `tool-result://history/...` when full originals exist. Resolution stays in the current conversation/project; cross-project access is denied and source deletion invalidates references. References cannot keep deleted-session caches alive. Old indexes upgrade without rewriting execution logs.

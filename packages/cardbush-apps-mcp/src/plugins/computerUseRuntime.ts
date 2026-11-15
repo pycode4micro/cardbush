@@ -6,7 +6,6 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { ComputerUsePluginConfig } from '../config.js';
 import { computerUsePresentation } from './computerUsePresentation.js';
-import { computerUseTakeoverRecovery } from './computerUseTakeover.js';
 import { computerUseCaptureLayersScript } from './computerUseCaptureLayers.js';
 import { computerUseAccessibilityScript } from './computerUseAccessibility.js';
 import { ComputerUseFailure, computerUseFailure, type ComputerUseFailureInfo } from './computerUseErrors.js';
@@ -482,7 +481,6 @@ async function executeComputerUseRequest(
           display_signature: desktop.display_signature,
           actionable: false,
           capture_performed: false,
-          next_step: 'Choose exactly one window and observe its hwnd. For a screen overview use screenshot with an exact display_id. Display bounds and window input use physical pixels.',
         });
       }
       const capture = await captureDesktop(config.screenshotDirectory, signal, optionalString(input.display_id));
@@ -509,7 +507,6 @@ async function executeComputerUseRequest(
       return plain({
         action, app, launch,
         actionable: false,
-        next_step: 'Launch was dispatched, not verified ready. Observe an exact window_check candidate hwnd before input. If unconfirmed, discover windows; do not launch again blindly.',
       });
     }
     if (action === 'window') {
@@ -880,8 +877,8 @@ async function captureWindowState(
         returned_elements: publicElements.length,
         truncated: nextOffset != null || accessibilityRecord.scan_truncated === true,
         ...(options.elementQuery ? { query: options.elementQuery } : {}),
-        ...(nextOffset != null ? { next_offset: nextOffset, next_step: 'For a specific control use element_query (name, automation_id, control_type or focused). Otherwise continue with element_offset=next_offset. Each observation replaces state_id and element indexes.' } : {}),
-        ...(accessibilityRecord.scan_truncated === true ? { scan_truncated: true, next_step: 'The UIA scan reached its 5000-element limit. Navigate the visible UI to narrow the tree; do not keep increasing max_elements.' } : {}),
+        ...(nextOffset != null ? { next_offset: nextOffset } : {}),
+        ...(accessibilityRecord.scan_truncated === true ? { scan_truncated: true } : {}),
         ...(optionalString(accessibilityRecord.error)
           ? { error: optionalString(accessibilityRecord.error) }
           : {}),
@@ -908,9 +905,6 @@ async function captureWindowState(
     capture_consistent: consistent,
     actionable: consistent && isForeground && rawOutput.visual_evidence_verified !== false,
     window_action_available: consistent,
-    ...(!consistent ? { next_step: 'Foreground changed during capture. Observe the intended target again before any action.' }
-      : !isForeground ? { next_step: 'The target is in the background. Use window/activate with its state_id and hwnd, then inspect the returned observation. Observe alone never activates a window.' }
-      : rawOutput.visual_evidence_verified === false ? { next_step: 'The window image is uniformly blank and could not be verified while visible. Uncover the target and observe again before coordinate input; UIA actions require observed elements.' } : {}),
     ...(accessibility ? { accessibility } : {}),
   };
   const artifact: ComputerUseArtifact = {
@@ -989,8 +983,7 @@ async function observeWindow(
       ...capture.output,
       actionable: Boolean(stateId) && capture.output.actionable && !paused,
       window_action_available: Boolean(stateId) && !paused,
-      ...(paused ? { control_state: 'user_takeover', ...computerUsePresentation.interruption(scopeId)?.info.details,
-        next_step: computerUseTakeoverRecovery } : {}),
+      ...(paused ? { control_state: 'user_takeover', ...computerUsePresentation.interruption(scopeId)?.info.details } : {}),
       ...(interrupted?.info.code === 'user_stopped' ? { control_state: 'user_stopped', error: interrupted.info } : {}),
     },
     paths: includeScreenshot ? [capture.path] : [],
@@ -1004,7 +997,7 @@ async function observeAfterAction(
   nativeAction?: NativeActionContext,
 ): Promise<ComputerUseResult> {
   const output = { ...acknowledgement, execution: acknowledgement.execution ?? 'dispatched' };
-  if (input.observe_after === false) return plain({ ...output, next_step: 'Observe the target before further input.' });
+  if (input.observe_after === false) return plain(output);
   try {
     const interruption = computerUsePresentation.interruption(scopeId);
     if (interruption?.info.code === 'user_takeover' || interruption?.info.code === 'user_stopped') throw interruption;
@@ -1023,11 +1016,7 @@ async function observeAfterAction(
     } else await computerUsePresentation.hold(scopeId).catch(() => undefined);
     // A failed refresh never changes a dispatched action into a retryable action.
     // No state token is issued, but the input acknowledgement is retained.
-    return plain({ ...output, observation: { actionable: false, error: {
-      ...failure.info, execution: output.execution,
-      recovery: ['user_stopped', 'user_takeover', 'application_control_blocked'].includes(failure.info.code) ? failure.info.recovery
-        : 'The input may already have taken effect. Observe before further input; do not replay the action to recover its observation.',
-    } } });
+    return plain({ ...output, observation: { actionable: false, error: { ...failure.info, execution: output.execution } } });
   }
 }
 

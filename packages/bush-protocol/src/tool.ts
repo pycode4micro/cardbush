@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { agentToolActivitySchema } from './agentToolActivity.js';
 import { terminalCommandOutcomeSchema } from './terminalControl.js';
-import { nextStepPredictionSchema } from './nextStepPrediction.js';
+import { userMessagePredictionSchema } from './userMessagePrediction.js';
 
 export const BUSH_TOOL_CALL_PROTOCOL = "bush.tool_call.v1" as const;
 export const BUSH_ACTION_MANIFEST_PROTOCOL =
@@ -269,7 +269,7 @@ export const toolExecutionSummarySchema = z.object({
   recordedAt: z.string().min(1),
   toolCall: toolCallSchema.pick({ protocol: true, id: true, name: true }),
   agentActivity: agentToolActivitySchema.optional(),
-  nextStepPrediction: nextStepPredictionSchema.optional(),
+  userMessagePrediction: userMessagePredictionSchema.optional(),
   terminalOutcome: terminalCommandOutcomeSchema.optional(),
   display: toolDisplaySchema.optional(),
   outcome: z.enum(["returned", "failed", "cancelled"]),

@@ -1001,7 +1001,7 @@ test('CLI memory commands save independent session switches and restore them bef
   await f.service.call('sessions.update', { sessionId: session.sessionId, individuation: { habits: true } });
   f.block(true); resumed.child.stdin.write('remember these preferences\r');
   await until(() => f.calls.length, count => count === 1);
-  assert.match(JSON.stringify(f.calls[0]), /habits enabled; next-step prediction enabled/);
+  assert.match(JSON.stringify(f.calls[0]), /habits enabled; user message prediction enabled/);
   await command(resumed, '/habit off', 'Use this command after the current task finishes');
   resumed.child.stdin.write('queued preferences\r');
   await until(() => f.service.call('chat.jobs', { sessionId: session.sessionId }), jobs => jobs.length === 2);

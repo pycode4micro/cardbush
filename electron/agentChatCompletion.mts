@@ -24,7 +24,7 @@ const commands: ChatChoice[] = [
   { value: '/settings', description: 'View and reload shared App settings' },
   { value: '/browser ', label: '/browser', description: 'Browser status, setup and bounded connection recovery' },
   { value: '/habit ', label: '/habit', description: 'Show or set user habit memory: on / off / status' },
-  { value: '/prediction ', label: '/prediction', description: 'Show or set next-step predictions: on / off / status' },
+  { value: '/prediction ', label: '/prediction', description: 'Show or set user message predictions: on / off / status' },
   { value: '/session ', label: '/session', description: 'Choose or switch a saved session' },
   { value: '/plan', description: 'Show the current task plan' },
   { value: '/tools ', label: '/tools', description: 'Inspect tools and results; --turn N for an earlier turn' },

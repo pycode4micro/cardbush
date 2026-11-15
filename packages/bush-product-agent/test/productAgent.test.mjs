@@ -168,7 +168,7 @@ test("time snapshots append as internal user inputs across midnight without chan
       ['turn_runtime_context', 'source_preference', 'individuation_preference', 'delivery_guidance', undefined]);
     const { content: individuationContent, ...individuationMessage } = request.inputMessages[2].message;
     assert.deepEqual(individuationMessage, { role: 'user', name: 'individuation_preference', visibility: 'internal' });
-    assert.match(individuationContent, /^Individuation for this turn: habits disabled; next-step prediction disabled\./);
+    assert.match(individuationContent, /^Individuation for this turn: habits disabled; user message prediction disabled\./);
     assert.equal(request.inputMessages[0].message.role, 'user');
     assert.equal(request.inputMessages[0].message.name, 'turn_runtime_context');
     assert.equal(request.inputMessages[0].message.visibility, 'internal');

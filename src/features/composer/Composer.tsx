@@ -32,7 +32,7 @@ import { promptReferenceMarkdown, selectedTeamReference, withTeamReference, type
 import { openPromptReference } from './PromptReferenceLink';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
 import { useComposerMultiline } from './useComposerMultiline';
-import { useNextStepPrediction } from './useNextStepPrediction';
+import { useUserMessagePrediction } from './useUserMessagePrediction';
 import { pastedTextSummary } from './pastedText';
 import { clipboardTableSource, draftTables, pastingIntoCode, separatePastedTable } from './clipboardTable';
 import './composerMarkdownPreview.css';
@@ -555,11 +555,11 @@ export function Composer({
   const predictionAvailable = memory.predictions && runtimeReady && !sending && !stopping &&
     !referenceContext.predictionPending && !submissionPending && !inputReadOnly && !hasContent && draft.length === 0 &&
     attachmentUploads === 0 && queuedMessageCount === 0 && !commandState && !voiceComposer.visible;
-  const nextStep = useNextStepPrediction(referenceContext.messages, referenceContext.sessionId, host?.id, predictionAvailable, referenceContext.nextStepPrediction);
-  const prediction = nextStep.prediction;
+  const predictionState = useUserMessagePrediction(referenceContext.messages, referenceContext.sessionId, host?.id, predictionAvailable, referenceContext.userMessagePrediction);
+  const prediction = predictionState.prediction;
   function acceptPrediction() {
     if (!prediction) return;
-    nextStep.dismiss(prediction.id);
+    predictionState.dismiss(prediction.id);
     onDraftChange(prediction.text);
     focusComposer(prediction.text.length);
   }
@@ -1510,7 +1510,7 @@ export function Composer({
       <div
         ref={composerSurfaceRef}
         data-table-preview={previewTable || undefined}
-        className={`composer-surface${multilineInput ? ' is-multiline' : ''}${prediction ? ' has-next-step' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
+        className={`composer-surface${multilineInput ? ' is-multiline' : ''}${prediction ? ' has-user-message-prediction' : ''}${fileDragActive ? ' is-file-dragging' : ''}${voiceComposer.visible ? ' voice-call-active' : ''}`}
         onCompositionStartCapture={() => { if (previewTable) setShowTableSource(true); }}
         onPointerDown={(event) => {
           if (event.button !== 0) return;

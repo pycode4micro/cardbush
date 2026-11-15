@@ -132,6 +132,32 @@ test('completed history cannot displace live agents from the bounded environment
   const agents = (await env.snapshot(self)).sections.agents;
   assert.equal(agents.total, 82); assert.equal(agents.items.length, 64);
   assert.deepEqual(agents.items.slice(0, 2).map(fact => fact.agentId), ['self', 'live-peer']);
+  const model = JSON.parse((await env.message(self, [])).content).sections.agents;
+  assert.deepEqual(model.items.map(fact => fact.agentId), ['self', 'live-peer']);
+  assert.equal(model.total, 2); assert.equal(model.historicalCount, 80);
+});
+
+test('model overview isolates remote observations while full inspector history remains available', async () => {
+  const self = { agentId: 'root', executionId: 'current', status: 'running', transport: 'local', role: 'root',
+    readOnly: false, canDelegate: true, canWake: true, startedAt: '2026-11-15T00:00:00Z', updatedAt: '2026-11-15T00:00:00Z' };
+  const old = { ...self, agentId: 'old-remote', executionId: 'four-days-ago', status: 'failed', transport: 'remote',
+    observationStatus: 'last_known', updatedAt: '2026-11-11T00:00:00Z' };
+  const remote = { ...old, agentId: 'pending-remote', status: 'running' };
+  const unavailable = { ...remote, agentId: 'offline-remote', status: 'unavailable', observationStatus: 'unavailable' };
+  const facts = [self, { ...self, executionId: 'old-voice-call', status: 'stopped' }, old, remote, unavailable];
+  const env = new RuntimeEnvironment({ get: () => self, related: () => structuredClone(facts) });
+  const req = request('root');
+  const message = await env.message(req, []), agents = runtimeEnvironmentSnapshotSchema.parse(JSON.parse(message.content)).sections.agents;
+  assert.deepEqual(agents.items.map(fact => fact.agentId), ['root']);
+  assert.deepEqual(agents.lastKnown.map(fact => fact.agentId), ['pending-remote', 'offline-remote']);
+  assert.equal(agents.historicalCount, 2); assert.equal(agents.lastKnown[0].updatedAt, old.updatedAt);
+  assert.ok(!message.content.includes('old-remote'));
+  assert.ok(!message.content.includes('old-voice-call'));
+  assert.equal((await env.snapshot(req)).sections.agents.items.length, 5);
+  assert.equal(await env.message(req, [message]), undefined);
+  remote.status = 'completed'; unavailable.status = 'failed';
+  const update = JSON.parse((await env.message(req, [message])).content).sections.agents;
+  assert.equal(update.lastKnown, undefined); assert.equal(update.historicalCount, 4);
 });
 
 test('host, extensions, parent and live Shadow read the same facts without altering the prefix', async t => {

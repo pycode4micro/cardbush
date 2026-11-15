@@ -14,6 +14,7 @@ import {
   type RuntimeToolError,
   type WorkspaceChange,
   type ToolExecutionFacts,
+  type ModelMessage,
 } from "@cardbush/bush-protocol";
 
 import type { PermissionResolver, ToolPermissionRequest, ToolRegistry } from "./toolRegistry.js";
@@ -89,6 +90,13 @@ export interface ToolExecutionCoordinatorOptions {
 export interface RuntimeCapabilityStore {
   hasAll(sessionId: string, capabilityIds: string[]): boolean;
   grant(sessionId: string, capabilityIds: string[]): void;
+}
+
+/** Append Hook context only after the complete tool-result batch. */
+export function toolHookMessages(outcomes: Iterable<Pick<ToolExecutionOutcome, 'hookMessages'>>): ModelMessage[] {
+  return [...outcomes].flatMap(outcome => (outcome.hookMessages ?? []).map(content => ({
+    role: 'developer' as const, name: 'plugin_hook_feedback', content,
+  })));
 }
 
 export class ToolExecutionCoordinator {

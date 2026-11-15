@@ -40,10 +40,9 @@ export function toolActionTitle(execution: ChatToolExecution, language: AppLangu
   const localized = localizedContent(display?.titles, language);
   if (typeof localized === 'string' && localized.trim()) return compactActionTitle(localized);
   const supplied = display?.title;
-  // Legacy receipts have one title only. Keep it in its own locale; otherwise
-  // use the localized tool action without inventing a translation or exposing arguments.
-  if (typeof supplied === 'string' && supplied.trim() &&
-      (/[\p{Script=Han}]/u.test(supplied) ? language === 'zh' : language === 'en')) return compactActionTitle(supplied);
+  // A single model-authored title follows the conversation language, which may
+  // differ from the interface language. Keep that text like other conversation data.
+  if (typeof supplied === 'string' && supplied.trim()) return compactActionTitle(supplied);
   const name = execution.name.toLowerCase();
   const labels: Record<string, MessageKey> = {
     terminal_exec: 'toolExecutionState.run_command' as const, shell_command: 'toolExecutionState.run_command' as const,

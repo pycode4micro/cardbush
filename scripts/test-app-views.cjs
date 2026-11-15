@@ -129,7 +129,7 @@ async function buildViews() {
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'session-scroll' ? ['src/hooks/useConversationHistoryPages.ts'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-memory' ? [
       'src/features/settings/SettingsSummaryPanel.tsx', 'src/features/settings/useAppSettings.ts',
-      'src/features/settings/individuation.ts', 'src/features/components/componentStore.ts', 'src/features/components/componentModel.ts', 'src/features/composer/composerStyle.ts',
+      'src/features/settings/individuation.ts', 'src/features/composer/composerStyle.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'composer-prediction' ? [
       'src/features/composer/Composer.tsx', 'src/features/composer/ComposerReferenceContext.ts',

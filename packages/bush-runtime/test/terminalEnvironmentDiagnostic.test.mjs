@@ -44,7 +44,8 @@ test('installed but unresolved, denied and unverified native-interpreter failure
     for (const budget of [0, 1000, 5000]) {
       const text = projectTerminalResult({ ...value, stdout: 'large\n'.repeat(10000) }, budget);
       assert.match(text, /environmentDiagnostic/); assert.match(text, /access_granted.*false/);
-      assert.match(text, /not host installation/);
+      assert.match(text, /execution_boundary.*sandbox/);
+      assert.doesNotMatch(text, /next_step|nextStep|recovery_hint/);
     }
   }
 });
@@ -59,10 +60,11 @@ test('a verified PowerShell launch rejection is distinct from discovery and comm
   assert.deepEqual(diagnostic.host_command, { command: 'pwsh', status: 'found', path: executable });
   assert.equal(diagnostic.command_started, false);
   assert.equal(diagnostic.access_granted, false);
-  assert.match(diagnostic.next_step, /MSI or portable PowerShell 7/);
-  assert.match(diagnostic.next_step, /Keep isolation enabled/);
-  assert.doesNotMatch(terminalEnvironmentDiagnostic({ ...result, nativeErrorCode: 5 }).next_step, /error 87|MSI/);
-  assert.doesNotMatch(terminalEnvironmentDiagnostic({ ...result, sandbox: null }).next_step, /error 87|MSI/);
+  assert.equal(diagnostic.native_error_code, 87);
+  assert.equal(diagnostic.execution_boundary, 'sandbox');
+  assert.equal(diagnostic.next_step, undefined);
+  assert.equal(terminalEnvironmentDiagnostic({ ...result, nativeErrorCode: 5 }).native_error_code, 5);
+  assert.equal(terminalEnvironmentDiagnostic({ ...result, sandbox: null }).execution_boundary, 'host');
   assert.notEqual(terminalEnvironmentDiagnostic({ ...result, commandStarted: true }).availability, 'shell_launch_failed');
   const text = projectTerminalResult({ ...result, environmentDiagnostic: diagnostic, stdout: 'large\n'.repeat(10000) }, 0);
   assert.match(text, /shell_launch_failed/); assert.match(text, /executable_found_on_host/);

@@ -73,7 +73,9 @@ test('installed Store PowerShell runs on the host and sandbox launch failures ne
     assert.equal(isolated.environmentDiagnostic.availability, 'shell_launch_failed');
     assert.equal(isolated.environmentDiagnostic.installation, 'executable_found_on_host');
     assert.equal(isolated.environmentDiagnostic.access_granted, false);
-    assert.match(isolated.environmentDiagnostic.next_step, /Keep isolation enabled/);
+    assert.equal(isolated.environmentDiagnostic.execution_boundary, 'sandbox');
+    assert.equal(isolated.environmentDiagnostic.command_started, false);
+    assert.equal(isolated.environmentDiagnostic.next_step, undefined);
     await assert.rejects(readFile(join(work, 'inside.txt')), { code: 'ENOENT' });
     assert.equal(approvals, 0);
     t.diagnostic('Host launch succeeded; Windows rejected Store launch in AppContainer with error 87, with no command execution or fallback.');

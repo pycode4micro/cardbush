@@ -93,7 +93,7 @@ A host-writable `.model.jsonl` journal preserves actual assistant/tool/receipt/r
 
 Assistant compaction uses the ordinary token budget, including `contextWindowTokens`, tools, reasoning and receipts, rather than a fixed 20,000-character threshold. Only complete exchanges in a prefix are replaced; originals remain and checkpoints survive restart. User model/vision/persona changes and real compaction may change provider prefixes; no cache-hit percentage is guaranteed.
 
-This memory is distinct from cross-session `summary_for_user` habits and next-step prediction. Opening assistant does not enable personalization. Model compaction and spoken task summaries consume text-model usage. Reset clears both page and model journals.
+This memory is distinct from cross-session `summary_for_user` habits and user message prediction. Opening assistant does not enable personalization. Model compaction and spoken task summaries consume text-model usage. Reset clears both page and model journals.
 
 Right-click → Reset context requires confirmation, ends the assistant call, and irreversibly clears page messages, internal transcripts, summaries and encrypted voice memory. Name, avatar, persona, execution host and mute settings remain. Late old requests/calls cannot enter the new context. Other conversations and dispatched child tasks remain; old task bubbles do not reappear. Stop those tasks from their execution details if required.
 

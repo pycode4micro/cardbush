@@ -32,7 +32,7 @@ run(['--test', 'scripts/test-release-privacy.mjs', 'scripts/test-repository-priv
 run(['--test', 'scripts/test-process-host-build.mjs']);
 run(['--test', 'scripts/test-resource-coordination.mjs']);
 run(['--test', 'scripts/test-notification-sound.mjs', 'scripts/test-session-attention-delivery.mjs']);
-run(['--test', 'scripts/test-next-step-prediction.mjs']);
+run(['--test', 'scripts/test-user-message-prediction.mjs']);
 run(['--test', 'scripts/test-tool-result-presentation.mjs']);
 run(['--test', 'scripts/test-window-visibility.mjs']);
 run(['--test', 'scripts/test-dialog-events.mjs']);

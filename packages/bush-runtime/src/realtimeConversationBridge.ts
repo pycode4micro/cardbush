@@ -3,7 +3,7 @@ export interface RealtimeToolCall { id: string; name: string; arguments: string 
 /** The same bounded journal projection for desktop and device-created child tasks. */
 export function realtimeConversationRecord(entries: ConversationEntry[], maxContextTokens: number) {
   const recent: string[] = []; let size = 0;
-  for (const entry of entries.filter(item => !item.id.startsWith('memory-')).reverse()) {
+  for (const entry of [...entries].reverse()) {
     const line = JSON.stringify({ role: entry.role, content: entry.content, source: entry.source, at: entry.createdAt, attachments: entry.attachments });
     if (size + line.length > Math.min(16000, maxContextTokens / 4)) break;
     recent.unshift(line); size += line.length;

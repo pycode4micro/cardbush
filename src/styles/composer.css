@@ -858,7 +858,7 @@
 .composer-prediction-accept:hover,
 .composer-prediction-accept:focus-visible { color: var(--text); background: var(--hover); }
 /* A suggestion is a placeholder, not authored content for field-sizing. */
-.composer-surface.has-next-step > textarea:placeholder-shown { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-surface.has-user-message-prediction > textarea:placeholder-shown { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .composer-footer {
   height: 36px;

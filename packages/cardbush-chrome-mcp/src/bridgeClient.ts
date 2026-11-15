@@ -102,14 +102,15 @@ function withConnectorHealth(error: unknown, options: RequestOptions): unknown {
     const age = Date.now() - Date.parse(health.updatedAt);
     if (health.protocol !== 'cardbush.browser_connector_health.v1' || typeof health.configPath !== 'string'
       || path.resolve(health.configPath) !== path.resolve(config) || !Number.isFinite(age) || age < -5000 || age > 30_000) return error;
-    const failure = health.state === 'disabled' ? { code: 'browser_connector_disabled', message: 'Browser Use is disabled on this host.',
-      nextStep: 'Enable the Browser Use plugin in /settings, then retry /browser status.' } : health.state === 'unavailable' ? health.error : undefined;
+    const failure = health.state === 'disabled' ? { code: 'browser_connector_disabled', message: 'Browser Use is disabled on this host.' }
+      : health.state === 'unavailable' ? health.error : undefined;
     if (!failure || !['browser_connector_disabled', 'browser_connector_legacy_active', 'browser_connector_component_missing',
       'browser_connector_access_denied', 'browser_connector_config_invalid', 'browser_connector_start_failed'].includes(failure.code)
-      || typeof failure.message !== 'string' || failure.message.length > 1500 || typeof failure.nextStep !== 'string' || failure.nextStep.length > 1000) return error;
+      || typeof failure.message !== 'string' || failure.message.length > 1500) return error;
     return new BrowserConnectorError(failure.code, failure.message, { ...error.details, execution: 'not_dispatched',
       transportReason: error.code, connector: { state: health.state, checkedAt: health.updatedAt,
-        code: failure.code, message: failure.message, nextStep: failure.nextStep } });
+        code: failure.code, message: failure.message,
+        ...(typeof health.recoveryPaused === 'boolean' ? { recoveryPaused: health.recoveryPaused } : {}) } });
   } catch { return error; }
 }
 

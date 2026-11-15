@@ -44,7 +44,8 @@ test('host startup failures reach Browser Use and current logs, then recover aut
   assert.equal(failed.availability, 'host_unavailable');
   assert.equal(failed.reason, 'browser_connector_legacy_active');
   assert.match(failed.connector.message, /older CardBush process/);
-  assert.match(failed.nextStep, /Close the older/); assert.ok(failed.connector.checkedAt);
+  assert.equal(failed.nextStep, undefined); assert.ok(failed.connector.checkedAt);
+  assert.equal(failed.connector.recoveryPaused, false);
   const end = Date.now() + 10000;
   while (connector.status().state !== 'running' && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(connector.status().state, 'running', 'background recovery requires no settings toggle');

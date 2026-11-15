@@ -215,11 +215,11 @@ for (const format of ['ordered', 'incremental']) test(`individuation gates survi
   assert.equal(result.payload.status, 'completed', JSON.stringify(result));
   assert.ok(host.events('preferences', 'individuation_compact').some(event => event.kind === 'context_compaction_completed'));
   const latest = () => observed.at(-1).messages.filter(message => message.name === 'individuation_preference').at(-1);
-  assert.match(latest().content, /habits disabled; next-step prediction enabled/);
+  assert.match(latest().content, /habits disabled; user message prediction enabled/);
   assert.deepEqual(observed.at(-1).metadata.individuation, settings.individuation);
   await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
   ({ host } = open());
   await host.runSessionTurn(request('individuation_restart', settings));
-  assert.match(latest().content, /habits disabled; next-step prediction enabled/);
+  assert.match(latest().content, /habits disabled; user message prediction enabled/);
   assert.deepEqual(observed.at(-1).metadata.individuation, settings.individuation);
 });

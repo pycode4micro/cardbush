@@ -52,7 +52,7 @@ description: 在 Windows 10 / 11 上通过 Browser Use 操作 CardBush 内置标
 
 已保存的配对持续失败、且用户明确要连接当前本机 App/CLI 时，可在扩展点击「重新申请本机连接」，在 CardBush 风格的扩展窗口确认一次。普通重连不主动改成重新授权；用户已选择本机申请后，「连接 CardBush」会继续该申请，不退回旧配对。此意图在扩展重启后保留，手动输入配对码才会另选目标。新申请成功前保留原配对与网站授权；拒绝或取消后停止，只有用户再次点击才重新申请，不代替用户确认。
 
-连接失败时优先依据本次 `list_browsers` 的状态：`host_unavailable` 表示宿主启动失败，按 `connector` 中的 `checkedAt`、`message` 和 `nextStep` 排查；`disabled` 表示插件关闭；连接器运行但连接离线才需要检查原浏览器扩展。宿主失败不能靠重新安装或配对扩展解决。日志只作为补充，先核对时间和所属 App/CLI 实例，不用旧日志推断当前连接状态。
+连接失败时优先依据本次 `list_browsers` 的状态：`host_unavailable` 表示宿主启动失败，按 `connector` 中的 `checkedAt`、`code`、`message` 和 `recoveryPaused` 排查；`disabled` 表示插件关闭；连接器运行但连接离线才需要检查原浏览器扩展。宿主失败不能靠重新安装或配对扩展解决。日志只作为补充，先核对时间和所属 App/CLI 实例，不用旧日志推断当前连接状态。
 
 配对码仅用于手动连接或远程 Agent 配对。用户在目标 Agent 的 CLI 输入 `/browser pair chrome` 或 `/browser pair edge`，也可在桌面设置的手动配对入口生成本机配对码，然后直接粘贴到目标浏览器的 CardBush Browser Use 扩展；使用 CLI 生成时保持该 CLI 开启。配对码不得发给模型。远程 Agent 独立管理连接，不继承本机 App/CLI 的连接。五分钟有效期仅限制新配对码的首次接受，成功连接不会在五分钟后失效。
 

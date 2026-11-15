@@ -30,7 +30,7 @@ export function individuationPreferenceText(value: unknown): string {
   const summaryNote = state.habits || state.predictions
     ? 'Use habit only for supported, reusable user preferences and prediction only for a supported next user request, each in its enabled category. A prediction remains unconfirmed: prediction.text is a short message the user could send next to the assistant, not analysis about the user or an assistant plan. Put conditions in applies_when; omit prediction if no single next request is clear. Do not copy narrative wording from historical memory. Omit unused fields entirely, never habit: {} or prediction: {}.'
     : 'Memory storage is disabled: omit habit and prediction.';
-  return `Individuation for this turn: habits ${state.habits ? 'enabled' : 'disabled'}; next-step prediction ${state.predictions ? 'enabled' : 'disabled'}. Relevant historical memory may be supplied as internal reference. Use check_habit only if more context would help. ${FINAL_RESPONSE_SIGNAL_INSTRUCTIONS} ${summaryNote} Runtime compaction does not require an extra summary. Current user instructions take priority; memories and predictions do not authorize actions.`;
+  return `Individuation for this turn: habits ${state.habits ? 'enabled' : 'disabled'}; user message prediction ${state.predictions ? 'enabled' : 'disabled'}. Relevant historical memory may be supplied as internal reference. Use check_habit only if more context would help. ${FINAL_RESPONSE_SIGNAL_INSTRUCTIONS} ${summaryNote} Runtime compaction does not require an extra summary. Current user instructions take priority; memories and predictions do not authorize actions.`;
 }
 
 // Only text is required within an optional entry. Provenance is supplied by the host.

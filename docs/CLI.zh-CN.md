@@ -68,7 +68,7 @@ cardbush --version
 | `/source [number]` | 查看记录中的依据与引用。 |
 | `/plan` | 查看当前计划。 |
 | `/habit [on\|off\|status]` | 管理当前会话的可选习惯记忆。 |
-| `/prediction [on\|off\|status]` | 管理当前会话的下一步预测。 |
+| `/prediction [on\|off\|status]` | 管理当前会话的用户消息预测。 |
 | `/browser` | 查看与管理浏览器连接。 |
 | `/webhook` | 管理 Assistant 的 Bot 连接。 |
 | `/logs` | 展示诊断日志路径。 |

@@ -233,7 +233,7 @@ export function registerSubagentTool(
       }),
     },
     projectModelDefinition: (definition, scope) => !scope.canRecall ? definition : presentTool(definition, {
-      fields: ['action', 'name', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'mode', 'run_in_background', 'delivery', 'response'], actions: ['run'],
+      fields: ['action', 'name', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'run_in_background', 'delivery', 'response'], actions: ['run'],
       description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with task_id and prompt, optionally delivery queue/insert for a local or remote child, or answer a pending interaction with task_id and response. Omit name, mode and configuration; the host retains identity and scope. Use tasks to inspect/stop/read conversations; await waits for results. Independent peers use an available collaboration plugin. For registration or a new clean child's configuration, load get_tool_schema(name="subagent"), then call_tool with its full arguments.`,
     }),
     manifest: {
@@ -602,7 +602,6 @@ function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<s
     ...(task.agentName ? { agentName: task.agentName } : {}),
     taskId: task.taskId,
     status: task.status,
-    ...(task.status === 'running' ? { next_step: 'The child result arrives automatically. Continue only other work within the user’s requested scope; wait only when the result blocks that work.' } : {}),
     childSessionId: task.childSessionId,
     childTurnId: task.childTurnId,
     mode: task.inheritContext ? 'fork' : 'clean',

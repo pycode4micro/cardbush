@@ -12,6 +12,7 @@ import type { ToolRegistry } from './toolRegistry.js';
 import { nextEventOccurrence } from './eventRecurrence.js';
 import { predicateEngine, evaluatePredicate, type PredicateObservation, type CollectorMatch } from './eventPredicate.js';
 import { CollectorReadError, type CollectorRule, type CollectorSource, type EventCollector } from './eventCollector.js';
+import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
 
 const text = z.string().trim().min(1).max(4000);
 const decisionSchema = z.object({ disposition: z.enum(['completed', 'watching', 'waiting_user']), basis: text, presentation: eventPresentationSchema.optional(), notifyUser: z.boolean().optional(), endSubscription: z.boolean().optional(),
@@ -338,6 +339,19 @@ export class AssistantEvents {
     return { id, logicalKey, title, intent, origin, inputs: [], status: 'queued', archived: false, revision: 1, createdAt: at, updatedAt: at };
   }
   private touch(event: FriendsWorkEvent) { event.revision++; event.updatedAt = new Date(this.clock()).toISOString(); }
+  private failMonitor(state: FriendsState, event: FriendsWorkEvent, error: string) {
+    if (event.status === 'failed') return;
+    this.clearClock(state, event.id);
+    event.status = 'failed'; event.error = error; this.touch(event);
+    if (!state.configuration?.assistant) return;
+    const language = resolveUiLanguage(state.configuration.parent.metadata.uiLanguage ?? state.configuration.profile.language);
+    const code = /^[a-z][a-z0-9_]{1,100}$/i.test(error) ? error : 'EVENT_MONITORING_FAILED';
+    // Persist failure and delivery together. Journal IDs make outbox retries
+    // harmless; no model request or task-result wake is needed for this notice.
+    (state.notifications ??= []).push({ eventId: event.id,
+      turnId: `notice-monitor-failed-${event.id}-${event.revision}`, createdAt: event.updatedAt,
+      text: uiText(language)('assistantEvent.monitoringFailed', { title: event.title, code }) });
+  }
   private event(state: FriendsState, id: string) {
     const event = state.events.find(event => event.id === id);
     if (!event) throw Error('FRIENDS_EVENT_NOT_FOUND');
@@ -484,10 +498,7 @@ export class AssistantEvents {
           catch (error) {
             // A rule at the calendar limit must not strand other due events.
             if (!(error instanceof RangeError)) throw error;
-            this.clearClock(state, event.id);
-            event.status = 'failed';
-            event.error = 'FRIENDS_RECURRENCE_OUT_OF_RANGE';
-            this.touch(event);
+            this.failMonitor(state, event, 'FRIENDS_RECURRENCE_OUT_OF_RANGE');
           }
         }
       }
@@ -614,14 +625,15 @@ export class AssistantEvents {
       state.detections = state.detections.filter(d => d.id !== detection.id);
       if (failure) {
         event.collectorFailures = (event.collectorFailures ?? 0) + 1;
-        if (retry && event.collectorFailures < 3) this.armPredicate(state, event, 30_000 * event.collectorFailures);
-        else { event.status = 'failed'; event.error = failure; }
-        this.touch(event); return;
+        if (retry && event.collectorFailures < 3) { this.armPredicate(state, event, 30_000 * event.collectorFailures); this.touch(event); }
+        else this.failMonitor(state, event, failure);
+        return;
       }
       delete event.collectorFailures; delete event.error;
       this.checkPredicate(state, event, engine, { nowMs: this.clock(), kind: 'collector' }, detection.id, { value });
       if (event.status === 'watching' || event.subscription && event.status === 'queued') this.armPredicate(state, event);
     });
+    await this.publishNotifications();
   }
   private checkPredicate(state: FriendsState, event: FriendsWorkEvent, engine: Awaited<ReturnType<typeof predicateEngine>>,
     observation: PredicateObservation, identity: string, sample?: { value: unknown }) {
@@ -634,9 +646,8 @@ export class AssistantEvents {
         sample ? m => { match = m; } : undefined);
     }
     catch (error) {
-      this.clearClock(state, event.id);
-      event.status = 'failed'; event.error = error instanceof Error ? error.message : 'EVENT_TRIGGER_EXECUTION_FAILED';
-      this.touch(event); return;
+      this.failMonitor(state, event, error instanceof Error ? error.message : 'EVENT_TRIGGER_EXECUTION_FAILED');
+      return;
     }
     const fire = matched && (trigger.source === 'runtime' || (match ? match.key !== event.triggerKey : !event.triggerMatched));
     if (trigger.source !== 'runtime') event.triggerMatched = matched;
@@ -666,7 +677,8 @@ export class AssistantEvents {
       }
       return state.signals.some(signal => signal.kind === 'predicate');
     });
-    if (fired) this.kick();
+    await this.publishNotifications();
+    if (fired || this.store.select(state => !!state.notifications?.length)) this.kick();
   }
   private async publishNotifications() {
     if (!this.deps.publish || !this.store.select(state => state.notifications?.length)) return;

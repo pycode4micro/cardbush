@@ -16,7 +16,7 @@ export function delegatedRequestContext(origins: ConversationEntry[], journal: C
   });
   const last = origins.at(-1);
   const later = last ? journal.slice(journal.indexOf(last) + 1).filter(item =>
-    item.role === 'user' && ['text', 'voice'].includes(item.source) && !item.id.startsWith('memory-') &&
+    item.role === 'user' && ['text', 'voice'].includes(item.source) &&
     (item.botSourceRef === last.botSourceRef || (last.botRecipientKey && item.botRecipientKey === last.botRecipientKey))) : [];
   return { role: 'user', name: 'delegated_user_request', visibility: 'internal', content: JSON.stringify({
     kind: 'historical_assignment', requests: origins.slice(-8).map(reference),

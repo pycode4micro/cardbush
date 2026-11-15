@@ -548,12 +548,14 @@ test('interval predicates keep their edge over restart and isolate a failed prog
     await until(async () => timer, t => t?.at === nextTime);
     time = nextTime; timer.wake();
     await until(async () => timer, t => t?.at === time + 1000);
-    assert.equal(notices.length, expectedNotices);
+    assert.equal(notices.filter(notice => notice.eventId !== bad.eventId).length, expectedNotices);
   };
   await advance(1000, 1);
   assert.equal((await current.manage({ action: 'read', eventId: bad.eventId })).error, 'EVENT_TRIGGER_EXPECTED_ZERO_OR_ONE');
+  assert.equal(notices.filter(notice => notice.eventId === bad.eventId).length, 1, 'a broken detector publishes one failure notice');
   await current.events.close(); current = open(); await current.events.command(assistantConfiguration());
   await advance(2000, 1); await advance(3000, 1); await advance(4000, 2);
+  assert.equal(notices.filter(notice => notice.eventId === bad.eventId).length, 1, 'restart does not repeat a delivered failure');
   await current.manage({ action: 'pause', eventId });
   assert.deepEqual((await current.events.snapshot()).detections, []);
   await current.manage({ action: 'delete', eventId }); await current.events.close();

@@ -43,6 +43,7 @@ test('real terminal exit is delivered once, with no model polling and a stable m
     else if (rounds === 2) {
       const receipt = request.messages.filter(m => m.role === 'tool').at(-1).content;
       assert.match(receipt, /"completion_notification":true/);
+      assert.doesNotMatch(receipt, /"(?:next_step|nextStep|guidance|recovery_hint)"\s*:/);
       taskId = JSON.parse(receipt.split('\n\n')[0]).completion_task_id;
       yield* response(request, { name: 'independent', args: {} });
     } else if (rounds === 3) yield* response(request, { name: 'await', args: { task_ids: [taskId], yield_time_ms: 30_000 } });

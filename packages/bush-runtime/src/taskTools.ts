@@ -25,10 +25,13 @@ export interface RuntimeTaskHandle {
 }
 export type TaskSource = (context: ToolHandlerContext<unknown>) => Promise<RuntimeTaskHandle[]> | RuntimeTaskHandle[];
 export const taskPending = (task: RuntimeTaskHandle) => ['running', 'pending', 'waiting_user', 'stopping'].includes(task.status);
+// Lost observation is unresolved work, not proof that execution ended.
+const taskActive = (task: RuntimeTaskHandle) => !['completed', 'failed', 'stopped', 'cancelled', 'canceled', 'paused'].includes(task.status);
 const taskIds = z.array(z.string().min(1)).max(TASK_BATCH_LIMIT);
 const revisions = z.record(z.string(), z.string()).refine(value => Object.keys(value).length <= TASK_BATCH_LIMIT).optional();
 const schema = z.object({
   action: z.enum(['list', 'inspect', 'conversation', 'stop', 'cancel_observation']).default('list'),
+  scope: z.enum(['active', 'all']).optional().describe('list only: active (default) includes pending or unobservable work. all includes finished history. Explicit task_ids remain readable regardless of status.'),
   task_ids: taskIds.min(1).optional().describe('Owned task_id from launch/list; Team uses task_id/run_id. Employee, workflow, node and chat IDs are not task handles.'),
   node_ids: z.array(z.string().trim().min(1)).min(1).max(TEAM_WORKFLOW_MAX_NODES).refine(ids => new Set(ids).size === ids.length, 'node_ids must be unique').optional().describe('Selected nodes of one Team run for inspect/conversation; conversation requires exactly one node.'),
   cursor: z.string().regex(/^\d+:\d+$/).optional(),
@@ -42,7 +45,7 @@ const awaitSchema = z.object({
   after: revisions,
 }).strict();
 type TaskOperation = z.infer<typeof schema> | (z.infer<typeof awaitSchema> & {
-  action: 'await'; offset: number; limit: number; node_ids?: never; cursor?: never;
+  action: 'await'; offset: number; limit: number; node_ids?: never; cursor?: never; scope?: never;
 });
 
 /** A facade over existing executors; never creates a second task lifecycle. */
@@ -82,7 +85,7 @@ export class RuntimeTaskTools {
         action: 'await', offset: 0, limit: TASK_BATCH_LIMIT } }, context.input.task_ids?.length === 0),
     });
     registry.register({
-      definition: { name: 'tasks', description: 'Manage owned tasks. Creates no work. list returns handles; inspect reads results/progress; conversation pages one child’s ordered inputs/final replies via nextCursor, excluding private reasoning/tool logs. All but list require task_ids. after skips unchanged results. stop uses normal permissions; cancel_observation removes only a subscription. Use await when blocked; do not poll or restart pending work.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
+      definition: { name: 'tasks', description: 'Manage owned task executions, not reusable agent definitions. Creates no work. list defaults to active or unresolved tasks; scope=all includes history. inspect reads results/progress; conversation pages one child’s ordered inputs/final replies via nextCursor, excluding private reasoning/tool logs. All but list require task_ids. after skips unchanged results. stop uses normal permissions; cancel_observation removes only a subscription. Use await when blocked; do not poll or restart pending work.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,
@@ -92,6 +95,7 @@ export class RuntimeTaskTools {
   }
   private async execute(context: ToolHandlerContext<TaskOperation>, messagesOnly = false) {
     const input = context.input;
+    if (input.scope !== undefined && input.action !== 'list') throw new Error('scope applies only to tasks list.');
     if (['inspect', 'conversation', 'stop', 'cancel_observation'].includes(input.action) && !input.task_ids) throw new Error('Explicit task_ids are required for this action.');
     if (input.action === 'conversation' && input.task_ids?.length !== 1) throw new Error('Read one child conversation at a time.');
     if (input.cursor !== undefined && input.action !== 'conversation') throw new Error('A conversation cursor requires action=conversation.');
@@ -105,7 +109,8 @@ export class RuntimeTaskTools {
       if (!matches.length) throw new Error(`Task ${id} is not available in this conversation. Use tasks list to find an existing task_id; employee IDs, workflow definition IDs, node IDs and chat session IDs are not task handles.`);
       return matches[0]!;
     }))];
-    let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'await' ? all.filter(taskPending).slice(0, TASK_BATCH_LIMIT) : all.slice(input.offset, input.offset + input.limit);
+    const listing = input.action === 'list' && input.scope !== 'all' ? all.filter(taskActive) : all;
+    let selected = input.task_ids ? select(all, input.task_ids) : input.action === 'await' ? all.filter(taskPending).slice(0, TASK_BATCH_LIMIT) : listing.slice(input.offset, input.offset + input.limit);
     if (input.node_ids && (!['inspect', 'conversation'].includes(input.action) || selected.length !== 1 || selected[0]!.kind !== 'team' || !input.task_ids)) throw new Error('node_ids requires inspect or conversation and one explicit Team task_id.');
     if (input.action === 'conversation') {
       const task = selected[0]!;
@@ -147,7 +152,7 @@ export class RuntimeTaskTools {
     const result = { ...(wake ? { wake_reason: wake } : {}), ...(controls.length ? { controls } : {}),
       ...(snapshot.unavailable_sources.length ? { complete: false, unavailable_sources: snapshot.unavailable_sources, note: 'Unavailable sources do not prove tasks ended or never started. Inspect the original handles before retrying.' } : {}),
       ...(input.action === 'await' && !input.task_ids && all.filter(taskPending).length > selected.length ? { selection_limited: true, pending_count: snapshot.handles.filter(taskPending).length } : {}),
-      ...(input.action === 'list' && !input.task_ids ? { total: all.length, offset: input.offset, next_offset: input.offset + selected.length < all.length ? input.offset + selected.length : null } : {}),
+      ...(input.action === 'list' && !input.task_ids ? { scope: input.scope ?? 'active', total: listing.length, offset: input.offset, next_offset: input.offset + selected.length < listing.length ? input.offset + selected.length : null } : {}),
       tasks: await Promise.all(selected.map(async ({ task_id, kind, status, revision, summary, progress, readProgress, result, readResult, stop, cancelObservation }) => {
         const unchanged = !input.node_ids && input.after?.[task_id] === revision;
         const value = !unchanged && input.action !== 'list' ? readResult ? await readResult(input.node_ids) : result : undefined;
@@ -157,7 +162,6 @@ export class RuntimeTaskTools {
           controls: { stop: !!stop, cancel_observation: !!cancelObservation } };
       })),
       after: Object.fromEntries(selected.map(task => [task.task_id, task.revision])),
-      ...(selected.some(taskPending) ? { next_step: 'Continue independent work. Pending tasks have not completed; they may be running or waiting for user input. Waiting does not restart or stop them.' } : {}),
     };
     context.signal?.throwIfAborted();
     return taskReceiptDelivery(result, selected.flatMap((task, index) => {

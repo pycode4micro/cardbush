@@ -111,8 +111,7 @@ test('repeated native/MCP envelope errors return an exact correction and bounded
     assert.equal(error.details.execution.dispatch, 'not_started');
     assert.equal(error.details.execution.effects, 'none');
     if (attempt > 1) {
-      assert.equal(error.details.route_recovery.attempts, attempt);
-      assert.deepEqual(error.details.route_recovery.next_step, { name: 'get_tool_schema', arguments: { name: 'call_tool' } });
+      assert.deepEqual(error.details.route_recovery, { attempts: attempt });
       assert.equal(error.details.definition, undefined, 'do not repeat a long definition on every failed call');
     }
   }

@@ -49,7 +49,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       h(views.ChatPanel,chatProps),h('div',{className:'memory-settings',style:{overflow:'auto'}},h(MemoryPreferences))));
     window.memoryButton=()=>document.querySelector('.composer-add-action[aria-label="'+(chatProps.language==='zh'?'个性化记忆':'Personalization memory')+'"]');
     window.habitInput=()=>[...document.querySelectorAll('.memory-settings .settings-switch')].find(row=>row.textContent.includes(chatProps.language==='zh'?'记住并参考用户习惯':'Remember and use habits')).querySelector('input');
-    window.predictionInput=()=>[...document.querySelectorAll('.memory-settings .settings-switch')].find(row=>row.textContent.includes(chatProps.language==='zh'?'预测下一步行为':'Predict next actions')).querySelector('input');
+    window.predictionInput=()=>[...document.querySelectorAll('.memory-settings .settings-switch')].find(row=>row.textContent.includes(require(${JSON.stringify(require.resolve('@cardbush/platform/i18n'))}).uiText(chatProps.language)('settingsSummaryPanel.predictUserMessages'))).querySelector('input');
     renderMemoryFixture();
   `);
   await until('!!document.querySelector(".tool-chip[title=添加]") && !!habitInput()', 'composer and real settings mounted');
@@ -79,11 +79,11 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('memoryButton()?.textContent.includes("Remember and use habits")', 'English label and explanation');
   await run('document.querySelector(".tool-chip[title=Add]").click();document.querySelector(".tool-chip[title=Add]").click()');
   await until('memoryButton()?.getAttribute("aria-checked")==="true"', 'reopened menu keeps saved state');
-  await run(`renderView(null);const components=JSON.parse(localStorage.getItem(views.componentStorageKey)||'null')||views.defaultComponents;views.saveComponents({...components,items:components.items.map(item=>item.id==='system-input'?{...item,inputStyle:'simple'}:item)},components.revision);
+  await run(`renderView(null);views.setComposerStyle('simple');
     chatProps.embedded=true;renderView(h(views.ChatPanel,chatProps));`);
   await until('!!document.querySelector(".composer-stack.simple .tool-chip[title=Add]")', 'embedded simple composer');
   window.setSize(420,360); await pause();
-  await run('document.querySelector(".app").classList.replace("theme-dark","theme-light");document.querySelector(".tool-chip[title=Add]").click()');
+  await run('document.querySelector(".app").classList.replace("theme-dark","theme-bright");document.querySelector(".tool-chip[title=Add]").click()');
   await until('!!memoryButton()', 'shortcut on narrow simple composer');
   await run('memoryButton().scrollIntoView({block:"nearest"})'); await pause();
   assert.ok(await run('(()=>{const menu=document.querySelector(".composer-add-menu").getBoundingClientRect(),button=memoryButton().getBoundingClientRect();return button.top>=menu.top-1&&button.bottom<=menu.bottom+1&&button.left>=0&&button.right<=innerWidth})()'), 'scrolling keeps the shortcut reachable in a short window');
@@ -165,6 +165,6 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('document.querySelector(".memory-record-toolbar")?.textContent.includes("变更历史")','Chinese memory controls');
   await run(`document.querySelector('.memory-record-toolbar').scrollIntoView({block:'start'})`);await pause();
   fs.writeFileSync(path.join(root,'tmp','summary-memory-records-narrow.png'),(await window.webContents.capturePage()).toPNG());
-  await run('renderView(null);localStorage.removeItem(views.componentStorageKey);localStorage.removeItem(views.individuationStorageKey)');
+  await run('renderView(null);views.setComposerStyle("standard");localStorage.removeItem(views.individuationStorageKey)');
   console.log('Memory settings and shortcut passed: shared switches, threshold validation/persistence, manual summary, failure recovery, keyboard, drafts, storage events and narrow layout.');
 };

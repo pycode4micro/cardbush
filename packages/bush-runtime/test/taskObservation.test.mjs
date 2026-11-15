@@ -88,9 +88,35 @@ test('task pagination and explicit selection do not load unrelated child event h
   })));
   tasks.register(registry); const tool = registry.resolve('tasks');
   const run = input => tool.execute({ sessionId: 's', turnId: 't', input: tool.decodeInput(input) });
-  const page = await run({ action: 'list', offset: 20, limit: 2 });
+  const page = await run({ action: 'list', scope: 'all', offset: 20, limit: 2 });
   assert.deepEqual(reads, [20, 21]); assert.equal(page.total, 100);
   const selected = await run({ action: 'inspect', task_ids: ['98'], after: { 98: '1' } });
   assert.deepEqual(reads, [20, 21, 98]); assert.equal(selected.tasks[0].progress.model_requests, 98);
   assert.equal(selected.tasks[0].unchanged, true);
+});
+
+test('task lists default to active work, filter before paging, and keep history explicitly accessible', async () => {
+  const registry = new ToolRegistry(), reads = [], tasks = new RuntimeTaskTools(async () => 'task_completed');
+  const handles = ['completed', 'failed', 'running', 'waiting_user', 'unavailable', 'stopped', 'queued'].map((status, index) => ({
+    task_id: String(index), kind: 'subagent', status, revision: '1', result: { status },
+    readProgress: () => { reads.push(status); return undefined; },
+  }));
+  tasks.addSource(() => handles); tasks.register(registry);
+  const tool = registry.resolve('tasks');
+  const run = input => tool.execute({ sessionId: 's', turnId: 't', input: tool.decodeInput(input) });
+  const first = await run({ action: 'list', limit: 2 });
+  assert.equal(first.scope, 'active'); assert.equal(first.total, 4); assert.equal(first.next_offset, 2);
+  assert.deepEqual(first.tasks.map(task => task.status), ['running', 'waiting_user']);
+  const second = await run({ action: 'list', offset: 2, limit: 2 });
+  assert.deepEqual(second.tasks.map(task => task.status), ['unavailable', 'queued']);
+  assert.equal(second.next_offset, null);
+  assert.ok(!reads.some(status => ['completed', 'failed', 'stopped'].includes(status)), 'overview never reads historical progress');
+  const history = await run({ action: 'list', scope: 'all' });
+  assert.equal(history.total, 7); assert.ok(history.tasks.some(task => task.status === 'failed'));
+  assert.equal((await run({ action: 'inspect', task_ids: ['1'] })).tasks[0].result.status, 'failed');
+  assert.equal((await run({ action: 'list', task_ids: ['0'] })).tasks[0].status, 'completed');
+  await assert.rejects(run({ action: 'inspect', task_ids: ['1'], scope: 'active' }), /scope applies only/);
+  for (const handle of handles) handle.status = 'completed';
+  const empty = await run({ action: 'list' });
+  assert.equal(empty.total, 0); assert.deepEqual(empty.tasks, []); assert.equal(empty.next_offset, null);
 });

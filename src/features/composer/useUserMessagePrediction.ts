@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { usableNextStepPrediction, type NextStepPrediction } from '@cardbush/bush-protocol';
+import { usableUserMessagePrediction, type UserMessagePrediction } from '@cardbush/bush-protocol';
 import type { ChatMessage } from '../../types';
 import { conversationViewKey, useConversationViewState } from '../../shared/conversationViewState';
-import { latestNextStepPrediction } from './nextStepPrediction';
+import { latestUserMessagePrediction } from './userMessagePrediction';
 
-export function useNextStepPrediction(messages: ChatMessage[], sessionId: string, hostId: string | undefined, enabled: boolean, supplied?: NextStepPrediction) {
+export function useUserMessagePrediction(messages: ChatMessage[], sessionId: string, hostId: string | undefined, enabled: boolean, supplied?: UserMessagePrediction) {
   const [clock, tick] = useState(0);
-  const prediction = useMemo(() => !enabled ? undefined : supplied ? usableNextStepPrediction(supplied)
-    : latestNextStepPrediction(messages, sessionId), [messages, sessionId, supplied, enabled, clock]);
+  const prediction = useMemo(() => !enabled ? undefined : supplied ? usableUserMessagePrediction(supplied)
+    : latestUserMessagePrediction(messages, sessionId), [messages, sessionId, supplied, enabled, clock]);
   const [dismissed, dismiss] = useConversationViewState(conversationViewKey(hostId, sessionId, 'accepted-prediction'), () => '');
   useEffect(() => {
     if (!prediction || prediction.expiresAt <= Date.now()) return;

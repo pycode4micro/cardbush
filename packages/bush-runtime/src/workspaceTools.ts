@@ -217,8 +217,7 @@ export function registerWorkspaceTools(
         const result = await execute(context) as Record<string, unknown>;
         if (result.state === 'running' && (context.input as TerminalInput).notifyOnExit && context.turn) {
           const taskId = options.onTerminalStarted!(context, result);
-          return { ...result, task_id: result.terminalSessionId, completion_notification: Boolean(taskId), ...(taskId ? { completion_task_id: taskId,
-            next_step: 'Continue independent work now. Completion arrives automatically; wait only when it blocks the next step.' } : {}) };
+          return { ...result, task_id: result.terminalSessionId, completion_notification: Boolean(taskId), ...(taskId ? { completion_task_id: taskId } : {}) };
         }
         return result;
       };

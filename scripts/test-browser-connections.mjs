@@ -64,7 +64,9 @@ test('an offline default reports available connections without pinning a new ses
     assert.equal(error.details.connectionId, old.id);
     assert.equal(error.details.selectionSource, source);
     assert.deepEqual(error.details.availableConnections.map(c => c.id), [live.id]);
-    assert.match(error.details.nextStep, /list_browsers/);
+    assert.equal(error.details.nextStep, undefined);
+    assert.equal(error.details.retryable, true);
+    assert.equal(error.details.execution, 'not_dispatched');
     return true;
   };
   await assert.rejects(f.call(broker, 'new'), check('default'));

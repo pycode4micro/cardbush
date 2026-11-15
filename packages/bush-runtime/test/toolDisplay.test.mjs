@@ -12,14 +12,14 @@ const call = (id, name, input) => ({ protocol: 'bush.tool_call.v1', id, name, ar
 const definition = { name: 'read_fixture', description: 'Read fixture', inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false } };
 const strictInput = input => { assert.deepEqual(Object.keys(input), ['path']); return input; };
 
-test('model requires localized descriptions while native schemas stay immutable and frozen across rounds', () => {
+test('model requires one text title while native schemas stay immutable and frozen across rounds', () => {
   const registry = new ToolRegistry();
   registry.register({ definition, manifest, decodeInput: strictInput, execute: () => ({}) });
   const original = structuredClone(registry.definitions());
   const request = { ...identity, tools: registry.definitions(), metadata: {} };
   const first = modelToolDefinitions(registry, request);
-  assert.equal(first[0].inputSchema.properties._display_title.type, 'object');
-  assert.deepEqual(first[0].inputSchema.properties._display_title.required, ['zh', 'en']);
+  assert.equal(first[0].inputSchema.properties._display_title.type, 'string');
+  assert.equal(first[0].inputSchema.properties._display_title.properties, undefined);
   assert.deepEqual(first[0].inputSchema.required, ['path', '_display_title']);
   assert.deepEqual(registry.definitions(), original, 'native schemas must stay untouched');
   assert.deepEqual(request.tools, original);
@@ -27,6 +27,11 @@ test('model requires localized descriptions while native schemas stay immutable 
   request.tools = first;
   request.messages = [{ role: 'user', content: 'next' }];
   assert.deepEqual(modelToolDefinitions(registry, request), first, 'no per-round schema changes to the cache prefix');
+  const frozen = structuredClone(first);
+  frozen[0].inputSchema.properties._display_title = { type: 'object', properties: { zh: { type: 'string' }, en: { type: 'string' } }, required: ['zh', 'en'] };
+  request.tools = frozen;
+  request.metadata.mcpModelToolSnapshot.tools = structuredClone(frozen);
+  assert.deepEqual(modelToolDefinitions(registry, request), frozen, 'already bound catalogs retain their old contract');
 });
 
 for (const title of ['核对产品资料', { zh: '核对产品资料', en: 'Check product information' },

@@ -12,13 +12,13 @@ import { computerUseUserIdleMs } from '../dist/plugins/computerUseTakeover.js';
 test('takeover receipts distinguish the short quiet period from observation expiry and retain explicit stop', () => {
   const early = computerUseNoticeFailure({ kind: 'paused', reason: 'keyboard', retry_after_ms: 250 }).info;
   assert.equal(early.code, 'user_takeover'); assert.equal(early.details.retry_after_ms, 250);
-  assert.equal(early.details.user_idle_ms, 1000); assert.match(early.recovery, /not a cooldown/);
-  assert.match(early.recovery, /observe the exact target once/);
+  assert.equal(early.details.user_idle_ms, 1000); assert.equal(early.execution, 'not_dispatched');
+  assert.equal(early.recovery, undefined);
   const ready = computerUseNoticeFailure({ kind: 'paused', retry_after_ms: 0 }).info;
   assert.equal(ready.details.retry_after_ms, 0, 'a finished quiet period must not be replaced with a new full delay');
   const stop = computerUseNoticeFailure({ kind: 'stopped', reason: 'escape' }).info;
   assert.equal(stop.code, 'user_stopped'); assert.equal(stop.details.retry_after_ms, undefined);
-  assert.match(stop.recovery, /do not bypass/);
+  assert.equal(stop.execution, 'not_dispatched'); assert.equal(stop.recovery, undefined);
 });
 
 test('native takeover timer expires in one second, physical input resets it, duplicate pause does not', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {

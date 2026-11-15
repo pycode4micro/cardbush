@@ -48,6 +48,7 @@ function fixture(t, coordinatorOptions = {}) {
   const add = (name, execute, extra = {}) => registry.register({ definition: { name, description: 'Fixture', inputSchema: { type: 'object' } }, manifest, decodeInput: x => x, execute, ...extra });
   const script = async code => {
     const start = await run('run_tools', { code }); assert.equal(start.kind, 'returned', JSON.stringify(start));
+    assert.deepEqual(start.result, { task_id: start.result.task_id, status: 'running' });
     const completion = JSON.parse((await deliveries.find(item => item.id === start.result.task_id).message).content);
     return { start, completion };
   };

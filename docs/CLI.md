@@ -68,7 +68,7 @@ Long or multiline pastes are folded visually but submitted in full. Incoming res
 | `/source [number]` | Inspect recorded evidence and references. |
 | `/plan` | Show the current plan. |
 | `/habit [on\|off\|status]` | Manage this session's optional habit memory. |
-| `/prediction [on\|off\|status]` | Manage this session's next-step predictions. |
+| `/prediction [on\|off\|status]` | Manage this session's user message predictions. |
 | `/browser` | Inspect and manage browser connections. |
 | `/logs` | Show the diagnostic log path. |
 | `/shell [COMMAND]`, `!COMMAND` | Run a local shell command; exit the native shell to return to chat. |

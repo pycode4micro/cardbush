@@ -1,8 +1,8 @@
-import { usableNextStepPrediction, type NextStepPrediction } from '@cardbush/bush-protocol';
+import { usableUserMessagePrediction, type UserMessagePrediction } from '@cardbush/bush-protocol';
 import type { ChatMessage } from '../../types';
 
 /** Only the latest exchange can suggest the next request; never search global memory. */
-export function latestNextStepPrediction(messages: ChatMessage[], sessionId: string, now = Date.now()): NextStepPrediction | undefined {
+export function latestUserMessagePrediction(messages: ChatMessage[], sessionId: string, now = Date.now()): UserMessagePrediction | undefined {
   if (!sessionId) return;
   let turnId: string | undefined;
   for (let outer = messages.length - 1; outer >= 0; outer--) {
@@ -18,7 +18,7 @@ export function latestNextStepPrediction(messages: ChatMessage[], sessionId: str
       const summary = [...(message.toolExecutions ?? [])].reverse().find(tool => tool.name === 'summary_for_user' && (!turnId || !tool.turnId || tool.turnId === turnId));
       if (!summary) continue;
       if (summary.state !== 'completed' || !summary.success) return;
-      const prediction = usableNextStepPrediction(summary.metadata.nextStepPrediction);
+      const prediction = usableUserMessagePrediction(summary.metadata.userMessagePrediction);
       return prediction && prediction.expiresAt > now ? { ...prediction, id: `${turnId ?? message.id}:${prediction.id}` } : undefined;
     }
   }

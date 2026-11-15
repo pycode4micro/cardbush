@@ -90,5 +90,6 @@ test('OS directory metadata uses the host account, creates no permissions, and h
   const value = await userDirectories();
   assert.equal(value.accessGranted, false); assert.equal(value.executionEnvironment.kind, 'local');
   assert.ok(value.directories.home); assert.doesNotMatch(value.directories.home, /cardbush-sandbox-/i);
+  assert.deepEqual(Object.keys(value).sort(), ['accessGranted', 'directories', 'executionEnvironment', 'unavailable']);
   await assert.rejects(userDirectories(AbortSignal.abort()), { name: 'AbortError' });
 });

@@ -109,10 +109,12 @@ test('a bounded wait yields to independent work without cancelling or duplicatin
   const f = await fixture(context => { calls++; signal = context.signal; return new Promise(resolve => { release = resolve; }); });
   t.after(() => f.jobs.endTurn('s', 't'));
   const started = await f.run('start_mcp_tool', { name: remoteName, arguments: {} });
-  assert.match(started.result.next_step, /Continue independent work/);
+  assert.deepEqual(started.result, { task_id: started.result.task_id, status: 'running', max_wait_ms: 300000 });
+  assert.ok(started.result.task_id);
   const yielded = await f.run('await', { yield_time_ms: 10 });
   assert.equal(yielded.result.wake_reason, 'yield_timeout');
   assert.equal(yielded.result.tasks[0].status, 'running');
+  assert.equal(yielded.result.next_step, undefined);
   assert.equal(signal.aborted, false);
   // The model can execute another tool after the wait receipt, while the same job is pending.
   f.registry.register({ definition: { name: 'independent', inputSchema: { type: 'object' } }, manifest,

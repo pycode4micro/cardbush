@@ -1,5 +1,5 @@
 import { FINAL_RESPONSE_SIGNAL_INSTRUCTIONS, checkHabitInputSchema, normalizeIndividuation, summaryForUserInputSchema, memoryChangeSchema,
-  NEXT_STEP_PREDICTION_TEXT_DESCRIPTION, nextStepPredictionTextIssue,
+  USER_MESSAGE_PREDICTION_TEXT_DESCRIPTION, userMessagePredictionTextIssue,
   type ModelMessage, type SummaryForUserInput, type CheckHabitInput, type MemoryChange, type MemoryRead } from '@cardbush/bush-protocol';
 import { fitToolResultPage } from './toolResultBudget.js';
 import type { ToolRegistry } from './toolRegistry.js';
@@ -62,7 +62,7 @@ export function registerIndividuationTools(registry: ToolRegistry, path: string,
       inputSchema:{type:'object',additionalProperties:false,properties:{
         habit:{...noteSchema,description:'Supported reusable user preference. Omit when disabled or nothing new is supported.'},
         prediction:{...noteSchema,description:'Optional next user message, offered in the empty composer for the user to insert, edit and send. This is an unconfirmed suggestion, never authorization. Omit when disabled or no single next request is clear. A prediction_display omission does not block the final reply; do not retry solely to fill the composer.',
-          properties:{...noteProperties,text:{...noteProperties.text,description:NEXT_STEP_PREDICTION_TEXT_DESCRIPTION}}},
+          properties:{...noteProperties,text:{...noteProperties.text,description:USER_MESSAGE_PREDICTION_TEXT_DESCRIPTION}}},
       }},
     },manifest:{...manifest,effect_kind:'mutation',operation:'memory.record',mutating:true},parallelSafe:true,decodeInput:value=>summaryForUserInputSchema.parse(value),
     execute:async context=>{
@@ -74,7 +74,7 @@ export function registerIndividuationTools(registry: ToolRegistry, path: string,
         const recorded=await store.summarize({habit:context.input.habit,prediction:context.input.prediction},settings,{...context,operationId:context.toolCall?.id},user,context.signal);
         if(context.turn) memory?.schedule(settings);
         const displayIssue=context.input.prediction && recorded.writes.some(write=>write.category==='prediction' && ['created','deduplicated'].includes(write.status))
-          ? nextStepPredictionTextIssue(context.input.prediction.text) : undefined;
+          ? userMessagePredictionTextIssue(context.input.prediction.text) : undefined;
         return {status:'ok',final_response:true,...handoff,...recorded,
           ...(displayIssue ? {prediction_display:{status:'omitted',reason:displayIssue}} : {})};
       } catch {

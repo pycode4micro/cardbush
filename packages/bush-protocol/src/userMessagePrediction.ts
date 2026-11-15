@@ -2,19 +2,19 @@ import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { z } from 'zod';
 
 /** A saved forecast for an editable draft, never a queued request or authorization. */
-export const nextStepPredictionSchema = z.object({
+export const userMessagePredictionSchema = z.object({
   id: z.string().min(1),
   text: z.string().trim().min(1).max(1600),
   expiresAt: z.number().finite(),
 });
-export type NextStepPrediction = z.infer<typeof nextStepPredictionSchema>;
+export type UserMessagePrediction = z.infer<typeof userMessagePredictionSchema>;
 
-export const NEXT_STEP_PREDICTION_TEXT_DESCRIPTION = renderPromptTemplate('next-step-prediction-text-description');
+export const USER_MESSAGE_PREDICTION_TEXT_DESCRIPTION = renderPromptTemplate('user-message-prediction-text-description');
 
 /** A conservative presentation check, not an inference of intent or permission.
  * Historical memory may legitimately contain narration. Keep that record, but
  * never rewrite its perspective or pick an alternative on the user's behalf. */
-export function nextStepPredictionTextIssue(text: string): 'too_long' | 'not_user_message' | 'multiple_options' | 'formatting' | undefined {
+export function userMessagePredictionTextIssue(text: string): 'too_long' | 'not_user_message' | 'multiple_options' | 'formatting' | undefined {
   const value = text.trim();
   if (value.length > 320) return 'too_long';
   if (!value || /[\r\n]|```|^\s*(?:[-*•]\s|\d+[.)、]\s*|[\[{]\s*["{]|<(?:analysis|thinking)>)/i.test(value)) return 'formatting';
@@ -29,14 +29,14 @@ export function nextStepPredictionTextIssue(text: string): 'too_long' | 'not_use
 }
 
 /** Validate at the display boundary without tightening the persisted wire schema. */
-export function usableNextStepPrediction(value: unknown): NextStepPrediction | undefined {
-  const parsed = nextStepPredictionSchema.safeParse(value);
-  return parsed.success && !nextStepPredictionTextIssue(parsed.data.text) ? parsed.data : undefined;
+export function usableUserMessagePrediction(value: unknown): UserMessagePrediction | undefined {
+  const parsed = userMessagePredictionSchema.safeParse(value);
+  return parsed.success && !userMessagePredictionTextIssue(parsed.data.text) ? parsed.data : undefined;
 }
 
-export function savedNextStepPrediction(
+export function savedUserMessagePrediction(
   call: { id: string; name: string; argumentsText: string }, result: unknown, createdAt: string,
-): NextStepPrediction | undefined {
+): UserMessagePrediction | undefined {
   if (call.name !== 'summary_for_user' || !result || typeof result !== 'object') return;
   const receipt = result as { status?: string; writes?: Array<{ category?: string; status?: string; id?: string }> };
   const write = Array.isArray(receipt.writes) ? receipt.writes.find(item => item?.category === 'prediction' &&
@@ -44,7 +44,7 @@ export function savedNextStepPrediction(
   if (receipt.status !== 'ok' || !write?.id) return;
   try {
     const note = JSON.parse(call.argumentsText)?.prediction;
-    return usableNextStepPrediction({ id: `${call.id}:${write.id}`, text: note?.text,
+    return usableUserMessagePrediction({ id: `${call.id}:${write.id}`, text: note?.text,
       expiresAt: note?.expires_at ? Date.parse(note.expires_at) : Date.parse(createdAt) + 7 * 86400_000 });
   } catch { return; }
 }
