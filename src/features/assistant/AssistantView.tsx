@@ -30,6 +30,7 @@ import '../chat/conversationComposerLayout.css';
 import './assistant.css';
 import { useLoopSubagentTasks } from '../subagents/useLoopSubagentTasks';
 import { AssistantTaskBubble } from './AssistantTaskBubble';
+import { childConversationSummaries } from '../subagents/subagentTaskPresentation';
 import { PromptReferenceFallback } from '../composer/PromptReferenceLink';
 import { usePublishRegionConversation } from '../inspector/RegionConversationContext';
 import { localInspectorWorkspace } from '../inspector/inspectorSessions';
@@ -57,6 +58,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   useEffect(() => { if (active) hasOpened.current = true; }, [active]);
   const [entries, setEntries] = useState<ConversationEntry[]>([]), [ready, setReady] = useState(false);
   const [submitted, setSubmitted] = useState<SubmittedMessage[]>([]);
+  const [pendingInputs, setPendingInputs] = useState<NonNullable<ConversationJournalSnapshot['pendingInputs']>>([]);
   const [messageMenu, setMessageMenu] = useState<AssistantMessageMenuTarget>();
   const closeMessageMenu = useCallback(() => setMessageMenu(undefined), []);
   const [quote, setQuote] = useState<ConversationEntry['replyTo']>();
@@ -69,12 +71,19 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   useEffect(() => { if (highlighted) { const timer = setTimeout(() => setHighlighted(undefined), 1500); return () => clearTimeout(timer); } }, [highlighted]);
   const submittedRef = useRef(submitted); submittedRef.current = submitted;
   const sendingRequest = useRef<string | undefined>(undefined);
-  const pageEntries = useMemo(() => [...entries.filter(isAssistantPageMessage), ...submitted
-    .filter(item => !entries.some(entry => entry.id === item.entry.id)).map(item => item.entry)], [entries, submitted]);
+  const queuedMessages = useMemo(() => [...pendingInputs, ...submitted.filter(item => item.entry.delivery && item.state !== 'failed'
+    && !pendingInputs.some(pending => pending.id === item.entry.id)).map(item => ({ id: item.entry.id, text: item.entry.content,
+      createdAt: item.entry.createdAt, delivery: item.entry.delivery! }))]
+    .map(item => ({ ...item, readOnly: true, waitFor: item.delivery === 'queue' ? 'turn' as const : 'step' as const })), [pendingInputs, submitted]);
+  const pageEntries = useMemo(() => {
+    const pendingIds = new Set(queuedMessages.map(item => item.id));
+    return [...entries.filter(entry => isAssistantPageMessage(entry) && !pendingIds.has(entry.id)), ...submitted
+      .filter(item => !pendingIds.has(item.entry.id) && !entries.some(entry => entry.id === item.entry.id)).map(item => item.entry)];
+  }, [entries, submitted, queuedMessages]);
   const allTasks = useLoopSubagentTasks(sessionId, active && !floating && ready, active && !floating);
   // Reset removes the journal; do not resurrect old tasks in a fresh conversation.
-  const tasks = allTasks.filter(task => task.origin === 'subagent' && task.taskId && entries.length &&
-    (task.createdAt || task.startedAt || '') >= entries[0].createdAt);
+  const tasks = childConversationSummaries(allTasks.filter(task => task.origin === 'subagent' && task.taskId && entries.length &&
+    (task.createdAt || task.startedAt || '') >= entries[0].createdAt));
   const timeline = [...pageEntries.map(entry => ({ key: entry.id, at: entry.createdAt, entry })),
     ...tasks.map(task => ({ key: task.taskId!, at: task.createdAt || task.startedAt || '', task }))]
     .sort((a, b) => a.at.localeCompare(b.at));
@@ -150,6 +159,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       const reset = result.cursor < cursor.current || result.generation !== generation.current;
       if (reset) result = await assistantBackend.read(0, language);
       generation.current = result.generation;
+      setPendingInputs(result.pendingInputs ?? []);
       if (!reactionPending.current) setReactions(current => JSON.stringify(current) === JSON.stringify(result.reactions ?? {}) ? current : result.reactions ?? {});
       if (reset && historyLoaded.current) { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); setReactions(result.reactions ?? {}); closeMessageMenu(); }
       if (historyLoaded.current && !reset && activeRef.current && result.entries.length) {
@@ -227,7 +237,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   }, [ensure, refresh]);
   const agent = useMemo(() => assistantBackend.voice(async () => { await ensure(); return { ...await prepareRef.current(), sessionId }; }), [ensure]);
   // Typed messages and recording transcripts share positioning, acceptance and errors.
-  const send = async (text: UserPromptInput, failed?: SubmittedMessage) => {
+  const send = async (text: UserPromptInput, failed?: SubmittedMessage, delivery: 'insert' | 'queue' = 'insert') => {
     if (!readUserPrompt(text).text.trim() || sendingRequest.current || submitting) return false;
     const request = crypto.randomUUID(), contextVersion = assistantBackend.contextVersion();
     const quoteVersion = quoteRevision.current;
@@ -239,7 +249,8 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     let entry: ConversationEntry | undefined;
     try {
       const prior = failed?.entry ? failed : submittedRef.current.find(item => item.state === 'failed' && JSON.stringify(item.prompt) === JSON.stringify(text) && JSON.stringify(item.entry.replyTo) === JSON.stringify(replyTo));
-      entry = prior?.entry ?? { ...await assistantInputEntry(text), ...(replyTo ? { replyTo } : {}) };
+      entry = prior?.entry ?? { ...await assistantInputEntry(text), ...(replyTo ? { replyTo } : {}),
+        ...(busyRef.current ? { delivery } : {}) };
       if (contextVersion !== assistantBackend.contextVersion()) return true;
       const message: SubmittedMessage = { entry, prompt: text, state: 'preparing' };
       setSubmitted(current => [...current.filter(item => item.entry.id !== entry!.id), message]);
@@ -419,7 +430,10 @@ export function AssistantView({ active, language, floating, prepare, observeActi
             interaction={management?.permissions[0] && <AssistantPermissionCard key={management.permissions[0].permissionId}
               permission={management.permissions[0]} language={language} onResolved={refresh}/>}
             userMessagePrediction={userMessagePrediction} predictionPending={busy || submitting || Boolean(error || runtimeError)}
-            ready={ready} submitting={submitting} onSend={send} fileDropTarget={chatBody} messages={pageMessages} browserTabs={browserTabs}/>
+             ready={ready} submitting={submitting} busy={busy} queuedMessages={queuedMessages}
+             onSend={(text, options) => send(text, undefined, options?.immediate === false ? 'queue' : 'insert')}
+             onCancel={async () => { await assistantBackend.stop(); await refresh(); }}
+             fileDropTarget={chatBody} messages={pageMessages} browserTabs={browserTabs}/>
           </ComposerPortalContext.Provider>
         </div>
       </VoiceConversation>

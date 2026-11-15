@@ -107,12 +107,12 @@ export function HomeBoardView(p: ViewProps) {
               {Array.from({length:13-width}, (_, i) => i+1).map(value => <option key={value} value={value}>{value}</option>)}</select></label>}
             {block.kind !== 'native' && <button type="button" data-home-action="configure" aria-label={t('homeComponents.edit', {name})}
               onClick={() => block.kind === 'web' ? p.editWeb(block) : p.editHtml(html)}><Pencil/></button>}
+            {block.kind === 'web' && <button type="button" aria-label={t('homeLayout.openWebsite', {name})} onClick={() => p.openWeb(block.url)}><ExternalLink/></button>}
             <button type="button" data-home-action="remove" aria-label={t('homeComponents.unpin', {name})} onClick={() => p.remove(block)}><Minus/></button>
           </div>}
           <div className="home-block-body" inert={p.editing}>
             {block.kind === 'native' ? p.native[block.id].content : <>
-              <header className="home-block-title"><h2>{name}</h2>
-                {block.kind === 'web' && <button type="button" aria-label={t('homeLayout.openWebsite', {name})} onClick={() => p.openWeb(block.url)}><ExternalLink/></button>}</header>
+              {p.editing && <header className="home-block-title"><h2>{name}</h2></header>}
               {p.editing ? <div className="home-block-preview">{block.kind === 'web' ? <><Globe/>{new URL(block.url).host}</> : <Code2/>}</div>
                 : p.visible && <NearViewport>{block.kind === 'web' ?
                   <HomeWebsiteBlock key={block.url} url={block.url} title={name}/>

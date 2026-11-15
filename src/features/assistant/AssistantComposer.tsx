@@ -13,9 +13,10 @@ export type AssistantComposerControls = Pick<ComposerProps,
   'subagentPermissionRouting' | 'onSubagentPermissionRoutingChange' | 'onRetainDraft' | 'reasoningLevel' |
   'reasoningLevelAvailable' | 'reasoningLevels' | 'onReasoningLevelChange' | 'skills' | 'disabledSkillNames' | 'onToggleSkill'>;
 
-export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, onSend, messages, fileDropTarget, browserTabs, userMessagePrediction, predictionPending, interaction, quote }: {
+export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, busy, onSend, onCancel, queuedMessages, messages, fileDropTarget, browserTabs, userMessagePrediction, predictionPending, interaction, quote }: {
   controls: AssistantComposerControls; language: string; draft: string; onDraftChange(value: string): void;
-  ready: boolean; submitting: boolean; onSend(text: string): Promise<boolean>; messages: ChatMessage[];
+  ready: boolean; submitting: boolean; busy: boolean; onSend: ComposerProps['onSend']; onCancel: ComposerProps['onCancel'];
+  queuedMessages: ComposerProps['queuedMessages']; messages: ChatMessage[];
   fileDropTarget: RefObject<HTMLElement | null>;
   browserTabs: BrowserPromptReference[];
   userMessagePrediction?: UserMessagePrediction;
@@ -28,10 +29,9 @@ export function AssistantComposer({ controls, language, draft, onDraftChange, re
       <Composer {...controls} compact language={language} draft={draft} onDraftChange={onDraftChange}
         topAccessory={(interaction || quote) && <div className="assistant-composer-accessories">{interaction}{quote}</div>}
         fileDropTarget={fileDropTarget} inputReadOnly={!ready} submissionPending={submitting}
-        sending={false} referencePlanAvailable={false} retainUntilAccepted optimisticSubmission
-        // Composer passes delivery options; Assistant's second argument is reserved
-        // for an explicit failed-message retry. Forward only the new prompt.
-        onSend={text => onSend(text)} onCancel={async () => {}} cancelEnabled={false}/>
+        sending={busy} guidanceDeliveryMode="immediate" queuedMessages={queuedMessages}
+        referencePlanAvailable={false} retainUntilAccepted optimisticSubmission
+        onSend={onSend} onCancel={onCancel} cancelEnabled={busy}/>
     </ComposerPresentationContext.Provider>
   </ComposerReferenceContext.Provider>;
 }

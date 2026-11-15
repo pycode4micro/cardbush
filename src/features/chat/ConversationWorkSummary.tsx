@@ -33,7 +33,7 @@ import {
   openWorkSummaryInspector,
   SUBAGENT_DISPATCH_UI_EVENT,
 } from '../subagents/subagentObservabilityEvents';
-import { subagentTaskPresentation } from '../subagents/subagentTaskPresentation';
+import { childConversationSummaries, subagentTaskPresentation } from '../subagents/subagentTaskPresentation';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import { openInspector, openMediaInspector } from '../inspector/inspectorEvents';
 import type { ProjectPathAlias } from '../conversationScope';
@@ -356,19 +356,6 @@ function subagentTaskFromDispatchEvent(event: SubagentDispatchEvent): SubagentTa
     usage: {},
     raw: event.raw,
   };
-}
-
-/** A resumed child is another turn in the same conversation, not another Agent. */
-function childConversationSummaries(tasks: SubagentTaskSnapshot[]) {
-  const conversations = new Map<string, SubagentTaskSnapshot>();
-  for (const task of [...tasks].sort((a, b) => subagentTaskTime(a) - subagentTaskTime(b))) {
-    const key = task.childSessionId ? `${task.remote?.connectionId ?? ''}:${task.childSessionId}` : subagentTaskIdentity(task);
-    const original = conversations.get(key);
-    conversations.set(key, original ? { ...original, status: task.status, terminal: task.terminal,
-      responsePrompt: task.responsePrompt, errorMessage: task.errorMessage, updatedAt: task.updatedAt,
-      completedAt: task.completedAt, usage: task.usage } : task);
-  }
-  return [...conversations.values()].sort((a, b) => subagentTaskTime(b) - subagentTaskTime(a));
 }
 
 function mergeSubagentTasks(

@@ -407,6 +407,7 @@ export class InMemoryRuntimeHost {
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
   readonly #reconcileChildTasks?: (parentSessionId: string, taskId?: string) => void;
+  readonly #refreshChildResults?: (parentSessionId: string, signal?: AbortSignal) => Promise<void>;
   #realtimeAgents?: RealtimeAgentDispatcher;
   readonly #assistant: AssistantConversation;
   readonly #assistantEvents: AssistantEvents;
@@ -540,6 +541,7 @@ export class InMemoryRuntimeHost {
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       resultDelivery: this.#subagentTasks.delivery,
+      refreshTasks: async (id, signal) => { await this.#refreshChildResults?.(id, signal); },
       runningTaskCount: id => this.#subagentTasks.runningCount(id),
       childTool: id => {
         let recent: string | undefined;
@@ -794,6 +796,7 @@ export class InMemoryRuntimeHost {
       },
     );
     this.#reconcileChildTasks = subagents?.reconcile;
+    this.#refreshChildResults = subagents?.refreshResults;
     this.#teams = new TeamWorkflowManager(this.#registeredAgents, (context, input) => {
       if (!subagents) throw new Error('The native subagent dispatcher is unavailable.');
       return subagents.dispatch(context, input);
@@ -1272,8 +1275,16 @@ export class InMemoryRuntimeHost {
     return this.#activeTurns.size > 0 || this.#teams.hasActiveRuns();
   }
   /** A disconnected local client must not terminate accepted or background work. */
-  restoreAssistantEvents(prepare: (parent: RuntimeSessionTurnRequest) => Promise<RuntimeSessionTurnRequest>, signal: AbortSignal) {
-    return this.#assistantEvents.restoreAssistant(prepare, signal);
+  async restoreAssistantEvents(prepare: (parent: RuntimeSessionTurnRequest) => Promise<RuntimeSessionTurnRequest>, signal: AbortSignal) {
+    const restored = await this.#assistantEvents.restoreAssistant(prepare, signal);
+    const configuration = this.#assistantEvents.store.select(state => state.configuration);
+    if (configuration?.assistant) {
+      signal.throwIfAborted();
+      await this.#refreshChildResults?.(PERSONAL_ASSISTANT_SESSION, signal);
+      signal.throwIfAborted();
+      this.#assistant.restore(configuration.parent, configuration.assistant);
+    }
+    return restored;
   }
   hasActiveWork(): boolean {
     return Boolean(this.hasActiveTurns() || this.#turnAdmissions || this.#workspaceActions || this.#activeAppCommands ||
@@ -1734,9 +1745,15 @@ export class InMemoryRuntimeHost {
         }
         return this.#assistant.command(input);
       }
-      case FRIENDS_COMMAND:
+      case FRIENDS_COMMAND: {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
-        return this.#assistantEvents.command(command.payload);
+        const result = await this.#assistantEvents.command(command.payload);
+        if (command.payload && typeof command.payload === 'object' && 'action' in command.payload && command.payload.action === 'configure') {
+          const config = this.#assistantEvents.store.select(state => state.configuration);
+          if (config?.assistant) this.#assistant.restore(config.parent, config.assistant);
+        }
+        return result;
+      }
       case REALTIME_AGENT_TOOL_COMMAND: {
         if (this.#shuttingDown) throw new Error('Runtime is shutting down.');
         const input = realtimeAgentToolRequestSchema.parse(command.payload);
@@ -2566,6 +2583,27 @@ export class InMemoryRuntimeHost {
     for (const fact of [...priorSession?.turns.flatMap(turn => turn.messages) ?? [], ...generatedMessages]) {
       const references = taskResultReferenceSchema.array().safeParse(fact.metadata?.taskResultReferences);
       if (references.success) this.#subagentTasks.delivery.restore(request.sessionId, references.data);
+    }
+    if (!input.internalTask && request.metadata.agentRole !== 'child' && request.sessionId !== PERSONAL_ASSISTANT_SESSION) {
+      await this.#refreshChildResults?.(request.sessionId, input.signal);
+      const tasks = this.#subagentTasks.list(request.sessionId);
+      this.#subagentTasks.delivery.restoreWatching(request.sessionId, tasks);
+      for (const task of tasks) {
+        if (!task.resultWatched || task.origin === 'team' || !this.#resultPending(request.sessionId, task.taskId)
+          || this.#pendingAgentGuidance.get(turnKey)?.some(entry => entry.taskId === task.taskId)) continue;
+        const result = async () => {
+          let current = task;
+          while (current.status === 'running') {
+            if (current.remote && !this.#subagentTasks.startedHere(request.sessionId, current.taskId)) {
+              await this.#refreshChildResults?.(request.sessionId, input.signal);
+              if (this.#subagentTasks.get(request.sessionId, current.taskId)?.status === 'running') await this.#wait(1200, input.signal);
+            } else await this.#subagentTasks.waitForCompletion(request.sessionId, current.taskId, input.signal ?? new AbortController().signal);
+            current = this.#subagentTasks.get(request.sessionId, current.taskId)!;
+          }
+          return asyncResultMessage(current);
+        };
+        this.#trackAgentGuidance(turnKey, task.taskId, result());
+      }
     }
     const previousCommittedUsage = priorSession?.turns.at(-1)?.usage;
     const usage: SessionUsage = {
@@ -4521,6 +4559,9 @@ export class InMemoryRuntimeHost {
     taskId: string,
     result: Promise<JoinedSubagentResult["message"] | null>,
   ): void {
+    const [sessionId] = JSON.parse(turnKey) as [string, string];
+    const task = this.#subagentTasks.get(sessionId, taskId);
+    if (task && task.origin !== 'team') this.#subagentTasks.delivery.watch(sessionId, task);
     const entry: PendingAgentGuidance = {
       taskId,
       settled: false,

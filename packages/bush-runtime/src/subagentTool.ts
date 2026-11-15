@@ -92,6 +92,7 @@ export interface SubagentDispatcher {
   dispatch(context: ToolHandlerContext<SubagentInput>, options?: SubagentExecutionOptions): Promise<unknown>;
   control(context: ToolHandlerContext<unknown>, control: RemoteControl): Promise<unknown>;
   reconcile(parentSessionId: string, taskId?: string): void;
+  refreshResults(parentSessionId: string, signal?: AbortSignal): Promise<void>;
   readConversation?(context: ToolHandlerContext<unknown>, taskId: string, cursor?: string): Promise<unknown>;
 }
 
@@ -218,7 +219,7 @@ export function registerSubagentTool(
             expected_revision: { type: 'integer', minimum: 0, description: 'Required for save/delete. 0 creates a new definition; otherwise use its observed revision.' },
           } : {}),
           prompt: { type: "string", minLength: 1, description: "Child assignment or follow-up text: necessary facts, original user's communication language, expected output and handoffs. Required for messages; omit when answering with response, whose text/decision is the complete reply. Distinguish pending dependencies from confirmed facts." },
-          delivery: { type: 'string', enum: ['queue', 'insert'], description: 'Owned task_id follow-up, local or remote. queue starts a later turn in the same child; insert interrupts active model reasoning and continues the same turn with your message. Already dispatched tools finish first. Omit for ordinary follow-up. No silent fallback if an explicit insert target has ended.' },
+          delivery: { type: 'string', enum: ['insert', 'queue'], description: 'Owned task_id follow-up, local or remote. For corrections or extra facts needed by the current task, omit delivery or use insert: the active turn receives guidance at its next safe boundary; dispatched tools finish first. Use queue only for separate work that should start after the current turn finishes. Queued work has not reached the active turn. An explicit insert requires an active target.' },
           response: { ...z.toJSONSchema(remoteResponseSchema), description: 'Answer a pending interaction from an owned child task. Free text answers questions; a permission needs its exact actionDigest and a structured decision. Human-required approval cannot be granted by a parent model. Use tasks inspect to read the pending interaction.' },
           name: { type: 'string', minLength: 1, maxLength: SUBAGENT_NAME_MAX_LENGTH, description: renderPromptTemplate('subagent-name-description') },
           ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt, target_agent and optional name/run_in_background; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
@@ -234,7 +235,7 @@ export function registerSubagentTool(
     },
     projectModelDefinition: (definition, scope) => !scope.canRecall ? definition : presentTool(definition, {
       fields: ['action', 'name', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'run_in_background', 'delivery', 'response'], actions: ['run'],
-      description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with task_id and prompt, optionally delivery queue/insert for a local or remote child, or answer a pending interaction with task_id and response. Omit name, mode and configuration; the host retains identity and scope. Use tasks to inspect/stop/read conversations; await waits for results. Independent peers use an available collaboration plugin. For registration or a new clean child's configuration, load get_tool_schema(name="subagent"), then call_tool with its full arguments.`,
+      description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with task_id and prompt: default to immediate guidance for current-task corrections or extra facts; queue only separate work that must wait for completion. State the selected mode and actual delivery state to the user. Answer a pending interaction with task_id and response. Omit name, mode and configuration; the host retains identity and scope. Use tasks to inspect/stop/read conversations; await waits for results. Independent peers use an available collaboration plugin. For registration or a new clean child's configuration, load get_tool_schema(name="subagent"), then call_tool with its full arguments.`,
     }),
     manifest: {
       effect_kind: "delegation",
@@ -249,7 +250,34 @@ export function registerSubagentTool(
     decodeInput: decodeInput,
     execute: context => dispatch(context),
   });
-  return { dispatch, reconcile, control: (context, control) => { assertParentAgent(context.turn?.request); reconcile(context.sessionId); return interactions.control(context, control); }, ...(options.readChildConversation || options.remoteAgents?.read ? { readConversation } : {}) };
+  return { dispatch, reconcile, refreshResults, control: (context, control) => { assertParentAgent(context.turn?.request); reconcile(context.sessionId); return interactions.control(context, control); }, ...(options.readChildConversation || options.remoteAgents?.read ? { readConversation } : {}) };
+
+  async function refreshResults(parentSessionId: string, signal?: AbortSignal) {
+    reconcile(parentSessionId);
+    if (!options.remoteAgents?.control || !options.remoteAgents.read) return;
+    for (const task of tasks.list(parentSessionId)) {
+      if (!task.resultWatched || !task.remote || task.status !== 'running' || tasks.startedHere(parentSessionId, task.taskId)) continue;
+      try {
+        const observation = remoteObservationSchema.parse(await options.remoteAgents.control({ ...task.remote, parentSessionId,
+          control: observationControl(task) }, signal));
+        tasks.observe(parentSessionId, task.taskId, observation);
+        if (['queued', 'working', 'input_required'].includes(observation.state)) continue;
+        const session = await options.remoteAgents.read({ ...task.remote, parentSessionId, sessionId: task.childSessionId }, signal);
+        if (session && session.sessionId !== task.childSessionId) throw new Error('Child result identity mismatch.');
+        const turn = session?.turns.find(turn => turn.turnId === task.childTurnId);
+        if (!turn && observation.state === 'completed') continue; // The worker has not committed its result yet.
+        const final = [...turn?.messages ?? []].reverse().find(item => item.message.role === 'assistant' && !item.message.toolCalls.length
+          && item.metadata?.runtimeMaintenance !== 'context_compaction')?.message;
+        tasks.finish({ parentSessionId, taskId: task.taskId, status: observation.state === 'completed' ? 'completed'
+          : ['canceled', 'interrupted'].includes(observation.state) ? 'stopped' : 'failed',
+          finalResponse: final?.content ?? '', errorMessage: observation.state === 'completed' ? '' : turn?.reason ?? observation.state, usage: turn?.usage ?? {} });
+      } catch (error) {
+        signal?.throwIfAborted();
+        tasks.observe(parentSessionId, task.taskId, tasks.get(parentSessionId, task.taskId)?.observation,
+          error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
 
   async function dispatch(context: ToolHandlerContext<SubagentInput>, execution: SubagentExecutionOptions = {}, queued = false): Promise<unknown> {
       const eventWork = options.eventWorkSignal?.(context.turn?.request);
@@ -295,7 +323,7 @@ export function registerSubagentTool(
         throw new Error('Local subagent execution is forbidden in this deployment.');
       if (context.input.taskId && !previous) throw new Error('Only a subagent task owned by this parent conversation can receive a follow-up. Use taskId from the subagent result or task_id with kind=subagent from tasks list; employee IDs, childSessionId and Team run IDs are not child task IDs.');
       if (previous && previous.origin !== 'subagent' && !context.input.response && context.input.delivery !== 'insert' && (!execution.team || previous.teamId !== execution.team.id)) throw new Error('This task belongs to a Team workflow node. Use team resume with the workflow run_id for unfinished steps, or tasks to inspect/stop the workflow run.');
-      if (!queued && (context.input.delivery || context.input.response)) {
+      if (!queued && (context.input.delivery === 'queue' || context.input.response)) {
         if (!previous) throw new Error('Interaction requires an owned task_id.');
         return interactions.control(context, { profile: 'subagent-remote-proton', version: '0.1',
             contextId: previous.childSessionId, taskId: previous.taskId, messageId: interactionMessageId(context),
@@ -308,12 +336,15 @@ export function registerSubagentTool(
           const messageId = interactionMessageId(context);
           const receipt = await interactions.control(context, { profile: 'subagent-remote-proton', version: '0.1',
             operation: 'message', delivery: 'insert', contextId: running.childSessionId, taskId: running.taskId, messageId, text: context.input.prompt });
-          return { status: 'message_queued', taskId: running.taskId, ...(running.agentName ? { agentName: running.agentName } : {}), childSessionId: running.childSessionId, receipt };
+          const rejected = receipt && typeof receipt === 'object' && 'accepted' in receipt && receipt.accepted === false;
+          return { status: rejected ? 'not_delivered' : 'message_queued', delivery: 'insert', taskId: running.taskId,
+            ...(running.agentName ? { agentName: running.agentName } : {}), childSessionId: running.childSessionId, receipt };
         } catch (error) {
-          if (tasks.get(context.sessionId, running.taskId)?.status === 'running') throw error;
+          if (context.input.delivery === 'insert' || tasks.get(context.sessionId, running.taskId)?.status === 'running') throw error;
           // If completion raced guidance, continue in the original session below.
         }
       }
+      if (context.input.delivery === 'insert') throw new Error('stale_target');
       const taskId = execution.taskId ?? createTaskId();
       if (context.input.targetAgent || previous?.remote || employee?.definition.remote) {
         if (!options.remoteAgents) throw new Error('Remote Agent delegation is unavailable in this host.');
@@ -334,11 +365,14 @@ export function registerSubagentTool(
           ? parent.permissionMode ?? 'task_free' : policy?.childPermissionMode ?? options.permissionPolicy?.childPermissionMode ?? 'task_free';
         const childSessionId = previous?.childSessionId ?? `delegated-${taskId}`;
         const childTurnId = `turn-${taskId}`;
+        const preceding = previous && context.input.delivery === 'queue'
+          ? tasks.list(context.sessionId).filter(task => task.childSessionId === childSessionId && task.status === 'running').at(-1) : undefined;
         tasks.start({ taskId, ...assistantDelegationOrigins(context.turn?.request), parentSessionId: context.sessionId, parentTurnId: context.turnId, childSessionId, childTurnId,
           agentName: previous?.agentName ?? worker?.name ?? resolveSubagentName({ name: context.input.name ?? target.name }) ?? fallbackSubagentName(childSessionId, parent.metadata.uiLanguage),
           prompt: context.input.prompt, inheritContext: false, inheritedMessageCount: 0, remote,
           ...(execution.team ? { origin: 'team', teamId: execution.team.id, teamMemberId: execution.team.nodeId } : {}),
-          ...(worker ? { agentProfileId: worker.id } : {}), ...(previous ? { resumedFromTaskId: previous.taskId } : {}) });
+          ...(worker ? { agentProfileId: worker.id } : {}), ...(previous ? { resumedFromTaskId: previous.taskId } : {}),
+          ...(preceding ? { queuedAfterTaskId: preceding.taskId } : {}) });
         const observer = new AbortController();
         const observationSignal = context.signal ? AbortSignal.any([observer.signal, context.signal]) : observer.signal;
         let accept!: () => void;
@@ -508,8 +542,11 @@ export function registerSubagentTool(
         .finally(() => { observer.abort(); localRuns.delete(taskId); });
       // Background admission can fail before run() owns terminal settlement.
       void completion.catch(() => {});
-      if (background) return { ...submittedResult(tasks.get(context.sessionId, taskId)!), background: true,
-        instructions: `Background task started. Continue independent work; use tasks when its result is needed.` };
+      if (background) {
+        const task = tasks.get(context.sessionId, taskId)!;
+        return { ...submittedResult(task), background: true,
+          ...(!queuedChild(task) ? { instructions: 'Background task started. Continue independent work; use tasks when its result is needed.' } : {}) };
+      }
       if (options.asyncDispatch && !execution.waitForResult) {
         options.onAsyncResult?.({
           parentSessionId: context.sessionId,
@@ -601,7 +638,8 @@ function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<s
     ...(task.agentProfileId ? { agentProfileId: task.agentProfileId } : {}),
     ...(task.agentName ? { agentName: task.agentName } : {}),
     taskId: task.taskId,
-    status: task.status,
+    status: queuedChild(task) ? 'queued' : task.status,
+    ...(queuedChild(task) ? { delivery: 'queue', queuedAfterTaskId: task.queuedAfterTaskId, executionStarted: false } : {}),
     childSessionId: task.childSessionId,
     childTurnId: task.childTurnId,
     mode: task.inheritContext ? 'fork' : 'clean',

@@ -300,8 +300,9 @@ app.whenReady().then(async () => {
     throw new Error('Timed out: ' + label + '\n' + await run('document.body.innerText') + '\nRenderer errors: ' + await run('JSON.stringify(window.failures ?? [])') + '\nDiagnostics: ' + diagnosticPath);
   };
   try {
-    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'media-reveal') {
-      const host = path.join(root, 'tmp', 'media-reveal-host.html');
+    if (['media-reveal','html-components'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+      // Match the shipped desktop's secure file document for WebGPU/Worker tests.
+      const host = path.join(root, 'tmp', process.env.CARDBUSH_APP_VIEWS_CASE + '-host.html');
       fs.mkdirSync(path.dirname(host), { recursive: true });
       fs.writeFileSync(host, '<html><body><div id="root"></div></body></html>');
       await window.loadFile(host);

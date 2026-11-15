@@ -24,7 +24,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.ok(guest,'HTML runs in its own sandbox frame');
   assert.deepEqual(await guest.executeJavaScript('[typeof require,typeof window.cardbushDesktop]'),['undefined','undefined']);
   assert.equal(await run('document.querySelector(".html-component-frame").sandbox.value'),'allow-scripts');
-  assert.equal(await guest.executeJavaScript('document.querySelector("meta[http-equiv]").content.includes("connect-src \'none\'")'),true);
+  assert.equal(await guest.executeJavaScript('fetch("https://example.org/denied").then(()=>false,()=>true)'),true,'undeclared external network remains blocked');
   const firstColor=await guest.executeJavaScript('getComputedStyle(document.documentElement).color');
   await run('document.querySelector(".app").style.setProperty("--text","rgb(12, 34, 56)"); void 0');
   await pause();
@@ -100,6 +100,12 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until('document.querySelector(".component-import textarea").value.includes("导入内容")','file import still works');
   await run('document.querySelector(".component-import input[type=file]").dispatchEvent(new Event("cancel",{bubbles:true}));void 0');
   assert.equal(await run('document.querySelector(".component-import textarea").value'),'<main>导入内容</main>','cancel/reselect retains imported HTML');
+  await run(`{
+    const files=new DataTransfer();files.items.add(new File([JSON.stringify({protocol:'cardbush.html-surface/1',title:'Resources',html:'<canvas></canvas>',resourceDomains:['https://graphics.example.org']})],'graphics.json',{type:'application/json'}));
+    const input=document.querySelector('.component-import input[type=file]');input.files=files.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+  } void 0;`);
+  await until('document.querySelector(".component-import textarea").value==="<canvas></canvas>"','frontend package import');
+  assert.equal(await run('document.querySelector(".component-import fieldset")?.textContent.includes("https://graphics.example.org")'),true,'JSON imports retain declared frontend resource origins');
   window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
   window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   await until('!document.querySelector(".component-import")','Escape still closes the component dialog');
@@ -114,7 +120,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
     showHome(false);`);
   await until('!!document.querySelector(".home-board")','editable home');
   assert.equal(await run('document.querySelectorAll(".html-component-frame").length'),0);
-  const boardClick = selector => run('document.querySelector('+JSON.stringify(selector)+').click()');
+  const boardClick = async selector => {
+    await until('!!document.querySelector('+JSON.stringify(selector)+')','Home control '+selector);
+    return run('document.querySelector('+JSON.stringify(selector)+').click()');
+  };
   assert.equal(await run('!!document.querySelector("[data-home-action=edit]")'),false);
   await run('showLibrary()');
   await boardClick('[data-home-action=edit]');
@@ -162,4 +171,5 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.equal(await run('document.querySelector("[data-draft=a]")===originalPage'),true);
   fs.mkdirSync(path.join(root,'tmp'),{recursive:true});fs.writeFileSync(path.join(root,'tmp','html-component-workspace.png'),(await window.webContents.capturePage()).toPNG());
   console.log('HTML components/workspace UI passed: sandbox SDK, explicit actions, deduplication, stale context, theme, retained resize/cancel state, bookmarks, multi-page partition and stable page DOM.');
+  await require('./home-component-graphics.cjs')({run,until,window,root});
 };

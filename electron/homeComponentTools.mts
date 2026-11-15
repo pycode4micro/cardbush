@@ -1,8 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { maxComponentBytes } from '../assets/skills/cardbush-docs/scripts/component-limits.mjs';
 
 export type HomeItem = { id:string; title:string; html:string; width:number; height:number; order:number; home?:boolean; allowActions:boolean;
-  networkDomains?:string[]; approvedNetworkOrigins?:string[]; embedDomains?:string[]; approvedEmbedOrigins?:string[] };
+  networkDomains?:string[]; approvedNetworkOrigins?:string[]; embedDomains?:string[]; approvedEmbedOrigins?:string[]; resourceDomains?:string[] };
 export type HomeSnapshot = { version:1; revision:number; items:HomeItem[] };
 export type HomeToolHost = {
   snapshot(): HomeSnapshot | null;
@@ -38,11 +39,12 @@ export function registerHomeComponentTools(server:McpServer, host:()=>HomeToolHo
   server.registerTool('edit_home_component', {
     description:'Create or update one installed Home widget in place. Use the revision from read_home_component. For updates prefer exact unique replacements, in order. Other widgets, placement, size and widget state are preserved unless explicitly changed. Declare exact HTTPS embedDomains to load websites immediately on Home. Use <cardbush-browser src="https://player.example.org/watch"></cardbush-browser> with CSS dimensions for a complete isolated website inside your own layout, including sites that disallow iframes; set its src, call reload(), and listen for load/error events. Use ordinary iframe for official embedded players and their messaging APIs. The component owns its initial page, navigation and controls; no host toolbar or extra website approval is inserted. networkDomains for cardbush.net.fetchJson still require user grants, revoked on code changes. Never patch host code or build output to edit a widget.',
     inputSchema:{id,mode:z.enum(['create','update']),expectedRevision:z.number().int().nonnegative(),title:z.string().trim().min(1).max(80).optional(),
-      html:z.string().min(1).max(262144).optional(), replacements:z.array(z.object({before:z.string().min(1).max(65536),after:z.string().max(65536)})).min(1).max(24).optional(),
+      html:z.string().min(1).max(maxComponentBytes).optional(), replacements:z.array(z.object({before:z.string().min(1).max(65536),after:z.string().max(65536)})).min(1).max(24).optional(),
       home:z.boolean().optional(),width:z.number().int().min(3).max(12).optional(),height:z.number().int().min(120).max(1200).optional(),
-      networkDomains:z.array(z.string().max(260)).max(8).optional(),embedDomains:z.array(z.string().max(260)).max(8).optional()},
+      networkDomains:z.array(z.string().max(260)).max(8).optional(),embedDomains:z.array(z.string().max(260)).max(8).optional(),
+      resourceDomains:z.array(z.string().max(260)).max(8).optional().describe('Exact HTTPS origins for browser modules/import maps, CSS, fonts, images, media and fetch (including model/WASM assets). Active on publication, including previews; CORS still applies. Bundle dependencies or declare every resource origin. Three.js/WebGL/WebGPU, classic Blob workers and WASM are supported; use data URLs for module workers in this opaque origin. Feature-detect GPU support and handle fallback. The Home surface has no host header, footer, border or padding. Up to 8 MiB of bundled HTML.')},
     annotations:{readOnlyHint:false,openWorldHint:false},
-  }, async ({id,mode,expectedRevision,html,replacements,title,width,height,home,networkDomains,embedDomains}) => { try {
+  }, async ({id,mode,expectedRevision,html,replacements,title,width,height,home,networkDomains,embedDomains,resourceDomains}) => { try {
     const state=snapshot();
     if(state.revision!==expectedRevision) throw Error('REVISION_CONFLICT');
     const previous=state.items.find(item=>item.id===id);
@@ -55,14 +57,14 @@ export function registerHomeComponentTools(server:McpServer, host:()=>HomeToolHo
       if(at<0 || source.indexOf(before,at+1)>=0) throw Error('PATCH_CONTEXT_NOT_UNIQUE');
       source=source.slice(0,at)+after+source.slice(at+before.length);
     }
-    const next=host().publish({id,title,html:source,width,height,networkDomains,embedDomains},home,expectedRevision);
+    const next=host().publish({id,title,html:source,width,height,networkDomains,embedDomains,resourceDomains},home,expectedRevision);
     return text({revision:next.revision,...metadata(lookup(next,id))});
   } catch(cause) {return failure(cause);} });
   if(preview) server.registerTool('preview_home_component',{
-    description:'Render one installed Home widget and return its screenshot in an isolated, offline desktop preview. No live conversation, saved widget state, network or actions. Confirms layout only, not live data freshness. Does not navigate the user’s window.',
+    description:'Render one installed Home widget and return its screenshot in an isolated desktop preview. Declared resourceDomains can load browser assets. No live conversation, saved widget state, website slots, JSON bridge or actions. Confirms rendering only, not live data freshness. Does not navigate the user’s window.',
     inputSchema:{id}, annotations:{readOnlyHint:true,openWorldHint:false},
   },async({id},context)=>{try {
     const state=snapshot(),item=lookup(state,id),data=await preview(item,context.mcpReq.signal);
-    return {content:[...text({id,revision:state.revision,sha256:metadata(item).sha256,mode:'offline-preview'}).content,{type:'image' as const,mimeType:'image/png',data}]};
+    return {content:[...text({id,revision:state.revision,sha256:metadata(item).sha256,mode:'isolated-preview'}).content,{type:'image' as const,mimeType:'image/png',data}]};
   } catch(cause){return failure(cause);} });
 }

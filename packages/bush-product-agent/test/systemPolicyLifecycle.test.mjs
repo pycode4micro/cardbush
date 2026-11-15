@@ -14,6 +14,9 @@ test('execution boundaries cover scope, method, actor, environment and stopping 
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Do not generate a second translation/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Use team for a saved dependency workflow/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Use worker_connection verify for a fresh authenticated check/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Default to immediate guidance for an active task/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /explicitly tell the user which mode you chose/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Never claim the child has consumed a message merely because it was accepted/);
 });
 const event = (request, sequence, kind, payload = {}) => ({ protocol: 'bush.model_event.v1',
   requestId: request.requestId, sequence, createdAt: now, kind, ...payload });

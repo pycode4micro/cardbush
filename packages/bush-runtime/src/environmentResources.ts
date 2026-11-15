@@ -1,4 +1,4 @@
-import type { RuntimeAgentFact, SubagentTask } from '@cardbush/bush-protocol';
+import { subagentExecutionQueued, type RuntimeAgentFact, type SubagentTask } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 import { commandSandboxPolicyForRequest, snapshotCommandSandbox, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
 
@@ -10,7 +10,7 @@ export function remoteAgentFacts(tasks: SubagentTask[]): RuntimeAgentFact[] {
     agentId: task.childSessionId, executionId: task.childTurnId, parentAgentId: task.parentSessionId,
     hostId: task.remote!.connectionId, transport: 'remote', role: 'child',
     status: task.status === 'running' ? task.observation?.state === 'input_required' ? 'waiting'
-      : task.executionStartedAt || task.remoteAcceptedAt ? 'running' : 'queued' : task.status,
+      : subagentExecutionQueued(task) || !task.executionStartedAt && !task.remoteAcceptedAt ? 'queued' : 'running' : task.status,
     observationStatus: task.observationError || task.status === 'unavailable' ? 'unavailable' : 'last_known',
     readOnly: null, canDelegate: false, canWake: false, startedAt: task.createdAt, updatedAt: task.updatedAt,
   }));

@@ -1862,6 +1862,7 @@ export function ChatPanel({
 
   const editQueuedMessage = useCallback(
     (item: QueuedChatMessage) => {
+      if (item.readOnly) return;
       onRemoveQueuedMessage(item.id);
       const prompt = readUserPrompt(item.text, { promptContext: item.promptContext });
       if (prompt.context) setDraftContext(current => [...current, ...prompt.context!]);

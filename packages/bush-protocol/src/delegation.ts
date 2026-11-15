@@ -40,6 +40,8 @@ export const subagentTaskSchema = z.object({
   queuedAfterTaskId: z.string().min(1).optional(),
   executionStartedAt: z.string().min(1).optional(),
   remoteAcceptedAt: z.string().datetime().optional(),
+  // Host-owned subscription intent. Consumption remains owned by committed parent context.
+  resultWatched: z.boolean().optional(),
   remote: z.object({ connectionId: z.string().min(1), agentId: z.string().optional(), worker: remoteWorkerSchema.optional() }).optional(),
   observation: remoteObservationSchema.optional(),
   observationError: z.string().optional(),
@@ -55,6 +57,14 @@ export const subagentTaskSchema = z.object({
 });
 
 export type SubagentTask = z.infer<typeof subagentTaskSchema>;
+
+/** Shared execution projection for native receipts and UI task snapshots. Admission is not execution. */
+export function subagentExecutionQueued(task: { status: unknown; queuedAfterTaskId?: unknown; executionStartedAt?: unknown; observation?: unknown; delivery?: unknown; executionStarted?: unknown }): boolean {
+  if (task.status !== 'running' || task.executionStartedAt) return false;
+  const observation = task.observation;
+  if (observation && typeof observation === 'object' && 'state' in observation) return observation.state === 'queued';
+  return Boolean(task.queuedAfterTaskId) || task.delivery === 'queue' && task.executionStarted === false;
+}
 
 export interface RemoteSubagentRequest {
   connectionId: string; agentId?: string; taskId: string;

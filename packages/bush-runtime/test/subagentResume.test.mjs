@@ -10,7 +10,7 @@ test('one subagent entry guides the current child and rejects stale names and fo
   let dispatched = 0;
   registerSubagentTool(registry, tasks, async () => { dispatched++; throw Error('must not dispatch'); }, {
     inheritBrowserScope: async (parent, child) => { browserScopes.push([parent, child]); },
-    guideChild: async input => { assert.deepEqual(browserScopes, [['parent', input.sessionId]], 'new browser selection is available before guidance is delivered'); guidance.push(input); return { status: 'queued' }; },
+    guideChild: async input => { assert.deepEqual(browserScopes.at(-1), ['parent', input.sessionId], 'new browser selection is available before guidance is delivered'); guidance.push(input); return { status: 'queued' }; },
     loadPluginAgents: async () => [{ id: 'fixture:reviewer', description: 'Read only', mcpServers: ['docs'] }],
   });
   const request = { requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' };
@@ -24,11 +24,14 @@ test('one subagent entry guides the current child and rejects stale names and fo
   const receipt = await invoke('subagent', { task_id: 'old', prompt: 'Keep it read only' });
   assert.equal(receipt.result.status, 'message_queued'); assert.equal(receipt.result.taskId, 'current');
   assert.equal(guidance[0].turnId, 'second'); assert.equal(guidance[0].mode, 'interrupt_and_continue');
+  const explicit = await invoke('subagent', { task_id: 'old', delivery: 'insert', prompt: 'Use the same active turn' });
+  assert.equal(explicit.kind, 'returned'); assert.equal(explicit.result.taskId, 'current');
+  assert.equal(guidance[1].turnId, 'second');
   assert.equal((await invoke('subagent', { task_id: 'old', prompt: 'x' }, 'foreign')).kind, 'failed');
   assert.equal((await invoke('subagent', { task_id: 'unknown', prompt: 'x' })).kind, 'failed');
   assert.equal((await invoke('subagent', { resume_task_id: 'old', prompt: 'x' })).kind, 'failed');
-  assert.equal(guidance.length, 1); assert.equal(dispatched, 0); assert.equal(tasks.list('parent').length, 2);
-  assert.deepEqual(browserScopes, [['parent', 'child']], 'foreign task IDs never transfer grants');
+  assert.equal(guidance.length, 2); assert.equal(dispatched, 0); assert.equal(tasks.list('parent').length, 2);
+  assert.deepEqual(browserScopes, [['parent', 'child'], ['parent', 'child']], 'foreign task IDs never transfer grants');
   assert.equal(registry.resolve('list_plugin_agents'), undefined);
   const options = await invoke('list_subagent_options', {});
   assert.equal(options.result.agent_roles[0].id, 'fixture:reviewer');

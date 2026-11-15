@@ -891,7 +891,7 @@ export function subagentDispatches(
     const taskId = optionalString(item.taskId);
     if (!taskId) return [];
     const statusValue = item.status ?? output.status;
-    const parsed = subagentTaskStatusSchema.safeParse(statusValue === 'message_queued' ? 'running' : statusValue);
+    const parsed = subagentTaskStatusSchema.safeParse(statusValue === 'message_queued' || statusValue === 'queued' ? 'running' : statusValue);
     if (!parsed.success) return [];
     const status = parsed.data;
     const terminal = status !== 'running';

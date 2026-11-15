@@ -5,6 +5,7 @@ import type { ConversationRuntime } from '../../backend/conversationRuntime';
 import type { SubagentDispatchEvent, SubagentTaskSnapshot } from '../../types';
 import { SUBAGENT_DISPATCH_UI_EVENT } from './subagentObservabilityEvents';
 import { subagentExecutionModel, type SubagentExecutionModel } from './subagentConversationModel';
+import { isQueuedSubagentTask } from './subagentTaskPresentation';
 
 /** Child sessions are hidden from Recents, but use the ordinary conversation controller. */
 export function subagentConversationBackend({ base = localConversationBackend, runtime, sessionId, readTasks, knownTask, onSubmitted, onTasksChanged, onExecutionModel }: {
@@ -64,7 +65,7 @@ export function subagentConversationBackend({ base = localConversationBackend, r
           task.remote?.connectionId === owner.remote?.connectionId);
         const revision = child.map(task => `${task.taskId}:${task.status}:${task.updatedAt}`).join('|');
         if (revision !== taskRevision) { taskRevision = revision; onTasksChanged?.(child); }
-        const running = child.find(task => !task.terminal);
+        const running = child.find(task => !task.terminal && !isQueuedSubagentTask(task));
         listener({ activeTurnId: jobs?.activeTurnId || running?.childTurnId, queueState: jobs?.queueState,
           queued: jobs?.queued ?? [], revision: `${jobs?.revision ?? ''}|${revision}` });
       };

@@ -62,7 +62,7 @@ export function createRealtimeAgentExecutor(prepare: () => Promise<ChatStreamReq
           prompt: args.prompt as string | undefined, taskId: args.task_id as string | undefined, cursor: args.cursor as string | undefined,
           delivery: args.delivery as RealtimeAgentToolRequest['delivery'], targetAgent: options.targetAgent?.() || undefined };
         const result = await runtime.client.command({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }, value => value as Record<string, unknown>);
-        if (parent && typeof result.taskId === 'string' && result.status === 'running') emitSubagentDispatch({
+        if (parent && typeof result.taskId === 'string' && (result.status === 'running' || result.status === 'queued')) emitSubagentDispatch({
           protocol: 'bush.subagent_dispatch.v1', phase: 'dispatched', status: 'running', terminal: false, accepted: true,
           taskId: result.taskId, toolCallId: callId, parentSessionId: config.sessionId, parentTurnId: parent.turnId,
           childSessionId: result.childSessionId as string, childTurnId: result.childTurnId as string, origin: 'subagent', raw: result,

@@ -5,6 +5,36 @@ import { build } from 'vite';
 const result = await build({configFile:false,logLevel:'silent',build:{write:false,minify:false,lib:{entry:'src/features/assistant/assistantTimeline.ts',formats:['es']}}});
 const output = (Array.isArray(result) ? result[0] : result).output.find(item=>item.type==='chunk').code;
 const { assistantTimeSeparators, assistantTimeLabel, assistantInputEntry } = await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
+const presentation = await build({configFile:false,logLevel:'silent',build:{write:false,minify:false,lib:{entry:'src/features/subagents/subagentTaskPresentation.ts',formats:['es']}}});
+const presentationCode = (Array.isArray(presentation) ? presentation[0] : presentation).output.find(item=>item.type==='chunk').code;
+const { childConversationSummaries, isQueuedSubagentTask } = await import('data:text/javascript;base64,'+Buffer.from(presentationCode).toString('base64'));
+
+test('remote admission and worker observations use the same queue projection as local children', () => {
+  const task = {status:'running',raw:{queuedAfterTaskId:'active',remoteAcceptedAt:'2026-11-15T08:33:47Z'}};
+  assert.equal(isQueuedSubagentTask(task),true);
+  assert.equal(isQueuedSubagentTask({...task,raw:{...task.raw,observation:{state:'queued'}}}),true);
+  assert.equal(isQueuedSubagentTask({...task,raw:{...task.raw,observation:{state:'working'},executionStartedAt:'2026-11-15T08:35:00Z'}}),false);
+  assert.equal(isQueuedSubagentTask({...task,status:'stopped'}),false);
+  const receipt = {status:'running',raw:{status:'queued',delivery:'queue',executionStarted:false}};
+  assert.equal(isQueuedSubagentTask(receipt),true,'a queued dispatch receipt is accurate before the task watcher supplies its first snapshot');
+  assert.equal(isQueuedSubagentTask({...receipt,raw:{...receipt.raw,observation:{state:'working'}}}),false,'a later worker observation supersedes admission');
+});
+
+test('Assistant and ordinary work summaries retain one stable entry through queued and completed child turns', () => {
+  const first = { taskId:'original',parentSessionId:'parent',childSessionId:'child',childTurnId:'first',agentName:'Inspector',requestPrompt:'Original work',
+    status:'running',terminal:false,createdAt:'2026-11-15T08:33:36Z',updatedAt:'2026-11-15T08:36:00Z',raw:{},usage:{} };
+  const queued = { ...first,taskId:'queued',childTurnId:'next',requestPrompt:'Both hosts are Ubuntu',createdAt:'2026-11-15T08:33:47Z',updatedAt:'2026-11-15T08:33:47Z',raw:{queuedAfterTaskId:first.taskId} };
+  let entries=childConversationSummaries([queued,first]);
+  assert.equal(entries.length,1); assert.equal(entries[0].taskId,first.taskId); assert.equal(entries[0].requestPrompt,first.requestPrompt);
+  assert.equal(entries[0].createdAt,first.createdAt); assert.deepEqual(entries[0].raw,first.raw,'active work represents the child while a later turn waits');
+  entries=childConversationSummaries([{...first,status:'completed',terminal:true},queued]);
+  assert.equal(entries.length,1); assert.equal(entries[0].terminal,false); assert.equal(entries[0].raw.queuedAfterTaskId,first.taskId);
+  entries=childConversationSummaries([{...first,status:'completed',terminal:true,updatedAt:'2026-11-15T08:39:00Z'},
+    {...queued,status:'failed',terminal:true,errorMessage:'Latest turn failed',raw:{executionStartedAt:'2026-11-15T08:36:18Z'}}]);
+  assert.equal(entries[0].status,'failed'); assert.equal(entries[0].errorMessage,'Latest turn failed','task creation order, not a stale observation time, selects the final result');
+  assert.equal(childConversationSummaries([first,{...first,childSessionId:'other'},
+    {...first,remote:{connectionId:'other-host'}},{...first,parentSessionId:'other-parent'}]).length,4,'names or IDs in another host or parent never collapse distinct children');
+});
 
 test('timestamps separate conversations after five minutes and across local calendar days', () => {
   const at = (day,hour,minute,second=0) => new Date(2026,9,day,hour,minute,second).toISOString();

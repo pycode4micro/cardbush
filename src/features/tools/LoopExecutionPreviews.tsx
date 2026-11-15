@@ -121,13 +121,14 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
         ? { ...storedTask, agentName: activity.name } : storedTask;
       const member = members.find(item => item.taskId === taskId);
       const returnedStatus = member?.status ?? output.status;
-      const running = task ? task.status === 'running' : isToolRunningInContext(execution, active) || returnedStatus === 'running' || returnedStatus === 'message_queued';
+      const running = task ? task.status === 'running' : isToolRunningInContext(execution, active) || ['running', 'message_queued', 'queued'].includes(String(returnedStatus));
       const employee = task ? isEmployeeTask(task) : activity?.kind === 'employee';
       const failed = task ? task.status === 'failed' : execution.state === 'failed' || returnedStatus === 'failed';
       const stopped = task ? task.status === 'stopped' : execution.state === 'cancelled' || returnedStatus === 'stopped';
       if (employee) { runningEmployees += Number(running); failedEmployees += Number(failed); }
       else { runningAgents += Number(running); failedAgents += Number(failed); }
       const status = task ? subagentTaskPresentation(task, language).label :
+        returnedStatus === 'queued' ? uiText(language)('queue.parentWaitingTurn') :
         running ? (uiText(language)('common.running')) : failed ? (uiText(language)('loopExecutionPreviews.failed')) :
         stopped ? (uiText(language)('automationPanel.stopped')) : returnedStatus === 'completed' ? (uiText(language)('automationPanel.completed')) : (uiText(language)('loopExecutionPreviews.dispatched'));
       const title = task ? employeeTaskTitle(task, language) : typeof member?.agentName === 'string' ? member.agentName : activity?.name || activity?.id || (uiText(language)('employeePresentation.subagent'));

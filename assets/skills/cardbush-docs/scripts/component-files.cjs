@@ -1,6 +1,6 @@
 const {extname} = require('node:path');
 const {stripTypeScriptTypes} = require('node:module');
-const maxBytes = 256 * 1024;
+const {maxComponentBytes: maxBytes} = require('./component-limits.mjs');
 
 // Input is source text only. Never resolve renderer-provided paths or execute component code in Node.
 function assembleComponent(files) {

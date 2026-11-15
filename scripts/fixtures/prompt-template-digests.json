@@ -227,7 +227,7 @@
   {
     "name": "coordination-tool-boundaries",
     "slots": [],
-    "sha256": "3bd7ae93fc7b25d501c5d170515fae05ebd4e0d4032fa8ede2f79bb611c96432"
+    "sha256": "037938fc4f312244da892feac8a7cf126b8082d6a6e6a67d97236688055137d5"
   },
   {
     "name": "runtime-environment-observation",

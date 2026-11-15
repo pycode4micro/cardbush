@@ -11,7 +11,99 @@ import { ToolRegistry } from '../dist/toolRegistry.js';
 import { assistantProfileSchema, conversationalSubagentTools, PERSONAL_ASSISTANT_SESSION as id } from '@cardbush/bush-protocol';
 import { TaskResultDelivery, resultDelivery } from '../dist/taskResultDelivery.js';
 import { AssistantModelHistory } from '../dist/assistantModelHistory.js';
-import { InMemoryRuntimeHost, SubagentTaskStore, SessionStore } from '../dist/index.js';
+import { InMemoryRuntimeHost, SubagentTaskStore, SessionStore, FileSubagentTaskPersistence } from '../dist/index.js';
+
+for (const stage of ['pending', 'reserved', 'committed', 'reset']) test(`Assistant restores ${stage} result subscriptions from the existing task journal`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const root = temporary(t), taskRoot = join(root, 'tasks'), journalRoot = join(root, 'journal');
+  const profile = assistantProfileSchema.parse({});
+  const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: id, turnId: 'dispatch-turn', model: 'fixture',
+    prefixMessages: [], inputMessages: [{ messageId: 'initial', message: { role: 'user', content: 'Start work' } }], tools: [], metadata: {} };
+  let persistence = new FileSubagentTaskPersistence({ root: taskRoot }), tasks = new SubagentTaskStore({ persistence });
+  let requests = [];
+  const create = () => new AssistantConversation(new ConversationJournal(journalRoot), { exists: () => true, tasks: () => tasks.list(id),
+    resultDelivery: tasks.delivery, checkpoint: () => ({}), delegate: async () => {
+      const task = tasks.start({ parentSessionId: id, parentTurnId: 'dispatch-turn', taskId: 'child', childSessionId: 'child-session',
+        childTurnId: 'child-turn', prompt: 'Check', inheritContext: false, inheritedMessageCount: 0 });
+      return { taskId: task.taskId, status: task.status };
+    }, provider: { async *stream(request) {
+      requests.push(request);
+      if (request.messages.some(message => message.name === 'background_task_result')) yield* response(request, 'Verified result delivered.');
+      else if (requests.length === 1) yield* response(request, '', [{ id: 'dispatch', name: 'subagent', args: { prompt: 'Check' } }]);
+      else yield* response(request, 'Started.');
+    } } });
+  let assistant = create();
+  t.after(() => { assistant.close(); persistence.close(); });
+  assistant.command({ action: 'turn', sessionId: id, parent, profile,
+    entry: { id: 'initial', role: 'user', source: 'text', visibility: 'conversation', content: 'Start work', createdAt: new Date().toISOString() } });
+  await until(() => requests.length === 2 && !assistant.command({ action: 'read', sessionId: id }).busy);
+  assert.equal(tasks.get(id, 'child').resultWatched, true);
+  const finished = tasks.finish({ parentSessionId: id, taskId: 'child', status: 'completed', finalResponse: 'Verified result', errorMessage: '', usage: {} });
+  if (stage === 'reserved') assert.ok(tasks.delivery.reserve(id, finished));
+  if (stage === 'committed') { t.mock.timers.tick(1200); await until(() => requests.length === 3 && !assistant.command({ action: 'read', sessionId: id }).busy); }
+  if (stage === 'reset') assistant.forget(id);
+  assistant.close(); persistence.close();
+  persistence = new FileSubagentTaskPersistence({ root: taskRoot }); tasks = new SubagentTaskStore({ persistence }); requests = [];
+  assistant = create(); assistant.restore(parent, profile); assistant.restore(parent, profile);
+  if (['pending', 'reserved'].includes(stage)) await until(() => requests.length === 1 && !assistant.command({ action: 'read', sessionId: id }).busy);
+  t.mock.timers.tick(4800); await yieldTurn();
+  assert.equal(requests.length, ['pending', 'reserved'].includes(stage) ? 1 : 0);
+  if (requests.length) assert.equal(requests[0].messages.filter(message => message.name === 'background_task_result').length, 1);
+  const replies = new ConversationJournal(journalRoot).read(id).filter(entry => entry.content === 'Verified result delivered.');
+  assert.equal(replies.length, stage === 'reset' ? 0 : 1);
+});
+
+test('ordinary conversation restores a watched result once without redispatching its child', async t => {
+  const root = temporary(t), persistence = new FileSubagentTaskPersistence({ root: join(root, 'tasks') });
+  const tasks = new SubagentTaskStore({ persistence }), sessions = new SessionStore();
+  t.after(() => persistence.close());
+  sessions.ensureSession('parent');
+  const task = tasks.start({ parentSessionId: 'parent', parentTurnId: 'old', taskId: 'finished-child', childSessionId: 'child',
+    childTurnId: 'child-turn', prompt: 'Check', inheritContext: false, inheritedMessageCount: 0 });
+  tasks.delivery.watch('parent', task);
+  tasks.finish({ parentSessionId: 'parent', taskId: task.taskId, status: 'completed', finalResponse: 'Durable result', errorMessage: '', usage: {} });
+  const requests = [];
+  for (const turnId of ['next', 'after-restart']) {
+    const registry = new ToolRegistry();
+    const host = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: sessions, subagentTaskStore: new SubagentTaskStore({ persistence }),
+      toolRegistry: registry, provider: { async *stream(request) { requests.push(request); yield* response(request, 'Acknowledged.'); } } });
+    try {
+      const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: turnId, sessionId: 'parent', turnId, model: 'fixture',
+        prefixMessages: [], inputMessages: [{ messageId: turnId, message: { role: 'user', content: 'Continue' } }], tools: registry.definitions(), metadata: {} });
+      assert.equal(terminal.payload.status, 'completed');
+    } finally { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); }
+  }
+  assert.equal(requests.length, 2, 'one model request per user turn, with no separate duplicate notification round');
+  assert.equal(sessions.snapshot('parent').turns.flatMap(turn => turn.messages).filter(fact => fact.message.name === 'subagent_result').length, 1);
+  assert.match(JSON.stringify(requests[0].messages), /Durable result/);
+});
+
+test('resident startup restores Assistant notifications without a new user turn', async t => {
+  const root = temporary(t), sessions = new SessionStore(), tasks = new SubagentTaskStore();
+  sessions.ensureSession(id);
+  const profile = assistantProfileSchema.parse({});
+  const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'configuration', sessionId: id, turnId: 'configuration', model: 'fixture',
+    prefixMessages: [], inputMessages: [{ messageId: 'configuration', message: { role: 'user', content: 'Configuration only' } }], tools: [], metadata: {} };
+  let requests = 0;
+  const provider = { async *stream(request) { requests++; assert.match(JSON.stringify(request.messages), /Recovered completion/); yield* response(request, 'Recovered completion delivered.'); } };
+  let host = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: sessions, subagentTaskStore: tasks, provider });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  await host.sendCommand({ kind: 'runtime.friends', payload: { action: 'configure', parent, assistant: profile,
+    profile: { name: 'Assistant', language: 'en', timeZone: 'UTC', recognition: {}, confirmedAt: new Date().toISOString() } } });
+  const task = tasks.start({ parentSessionId: id, parentTurnId: 'old', taskId: 'watched', childSessionId: 'child', childTurnId: 'child-turn',
+    prompt: 'Check', inheritContext: false, inheritedMessageCount: 0 });
+  tasks.delivery.watch(id, task);
+  tasks.finish({ parentSessionId: id, taskId: task.taskId, status: 'completed', finalResponse: 'Recovered completion', errorMessage: '', usage: {} });
+  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+  host = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: sessions, subagentTaskStore: tasks, provider });
+  await host.restoreAssistantEvents(async saved => saved, new AbortController().signal);
+  await until(() => requests === 1);
+  const journal = new ConversationJournal(join(root, 'conversation-journal'));
+  await until(() => new ConversationJournal(join(root, 'conversation-journal')).read(id).some(entry => entry.role === 'assistant'));
+  assert.equal(journal.read(id).filter(entry => entry.role === 'assistant').length, 1);
+  await host.restoreAssistantEvents(async saved => saved, new AbortController().signal);
+  await yieldTurn(); assert.equal(requests, 1);
+});
 
 function temporary(t) {
   const root = mkdtempSync(join(tmpdir(), 'cardbush-confirm-issues-'));
@@ -158,14 +250,15 @@ for (const action of ['stop', 'inspect']) {
       assert.equal(requests.length, count);
       assert.equal(state().error, '');
       assert.equal(new Set(requests.map(request => request.requestId)).size, count);
-      assert.equal(new Set(executions).size, timing === 'concurrent-user' ? 3 : 2, 'consumed completion cannot create a phantom execution or habit observation');
+      assert.equal(new Set(executions).size, 2, 'guidance stays in the current execution and consumed completion cannot create a phantom execution');
       assert.equal(controls.length, action === 'stop' ? 1 : 0);
       assert.equal(state().entries.filter(entry => entry.source === 'task').length, 0);
       assert.deepEqual(state().entries.filter(entry => entry.role === 'assistant').map(entry => entry.content),
-        ['Task accepted.', 'Terminal result acknowledged.', ...(timing === 'concurrent-user' ? ['Fresh request handled.'] : [])]);
+        ['Task accepted.', timing === 'concurrent-user' ? 'Fresh request handled.' : 'Terminal result acknowledged.']);
       if (timing === 'concurrent-user') {
         assert.ok(requests[4].messages.some(message => message.role === 'user' && message.content === 'A new independent request.'));
-        assert.deepEqual(state().entries.at(-1).responseTo, ['fresh-input']);
+        assert.deepEqual(state().entries.at(-1).responseTo, ['control-input', 'fresh-input']);
+        assert.equal(requests[4].messages.filter(message => message.toolCallId === 'control').length, 1);
       }
       assert.equal(delivery.phase(id, child), 'delivered');
       assert.equal(delivery.watching(id), false);

@@ -5,7 +5,7 @@ import type { ToolDefinition } from './tool.js' with { 'resolution-mode': 'impor
 export const conversationalSubagentInput = z.object({
   prompt: z.string().trim().min(1).max(8000),
   task_id: z.string().trim().min(1).optional(),
-  delivery: z.enum(['queue', 'insert']).optional().describe('With task_id: queue starts a later turn in the same child. insert interrupts current reasoning and continues that turn after any in-flight tools finish.'),
+  delivery: z.enum(['insert', 'queue']).optional().describe('With task_id: default to immediate guidance for current-task corrections or extra facts (omit delivery or use insert). Already dispatched tools finish first. Use queue only for separate work that must wait until this turn ends; it does not update the active turn.'),
 }).strict().refine(input => !input.delivery || input.task_id !== undefined, { message: 'delivery requires task_id' });
 export const conversationalTaskInput = z.object({
   action: z.enum(['inspect', 'conversation']).default('inspect'),
@@ -17,7 +17,7 @@ export const conversationalTaskInput = z.object({
 });
 export const conversationalSubagentTools: ToolDefinition[] = [{
   name: 'subagent',
-  description: 'Dispatch a user-requested task, or continue an existing child with task_id. Omit task_id only for new work. With task_id, choose delivery to queue or immediately insert a message. An explicit insert requires the exact active task. When delivery is omitted, a running child receives guidance and a finished child resumes its original conversation and execution host. Returns immediately, without blocking conversation. Briefly state intent, then call without an extra confirmation step. Include relevant context and constraints in prompt. Configured execution permissions remain enforced. A running or message_queued receipt is not a completed result.',
+  description: 'Dispatch a user-requested task, or continue an existing child with task_id. Omit task_id only for new work. Assess each follow-up before forwarding it. Default to immediate guidance for updates to the active task; queue only separate work that must wait until it finishes. Explicitly tell the user which mode was accepted, and whether delivery is still waiting for a safe boundary. An explicit insert requires the exact active task. When delivery is omitted, a running child receives guidance and a finished child resumes its original conversation and execution host. Returns immediately, without blocking conversation. Briefly state intent, then call without an extra confirmation step. Include relevant context and constraints in prompt. Configured execution permissions remain enforced. A running or message_queued receipt is not a completed result.',
   inputSchema: z.toJSONSchema(conversationalSubagentInput),
 }, {
   name: 'tasks',

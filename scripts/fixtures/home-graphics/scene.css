@@ -1,0 +1,4 @@
+html { background: rgb(32, 92, 197); }
+main { display: grid; grid-template-columns: 1fr 1fr; }
+canvas { width: 100%; aspect-ratio: 1; }
+output { color: white; grid-column: 1 / -1; }

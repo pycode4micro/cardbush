@@ -44,6 +44,7 @@ type State = {
 export class TaskResultDelivery {
   private sessions = new Map<string, Map<string, State>>();
   private committed = new Map<string, string>();
+  constructor(private persistence?: { watch(sessionId: string, task: SubagentTask): void; forget(sessionId: string): void }) {}
   restore(sessionId: string, references: TaskResultReference[]) {
     for (const reference of references) {
       if (reference.sessionId !== sessionId) continue;
@@ -73,7 +74,13 @@ export class TaskResultDelivery {
   observe(sessionId: string, task: SubagentTask) { this.state(sessionId, task); }
   watch(sessionId: string, task: SubagentTask) {
     const state = this.state(sessionId, task);
-    if (state.phase !== 'delivered') state.watched = true;
+    if (state.phase !== 'delivered') {
+      this.persistence?.watch(sessionId, task);
+      state.watched = true;
+    }
+  }
+  restoreWatching(sessionId: string, tasks: SubagentTask[]) {
+    for (const task of tasks) if (task.resultWatched) this.watch(sessionId, task);
   }
   ready(sessionId: string): SubagentTask[] {
     return [...this.sessions.get(sessionId)?.values() ?? []]
@@ -101,6 +108,7 @@ export class TaskResultDelivery {
     return { task: structuredClone(state.task), reference: { sessionId, taskId, attempt: state.attempt }, active, commit: () => settle('delivered'), release: () => settle('ready') };
   }
   forget(sessionId: string) {
+    this.persistence?.forget(sessionId);
     this.sessions.delete(sessionId);
     for (const key of this.committed.keys()) if (JSON.parse(key)[0] === sessionId) this.committed.delete(key);
   }

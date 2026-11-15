@@ -90,6 +90,8 @@ test('Assistant projects the ordinary native definitions without changing memory
   assert.equal(tools.find(tool => tool.name === 'subagent').inputSchema.properties.agent, undefined);
   assert.equal(tools.find(tool => tool.name === 'subagent').inputSchema.properties.mode, undefined, 'clean is recalled with its required configuration');
   assert.equal(tools.find(tool => tool.name === 'subagent').inputSchema.properties.system_prompt, undefined);
+  assert.match(tools.find(tool => tool.name === 'subagent').description, /default to immediate guidance/);
+  assert.match(seen[0].messages.find(message => message.role === 'system').content, /explicitly tell the user which mode you chose/);
   assert.equal(tools.find(tool => tool.name === 'team').inputSchema.properties.definition, undefined);
   assert.deepEqual(tools.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
   for (const name of ['get_tool_schema', 'call_tool']) assert.ok(tools.some(tool => tool.name === name));

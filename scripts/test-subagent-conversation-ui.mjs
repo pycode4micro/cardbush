@@ -9,14 +9,15 @@ await mkdir(directory, { recursive: true });
 const local = path => resolve(path).replaceAll('\\', '/');
 const source = `
 import React from 'react'; import { createRoot } from 'react-dom/client';
-import { SubagentConversationView, childConversationMessages } from '${local('src/features/subagents/SubagentConversation.tsx')}';
+import { SubagentConversationView, childConversationMessages, childConversationQueue } from '${local('src/features/subagents/SubagentConversation.tsx')}';
 import { guidanceQueuedUpdate, guidanceAppliedUpdate } from '${local('src/backend/runtimeTranscriptEvents.ts')}';
 import {setConversationSource} from '${local('src/features/settings/conversationSource.ts')}'; window.setSource=setConversationSource;
 import '${local('src/styles/theme.css')}'; import '${local('src/styles/app.css')}';
 window.addEventListener('error',event=>console.error(event.error?.stack)); window.calls=[]; window.reads=[]; window.streams=new Map();
 window.projectChild=childConversationMessages;
+window.projectChildQueue=childConversationQueue;
 const now=()=>new Date().toISOString(), root=createRoot(document.getElementById('root'));
-const tasks={}, histories={}, selectedTasks={}; let render;
+const tasks={}, histories={}, selectedTasks={}, parentQueues={}; let render;
 localStorage.setItem('cardbush.conversation_model:'+JSON.stringify(['subagent:a','a']),'deepseek');
 const executionFor=id=>({model:id==='a'?'gpt-6-astra':'deepseek-flash',modelConfigId:id==='a'?'gpt':'deepseek',turnId:taskFor(id).childTurnId});
 const taskFor=id=>tasks[id]??(tasks[id]={protocol:'bush.subagent_task.v1',taskId:'task-'+id,parentSessionId:'parent',parentTurnId:'parent-turn',childSessionId:id,childTurnId:'initial-'+id,requestPrompt:'主 Agent 派发：检查布局 '+id,status:'running',terminal:false,createdAt:now(),updatedAt:now(),usage:{},raw:{}});
@@ -60,7 +61,13 @@ const call=async()=>models;
 let current='a',language='zh',theme='dark',refreshing=false;
 window.setRefreshing=value=>{refreshing=value;render();};
 window.setEmployee=enabled=>{tasks[current]={...taskFor(current),agentProfileId:enabled?'registered:fixture':undefined};render();};
-const readTasks=async()=>Object.values(tasks);
+const readTasks=async()=>[...Object.values(tasks),...Object.values(parentQueues)];
+window.queueParentFollowup=id=>{const previous=taskFor(id);parentQueues[id]={...previous,taskId:'parent-queued-'+id,childTurnId:'parent-followup-queued-'+id,
+  requestPrompt:'父代理排队追加：等当前检查完成后再生成报告。',createdAt:now(),updatedAt:now(),raw:{queuedAfterTaskId:previous.taskId,resumedFromTaskId:previous.taskId}};
+  window.dispatchEvent(new CustomEvent('cardbush:subagent-dispatch',{detail:{parentSessionId:'parent',childSessionId:id,taskId:parentQueues[id].taskId}}));};
+window.startParentFollowup=id=>{window.finish(id);selectedTasks[id]??=taskFor(id);const next=parentQueues[id];delete parentQueues[id];
+  tasks[id]={...next,updatedAt:now(),raw:{...next.raw,executionStartedAt:now()}};render();
+  window.dispatchEvent(new CustomEvent('cardbush:subagent-dispatch',{detail:{parentSessionId:'parent',childSessionId:id,taskId:next.taskId}}));};
 window.parentFollowup=(id,notify)=>{const previous=taskFor(id);selectedTasks[id]??=previous;tasks[id]={...previous,taskId:'resumed-'+crypto.randomUUID(),childTurnId:'parent-followup-'+crypto.randomUUID(),requestPrompt:'父代理追加：请在报告后补充操作建议。',status:'running',terminal:false,createdAt:now(),updatedAt:now(),raw:{resumedFromTaskId:previous.taskId}};render();if(notify)window.dispatchEvent(new CustomEvent('cardbush:subagent-dispatch',{detail:{parentSessionId:'parent',childSessionId:id,taskId:tasks[id].taskId}}));};
 const parentGuidance=new Map();
 window.appendParentGuidance=(id,applied=false)=>{

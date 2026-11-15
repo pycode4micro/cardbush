@@ -76,7 +76,7 @@ export class RealtimeAgentDispatcher {
     if (outcome.hookFeedback !== undefined) return outcome.hookFeedback;
     if (native) return outcome.result;
     if (outcome.result && typeof outcome.result === 'object' && 'status' in outcome.result &&
-      ['completed', 'failed', 'stopped', 'unavailable'].includes(String(outcome.result.status))) return outcome.result;
+      ['completed', 'failed', 'stopped', 'unavailable', 'queued'].includes(String(outcome.result.status))) return outcome.result;
     const result = { ...(outcome.result as Record<string, unknown>), instructions: 'Request accepted; execution continues in the background. Continue the call. tasks action=inspect registers a non-blocking result notification.' };
     transferResultDelivery(outcome.result, result);
     return result;

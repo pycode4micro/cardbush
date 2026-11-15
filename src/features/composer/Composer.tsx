@@ -143,6 +143,8 @@ type ComposerFileAttachment = {
 };
 
 type ComposerQueuedMessage = {
+  readOnly?: boolean;
+  waitFor?: 'turn' | 'step';
   id: string;
   text: string;
   createdAt: string;
@@ -1276,8 +1278,9 @@ export function Composer({
   const effectiveReasoningLevel = reasoningLevel === 'default' ? 'default' : protocolReasoningEffort(selectedModelConfig?.apiProtocol, reasoningLevel);
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);
-  const firstQueuedMessage = queuedMessages[0] ?? null;
+  const firstQueuedMessage = queuedMessages.find(item => !item.readOnly) ?? null;
   const guideQueuedMessage = async (id: string) => {
+    if (queuedMessages.find(item => item.id === id)?.readOnly) return;
     if (!runtimeReady || stopping || immediatePendingRef.current || !onGuideQueuedMessage || (sending && !cancelEnabled)) return;
     immediatePendingRef.current = true;
     setGuidingQueuedId(id);

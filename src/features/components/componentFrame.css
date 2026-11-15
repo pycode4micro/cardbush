@@ -1,5 +1,5 @@
-html{color:var(--cb-text);background:var(--cb-background);font:var(--cb-font-size,14px)/1.6 var(--cb-font,system-ui);color-scheme:var(--cb-color-scheme)}
-body{margin:16px;overflow-wrap:anywhere}
+html{min-height:100%;color:var(--cb-text);background:transparent;font:var(--cb-font-size,14px)/1.6 var(--cb-font,system-ui);color-scheme:var(--cb-color-scheme)}
+body{margin:0;min-height:100vh;overflow-wrap:anywhere}
 *{box-sizing:border-box}
 input,textarea,select,button{font:inherit;color:inherit}
 input,textarea,select{background:var(--cb-surface);border:1px solid var(--cb-border)}

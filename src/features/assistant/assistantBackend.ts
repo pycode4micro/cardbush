@@ -67,7 +67,7 @@ export const assistantBackend = {
     })().finally(() => { resetting = undefined; });
   },
   async send(text: UserPromptInput, config: ChatStreamRequest, spoken: boolean, expectedVersion = contextVersion,
-    identity?: Pick<ConversationEntry, 'id' | 'createdAt' | 'replyTo'>, onDispatch?: () => void) {
+    identity?: Pick<ConversationEntry, 'id' | 'createdAt' | 'replyTo' | 'delivery'>, onDispatch?: () => void) {
     if (resetting) throw Error(uiText()('assistantBackend.context_is_being_reset_send_the_message'));
     if (expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
     let stageStart = performance.now();
@@ -103,7 +103,7 @@ export const assistantBackend = {
         source: spoken ? 'voice' : 'text', visibility: 'conversation', ...(spoken ? { voiceMode: 'chained' as const } : {}), createdAt: identity?.createdAt ?? new Date().toISOString() };
       if (resetting || expectedVersion !== contextVersion) throw Error(uiText()('assistantBackend.context_was_reset_send_the_message_again'));
       onDispatch?.();
-      await conversationJournalCommand({ action: 'turn', sessionId, entry, parent, profile, generation });
+      await conversationJournalCommand({ action: 'turn', sessionId, entry, parent, profile, generation, delivery: identity?.delivery ?? 'insert' });
       stageFinished('admission');
     } finally { runtime.dispose(); }
   },

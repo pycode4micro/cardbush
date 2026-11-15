@@ -3,7 +3,7 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import { HtmlComponentContext } from './HtmlComponentContext';
 import { componentDocument } from './componentDocument';
 import { approvedEmbedOrigins, componentProtocol, validateComponentText, type HtmlComponent } from './componentModel';
-import { approvedWebsiteUrl } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
+import { approvedWebsiteUrl, componentOrigins } from '../../../assets/skills/cardbush-docs/scripts/component-origins.mjs';
 import { ComponentBrowserViews } from './ComponentBrowserViews';
 import { componentBrowsers, type ComponentBrowser } from './componentBrowsers';
 import { HomeWebsiteView } from './HomeWebsiteView';
@@ -18,7 +18,8 @@ type SurfaceProps = { component: HtmlComponent; active?: boolean; eventPage?: Ev
 export function HtmlComponentSurface(props: SurfaceProps) {
   const {id, html, homeWebsiteUrl} = props.component;
   const grants = approvedEmbedOrigins(props.component).join(' ');
-  const displayKey = useMemo(() => componentId(), [id, html, grants, homeWebsiteUrl]);
+  const resources = componentOrigins(props.component.resourceDomains).join(' ');
+  const displayKey = useMemo(() => componentId(), [id, html, grants, resources, homeWebsiteUrl]);
   // A hidden iframe still runs its own JavaScript independently of React.
   return useContext(FeaturePageVisible) ? <ComponentDisplay key={displayKey} {...props}/> : null;
 }
@@ -39,10 +40,11 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
   const liveHome = onHome && active && !eventPage;
   const sites = liveHome ? approvedOrigins(component).join(' ') : '';
   const embeds = liveHome ? approvedEmbedOrigins(component).join(' ') : '';
-  const token = useMemo(() => componentId(), [component.id, component.html, sites, embeds]);
+  const resources = componentOrigins(component.resourceDomains).join(' ');
+  const token = useMemo(() => componentId(), [component.id, component.html, sites, embeds, resources]);
   const homeLinks = liveHome && Boolean(host);
   const linkKey = useMemo(() => homeLinks ? componentId() : undefined, [token, homeLinks]);
-  const document = useMemo(() => componentDocument(component.html, token, Boolean(sites), linkKey, embeds.split(' ')), [component.html, token, sites, linkKey, embeds]);
+  const document = useMemo(() => componentDocument(component.html, token, Boolean(sites), linkKey, embeds.split(' '), resources.split(' ')), [component.html, token, sites, linkKey, embeds, resources]);
   const [reported, setReported] = useState<{token:string;items:ComponentBrowser[]}>();
   const browserItems = browsers && reported?.token === token ? reported.items : [];
   const reply = (message: unknown) => frame.current?.contentWindow?.postMessage({ protocol: componentProtocol, token, ...message as object }, '*');

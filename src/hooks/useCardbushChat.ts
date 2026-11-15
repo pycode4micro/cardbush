@@ -176,6 +176,9 @@ export {
 } from '../features/chatMessages/transcript/messageProjection';
 
 export type QueuedChatMessage = {
+  /** Observed host work is displayed in the rail but is not a locally editable queue item. */
+  readOnly?: boolean;
+  waitFor?: 'turn' | 'step';
   promptContext?: PromptContext[];
   sourceEnabled?: boolean;
   id: string;

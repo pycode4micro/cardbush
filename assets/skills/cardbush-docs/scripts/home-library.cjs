@@ -4,7 +4,7 @@ const { join } = require('node:path');
 const { createHash } = require('node:crypto');
 const { componentOrigins, componentOrigin, approvedWebsiteUrl } = require('./component-origins.mjs');
 
-const limit = 256 * 1024;
+const {maxComponentBytes: limit} = require('./component-limits.mjs');
 function requestedOrigins(value) {
   if (!Array.isArray(value) || value.length > 8 || value.some(origin => !componentOrigin(origin))) throw Error('INVALID_COMPONENT_ORIGIN');
   return componentOrigins(value);
@@ -20,6 +20,7 @@ function validate(items, capacity) {
       !Number.isInteger(item.height) || item.height < 120 || item.height > 1200 || !Number.isFinite(item.order) ||
       typeof item.allowActions !== 'boolean' || (item.home !== undefined && typeof item.home !== 'boolean')) throw Error('INVALID_COMPONENT');
     seen.add(item.id);
+    requestedOrigins(item.resourceDomains ?? []);
     if (item.homeWebsiteUrl != null && !approvedWebsiteUrl(item.homeWebsiteUrl, componentOrigins(item.embedDomains))) throw Error('INVALID_COMPONENT_WEBSITE');
   }
 }
@@ -63,13 +64,15 @@ function openLibrary(profile) {
       const sameCode = previous && previous.html === source.html;
       const networkDomains = requestedOrigins(source.networkDomains ?? previous?.networkDomains ?? []);
       const embedDomains = requestedOrigins(source.embedDomains ?? previous?.embedDomains ?? []);
+      const resourceDomains = requestedOrigins(source.resourceDomains ?? previous?.resourceDomains ?? []);
+      const sameExecution = sameCode && resourceDomains.join(' ') === componentOrigins(previous.resourceDomains).join(' ');
       const approvedEmbedOrigins = embedDomains;
       const component = {id:source.id, html:source.html, title:source.title ?? previous?.title, width:source.width ?? previous?.width ?? 6,
         height:source.height ?? previous?.height ?? 280, order: previous?.order ?? Math.max(-1,...state.items.map(item => item.order)) + 1,
-        home: home ?? previous?.home ?? false, allowActions: Boolean(sameCode && previous.allowActions),
-        embedDomains, approvedEmbedOrigins,
+        home: home ?? previous?.home ?? false, allowActions: Boolean(sameExecution && previous.allowActions),
+        embedDomains, approvedEmbedOrigins, resourceDomains,
         homeWebsiteUrl: sameCode ? previous.homeWebsiteUrl === null ? null : approvedWebsiteUrl(previous.homeWebsiteUrl, embedDomains) : undefined,
-        networkDomains, approvedNetworkOrigins: sameCode ? componentOrigins(previous.approvedNetworkOrigins).filter(origin => networkDomains.includes(origin)) : []};
+        networkDomains, approvedNetworkOrigins: sameExecution ? componentOrigins(previous.approvedNetworkOrigins).filter(origin => networkDomains.includes(origin)) : []};
       return previous ? state.items.map(item => item.id === source.id ? component : item) : [...state.items, component];
     }),
   };
@@ -78,7 +81,7 @@ function componentInfo(item) {
   const {id,title,home,width,height,order,allowActions,html} = item;
   const networkDomains = componentOrigins(item.networkDomains);
   const embedDomains = componentOrigins(item.embedDomains);
-  return {id,title,home,width,height,order,allowActions,networkDomains,embedDomains,
+  return {id,title,home,width,height,order,allowActions,networkDomains,embedDomains,resourceDomains:componentOrigins(item.resourceDomains),
     approvedEmbedOrigins: embedDomains,
     approvedNetworkOrigins: componentOrigins(item.approvedNetworkOrigins).filter(origin => networkDomains.includes(origin)),
     length: html.length, bytes: Buffer.byteLength(html), sha256:createHash('sha256').update(html).digest('hex')};

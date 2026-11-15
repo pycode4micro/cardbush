@@ -1,4 +1,4 @@
-import { subagentControlSchema, remoteObservationSchema, type SubagentControl,
+import { subagentControlSchema, remoteObservationSchema, subagentExecutionQueued, type SubagentControl,
   type SubagentTask, type SubagentInteractionCapabilities } from '@cardbush/bush-protocol';
 import { assertParentAgent } from './childAgentPolicy.js';
 import type { ToolHandlerContext } from './toolRegistry.js';
@@ -57,4 +57,4 @@ export function observationControl(task: SubagentTask, after?: number, waitMs = 
     operation: 'observe', after, waitMs };
 }
 
-export function queuedChild(task: SubagentTask): boolean { return Boolean(task.queuedAfterTaskId && !task.executionStartedAt && task.status === 'running'); }
+export const queuedChild = subagentExecutionQueued;

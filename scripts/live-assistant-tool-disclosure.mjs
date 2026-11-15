@@ -99,7 +99,8 @@ async function scenario(name, advanced, ordinaryChat = false) {
           if (event.kind === 'text_delta') entry.text += event.delta;
           if (event.kind === 'tool_call_delta') {
             const call = calls.get(event.index) ?? { id: '', name: '', arguments: '' };
-            call.id += event.toolCallId ?? ''; call.name += event.nameDelta ?? ''; call.arguments += event.argumentsDelta ?? '';
+            if (event.toolCallId) call.id = event.toolCallId;
+            call.name += event.nameDelta ?? ''; call.arguments += event.argumentsDelta ?? '';
             calls.set(event.index, call);
           }
           if (event.kind === 'response_failed') entry.failures.push({ code: event.code, message: event.message, retryable: event.retryable });

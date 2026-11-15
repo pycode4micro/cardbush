@@ -11,6 +11,55 @@ const start = (tasks, taskId = 'child-task', extra = {}) => tasks.start({ taskId
 const context = (sessionId = 'parent', metadata = {}) => ({ sessionId, turnId: 'parent-turn', turn: { request: { metadata } } });
 const control = (task, operation, rest = {}) => ({ profile: 'subagent-remote-proton', version: '0.1', contextId: task.childSessionId, taskId: task.taskId, operation, ...rest });
 
+test('remote queued admission stays queued until worker execution is observed', async () => {
+  const tasks = new SubagentTaskStore(), registry = new ToolRegistry(), completion = Promise.withResolvers();
+  const remote = { connectionId: 'remote', agentId: 'instance' };
+  start(tasks, 'active', { remote });
+  let submitted;
+  const dispatcher = registerSubagentTool(registry, tasks, async () => assert.fail('local execution'), { asyncDispatch: true, remoteAgents: {
+    list: async () => [{ id: 'remote', name: 'Remote', agentId: 'instance' }],
+    run: async (request, signal, accepted) => { submitted = request; accepted(); await completion.promise; return { status: 'completed', finalResponse: 'done', errorMessage: '', usage: {} }; },
+    control: async ({ control }) => ({ contextId: control.contextId, taskId: control.taskId, cursor: 1, state: 'queued',
+      progress: { phase: 'queued', text: '', completedActions: 0, failedActions: 0 }, interactions: [] }),
+  } });
+  try {
+    const result = await dispatcher.dispatch({ ...context(), toolCall: { id: 'queue-call' },
+      input: { taskId: 'active', mode: 'fork', prompt: 'Follow-up', delivery: 'queue' } });
+    assert.equal(submitted.queue, true); assert.equal(result.status, 'queued');
+    assert.equal(result.delivery, 'queue'); assert.equal(result.executionStarted, false);
+    let task = tasks.get('parent', result.taskId);
+    assert.equal(task.queuedAfterTaskId, 'active'); assert.ok(task.remoteAcceptedAt); assert.equal(task.executionStartedAt, undefined);
+    tasks.observe('parent', task.taskId, { ...task.observation, contextId: task.childSessionId, taskId: task.taskId, cursor: 2, state: 'working',
+      progress: { phase: 'working', text: '', completedActions: 0, failedActions: 0 }, interactions: [] });
+    task = tasks.get('parent', result.taskId);
+    assert.ok(task.executionStartedAt, 'execution requires a worker observation, not admission');
+    const startedAt = task.executionStartedAt;
+    tasks.observe('parent', task.taskId, task.observation, 'connection interrupted');
+    assert.equal(tasks.get('parent', task.taskId).executionStartedAt, startedAt);
+  } finally { completion.resolve(); }
+});
+
+test('restored remote result subscriptions observe the original task without submitting it again', async () => {
+  const events = [], persistence = { load: () => events, append: event => events.push(event) };
+  let tasks = new SubagentTaskStore({ persistence });
+  const task = start(tasks, 'remote-task', { remote: { connectionId: 'remote', agentId: 'instance' } });
+  tasks.delivery.watch('parent', task); tasks = new SubagentTaskStore({ persistence });
+  let submits = 0, reads = 0;
+  const dispatcher = registerSubagentTool(new ToolRegistry(), tasks, async () => assert.fail('local dispatch'), { remoteAgents: {
+    list: async () => [], run: async () => { submits++; throw Error('must not resubmit'); },
+    control: async ({ control }) => ({ contextId: control.contextId, taskId: control.taskId, cursor: 9, state: 'completed',
+      progress: { phase: 'completed', text: '', completedActions: 1, failedActions: 0 }, interactions: [] }),
+    read: async () => { reads++; return { sessionId: 'child', turns: [{ turnId: 'remote-task', reason: 'completed', usage: {},
+      messages: [{ messageId: 'final', message: { role: 'assistant', toolCalls: [], content: 'Original remote result' } }] }] }; },
+  } });
+  await dispatcher.refreshResults('parent');
+  tasks.delivery.restoreWatching('parent', tasks.list('parent'));
+  assert.equal(tasks.delivery.ready('parent').length, 1);
+  assert.equal(tasks.get('parent', task.taskId).finalResponse, 'Original remote result');
+  await dispatcher.refreshResults('parent');
+  assert.equal(reads, 1); assert.equal(submits, 0); assert.equal(tasks.list('parent').length, 1);
+});
+
 test('shared admission rejects foreign owners, child callers, unsupported operations and duplicate mutations', async () => {
   const tasks = new SubagentTaskStore(), task = start(tasks); let calls = 0, queues = 0;
   const adapter = { capabilities: { operations: ['insert', 'queue', 'cancel'] }, control: async () => { calls++; return { accepted: true }; } };

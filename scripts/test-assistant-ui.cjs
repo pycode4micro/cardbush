@@ -32,7 +32,7 @@ async function buildFixture(directory) {
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
-          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,toolName:fixture.toolName,expression:fixture.expression,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
+          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),pendingInputs:structuredClone(fixture.pendingInputs??[]),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,toolName:fixture.toolName,expression:fixture.expression,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
           react:async(messageId,reaction)=>{if(fixture.failReact)throw Error('fixture reaction failed');fixture.reactions??={};if(reaction)fixture.reactions[messageId]=reaction;else delete fixture.reactions[messageId];return {reactions:structuredClone(fixture.reactions)};},
           answerPermission:async(answer)=>{if(fixture.failPermission)throw Error('Approval connection failed');(fixture.permissionAnswers??=[]).push(answer);fixture.management.permissions=fixture.management.permissions.filter(item=>item.permissionId!==answer.permissionId);},
           stop:async()=>{fixture.stops=(fixture.stops??0)+1;fixture.busy=false;fixture.retry=null;fixture.runtimeError='已停止回复，可以稍后重试。';},
@@ -47,6 +47,7 @@ async function buildFixture(directory) {
             if(identity&&fixture.entries.some(entry=>entry.id===identity.id))return;
             fixture.sent.push({text,spoken});const input=splitStreamAttachmentMentions(text);
             fixture.entries.push({id:identity?.id??'user-'+fixture.sent.length,role:'user',content:input.userInput,replyTo:identity?.replyTo,attachments:await chatAttachmentsFromOutbound(input),createdAt:identity?.createdAt??new Date().toISOString(),source:'text',visibility:'conversation'});
+            if(identity?.delivery)(fixture.pendingInputs??=[]).push({id:identity.id,text:input.userInput,createdAt:identity.createdAt,delivery:identity.delivery});
             if(fixture.failReadAfterAccept)fixture.failRead=true;
             if(fixture.loseReceipt)throw Error('fixture acknowledgement lost');
             if(fixture.holdReceipt)await new Promise(resolve=>fixture.releaseReceipt=resolve);
@@ -338,7 +339,16 @@ app.whenReady().then(async () => {
       await click('.scroll-bottom');await pause(150);
       fs.writeFileSync(path.join(directory,'assistant-task-'+theme+'.png'),(await win.webContents.capturePage()).toPNG());
     }
-    await read(`fixture.tasks=[{...fixture.tasks[0],status:'completed',terminal:true}];window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await read(`fixture.taskBubble=document.querySelector('.assistant-task-bubble');const first=fixture.tasks[0];fixture.tasks.push({...first,taskId:'task-queued',childTurnId:'child-next-turn',requestPrompt:'用户补充：两台都是 Ubuntu',createdAt:new Date(Date.parse(first.createdAt)+1).toISOString(),raw:{queuedAfterTaskId:first.taskId}});window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await pause(100);
+    assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),1,'queued continuations share the original child conversation entry');
+    assert.equal(await read('document.querySelector(".assistant-task-bubble")===fixture.taskBubble'),true,'the entry does not move or remount on a follow-up');
+    assert.match(await read('document.querySelector(".assistant-task-bubble").textContent'),/整理桌面应用清单/,'retain the original assignment title');
+    await read(`fixture.tasks[0]={...fixture.tasks[0],status:'completed',terminal:true};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await until('document.querySelector(".assistant-task-bubble").textContent.includes("本轮结束后执行")');
+    await read(`fixture.tasks[1]={...fixture.tasks[1],raw:{...fixture.tasks[1].raw,executionStartedAt:new Date().toISOString()}};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await until('!document.querySelector(".assistant-task-bubble").textContent.includes("本轮结束后执行")');
+    await read(`fixture.tasks=fixture.tasks.map(task=>({...task,status:'completed',terminal:true}));window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=completed]")');
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble .subagent-activity-spinner").length'), 0, 'completed tasks stop rotating');
     await menu();await choose('重置上下文');await until('document.querySelector(".confirm-action-dialog[open]")');
@@ -348,6 +358,15 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),0,'reset does not resurrect earlier tasks');
     await require('./helpers/assistant-reference-bubbles.cjs')({read,until,fill,click,pause,win,directory});
     assert.deepEqual(errors, []);
+    await read('fixture.busy=true;fixture.runtimeError="";void 0');
+    await until('document.querySelector(".assistant-typing-bubble")');
+    await fill('.assistant-composer-dock textarea','补充信息立即进入当前任务');
+    await click('.assistant-composer-dock .send-button');
+    await until('document.querySelector(".assistant-composer-dock .runtime-queue-item")?.textContent.includes("补充信息立即进入当前任务")');
+    assert.equal(await read('fixture.sendCalls.at(-1).identity.delivery'),'insert','Assistant defaults to immediate guidance');
+    assert.equal(await read('document.querySelectorAll(".assistant-messages [data-message-id="+fixture.sendCalls.at(-1).identity.id+"]").length'),0,'unconsumed guidance stays above the composer');
+    await read('fixture.pendingInputs=[];fixture.busy=false;void 0');
+    await until('!document.querySelector(".assistant-composer-dock .runtime-queue-item") && document.querySelectorAll(".assistant-messages [data-message-id="+fixture.sendCalls.at(-1).identity.id+"]").length===1');
     console.log('Assistant UI passed: shared header/docking, inspector/summary, browser references, portal draft, responsive input alignment, scroll follow, simple Composer, file picker/send/retry, dictation draft, Markdown, private speech, model settings, history, bubble/reduced-motion animations and responsive themes. Screenshots: ' + directory);
   } finally { win.destroy(); clearTimeout(deadline); }
   app.quit();

@@ -172,10 +172,12 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       const origin = 'https://scores.example.org';
       const start = await invoke('read_home_component');
       const first = await invoke('edit_home_component', {mode:'create',id:'scores',title:'Scores',html:'one one two',home:true,width:12,height:680,
-        networkDomains:[origin],embedDomains:['https://player.example.org'],expectedRevision:start.revision});
+        networkDomains:[origin],embedDomains:['https://player.example.org'],resourceDomains:['https://graphics.example.org'],expectedRevision:start.revision});
       assert.deepEqual(first.approvedNetworkOrigins,[]);
       assert.deepEqual(first.embedDomains,['https://player.example.org']); assert.deepEqual(first.approvedEmbedOrigins,first.embedDomains);
-      const other = await invoke('edit_home_component',{mode:'create',id:'other',title:'Other',html:'isolated',expectedRevision:first.revision});
+      assert.deepEqual(first.resourceDomains,['https://graphics.example.org']);
+      const other = await invoke('edit_home_component',{mode:'create',id:'other',title:'Other',html:'isolated'+' '.repeat(300000),expectedRevision:first.revision});
+      assert.ok(other.bytes>256*1024,'the actual tool accepts frontend bundles larger than the former limit');
       const read = await invoke('read_home_component',{id:'scores',find:'two',limit:2});
       assert.equal(read.source,'tw'); assert.equal(read.nextOffset,10);
       const patch = {mode:'update',id:'scores',expectedRevision:other.revision};
@@ -185,6 +187,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       assert.equal(home.snapshot().items[0].html,'one one two');
       await denied({...patch,networkDomains:['https://127.0.0.1']},/INVALID_COMPONENT_ORIGIN/);
       await denied({...patch,embedDomains:['https://*.example.org']},/INVALID_COMPONENT_ORIGIN/);
+      await denied({...patch,resourceDomains:['https://*.example.org']},/INVALID_COMPONENT_ORIGIN/);
       const before=home.snapshot();
       const approved=home.save([{...before.items[0],approvedNetworkOrigins:[origin],approvedEmbedOrigins:first.embedDomains,allowActions:true},before.items[1]],before.revision);
       await denied({...patch,title:'stale'},/REVISION_CONFLICT/);
@@ -194,6 +197,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       const changed=await invoke('edit_home_component',{...patch,replacements:[{before:'two',after:'three'}],expectedRevision:renamed.revision});
       assert.deepEqual(changed.approvedNetworkOrigins,[]); assert.equal(changed.allowActions,false);
       assert.deepEqual(changed.approvedEmbedOrigins,first.embedDomains);
+      assert.deepEqual(changed.resourceDomains,first.resourceDomains,'code edits retain declared frontend assets');
       assert.deepEqual([changed.home,changed.width,changed.height,changed.title],[true,12,680,'Live scores']);
       const final=home.snapshot(); assert.equal(final.items[0].html,'one one three'); assert.deepEqual(final.items[1],before.items[1]);
     });

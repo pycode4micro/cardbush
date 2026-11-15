@@ -100,6 +100,47 @@ const parent = (registry, voice = false) => ({ protocol: 'bush.session_turn_requ
   inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Check the files' } }], tools: registry?.definitions() ?? [],
   metadata: { assistantOutputMode: voice ? 'voice' : 'text' }, permissionMode: 'task_free' });
 
+test('desktop corrections interrupt current reasoning and consume full input once before dispatch', async t => {
+  const journal = new ConversationJournal(temporary()), held = gate(), requests = []; let actions = 0, firstSignal;
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
+    delegate: async () => { actions++; return { status: 'completed' }; }, provider: { async *stream(request, signal) {
+      requests.push(request);
+      if (requests.length === 1) { firstSignal = signal.signal; await held.promise; yield* response(request, { calls: [{ id: 'old', name: 'subagent', args: { prompt: 'Old action' } }] }); }
+      else yield* response(request, { text: 'Canceled before dispatch.' });
+    } } });
+  t.after(() => { held.resolve(); assistant.close(); });
+  const send = (input, delivery) => assistant.command({ action: 'turn', sessionId: id, entry: input, parent: parent(), profile: assistantProfileSchema.parse({}), ...(delivery ? { delivery } : {}) });
+  send(entry('original', 'Run the old action')); await until(() => requests.length === 1);
+  const correction = { ...entry('correction', 'Cancel the old action'), promptContext: [{ kind: 'preview-selection', content: 'Read only selection' }],
+    attachments: [{ id: 'file', name: 'evidence.txt', path: 'C:/fixture/evidence.txt', type: 'document' }] };
+  send(correction); send(correction);
+  await until(() => requests.length === 2 && !assistant.command({ action: 'read', sessionId: id }).busy);
+  held.resolve(); await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(firstSignal.aborted, true); assert.equal(actions, 0); assert.equal(requests.length, 2);
+  assert.equal(requests[1].messages.filter(message => message.role === 'user' && message.content.includes('Cancel the old action')).length, 1);
+  assert.match(JSON.stringify(requests[1].messages), /Read only selection/); assert.match(JSON.stringify(requests[1].messages), /evidence.txt/);
+  assert.equal(journal.read(id).filter(item => item.role === 'assistant').length, 1);
+  assert.deepEqual(journal.read(id).find(item => item.role === 'assistant').responseTo, ['original', 'correction']);
+});
+
+for (const delivery of ['insert', 'queue']) test(`desktop ${delivery} during a tool preserves execution and exposes pending delivery until consumed`, async t => {
+  const journal = new ConversationJournal(temporary()), tool = gate(), requests = []; let actions = 0;
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
+    delegate: async (_, signal) => { actions++; await tool.promise; assert.equal(signal.aborted, false); return { status: 'completed' }; },
+    provider: { async *stream(request) { requests.push(request); yield* response(request, requests.length === 1
+      ? { calls: [{ id: 'work', name: 'subagent', args: { prompt: 'Read' } }] } : { text: `reply ${requests.length}` }); } } });
+  t.after(() => { tool.resolve(); assistant.close(); });
+  const send = (key, mode) => assistant.command({ action: 'turn', sessionId: id, entry: entry(key, key), parent: parent(), profile: assistantProfileSchema.parse({}), delivery: mode });
+  send('first', 'insert'); await until(() => actions === 1); send('supplement', delivery);
+  const pending = assistant.command({ action: 'read', sessionId: id }).pendingInputs;
+  assert.deepEqual(pending.map(item => [item.id, item.delivery]), [['supplement', delivery]]);
+  tool.resolve(); await until(() => requests.length === (delivery === 'insert' ? 2 : 3) && !assistant.command({ action: 'read', sessionId: id }).busy);
+  assert.equal(actions, 1);
+  assert.equal(requests[1].messages.some(message => message.content === 'supplement'), delivery === 'insert');
+  assert.equal(journal.read(id).filter(item => item.role === 'assistant').length, delivery === 'insert' ? 1 : 2);
+  assert.deepEqual(assistant.command({ action: 'read', sessionId: id }).pendingInputs, []);
+});
+
 test('assistant journals keep authored text and selection identity while the model receives the full context', async () => {
   const directory = temporary(), journal = new ConversationJournal(directory), requests = [];
   const promptContext = [{ kind: 'preview-selection', requestId: 'selected-request', content: 'Selected file C:/work/slides.pptx, page 3, shape heading.' }];
@@ -372,7 +413,7 @@ test('text assistant dispatch reaches the actual child loop and reports completi
 for (const voice of [false, true]) test(`assistant ${voice ? 'conversational' : 'native'} tool queues a later turn and interrupts only child reasoning`, async () => {
   const sessions = new SessionStore(), registry = new ToolRegistry(), tasks = new SubagentTaskStore();
   sessions.ensureSession(id);
-  const oldStream = gate(), releaseTool = gate(), requests = [];
+  const oldStream = gate(), releaseTool = gate(), requests = [], parentRequests = [];
   let oldSignal, toolSignal, toolRuns = 0, nextCall;
   registry.register({
     definition: { name: 'check_inventory', description: 'Check inventory', inputSchema: { type: 'object', properties: {} } },
@@ -383,6 +424,7 @@ for (const voice of [false, true]) test(`assistant ${voice ? 'conversational' : 
   const host = new InMemoryRuntimeHost({ dataRoot: temporary(), sessionStore: sessions, toolRegistry: registry, subagentTaskStore: tasks,
     provider: { async *stream(request, { signal }) {
       if (request.metadata.agentRole !== 'child') {
+        parentRequests.push(request);
         const call = nextCall; nextCall = undefined;
         yield* response(request, call ? { calls: [call] } : { text: 'Acknowledged.' }); return;
       }
@@ -417,13 +459,19 @@ for (const voice of [false, true]) test(`assistant ${voice ? 'conversational' : 
     const queued = tasks.list(id).find(task => task.queuedAfterTaskId === child.taskId);
     assert.ok(queued); assert.equal(queued.childSessionId, child.childSessionId);
     assert.equal(oldSignal.aborted, false); assert.equal(requests.length, 1);
+    const receipt = parentRequests.flatMap(request => request.messages).filter(message => message.role === 'tool')
+      .map(message => { try { return JSON.parse(message.content); } catch { return {}; } }).find(result => result.taskId === queued.taskId);
+    assert.equal(receipt.status, 'queued'); assert.equal(receipt.executionStarted, false);
+    assert.equal(receipt.queuedAfterTaskId, child.taskId);
+    assert.doesNotMatch(receipt.instructions ?? '', /started|continues in the background/);
 
-    await ask('now', { task_id: child.taskId, delivery: 'insert', prompt: 'Only count available items.' });
+    await ask('now', { task_id: child.taskId, prompt: 'Only count available items.' });
     await until(() => toolRuns === 1);
     assert.equal(oldSignal.aborted, true);
     assert.equal(requests[1].turnId, child.childTurnId);
     assert.equal(requests[1].messages.at(-1).role, 'user');
     assert.equal(requests[1].messages.at(-1).content, 'Only count available items.');
+    assert.equal(tasks.list(id).length, 2, 'default guidance does not create another child task or turn');
 
     await ask('during-tool', { task_id: child.taskId, delivery: 'insert', prompt: 'Include the count in your reply.' });
     const pending = events().find(e => e.kind === 'guidance_queued' && e.payload.content === 'Include the count in your reply.');
@@ -497,7 +545,7 @@ for (const [foregroundRead, followUp] of [[false, false], [true, false], [true, 
     assert.equal(children[0].metadata.registeredAgentId, 'clerk');
     assert.doesNotMatch(JSON.stringify(children[0].messages), /Execution instructions only/);
     assert.deepEqual(receipts.filter(receipt => receipt.status === 'failed'), []);
-    if (followUp) await command({ action: 'turn', entry: entry('follow-up', '同时到达的补充要求'), parent: parent(registry), profile: assistantProfileSchema.parse({}) });
+    if (followUp) await command({ action: 'turn', entry: entry('follow-up', '同时到达的补充要求'), delivery: 'queue', parent: parent(registry), profile: assistantProfileSchema.parse({}) });
     childGate.resolve();
     await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '团队已确认库存。'));
     await until(async () => !(await command({ action: 'read' })).busy);

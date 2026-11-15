@@ -4,9 +4,11 @@ import type { HomeItem } from './homeComponentTools.mjs' with { 'resolution-mode
 
 let busy = false;
 export async function previewHomeComponent(item:HomeItem, signal:AbortSignal, devUrl?:string) {
+  const { componentOrigins } = await import('../assets/skills/cardbush-docs/scripts/component-origins.mjs');
   signal.throwIfAborted();
   if (busy) throw Error('COMPONENT_PREVIEW_BUSY');
   const ses = session.fromPartition('cardbush-home-preview');
+  const resourceDomains = componentOrigins(item.resourceDomains);
   const blockDownload = (event:Electron.Event) => event.preventDefault();
   ses.setPermissionRequestHandler((_web,_permission,callback) => callback(false));
   ses.setPermissionCheckHandler(() => false);
@@ -20,9 +22,11 @@ export async function previewHomeComponent(item:HomeItem, signal:AbortSignal, de
   contents.on('will-navigate', event => event.preventDefault());
   contents.on('will-frame-navigate', event => { if (!event.isMainFrame && event.url !== 'about:srcdoc') event.preventDefault(); });
   ses.webRequest.onBeforeRequest((request,callback) => {
-    // Only the trusted parent may load application assets. The sandboxed guest is offline.
+    // Render the same declared assets as Home, without exposing application
+    // files or granting live state, actions, website slots or the JSON bridge.
     const guest = request.resourceType === 'subFrame' || request.frame?.parent != null;
-    callback({cancel:guest && !/^(?:data:|blob:|about:srcdoc$)/.test(request.url)});
+    const resource = request.resourceType !== 'subFrame' && resourceDomains.includes(new URL(request.url).origin);
+    callback({cancel:guest && !resource && !/^(?:data:|blob:|about:srcdoc$)/.test(request.url)});
   });
   let timer:ReturnType<typeof setTimeout>|undefined, rejectRun:(cause:Error)=>void=()=>{};
   const abort = () => rejectRun(Error('COMPONENT_PREVIEW_CANCELLED'));
@@ -35,7 +39,7 @@ export async function previewHomeComponent(item:HomeItem, signal:AbortSignal, de
     const ready = new Promise<void>(resolve => {
       contents.ipc.handle('component-preview:read',event => {
         if (event.senderFrame !== contents.mainFrame) throw Error('INVALID_SENDER');
-        return {id:item.id,title:item.title,html:item.html,width:item.width,height:item.height,order:0,allowActions:false};
+        return {id:item.id,title:item.title,html:item.html,width:item.width,height:item.height,order:0,allowActions:false,resourceDomains};
       });
       contents.ipc.on('component-preview:ready',event => { if(event.senderFrame===contents.mainFrame) resolve(); });
     });

@@ -517,6 +517,8 @@
   border-style: dashed;
 }
 .runtime-queue-item.dragging > * { visibility: hidden; }
+.runtime-queue-wait-icon { width: var(--queue-prompt-font-size); height: var(--queue-prompt-font-size); color: var(--text-soft); justify-self: center; }
+.runtime-queue-status { max-width: min(45cqw, 30ch); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: calc(var(--queue-prompt-font-size) * var(--ui-font-scale, 1)); }
 .runtime-queue-drag-handle {
   display: grid;
   place-items: center;

@@ -4,6 +4,7 @@ import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSe
 import type { ChatMessage } from '../types';
 
 export interface ConversationJournalSnapshot extends Partial<AssistantActivitySnapshot> { entries: ConversationEntry[]; cursor: number; busy: boolean; error: string; canRetry?: boolean; workingTasks?: number; generation?: number;
+  pendingInputs?: Array<{ id: string; text: string; createdAt: string; delivery: 'insert' | 'queue' }>;
   reactions?: Record<string, import('@cardbush/bush-protocol').AssistantReaction>;
   eventNeedsResponse?: boolean;
   management?: AssistantManagementSnapshot;

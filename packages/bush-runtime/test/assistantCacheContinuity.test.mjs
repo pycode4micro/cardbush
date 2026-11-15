@@ -82,7 +82,7 @@ for (const protocol of ['chat', 'responses']) test(`${protocol}: assistant prese
   assert.deepEqual(new ConversationJournal(f.root).modelHistory(id).read().messages, []);
 });
 
-test('new input arriving during a tool keeps the old exchange intact and enters the next response once', async t => {
+test('new input arriving during a tool preserves the cache prefix and enters the current response once', async t => {
   const gate = Promise.withResolvers(), requests = [];
   const f = fixture(t, { async *stream(request) {
     requests.push(structuredClone(request));
@@ -90,13 +90,13 @@ test('new input arriving during a tool keeps the old exchange intact and enters 
   } }, async () => { await gate.promise; return { status: 'accepted' }; });
   t.after(gate.resolve);
   const app = f.create(); app.send('first'); await until(() => requests.length === 1);
-  app.send('queued'); gate.resolve(); await until(() => !app.read().busy);
-  assert.equal(app.read().error, ''); assert.equal(requests.length, 3);
-  assert.ok(!requests[1].messages.some(m => m.content === 'queued'));
-  assert.deepEqual(requests[2].messages.slice(0, requests[1].messages.length), requests[1].messages);
-  assert.equal(requests[2].messages.filter(m => m.content === 'queued').length, 1);
-  assert.equal(requests[2].messages.at(-1).content, 'queued');
-  validateConversation(requests[2].messages);
+  app.send('correction'); gate.resolve(); await until(() => !app.read().busy);
+  assert.equal(app.read().error, ''); assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1].messages.slice(0, requests[0].messages.length), requests[0].messages);
+  assert.equal(requests[1].messages.filter(m => m.content === 'correction').length, 1);
+  assert.equal(requests[1].messages.filter(m => m.toolCallId === 'dispatch').length, 1);
+  assert.equal(requests[1].messages.at(-1).content, 'correction');
+  validateConversation(requests[1].messages);
 });
 
 test('Assistant timestamps each input and task result once, preserving clocks across retries and restart', async t => {

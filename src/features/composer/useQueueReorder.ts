@@ -76,7 +76,7 @@ export function useQueueReorder(
     }
     // Layout offsets ignore our transforms, so animated neighbours cannot move
     // the hit-test boundaries back and forth while the pointer is stationary.
-    const rows = Array.from(list.querySelectorAll<HTMLElement>('[data-queue-item-id]'))
+    const rows = Array.from(list.querySelectorAll<HTMLElement>('[data-queue-item-id]:not([data-queue-readonly="true"])'))
       .map(element => ({ element, top: element.offsetTop, height: element.offsetHeight }));
     const sourceIndex = rows.findIndex(row => row.element === session.row);
     if (sourceIndex < 0) { finish(); return; }

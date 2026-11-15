@@ -51,16 +51,19 @@ app.whenReady().then(async () => {
     assert.match(await read('document.body.innerText'),/主 Agent 派发：检查布局 a/);
     assert.equal(await read(`document.querySelector('.subagent-message-author').textContent`),'主 Agent');
     await read(`window.appendParentGuidance('a')`);
-    await until(`document.querySelector('[data-message-id="parent-guidance-a"]')?.textContent.includes('增强双 11 活动感')`);
-    assert.equal(await read(`document.querySelector('[data-message-id="parent-guidance-a"] .subagent-message-author')?.textContent`),'主 Agent');
-    await until(`document.querySelector('.guidance-activity[data-guidance-state="queued"]')?.textContent.includes('等待当前步骤完成')`);
+    await until(`document.querySelector('[data-queue-item-id="parent-guidance-a"]')?.textContent.includes('增强双 11 活动感')`);
+    assert.equal(await read(`document.querySelector('[data-message-id="parent-guidance-a"]')`),null,'accepted parent guidance is not consumed transcript input yet');
+    assert.match(await read(`document.querySelector('[data-queue-item-id="parent-guidance-a"]').textContent`),/主 Agent 立即引导.*等待当前步骤完成/);
+    assert.equal(await read(`document.querySelector('[data-queue-item-id="parent-guidance-a"] .runtime-queue-actions')`),null,'observing host guidance never offers a second dispatch');
     assert.ok(await read(`!!document.querySelector('.subagent-conversation-heading .subagent-activity-spinner')`),'queued guidance does not finish the running child');
     await read(`window.appendParentGuidance('a')`);
     await wait(100);
-    assert.equal(await read(`document.querySelectorAll('[data-message-id="parent-guidance-a"]').length`),1,'queue receipt replay does not duplicate parent messages');
+    assert.equal(await read(`document.querySelectorAll('[data-queue-item-id="parent-guidance-a"]').length`),1,'queue receipt replay does not duplicate parent messages');
     await read(`window.appendParentGuidance('a',true);window.appendParentGuidance('a')`);
     await until(`!!document.querySelector('.guidance-activity[data-guidance-state="sent"]')`);
     assert.equal(await read(`document.querySelectorAll('[data-message-id="parent-guidance-a"]').length`),1,'consumption updates the existing row and ignores stale queue receipts');
+    assert.equal(await read(`document.querySelectorAll('[data-queue-item-id="parent-guidance-a"]').length`),0,'applied guidance leaves the waiting rail');
+    assert.equal(await read(`document.querySelector('[data-message-id="parent-guidance-a"] .subagent-message-author')?.textContent`),'主 Agent');
     assert.equal(await read(`document.querySelectorAll('.subagent-inspector-raw,.subagent-inspector-facts').length`),0);
     {
       const content='You are currently a child Agent.\n\n原始中文任务';
@@ -100,6 +103,31 @@ app.whenReady().then(async () => {
     await until(`!document.querySelector('.subagent-conversation-heading .subagent-activity-spinner')`);
     // Keep the inspector on the original card. The parent resumes that child;
     // the accepted assignment must appear before the model produces anything.
+    await read(`window.show('q')`); await until(`window.streams.has('q')`);
+    const sendsBeforeQueue=await read(`window.calls.filter(item=>item.kind==='send'||item.kind==='guide').length`);
+    await read(`window.queueParentFollowup('q')`);
+    await until(`document.querySelector('[data-queue-item-id="subagent-assignment:parent-queued-q"]')?.textContent.includes('等当前检查完成')`);
+    assert.equal(await read(`Array.from(document.querySelectorAll('.message-row.user')).some(node=>node.textContent.includes('父代理排队追加'))`),false,'a queued parent turn stays out of the transcript');
+    assert.equal(await read(`window.calls.some(item=>item.kind==='watch'&&item.turnId==='parent-followup-queued-q')`),false,'the child watcher never attaches to an unstarted turn');
+    assert.equal(await read(`window.calls.filter(item=>item.kind==='send'||item.kind==='guide').length`),sendsBeforeQueue,'the queue projection does not redispatch parent work');
+    await type('用户排队第一条'); await send(); await type('用户排队第二条'); await send();
+    await until(`document.querySelectorAll('.runtime-queue-item:not([data-queue-readonly])').length===2`);
+    await read(`document.querySelector('.runtime-queue-item:not([data-queue-readonly]) .runtime-queue-drag-handle').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))`);
+    await until(`document.querySelector('.runtime-queue-item:not([data-queue-readonly])').textContent.includes('用户排队第二条')`);
+    assert.equal(await read(`document.querySelector('.runtime-queue-item').dataset.queueReadonly`),'true','the host-owned row stays separate from editable queue reordering');
+    await read(`Array.from(document.querySelectorAll('.runtime-queue-item:not([data-queue-readonly]) .runtime-queue-actions > button:nth-of-type(2)')).forEach(button=>button.click())`);
+    await until(`document.querySelectorAll('.runtime-queue-item').length===1`);
+    assert.ok(await read(`(()=>{const queue=document.querySelector('.runtime-queue-item').getBoundingClientRect(),composer=document.querySelector('.composer-surface').getBoundingClientRect();return queue.bottom<=composer.top+1;})()`),'reuse the queue above the composer');
+    await read(`window.show('q','en','bright')`);
+    await until(`document.querySelector('.runtime-queue-status')?.textContent.includes('after this turn')`);
+    writeFileSync(resolve('tmp/subagent-parent-queued.png'),(await window.webContents.capturePage()).toPNG());
+    await read(`window.show('a');window.show('q')`);
+    await until(`!!document.querySelector('[data-queue-item-id="subagent-assignment:parent-queued-q"]')`);
+    await read(`window.startParentFollowup('q')`);
+    await until(`window.streams.get('q')?.request.turnId==='parent-followup-queued-q'`);
+    await until(`!document.querySelector('[data-queue-item-id="subagent-assignment:parent-queued-q"]') && Array.from(document.querySelectorAll('.message-row.user')).some(node=>node.textContent.includes('父代理排队追加'))`);
+    await read(`window.releaseParentOutput();window.finish('q');window.show('a')`);
+    await until(`!document.querySelector('.subagent-conversation-heading .subagent-activity-spinner')`);
     for(let count=1;count<=2;count++) {
       await read(`window.parentFollowup('a',${count===1})`);
       await until(`window.streams.get('a')?.request.turnId.startsWith('parent-followup-')`);
@@ -129,7 +157,7 @@ app.whenReady().then(async () => {
     await read(`window.show('a')`);await until(`document.querySelector('[data-composer-input]')?.value==='未发送草稿'`);
     await until(`document.querySelector('.model-select')?.textContent.includes('gpt-6-astra')`);
     await until(`document.body.innerText.includes('继续检查边距') && document.body.innerText.includes('请先检查宽度')`);
-    assert.ok(await read(`window.reads.every(id=>id==='a'||id==='b')`));
+    assert.ok(await read(`window.reads.every(id=>['a','b','q'].includes(id))`));
     await wait(300);writeFileSync(resolve('tmp/subagent-conversation-dark.png'),(await window.webContents.capturePage()).toPNG());
     await read(`window.show('a','en','bright')`);await until(`document.body.innerText.includes('Parent Agent')`);
     window.setSize(700,650);await read(`Object.assign(document.querySelector('aside').style,{width:'360px',flex:'0 0 360px'})`);await wait(300);

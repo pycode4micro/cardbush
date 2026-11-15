@@ -24,7 +24,10 @@ type ParentTasks = {
 };
 
 export class SubagentTaskStore {
-  readonly delivery = new TaskResultDelivery();
+  readonly delivery = new TaskResultDelivery({
+    watch: (sessionId, task) => this.#setResultWatch(sessionId, task.taskId, true),
+    forget: sessionId => { for (const task of this.list(sessionId)) if (task.resultWatched) this.#setResultWatch(sessionId, task.taskId, false); },
+  });
   readonly #persistence?: SubagentTaskPersistence;
   readonly #createEventId: () => string;
   readonly #now: () => string;
@@ -35,6 +38,13 @@ export class SubagentTaskStore {
 
   startedHere(parentSessionId: string, taskId: string): boolean {
     return this.#liveByParent.get(parentSessionId)?.has(taskId) ?? false;
+  }
+
+  #setResultWatch(sessionId: string, taskId: string, watched: boolean) {
+    const task = this.get(sessionId, taskId);
+    if (!task || Boolean(task.resultWatched) === watched) return;
+    this.#append(sessionId, subagentTaskSchema.parse({ ...task, resultWatched: watched,
+      updatedAt: this.#now(), revision: task.revision + 1 }));
   }
 
   waitForCompletion(parentSessionId: string, taskId: string, signal: AbortSignal): Promise<void> {
@@ -96,8 +106,8 @@ export class SubagentTaskStore {
     const now = this.#now();
     if (input.queuedAfterTaskId) {
       const predecessor = this.get(input.parentSessionId, input.queuedAfterTaskId);
-      if (!predecessor || predecessor.childSessionId !== input.childSessionId || predecessor.remote || input.remote)
-        throw new Error('A local queued turn must follow an owned task in the same child conversation.');
+      if (!predecessor || predecessor.childSessionId !== input.childSessionId || JSON.stringify(predecessor.remote) !== JSON.stringify(input.remote))
+        throw new Error('A queued turn must follow an owned task on the same host and child conversation.');
     }
     const task = subagentTaskSchema.parse({
       protocol: BUSH_SUBAGENT_TASK_PROTOCOL,
@@ -182,6 +192,8 @@ export class SubagentTaskStore {
     if (observation && before.observation && observation.cursor < before.observation.cursor) throw new Error('Child observation cursor moved backwards.');
     if (JSON.stringify(before.observation) === JSON.stringify(observation) && before.observationError === error) return;
     this.#append(parentSessionId, subagentTaskSchema.parse({ ...before, observation, observationError: error,
+      ...(before.remote && !before.executionStartedAt && observation && ['working', 'input_required'].includes(observation.state)
+        ? { executionStartedAt: this.#now() } : {}),
       updatedAt: this.#now(), revision: before.revision + 1 }));
   }
 
@@ -303,7 +315,12 @@ function validateTransition(parentSessionId: string, state: ParentTasks, event: 
         throw new Error(`Subagent immutable fact ${key} changed.`);
       }
     }
-    if (before.status !== "running") throw new Error("Subagent terminal task was updated.");
+    if (before.status !== "running") {
+      const { resultWatched: oldWatch, revision: oldRevision, updatedAt: oldUpdated, ...oldExecution } = before;
+      const { resultWatched: newWatch, revision: newRevision, updatedAt: newUpdated, ...newExecution } = event.task;
+      if (oldWatch === newWatch || JSON.stringify(oldExecution) !== JSON.stringify(newExecution))
+        throw new Error("Subagent terminal task was updated.");
+    }
     if (before.executionStartedAt && event.task.executionStartedAt !== before.executionStartedAt) throw new Error('Child execution admission changed.');
   }
 }

@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import library from '../assets/skills/cardbush-docs/scripts/home-library.cjs';
+import componentFiles from '../assets/skills/cardbush-docs/scripts/component-files.cjs';
+import { maxComponentBytes } from '../assets/skills/cardbush-docs/scripts/component-limits.mjs';
 import './coding-benchmark/register-loader.mjs';
 
 const p = await import('../src/features/inspector/panelLayout.ts');
@@ -51,6 +53,30 @@ test('only custom components survive migration; previously placed custom content
   const result = c.normalizeComponents({version:1, items, welcomeLayout:{items:[{componentId:'placed'}]}});
   assert.deepEqual(result.items.map(({id,home})=>[id,home]), [['draft',false],['placed',true]]);
   assert.equal(c.defaultComponents.items.length,0);
+});
+
+test('bundled frontend documents share size limits and retain resource declarations across publication', () => {
+  const profile = mkdtempSync(join(tmpdir(), 'cardbush-home-resources-'));
+  const db = library.openLibrary(profile), resources = ['https://graphics.example.org'];
+  try {
+    const html = componentFiles.assembleComponent([{name:'index.html',text:'<canvas></canvas>'},
+      {name:'bundle.js',text:'/*'+'x'.repeat(300000)+'*/'}]);
+    const first = db.publish({id:'graphics',title:'Graphics',html,resourceDomains:resources},true);
+    assert.ok(Buffer.byteLength(html)>256*1024,'a realistic frontend bundle exceeds the old limit');
+    assert.equal(c.maxComponentBytes,maxComponentBytes);
+    assert.deepEqual(c.normalizeComponents(first).items[0].resourceDomains,resources);
+    assert.deepEqual(db.describe(first.items[0]).resourceDomains,resources);
+    const updated = db.publish({id:'graphics',html:html+'<p>Changed</p>'});
+    assert.deepEqual(updated.items[0].resourceDomains,resources);
+    const large='界'.repeat(Math.floor(maxComponentBytes/3)+1);
+    assert.throws(()=>componentFiles.assembleComponent([{name:'large.html',text:large}]),/COMPONENT_SIZE/);
+    assert.throws(()=>db.publish({id:'graphics',html:large}),/INVALID_COMPONENT/);
+    assert.throws(()=>db.save([{...updated.items[0],resourceDomains:['https://*.example.org']}],updated.revision),/INVALID_COMPONENT_ORIGIN/);
+    db.save([{...updated.items[0],allowActions:true,networkDomains:resources,approvedNetworkOrigins:resources}],updated.revision);
+    const revoked=db.publish({id:'graphics',html:updated.items[0].html,resourceDomains:[]}).items[0];
+    assert.deepEqual(revoked.resourceDomains,[]);assert.equal(revoked.allowActions,false);assert.deepEqual(revoked.approvedNetworkOrigins,[],
+      'changing executable resource origins cannot retain unrelated live action/bridge grants');
+  } finally {db.close();rmSync(profile,{recursive:true,force:true});}
 });
 
 test('component dispatch acknowledges locally without waiting for a long model turn, rejects unavailable configuration', async () => {

@@ -15,8 +15,9 @@ module.exports = async ({root,project,win,read,visible,click,wait}) => {
   const inputFiles = [html,ts,css].map(file => ({name:path.basename(file),text:fs.readFileSync(file,'utf8')}));
   const assembled = await read('window.cardbushDesktop.assembleHomeComponent(' + JSON.stringify(inputFiles) + ')');
   assert.ok(assembled.includes('type="module"') && !assembled.includes('<HTMLInputElement>') && assembled.includes('accent-color'));
-  const options = ['publish','--id','qa-review','--title','Review','--html',html,'--script',ts,'--style',css];
+  const options = ['publish','--id','qa-review','--title','Review','--html',html,'--script',ts,'--style',css,'--resource-origin','https://graphics.example.org'];
   assert.equal(cli(...options).home,false);
+  assert.deepEqual(cli('list').find(item=>item.id==='qa-review').resourceDomains,['https://graphics.example.org']);
   const edit = () => require('./open-home-editor.cjs')(read,visible,click);
   const done = '[data-home-action=done]';
   await edit();

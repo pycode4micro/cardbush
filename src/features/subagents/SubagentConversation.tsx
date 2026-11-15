@@ -8,7 +8,7 @@ import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import * as api from '../../backend/api';
 import { conversationRuntime, type ConversationRuntime } from '../../backend/conversationRuntime';
 import { localConversationBackend, type ConversationBackend } from '../../backend/conversationBackend';
-import { useCardbushChat } from '../../hooks/useCardbushChat';
+import { useCardbushChat, type QueuedChatMessage } from '../../hooks/useCardbushChat';
 import type { AppLanguage, ChatMessage, ManagedModelConfig, SubagentTaskSnapshot, ThemeMode } from '../../types';
 import { ChatPanel } from '../chat/ChatPanel';
 import { ConversationHostContext, ConversationMessageTargetContext, type ConversationHost } from '../conversationHost';
@@ -23,7 +23,7 @@ import { changeReportsFromMessages, type ConversationChangeReport } from '../too
 import { conversationWorkspaceRoot } from '../conversationWorkspace';
 import { useConversationViewState, conversationViewKey } from '../../shared/conversationViewState';
 import { subagentConversationBackend } from './subagentConversationBackend';
-import { subagentTaskPresentation } from './subagentTaskPresentation';
+import { isQueuedSubagentTask, subagentTaskPresentation } from './subagentTaskPresentation';
 import { subagentModelConfig, type SubagentExecutionModel } from './subagentConversationModel';
 import './subagent-conversation.css';
 import './subagent-activity.css';
@@ -146,6 +146,10 @@ export function SubagentConversationView({ task, language, active, refresh, refr
     });
   };
   const messages = useMemo(() => childConversationMessages(chat.activeMessages, task, observedTasks), [chat.activeMessages, task, observedTasks]);
+  // Parent-owned submissions are observed here, never enqueued again by the UI.
+  const parentQueue = useMemo(() => childConversationQueue(chat.activeMessages, task, observedTasks), [chat.activeMessages, task, observedTasks]);
+  // Keep the editable queue's explicit order; sorting by time would undo drag/reorder.
+  const queuedMessages = useMemo(() => [...parentQueue, ...chat.queuedMessages], [chat.queuedMessages, parentQueue]);
   const reports = useMemo(() => changeReportsFromMessages(messages), [messages]);
   const [error, setError] = useState('');
   const [reverting, setReverting] = useState('');
@@ -191,8 +195,9 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         turnHistoryAvailable subagentObservabilityAvailable={false} thinkingVisible={thinkingVisible} guidanceDeliveryMode={guidanceDeliveryMode}
         activeGoal={chat.activeGoal} goalAvailable={false} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting}
         shadowAvailable={false} shadowAccentColor="" shadowThemeVariables={{}}
-        queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending} onToggleQueueLock={chat.toggleQueueLock}
-                queuedMessageCount={chat.queuedMessageCount} queuedMessagePreview={chat.queuedMessagePreview} queuedMessages={chat.queuedMessages}
+        queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending}
+        onToggleQueueLock={chat.queuedMessages.length || chat.queueLocked ? chat.toggleQueueLock : undefined}
+        queuedMessageCount={queuedMessages.length} queuedMessagePreview={queuedMessages[0]?.text ?? ''} queuedMessages={queuedMessages}
         pendingInteraction={chat.pendingInteraction ? { ...chat.pendingInteraction, sessionId: host?.id ?? sessionId } : null}
         connectionRecovery={chat.activeConnectionRecovery} error={error || taskError || configurationError || chat.error || (displayedStatus === 'failed' ? task.errorMessage ?? '' : '')} notice={chat.notice}
         onClearError={() => { setError(''); chat.clearError(); }} onClearNotice={chat.clearNotice}
@@ -221,15 +226,38 @@ export function SubagentConversationView({ task, language, active, refresh, refr
 }
 
 /** Keep parent assignments distinguishable from direct human interventions. */
-export function childConversationMessages(messages: ChatMessage[], task: SubagentTaskSnapshot, observedTasks: SubagentTaskSnapshot[] = []): ChatMessage[] {
+function childAssignments(task: SubagentTaskSnapshot, observedTasks: SubagentTaskSnapshot[]) {
   // An inspector can stay on the original task while the parent starts later
   // turns in the same child. Use the session watcher, not just the selected card.
-  const assignments = [...new Map([task, ...observedTasks.filter(candidate =>
+  return [...new Map([task, ...observedTasks.filter(candidate =>
     candidate.childSessionId === task.childSessionId && candidate.parentSessionId === task.parentSessionId &&
     candidate.remote?.connectionId === task.remote?.connectionId,
   )].map(candidate => [candidate.childTurnId, candidate])).values()]
     .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
-  const result = messages.map(message => {
+}
+
+function pendingParentGuidance(message: ChatMessage) {
+  const author = message.metadata?.subagent_author ?? message.metadata?.subagentAuthor;
+  return message.role === 'user' && author === 'parent' && message.metadata?.turn_guidance &&
+    ['pending', 'queued'].includes(String(message.metadata?.guidance_delivery ?? message.status));
+}
+
+/** Project host-owned waiting work into the existing composer rail without driving execution. */
+export function childConversationQueue(messages: ChatMessage[], task: SubagentTaskSnapshot, observedTasks: SubagentTaskSnapshot[] = []): QueuedChatMessage[] {
+  const assignments: QueuedChatMessage[] = childAssignments(task, observedTasks)
+    .filter(assignment => isQueuedSubagentTask(assignment) && assignment.requestPrompt &&
+      !messages.some(message => message.turnId === assignment.childTurnId && !pendingParentGuidance(message)))
+    .map(assignment => ({ id: `subagent-assignment:${assignment.taskId}`, text: assignment.requestPrompt!,
+      createdAt: assignment.createdAt ?? '', readOnly: true, waitFor: 'turn' }));
+  const guidance: QueuedChatMessage[] = messages.filter(pendingParentGuidance).map(message => ({
+    id: message.id, text: message.content, createdAt: message.createdAt ?? '', readOnly: true, waitFor: 'step',
+  }));
+  return [...assignments, ...guidance].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export function childConversationMessages(messages: ChatMessage[], task: SubagentTaskSnapshot, observedTasks: SubagentTaskSnapshot[] = []): ChatMessage[] {
+  const assignments = childAssignments(task, observedTasks);
+  const result = messages.filter(message => !pendingParentGuidance(message)).map(message => {
     if (message.role !== 'user') return message;
     const assignment = childAgentAssignmentText(message.content);
     const author = message.metadata?.subagent_author ?? message.metadata?.subagentAuthor;
@@ -241,13 +269,14 @@ export function childConversationMessages(messages: ChatMessage[], task: Subagen
   // Active turns are not committed yet. Show both initial and resumed assignments
   // before that turn's live output, then replace them with the durable input.
   for (const assignment of assignments) {
-    if (assignment.terminal || !assignment.childTurnId || !assignment.requestPrompt || result.some(message =>
+    if (assignment.terminal || isQueuedSubagentTask(assignment) || !assignment.childTurnId || !assignment.requestPrompt || result.some(message =>
       message.role === 'user' && message.turnId === assignment.childTurnId && !message.metadata?.turn_guidance)) continue;
     const sameTurn = result.findIndex(message => message.turnId === assignment.childTurnId);
-    const later = assignment.createdAt ? result.findIndex(message => (message.createdAt ?? '') > assignment.createdAt!) : -1;
+    const createdAt = typeof assignment.raw.executionStartedAt === 'string' ? assignment.raw.executionStartedAt : assignment.createdAt;
+    const later = createdAt ? result.findIndex(message => (message.createdAt ?? '') > createdAt) : -1;
     const index = sameTurn >= 0 ? sameTurn : later >= 0 ? later : result.length;
     result.splice(index, 0, { id: `subagent-assignment:${assignment.taskId}`, role: 'user', content: assignment.requestPrompt,
-      conversationId: assignment.childSessionId, turnId: assignment.childTurnId, createdAt: assignment.createdAt,
+      conversationId: assignment.childSessionId, turnId: assignment.childTurnId, createdAt,
       metadata: { subagent_author: 'parent' } });
   }
   return result;
