@@ -32,6 +32,7 @@ export function teamToMarkdown(team: TeamWorkflow): string {
     const attributes: Record<string, unknown> = { ...prior?.attributes, agent_id: node.agent_id, depends_on: node.depends_on };
     if (node.name) attributes.name = node.name; else delete attributes.name;
     if (node.position) attributes.position = node.position; else delete attributes.position;
+    if (node.acceptance !== undefined) attributes.acceptance = node.acceptance; else delete attributes.acceptance;
     return { id: node.id, body: node.prompt, attributes };
   };
   const nodes = document.nodes.flatMap(node => {
@@ -61,7 +62,8 @@ export function teamFromMarkdown(source: string): TeamWorkflow {
         prompt = prompt.split('\n').filter((_line, index) => marked[index].split(marker).join('').trim() !== '' || !marked[index].includes(marker)).join('\n').trim();
       }
       return { id: node.id, ...(node.attributes.name ? { name: node.attributes.name } : {}), agent_id: node.attributes.agent_id,
-        prompt, depends_on: legacy && !('depends_on' in node.attributes) ? nodeLinks(node) : nodeDependencies(node),
+        prompt, ...(node.attributes.acceptance !== undefined ? { acceptance: node.attributes.acceptance } : {}),
+        depends_on: legacy && !('depends_on' in node.attributes) ? nodeLinks(node) : nodeDependencies(node),
         ...(node.attributes.position ? { position: node.attributes.position } : {}) };
     }),
   });

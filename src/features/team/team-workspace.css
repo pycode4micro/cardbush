@@ -143,3 +143,7 @@
 .remote-workers > header h2, .remote-workers > article > div { flex: 1; min-width: 0; }
 .remote-workers small { display: block; color: var(--text-soft); }
 .remote-workers p { color: var(--text-soft); }
+.team-node-delivery { padding-block: var(--space-3, 12px); overflow-wrap: anywhere; }
+.team-node-delivery > p { color: var(--text-mid); }
+.team-node-delivery dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2, 8px); }
+.team-node-delivery dd { margin: 0; }

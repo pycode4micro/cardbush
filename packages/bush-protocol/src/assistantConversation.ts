@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { runtimeSessionTurnRequestSchema } from './session.js';
 import type { PlanState } from './coordination.js';
 import type { RuntimePermissionRequest } from './runtimeHost.js';
+import { bridgeDeliveryResultSchema } from './bridgeDelivery.js';
 
 /** Direct, bounded management; execution tools remain owned by children. */
 export const ASSISTANT_MANAGEMENT_TOOLS = ['schedule_task', 'scheduled_results', 'search_plugins', 'list_plugin_commands', 'update_task_plan', 'assistant_event'] as const;
@@ -67,6 +68,8 @@ export const assistantProfileSchema = z.object({
 }).strict();
 export type AssistantProfile = z.infer<typeof assistantProfileSchema>;
 export const assistantConversationRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('delivery-update'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION),
+    generation: z.number().int().nonnegative(), sourceRef: z.string().min(1).max(100), result: bridgeDeliveryResultSchema }).strict(),
   z.object({ action: z.literal('reply-status'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION),
     after: z.object({ id: z.string().max(220), at: z.string().max(64) }).optional() }).strict(),
   z.object({ action: z.literal('activity'), sessionId: z.literal(PERSONAL_ASSISTANT_SESSION) }).strict(),

@@ -44,7 +44,7 @@ export function projectMcpDiscoveryResult(text: string, maxChars = DEFAULT_TOOL_
   // Search pages use their actual delivery budget; explicit oversized schemas
   // still use the ordinary immutable result archive.
   if (result.action === 'search' || result.action === 'load') {
-    const { next_step: _next, ...receipt } = result;
+    const receipt = { ...result };
     if (result.action === 'search') {
       if (result.matches.some((match: any) => !match || typeof match.name !== 'string' || typeof match.description !== 'string')) return undefined;
       delete receipt.protocol; delete receipt.sessionId; delete receipt._searchPage;

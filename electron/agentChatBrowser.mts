@@ -33,7 +33,6 @@ export async function chatBrowserCommand(text: string, client: Pick<AgentHttpCli
     } else {
       io.status(`Browser connector: ${terminalText(result.state ?? 'unavailable')}${result.error ? ` — ${terminalText(result.error)}` : ''}\n`);
       if (result.state === 'unavailable') {
-        io.status('Check the current CLI /logs for the host startup error, then retry /browser status.\n');
         return true;
       }
       if (result.state === 'disabled') {

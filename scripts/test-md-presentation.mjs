@@ -107,8 +107,10 @@ test('runtime edits update execution fields while retaining the surrounding bush
   document.nodes.push({ id: 'notes', attributes: { name: '备忘录' }, body: '保留这段普通笔记。' });
   const team = teamFromMarkdown(graph.writeMarkdownGraph(document));
   team.nodes[0].prompt = 'Updated task instructions';
+  team.nodes[0].acceptance = 'Agent criterion: preserve the cited evidence';
   team.nodes[1].depends_on = [];
   const restored = graph.parseMarkdownGraph(teamToMarkdown(team));
+  assert.equal(teamFromMarkdown(teamToMarkdown(team)).nodes[0].acceptance, team.nodes[0].acceptance);
   assert.equal(restored.introduction, document.introduction);
   assert.equal(restored.nodes[0].body, 'Updated task instructions');
   assert.deepEqual(graph.nodeDependencies(restored.nodes[1]), []);

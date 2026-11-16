@@ -68,6 +68,17 @@ module.exports = async ({ read, until, frame, click, action, fill, key, pointerC
   await read('records.runs[0].status="completed";records.runs[0].nodes[1].status="completed";records.runs[0].nodes[1].output="## 核验结论\\n\\n订单与库存一致。\\n\\n[查看交付文件](D:/reports/result.md)"');
   await action('刷新'); await until('document.querySelector(".team-run-results h2")?.textContent==="核验结论"');
   assert.equal(await read('document.querySelector(".team-run-results").textContent.includes("库存 50 件")'), false, 'completed result shows terminal deliverables without repeating upstream output');
+  await read('records.runs[0].status="paused";records.runs[0].nodes[1].delivery={status:"unsubmitted"}');
+  await action('刷新'); await until('document.querySelector(".team-flow-run-caption")?.textContent.includes("等待节点提交")');
+  assert.ok(await read('document.querySelector("[data-node-id=summary]").textContent.includes("执行已结束 · 未提交")'));
+  await pointerClick('[data-node-id="summary"] .md-node-face');
+  await until('document.querySelector(".team-flow-detail .team-node-delivery")?.textContent.includes("本地不检查产出内容")');
+  await click('重跑此节点及其下游');
+  await until('document.querySelector(".team-flow-workspace .inspector-quick-input textarea")?.value.includes("run-one")');
+  assert.ok(await read('document.querySelector(".team-flow-workspace .inspector-quick-input textarea").value.includes("summary")'), 'rerun uses the selected immutable run/node identity');
+  await action('关闭步骤详情');
+  await read('records.runs[0].status="completed";records.runs[0].nodes.forEach(node=>node.delivery={status:"submitted",submission:{status:"submitted",summary:"Agent 已声明交付",artifacts:[],checks:[]}})');
+  await action('刷新'); await until('document.querySelector(".team-flow-run-caption")?.textContent.includes("已提交 2 / 2")');
   writeFileSync(resolve('tmp/team-workflow-results.png'), (await capture()).toPNG());
   await read('records.runs[0].status="stopped";records.runs[0].nodes[1].status="stopped";records.runs[0].nodes[1].output=""'); await action('刷新');
   await read('records.runs[0].parentSessionId="original-chat"'); await action('刷新');

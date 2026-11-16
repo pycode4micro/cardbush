@@ -18,7 +18,7 @@ export function TeamViewPicker({ record, runs, run, language, disabled, onChange
     return { value: item.id, group: uiText(language)('teamViewPicker.runHistoryReadOnly'),
       label: <span className="team-run-option-title"><span data-status={item.status}>{status}</span><time dateTime={item.createdAt}>{timestamp}</time></span>,
       selectedLabel: `${status} · ${date.toLocaleString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}`,
-      description: `v${item.teamRevision} · ${item.nodes.filter(node => node.status === 'completed').length}/${item.nodes.length} ${uiText(language)('teamViewPicker.steps')}${item.input ? ' · ' + item.input : ''}`,
+      description: `v${item.teamRevision} · ${uiText(language)('teamDelivery.progress', { submitted: item.nodes.filter(node => node.status === 'completed' && node.delivery?.status === 'submitted').length, total: item.nodes.length })}${item.input ? ' · ' + item.input : ''}`,
       searchText: `${status} ${timestamp} ${item.input}`, icon: <History size={15}/> };
   }));
   return <SettingsDropdown label={uiText(language)('teamViewPicker.viewDefinitionOrRun')} value={run?.id ?? 'definition'} options={options} disabled={disabled} onChange={onChange} minMenuWidth={350}/>;

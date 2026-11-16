@@ -33,6 +33,7 @@ test('development desk Team updates through real child tools after the parent fi
         else { assert.equal(request.metadata.registeredAgentReadOnly, true); assert.match(receipt.content, /Updated through/); }
       }
     } else if (round === 1) call = ['team', { action: 'run', team_id: 'desk', input: 'Update the development desk', canvas_path: path }];
+    if (!call && request.metadata.registeredAgentId && !request.messages.some(message => message.role === 'tool' && message.content.includes('bush.team_submission.v1'))) call = ['team_submit', { status: 'submitted', summary: 'Desk result available.' }];
     if (call) {
       yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `${request.turnId}-${round}`, nameDelta: call[0], argumentsDelta: JSON.stringify(call[1]) };
       yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
@@ -83,6 +84,10 @@ test('native Team passes dependency results between independent sessions without
     const tool = (name, args) => ({ ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `${request.turnId}-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(args) });
     if (request.metadata.registeredAgentId) {
       childRequests.push(structuredClone(request)); await gate;
+      if (round === 1) {
+        yield tool('team_submit', { status: 'submitted', summary: request.metadata.teamMemberId === 'prepare' ? 'Warehouse dispatch requires a verified order number.' : 'Order checked.' });
+        yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
+      }
     } else if (round === 1) {
       yield tool('team', { action: 'run', team_id: 'warehouse', input: 'Order 42' });
       yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
@@ -158,7 +163,7 @@ for (const finishBeforeWait of [false, true]) test(`Team reads a real file and d
           yield call('read_file', { path: inventory });
           yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
         }
-        assert.match(request.messages.filter(message => message.role === 'tool').at(-1).content, /SKU_42_AVAILABLE=7/);
+        assert.match(request.messages.filter(message => message.role === 'tool').map(message => message.content).join('\n'), /SKU_42_AVAILABLE=7/);
         text = 'INVENTORY_EVIDENCE: SKU 42 has 7 units.';
       } else {
         assert.match(JSON.stringify(request.messages), /INVENTORY_EVIDENCE: SKU 42 has 7 units/);
@@ -192,6 +197,10 @@ for (const finishBeforeWait of [false, true]) test(`Team reads a real file and d
         'a wait receipt consumes the simultaneous completion notification');
       text = 'Order checked from inventory.';
     }
+    if (request.metadata.registeredAgentId && !request.messages.some(message => message.role === 'tool' && message.content.includes('bush.team_submission.v1'))) {
+      yield call('team_submit', { status: 'submitted', summary: text });
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
+    }
     yield { ...base, sequence: 0, kind: 'text_delta', delta: text };
     yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'stop' };
   } };
@@ -213,6 +222,24 @@ for (const finishBeforeWait of [false, true]) test(`Team reads a real file and d
     permissionMode: 'all_free', metadata: { workspaceDir: root, individuation: { habits: false, predictions: false } } });
   assert.equal(terminal.payload.status, 'completed', JSON.stringify({ terminal, lastChildResults: children.at(-1)?.messages.filter(message => message.role === 'tool') }));
   assert.equal(parents.length, 3, 'run, wait, final reply; no redundant model round');
-  assert.equal(children.length, 3, 'stock calls read_file, then final receives its evidence');
+  assert.equal(children.length, 5, 'stock reads, both children submit explicitly, then end their turns');
   assert.doesNotMatch(JSON.stringify(children), /PRIVATE PARENT CONTEXT/);
+});
+
+for (const status of ['submitted', 'blocked']) test(`an explicit ${status} declaration permits a silent child finish without host recovery instructions`, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-team-declaration-')); let host, rounds = 0;
+  t.after(async () => { await host?.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-team-declaration-')); await rm(root, { recursive: true, force: true }); });
+  host = new InMemoryRuntimeHost({ dataRoot: root, provider: { async *stream(request) {
+    const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+    assert.doesNotMatch(JSON.stringify(request.messages), /empty_stop_recovery/);
+    if (++rounds === 1) {
+      yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'submission', nameDelta: 'team_submit', argumentsDelta: JSON.stringify({ status, summary: 'My explicit declaration', artifacts: ['missing://artifact'] }) };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' };
+    } else yield { ...base, sequence: 0, kind: 'response_completed', finishReason: 'stop' };
+  } } });
+  const tools = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
+  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 'child', turnId: 't', model: 'fixture',
+    inputMessages: [{ messageId: 'u', message: { role: 'user', content: 'Submit your decision.' } }], tools, permissionMode: 'all_free', metadata: { agentRole: 'child', individuation: { habits: false, predictions: false } } });
+  assert.equal(rounds, 2); assert.equal(terminal.payload.status, 'completed'); assert.equal(terminal.payload.reason, 'child_delivery_declared');
 });

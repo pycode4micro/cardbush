@@ -15,6 +15,8 @@ export function onlySubagentArguments(input: Record<string, unknown>, kind: keyo
 
 export function subagentInputSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const properties = { ...(schema.properties as Record<string, Record<string, unknown>>) };
+  if (properties.action) properties.action = { ...properties.action,
+    description: `run dispatches work. save registers a clean Agent and accepts only ${SUBAGENT_ARGUMENTS.save.join(', ')}; delete accepts only ${SUBAGENT_ARGUMENTS.delete.join(', ')}. Neither registration action accepts prompt or starts a child.` };
   for (const key of ['prompt', 'name', 'system_prompt', 'agent_id', 'task_id', 'target_agent', 'agent_type']) {
     if (properties[key]) properties[key] = { ...properties[key], pattern: key === 'name' ? '^[^\\r\\n]*\\S[^\\r\\n]*$' : '\\S' };
   }

@@ -5,7 +5,7 @@ import { modelMessageSchema, type ModelMessage } from '@cardbush/bush-protocol';
 import { taskResultReferenceSchema, type TaskResultReference } from './taskResultDelivery.js';
 
 const eventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('append'), messages: z.array(modelMessageSchema), entryIds: z.array(z.string()), taskResults: z.array(taskResultReferenceSchema).default([]) }),
+  z.object({ type: z.literal('append'), messages: z.array(modelMessageSchema), entryIds: z.array(z.string()), taskResults: z.array(taskResultReferenceSchema).default([]), replyInputs: z.array(z.string()).optional() }),
   z.object({ type: z.literal('checkpoint'), through: z.number().int().nonnegative(), summary: z.string(), entryIds: z.array(z.string()).default([]) }),
 ]);
 type HistoryEvent = z.infer<typeof eventSchema>;
@@ -16,13 +16,14 @@ export class AssistantModelHistory {
   private records: ModelMessage[] = [];
   private consumed = new Set<string>();
   private taskResults = new Map<string, TaskResultReference>();
+  private activeReplyInputs?: string[];
   private through = 0;
   private summary = '';
   constructor(private readonly path: string) {}
 
   read() {
     if (!this.loaded) {
-      this.records = []; this.consumed.clear(); this.taskResults.clear(); this.through = 0; this.summary = '';
+      this.records = []; this.consumed.clear(); this.taskResults.clear(); this.activeReplyInputs = undefined; this.through = 0; this.summary = '';
       if (existsSync(this.path)) {
         const raw = readFileSync(this.path, 'utf8'), lines = raw.split('\n');
         for (let index = 0; index < lines.length; index++) {
@@ -45,8 +46,13 @@ export class AssistantModelHistory {
       taskResults: [...this.taskResults.values()],
       through: this.through, summary: this.summary };
   }
-  append(messages: ModelMessage[], entryIds: string[] = [], taskResults: TaskResultReference[] = []) {
-    if (messages.length || entryIds.length || taskResults.length) this.write({ type: 'append', messages, entryIds, taskResults });
+  replyInputs(): string[] | undefined {
+    this.read();
+    return this.activeReplyInputs && [...this.activeReplyInputs];
+  }
+  append(messages: ModelMessage[], entryIds: string[] = [], taskResults: TaskResultReference[] = [], replyInputs?: string[]) {
+    if (messages.length || entryIds.length || taskResults.length || replyInputs !== undefined)
+      this.write({ type: 'append', messages, entryIds, taskResults, ...(replyInputs !== undefined ? { replyInputs } : {}) });
   }
   checkpoint(through: number, summary: string, entryIds: string[] = []) { this.write({ type: 'checkpoint', through, summary, entryIds }); }
   private write(event: HistoryEvent) {
@@ -65,6 +71,7 @@ export class AssistantModelHistory {
     this.validate(event);
     if (event.type === 'append') {
       this.records.push(...event.messages);
+      if (event.replyInputs !== undefined) this.activeReplyInputs = [...event.replyInputs];
       for (const reference of event.taskResults) this.taskResults.set(JSON.stringify([reference.sessionId, reference.taskId]), reference);
     } else {
       // Retain source events on disk without keeping compacted tool output in RAM.
@@ -75,6 +82,6 @@ export class AssistantModelHistory {
   }
   clear() {
     rmSync(this.path, { force: true });
-    this.records = []; this.consumed.clear(); this.taskResults.clear(); this.through = 0; this.summary = ''; this.loaded = true;
+    this.records = []; this.consumed.clear(); this.taskResults.clear(); this.activeReplyInputs = undefined; this.through = 0; this.summary = ''; this.loaded = true;
   }
 }

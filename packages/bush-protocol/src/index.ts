@@ -48,6 +48,7 @@ export * from './assistantConversation.js';
 export { normalizeToolDisplay, normalizeToolDisplayTitle } from './toolDisplay.js';
 export * from './webApplications.js';
 export * from './agentWorkflow.js';
+export * from './teamSubmission.js';
 export * from './agentToolActivity.js';
 export * from './toolResult.js';
 export * from './transcriptPresentation.js';
@@ -65,3 +66,4 @@ export * from './friends.js';
 
 export * from './fileTransfer.js';
 export * from './workerConnection.js';
+export * from './bridgeDelivery.js';

@@ -50,13 +50,12 @@ test('browser management validates IDs, reports failure and preserves cancellati
   await assert.rejects(chatBrowserCommand('/browser', client, io, controller.signal), { name: 'AbortError' });
 });
 
-test('host failures show their diagnostic and CLI help without echoing model action hints', async () => {
+test('host failures show their observed error without prescribing another action', async () => {
   const output = [];
   const client = { async call() { return { shared: true, state: 'unavailable', error: 'The previous connector is still active.',
-    nextStep: 'Close the older App and retry /browser status.', extensionPath: 'extension' }; } };
+    extensionPath: 'extension' }; } };
   await chatBrowserCommand('/browser status', client, { commitInput() {}, status: text => output.push(text) }, new AbortController().signal);
-  assert.match(output.join(''), /previous connector is still active.*\nCheck the current CLI \/logs/);
-  assert.doesNotMatch(output.join(''), /Close the older App/);
+  assert.equal(output.join(''), 'Browser connector: unavailable — The previous connector is still active.\n');
   assert.doesNotMatch(output.join(''), /pair chrome|Install or reload|approve the first/);
 });
 

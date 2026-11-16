@@ -72,10 +72,10 @@ export class BridgePluginTools {
         arguments: args } satisfies BridgeToolCall;
     };
     return {
-      definition: { name, description: `${entry.plugin.name}: ${tool.description}\nBridge plugin ${entry.plugin.id}@${entry.plugin.version}. Uses the current user message source. Disconnected or revoked connections cannot execute. Reuse request_id after an unknown outcome.`,
+      definition: { name, description: `${entry.plugin.name}: ${tool.description}\nBridge plugin ${entry.plugin.id}@${entry.plugin.version}. Uses the current user message source. Disconnected or revoked connections cannot execute. A request_id identifies one invocation of this tool with identical arguments, not a delivery or conversation.`,
         inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties,
           source_ref: { type: 'string', description: 'Usually omit. Disambiguate a host-supplied sourceRef when handling several messages; never substitute another platform or sender.' },
-          request_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$', description: 'Optional stable idempotency key. Reuse the returned requestId on retries.' },
+          request_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$', description: 'Usually omit. Reuse the returned requestId only to retry the same tool with identical arguments after an unknown outcome. Other calls, including status queries, have their own request IDs.' },
         } } },
       modelAvailable: available, visibleToChild: true,
       manifest: { effect_kind: tool.readOnly ? 'observation' : 'mutation', operation: 'bridge.plugin.call', risk: tool.readOnly ? 'low' : 'medium',

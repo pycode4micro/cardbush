@@ -4,6 +4,7 @@ import type { RemoteSubagentRequest, RemoteSubagentResult, SessionSnapshot } fro
 import type { AgentJob, AgentInfo, AgentOperation, AgentEventRequest, AgentEventFrame } from './agentTypes.js';
 import { AgentNetworkError, AgentHttpError } from './agentHttpClient.mjs';
 import { uiText } from '@cardbush/platform/i18n';
+import { childSubmission, childExecutionFacts } from '@cardbush/bush-runtime';
 
 export interface RemoteSubagentConnection {
   connect(id: string): Promise<AgentInfo>;
@@ -47,7 +48,8 @@ export async function runRemoteSubagent(manager: RemoteSubagentConnection, reque
       finalResponse: [...(turn?.messages ?? [])].reverse().find(item => item.message.role === 'assistant'
         && !item.message.toolCalls?.length && item.metadata?.runtimeMaintenance !== 'context_compaction'
         && typeof item.message.content === 'string')?.message.content as string ?? '',
-      errorMessage: job.error ?? '', usage: turn?.usage ?? {} };
+      errorMessage: job.error ?? '', usage: turn?.usage ?? {},
+      submission: childSubmission(turn, input.sessionId), diagnostics: childExecutionFacts(turn) };
   };
   try {
     while (true) {

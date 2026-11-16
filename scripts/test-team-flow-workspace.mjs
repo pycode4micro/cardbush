@@ -7,7 +7,7 @@ import * as protocol from '@cardbush/bush-protocol';
 const require = createRequire(import.meta.url);
 function load(path) {
   const exports = {};
-  new Function('exports', 'require', ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports, id => id === '@cardbush/bush-protocol' ? protocol : require(id));
+  new Function('exports', 'require', ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports, id => id === '@cardbush/bush-protocol' ? protocol : id === '../../i18n' ? require('@cardbush/platform/i18n') : require(id));
   return exports;
 }
 const { teamGraphDocument, teamNodeTitle } = load('src/features/team/teamFlowGraph.ts');
@@ -56,6 +56,7 @@ test('graph receipts update locally and an older background list cannot roll the
   new Function('exports', 'require', ts.transpileModule(readFileSync('src/features/team/teamWorkspaceStore.ts', 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports, id => {
     if (id === 'react') return hooks;
+    if (id === '../../i18n') return require('@cardbush/platform/i18n');
     if (id === '@cardbush/bush-protocol') return protocol;
     if (id.includes('promptReferences')) return { teamReferenceInstructions: id => id };
     if (id.includes('ElectronRuntimeSession')) return { createDesktopRuntimeSession: () => ({ dispose() {}, client: { command: async ({ kind }) => {

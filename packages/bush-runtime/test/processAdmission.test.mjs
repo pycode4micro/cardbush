@@ -89,6 +89,7 @@ test('Windows Worker preserves case-insensitive PATH semantics and trusted absol
 test('OS directory metadata uses the host account, creates no permissions, and honors cancellation', async () => {
   const value = await userDirectories();
   assert.equal(value.accessGranted, false); assert.equal(value.executionEnvironment.kind, 'local');
+  assert.equal(value.nextStep, undefined);
   assert.ok(value.directories.home); assert.doesNotMatch(value.directories.home, /cardbush-sandbox-/i);
   assert.deepEqual(Object.keys(value).sort(), ['accessGranted', 'directories', 'executionEnvironment', 'unavailable']);
   await assert.rejects(userDirectories(AbortSignal.abort()), { name: 'AbortError' });

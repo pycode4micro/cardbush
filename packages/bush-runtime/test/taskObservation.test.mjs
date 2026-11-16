@@ -120,3 +120,39 @@ test('task lists default to active work, filter before paging, and keep history 
   const empty = await run({ action: 'list' });
   assert.equal(empty.total, 0); assert.deepEqual(empty.tasks, []); assert.equal(empty.next_offset, null);
 });
+
+test('running snapshots stay factual and a later completion returns the new revision and result', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const registry = new ToolRegistry(), signals = new RuntimeTurnSignals(), work = Promise.withResolvers();
+  const tasks = new RuntimeTaskTools((c, p, m, s, ms) => signals.wait(c.sessionId, c.turnId, p, m, s, ms));
+  const result = { exitCode: 0, output: 'connection verified' };
+  let completed = false;
+  tasks.addSource(() => [{ task_id: 'check', kind: 'subagent', status: completed ? 'completed' : 'running',
+    revision: completed ? '2' : '1', ...(completed ? { result } : {}), wait: () => work.promise }]);
+  tasks.register(registry);
+  const invoke = (name, input) => {
+    const tool = registry.resolve(name);
+    return tool.execute({ sessionId: 'parent', turnId: 'turn', input: tool.decodeInput(input) });
+  };
+  const running = await invoke('tasks', { action: 'inspect', task_ids: ['check'] });
+  assert.deepEqual(running, { tasks: [{ task_id: 'check', kind: 'subagent', status: 'running', revision: '1',
+    controls: { stop: false, cancel_observation: false } }], after: { check: '1' } });
+  const listed = await invoke('tasks', { action: 'list' });
+  assert.equal(listed.next_step, undefined);
+  assert.equal(listed.tasks[0].status, 'running');
+  const waiting = invoke('await', { task_ids: ['check'], after: running.after });
+  await flush();
+  setTimeout(() => { completed = true; work.resolve(); }, 1000);
+  t.mock.timers.tick(1000);
+  const finished = await waiting;
+  assert.deepEqual(finished, { wake_reason: 'task_completed', tasks: [{ task_id: 'check', kind: 'subagent',
+    status: 'completed', revision: '2', result, controls: { stop: false, cancel_observation: false } }], after: { check: '2' } });
+  assert.equal(running.tasks[0].status, 'running', 'a previously observed snapshot is not rewritten');
+  assert.equal(running.tasks[0].revision, '1');
+  const inspected = await invoke('tasks', { action: 'inspect', task_ids: ['check'], after: running.after });
+  assert.deepEqual(inspected.tasks, finished.tasks);
+  assert.equal(inspected.next_step, undefined);
+  const unchanged = await invoke('tasks', { action: 'inspect', task_ids: ['check'], after: finished.after });
+  assert.equal(unchanged.tasks[0].unchanged, true);
+  assert.equal(unchanged.tasks[0].result, undefined);
+});

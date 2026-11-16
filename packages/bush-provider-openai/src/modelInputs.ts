@@ -49,7 +49,7 @@ async function resolvedImageUrl(value: string, options: Pick<ModelStreamOptions,
 
 /** Identity stays in durable Runtime history for discovery recovery, not in model text. */
 export function discoveryReceipt(output: Record<string, unknown>): string {
-  const { protocol: _protocol, sessionId: _sessionId, next_step: _next, ...receipt } = output;
+  const { protocol: _protocol, sessionId: _sessionId, ...receipt } = output;
   if (receipt.more === false) delete receipt.more;
   return JSON.stringify(receipt);
 }

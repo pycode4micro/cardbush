@@ -1,6 +1,7 @@
 import { assistantDelegationOrigins } from './assistantDelegationOrigins.js';
 import { taskReceiptDelivery } from './taskResultDelivery.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
+import { registerTeamSubmission, childSubmission, childExecutionFacts } from './teamSubmission.js';
 import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
 import { randomUUID, createHash } from "node:crypto";
 import { withToolFailureFacts } from './toolFailureFacts.js';
@@ -149,8 +150,9 @@ export function registerSubagentTool(
       ? await options.remoteAgents?.read?.({ ...task.remote, parentSessionId: context.sessionId, sessionId: task.childSessionId }, context.signal)
       : options.readChildConversation?.(task.childSessionId);
     if (!session) throw new Error('The child conversation is not available yet.');
-    return { taskId: task.taskId, ...(task.agentName ? { agentName: task.agentName } : {}), status: task.status, ...childConversationPage(session, cursor) };
+    return { taskId: task.taskId, turnId: task.childTurnId, ...(task.agentName ? { agentName: task.agentName } : {}), status: task.status, ...childConversationPage(session, cursor) };
   };
+  registerTeamSubmission(registry);
   if (registry.resolve(SUBAGENT_TOOL)) return;
   const createTaskId = options.createTaskId ?? (() => `subagent_task_${randomUUID()}`);
   const createRequestId = options.createRequestId ?? (() => `subagent_request_${randomUUID()}`);
@@ -226,7 +228,7 @@ export function registerSubagentTool(
           ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Owned child taskId from a subagent result, or task_id with kind=subagent from tasks list. Never substitute agent_id, childSessionId, team run_id or a workflow node ID. Supply task_id and prompt, with optional run_in_background; the original history and execution host are retained.' } } : {}),
           mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'fork is a snapshot of the pre-dispatch conversation and intent; later parent messages are not synchronized. clean uses a registered agent_id, or explicit independent system_prompt/settings. Discover reusable employees with list_subagent_options. Each new clean task has its own conversation; use task_id to continue an existing task.' },
           system_prompt: { type: 'string', minLength: 1, description: 'Required for an unregistered clean Agent; omit when using agent_id or fork. Sets the actual system message. Host permissions cannot be overridden.' },
-          allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
+          allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact work tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no work tools. Team assignments retain team_submit unless explicitly disabled. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
           settings: CLEAN_AGENT_SETTINGS_SCHEMA,
           ...(options.runBackground ? { run_in_background: { type: 'boolean', default: false, description: 'Keep delegated work running in the background. Remote targets return after service acceptance; this does not change the remote worker configuration.' } } : {}),
           ...(options.loadPluginAgents ? { agent_type: { type: 'string', description: 'Optional exact plugin Agent id from list_subagent_options.agent_roles. Its role and tool restrictions apply to the child.' } } : {}),
@@ -270,7 +272,8 @@ export function registerSubagentTool(
           && item.metadata?.runtimeMaintenance !== 'context_compaction')?.message;
         tasks.finish({ parentSessionId, taskId: task.taskId, status: observation.state === 'completed' ? 'completed'
           : ['canceled', 'interrupted'].includes(observation.state) ? 'stopped' : 'failed',
-          finalResponse: final?.content ?? '', errorMessage: observation.state === 'completed' ? '' : turn?.reason ?? observation.state, usage: turn?.usage ?? {} });
+          finalResponse: final?.content ?? '', errorMessage: observation.state === 'completed' ? '' : turn?.reason ?? observation.state, usage: turn?.usage ?? {},
+          submission: childSubmission(turn, task.childSessionId), diagnostics: childExecutionFacts(turn) });
       } catch (error) {
         signal?.throwIfAborted();
         tasks.observe(parentSessionId, task.taskId, tasks.get(parentSessionId, task.taskId)?.observation,
@@ -616,9 +619,10 @@ async function finishTask(input: {
   let finalResponse = "";
   let errorMessage = "";
   let usage: SessionSnapshot["turns"][number]["usage"] = {};
+  let submission: ReturnType<typeof resolveChildTurn>['submission'], diagnostics: ReturnType<typeof resolveChildTurn>['diagnostics'];
   try {
     const child = await input.runChild(input.childRequest, input.signal);
-    ({ status, finalResponse, errorMessage, usage } = resolveChildTurn(child, input.childTurnId));
+    ({ status, finalResponse, errorMessage, usage, submission, diagnostics } = resolveChildTurn(child, input.childTurnId));
   } catch (error) {
     status = input.signal?.aborted ? "stopped" : "failed";
     errorMessage = error instanceof Error ? error.message : String(error);
@@ -630,6 +634,7 @@ async function finishTask(input: {
     finalResponse,
     errorMessage,
     usage,
+    submission, diagnostics,
   });
 }
 
@@ -659,6 +664,7 @@ function taskResult(task: ReturnType<SubagentTaskStore["finish"]>, tasks: Subage
     mode: task.inheritContext ? 'fork' : 'clean',
     inheritedMessageCount: task.inheritedMessageCount,
     finalResponse: task.finalResponse,
+    ...(task.submission ? { submission: task.submission } : {}), ...(task.diagnostics ? { diagnostics: task.diagnostics } : {}),
     ...(task.remote ? { remote: task.remote } : {}),
     errorMessage: task.errorMessage,
     usage: task.usage,
@@ -678,7 +684,7 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}`);
   if (object.action !== undefined && !['run', 'save', 'delete'].includes(String(object.action))) throw new Error('Invalid subagent action.');
   if (object.action === 'save' || object.action === 'delete') {
-    if (!onlySubagentArguments(object, object.action) || !Number.isSafeInteger(object.expected_revision) || Number(object.expected_revision) < 0) throw new Error('Registration requires the definition/agent_id and expected_revision only.');
+    if (!onlySubagentArguments(object, object.action) || !Number.isSafeInteger(object.expected_revision) || Number(object.expected_revision) < 0) throw new Error('Registration accepts action, agent (save) or agent_id (delete), and expected_revision only. No prompt. No child was started.');
     if (object.action === 'save') registeredAgentSchema.parse(object.agent);
     if (object.action === 'delete' && (typeof object.agent_id !== 'string' || !object.agent_id.trim())) throw new Error('agent_id is required.');
     return { prompt: '', mode: 'clean', registration: { action: object.action, agent: object.agent, id: object.agent_id as string | undefined, revision: Number(object.expected_revision) } };

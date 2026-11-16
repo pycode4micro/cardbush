@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry, ToolExecutionStore, AutomationScheduler,
   CoordinationStore, FileCoordinationPersistence, registerSkillTools } from '../dist/index.js';
 import { PERSONAL_ASSISTANT_SESSION as id, ASSISTANT_MANAGEMENT_TOOLS, assistantProfileSchema } from '@cardbush/bush-protocol';
+import { BridgePluginTools } from '../dist/botMessaging.js';
 
 const until = async check => { for (let i = 0; i < 500; i++) { if (await check()) return; await new Promise(r => setTimeout(r, 10)); } assert.fail('condition timed out'); };
 const manifest = { effect_kind: 'observation', operation: 'test', risk: 'low', owner: 'fixture', dispatch_scope: 'session', mutating: false };
@@ -61,6 +62,37 @@ async function fixture(t, now) {
 }
 const schedule = { action: 'create', name: 'Report', prompt: 'Read the fixture project and save report.html; return its path.', time_zone: 'Asia/Shanghai', trigger: { kind: 'once', at: '2099-10-30T10:00:00+08:00' } };
 const reminder = { action: 'create', text: 'Remind me to review the report.', at: schedule.trigger.at };
+test('Assistant loads and invokes an owned bridge directly with normal file/source admission', async t => {
+  const f = await fixture(t), calls = [], connectionId = '11111111-1111-4111-8111-111111111111';
+  const file = join(f.root, 'screenshot.png'); await writeFile(file, 'fixture bytes');
+  let connected = true;
+  const source = { sourceRef: 'webhook:fixture', connectionId, available: true, capabilities: { text: true, files: true } };
+  const bridge = new BridgePluginTools(f.registry, {
+    catalog: async () => connected ? [{ connectionId, sessionId: id, expiresAt: Date.now() + 60000, revision: 'a'.repeat(64), plugin: {
+      id: 'fixture', name: 'Fixture', version: '1', description: 'Fixture bridge', tools: [{ name: 'send_file', description: 'Send file', fileArguments: ['file'],
+        inputSchema: { type: 'object', properties: { file: { type: 'string' } }, required: ['file'], additionalProperties: false } }] } }] : [],
+    context: async () => ({ available: true, targets: [source] }),
+    call: async (session, input, signal, files) => { calls.push({ session, input, files }); return { status: 'accepted' }; },
+  }, session => session);
+  await bridge.sync(id);
+  const name = f.registry.definitions().find(tool => tool.name.startsWith('mcp__bridge_')).name;
+  const schema = await f.invoke('get_tool_schema', { name });
+  assert.equal(schema.matches[0].name, name);
+  assert.equal((await f.invoke('call_tool', { name, arguments: { file } })).status, 'accepted');
+  assert.equal(calls.length, 1); assert.equal(calls[0].session, id); assert.equal(calls[0].input.sourceRef, source.sourceRef);
+  assert.equal(calls[0].files.length, 1, 'file identity admission was not bypassed');
+  const narrow = join(f.root, 'narrow'); await mkdir(narrow);
+  const denied = await f.begin(name, { file }, { metadata: { ...f.parent().metadata, workspaceDir: narrow } });
+  await until(async () => { const current = await f.read(); if (!current.busy) assert.fail(JSON.stringify(f.results.get(denied))); return current.management.permissions.length === 1; });
+  await f.answer((await f.read()).management.permissions[0], 'deny');
+  assert.equal((await f.complete(denied)).status, 'failed'); assert.equal(calls.length, 1);
+  assert.equal((await f.invoke(name, { file }, { metadata: { ...f.parent().metadata, botDeliveryLocalOnly: true } })).status, 'failed');
+  assert.equal((await f.invoke(name, { file }, { metadata: { ...f.parent().metadata, toolExecutionPolicy: 'web_restricted' } })).status, 'failed');
+  assert.equal((await f.invoke(name, { file, source_ref: 'another-source' }, { metadata: { ...f.parent().metadata, botSourceRef: source.sourceRef } })).status, 'failed');
+  assert.equal(calls.length, 1);
+  connected = false; await bridge.sync(id);
+  assert.equal((await f.invoke('get_tool_schema', { name })).status, 'failed');
+});
 async function seedExistingSchedule(f) {
   await f.scheduler.remember(f.parent());
   return f.scheduler.manage({ action: 'create', definition: {

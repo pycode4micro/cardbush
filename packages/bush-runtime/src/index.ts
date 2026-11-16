@@ -4,6 +4,7 @@ export * from "./childAgentPolicy.js";
 export * from "./cleanAgentSettings.js";
 export * from './registeredAgents.js';
 export * from './teamWorkflow.js';
+export * from './teamSubmission.js';
 export * from "./pluginExtensions.js";
 export * from "./contextAssembler.js";
 export * from "./contextCompaction.js";

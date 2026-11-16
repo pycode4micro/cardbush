@@ -5,7 +5,7 @@ import type { RegisteredAgent, TeamRun, TeamWorkflow } from '@cardbush/bush-prot
 import { MdGraphCanvas } from '../mdPresentation/MdGraphCanvas';
 import type { MdPosition } from '../mdPresentation/markdownGraph';
 import { EmployeeIcon } from './employeePresentation';
-import { teamGraphDocument, teamStatusLabel } from './teamFlowGraph';
+import { teamGraphDocument, teamStatusLabel, teamDeliveryLabel } from './teamFlowGraph';
 import '../mdPresentation/md-presentation.css';
 
 export function TeamFlowDiagram({ workflow, run, agents, selectedId, onSelect, language, readOnly, saving = false, onPositions, onConnect }: {
@@ -24,10 +24,11 @@ export function TeamFlowDiagram({ workflow, run, agents, selectedId, onSelect, l
         const task = workflow.nodes.find(item => item.id === node.id)!;
         return task.name ? agents.find(agent => agent.id === task.agent_id)?.name || task.agent_id : task.id;
       }}
-      nodeStatus={node => status(node.id)}
+      nodeStatus={node => status(node.id) === 'completed' && run?.nodes.find(item => item.id === node.id)?.delivery?.status !== 'submitted' ? 'paused' : status(node.id)}
       nodeDetail={node => {
-        const value = status(node.id), Icon = value === 'running' ? LoaderCircle : value === 'completed' ? Check : value === 'failed' ? OctagonAlert : value === 'stopped' ? Square : Circle;
-        return <><Icon size={11}/>{teamStatusLabel(value, language)}</>;
+        const value = status(node.id), delivery = run?.nodes.find(item => item.id === node.id)?.delivery?.status;
+        const Icon = value === 'running' ? LoaderCircle : value === 'failed' || delivery === 'blocked' ? OctagonAlert : value === 'completed' && delivery === 'submitted' ? Check : value === 'stopped' ? Square : Circle;
+        return <><Icon size={11}/>{run ? uiText(language)('teamDelivery.states', { execution: teamStatusLabel(value, language), delivery: teamDeliveryLabel(delivery, language) }) : teamStatusLabel(value, language)}</>;
       }}
       onMove={(id, position) => void onPositions(new Map([[id, position]]))} onLayout={onPositions} onConnect={onConnect}/>
   </div>;

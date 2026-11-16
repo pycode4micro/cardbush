@@ -11,7 +11,7 @@ export const REGISTERED_AGENT_SCHEMA = {
       connection_id: { type: 'string', description: 'Saved worker connection ID from list_subagent_options.remote_agents. Credentials are managed by the host, never included here.' },
       agent_id: { type: 'string', description: 'Verified service instance ID from that connection. A different instance requires a new registration.' },
     }, description: 'Register a remote worker as a reusable subagent. Its own model, workspace and tools execute the role. Omit local allowed_tools, settings, hooks and guards.' },
-    allowed_tools: { type: 'array', items: { type: 'string' }, description: 'Exact available tools. Omit to inherit the host catalog, [] to run without tools.' },
+    allowed_tools: { type: 'array', items: { type: 'string' }, description: 'Exact work tools. Omit to inherit the host catalog, [] for no work tools. Team assignments retain their read-only team_submit lifecycle capability unless explicitly disabled.' },
     settings: CLEAN_AGENT_SETTINGS_SCHEMA,
     hooks: { type: 'array', items: { type: 'string' }, description: 'Exact trusted hook IDs from list_subagent_options section=settings. Host hooks always remain enforced.' },
     guards: { type: 'array', items: { type: 'string', enum: ['read_only'] }, description: 'Runtime-enforced guards. read_only denies resource mutations.' },

@@ -1,4 +1,5 @@
-import type { RuntimeSessionTurnRequest, SessionSnapshot, SessionMessage } from '@cardbush/bush-protocol';
+import type { RuntimeSessionTurnRequest, SessionSnapshot, SessionMessage, ChildExecutionFacts } from '@cardbush/bush-protocol';
+import { childExecutionFacts } from './teamSubmission.js';
 import { childAgentAssignmentText } from '@cardbush/bush-protocol';
 
 export function childConversationReadHint(taskId?: string): string {
@@ -29,7 +30,7 @@ export function continueChildConversation(input: RuntimeSessionTurnRequest, save
   };
 }
 
-export type ChildConversationSource = { sessionId: string; messages: SessionMessage[]; supersededMessageIds: string[]; finalMessageIds: string[] };
+export type ChildConversationSource = { sessionId: string; messages: SessionMessage[]; supersededMessageIds: string[]; finalMessageIds: string[]; execution?: ChildExecutionFacts[] };
 
 /** Parent-facing output is one terminal answer per completed turn, never loop activity. */
 export function childFinalMessageIds(session: SessionSnapshot): string[] {
@@ -64,5 +65,7 @@ export function childConversationPage(session: SessionSnapshot | ChildConversati
     if (offset + part.length < content.length) { offset += part.length; break; }
     index++; offset = 0;
   }
-  return { sessionId: session?.sessionId, messages, nextCursor: index < source.length ? `${index}:${offset}` : null };
+  const execution = session ? ('turns' in session ? session.turns.map(childExecutionFacts).filter(fact => fact !== undefined) : session.execution ?? []) : [];
+  return { sessionId: session?.sessionId, messages, nextCursor: index < source.length ? `${index}:${offset}` : null,
+    projection: { includesToolMessages: false, includesIntermediateReplies: false }, execution: execution.slice(-50) };
 }

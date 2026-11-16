@@ -8,7 +8,8 @@ import { refreshTeamWorkspace, teamCommand, useTeamWorkspace } from './teamWorks
 import { TeamGraphWorkspace } from './TeamGraphWorkspace';
 import { TeamWorkflowLibrary } from './TeamWorkflowLibrary';
 import { MarkdownContent } from '../chatMessages';
-import { teamNodeTitle } from './teamFlowGraph';
+import { teamNodeTitle, teamStatusLabel } from './teamFlowGraph';
+import { TeamNodeDelivery } from './TeamNodeDelivery';
 import { requestTeamDocument, useTeamWorkspaceNavigation } from './teamWorkspaceNavigation';
 import type { CreationChatOptions } from '../mdPresentation/CreationConversation';
 import './team-workspace.css';
@@ -29,8 +30,7 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
     if (error && typeof error === 'object' && 'issues' in error && Array.isArray(error.issues)) return error.issues.map(issue => String(issue.message)).join(' · ');
     return message;
   };
-  const statusLabel = (status: string) => ({ pending: uiText(language)('teamWorkspace.pending'), running: uiText(language)('common.running'), completed: uiText(language)('automationPanel.completed'),
-    failed: uiText(language)('automationPanel.failed'), stopped: uiText(language)('automationPanel.stopped'), interrupted: uiText(language)('teamWorkspace.interrupted') }[status] ?? status);
+  const statusLabel = (status: string) => teamStatusLabel(status, language);
   useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refreshTeamWorkspace(false, true); }, 4000); return () => window.clearInterval(timer); }, []);
   const perform = async (operation: () => Promise<unknown>) => {
     setError(''); setBusy(true);
@@ -84,10 +84,10 @@ export function TeamWorkspace({ language, chatOptions, onOpenConversation }: { l
     {tab === 'runs' && <section className="native-team-management"><h1>{uiText(language)('teamSidebar.runs')}</h1><div className="native-team-runs">{!state.runs.length && <p>{uiText(language)('teamWorkspace.noRunsYet')}</p>}
       {[...state.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(run => <article key={run.id}><strong>{run.workflow.name}</strong><span>{statusLabel(run.status)}</span><p>{run.input}</p>
         <button type="button" onClick={() => requestTeamDocument({ kind: 'select', id: run.teamId, runId: run.id })}>{uiText(language)('teamWorkspace.viewWorkflowAndResults')}</button>
-        {run.nodes.map(node => <details key={node.id}><summary>{teamNodeTitle(run.workflow.nodes.find(item => item.id === node.id)!, run.agents.map(item => item.definition))} · {statusLabel(node.status)}</summary><MarkdownContent content={node.output || node.error} language={language}/></details>)}
+        {run.nodes.map(node => <details key={node.id}><summary>{teamNodeTitle(run.workflow.nodes.find(item => item.id === node.id)!, run.agents.map(item => item.definition))} · {statusLabel(node.status)}</summary><TeamNodeDelivery node={node} language={language}/><MarkdownContent content={node.output || node.error} language={language}/></details>)}
         {run.error && <p role="alert">{run.error}</p>}<time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString(language)}</time>
         {run.status === 'running' && <button type="button" disabled={busy} onClick={() => void perform(() => teamCommand(TEAM_WORKFLOW_COMMAND, { action: 'stop', run_id: run.id }))}>{uiText(language)('teamWorkspace.stopRun')}</button>}
-        {['failed', 'stopped', 'interrupted'].includes(run.status) && <p>{uiText(language)('teamWorkspace.askToResumeThisRunInIts')}</p>}
+        {['failed', 'stopped', 'interrupted', 'paused'].includes(run.status) && <p>{uiText(language)('teamWorkspace.askToResumeThisRunInIts')}</p>}
       </article>)}
     </div></section>}
   </div>;

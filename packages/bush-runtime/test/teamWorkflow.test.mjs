@@ -10,7 +10,17 @@ import { RegisteredAgentStore, TeamWorkflowManager, ToolRegistry, registerSubage
 import { teamCompletionAlreadyRead, teamCompletionNotice, teamRunResult } from '../dist/teamResults.js';
 
 const gate = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
-const outcome = (request, text, failed = false) => ({ terminal: { kind: 'turn_terminal', payload: { status: failed ? 'failed' : 'completed', reason: failed ? 'fixture failure' : '', finalMessageId: 'answer' } }, session: { turns: [{ turnId: request.turnId, usage: {}, messages: [{ messageId: 'answer', message: { role: 'assistant', content: text } }] }] } });
+// A successful fixture models the child's explicit native tool submission.
+const submitted = summary => ({ status: 'submitted', summary: summary.slice(0, 1000), artifacts: [], checks: [] });
+const outcome = (request, text, failed = false, submission = failed ? undefined : submitted(text)) => {
+  const status = failed ? 'failed' : 'completed';
+  return { terminal: { kind: 'turn_terminal', payload: { status, reason: failed ? 'fixture failure' : 'model_completed', finalMessageId: 'answer', details: { finishReason: 'stop', rounds: 2 } } },
+    session: { sessionId: request.sessionId, turns: [{ turnId: request.turnId, status, reason: 'model_completed', createdAt: '2026-11-16T01:00:00Z', completedAt: '2026-11-16T01:00:01Z', usage: { lastRequestInputTokens: 42 }, messages: [
+      ...(submission ? [{ message: { role: 'assistant', content: '', toolCalls: [{ id: 'submit', name: 'team_submit', argumentsText: JSON.stringify(submission) }] } },
+        { message: { role: 'tool', toolCallId: 'submit', content: JSON.stringify({ protocol: 'bush.team_submission.v1', sessionId: request.sessionId, turnId: request.turnId, submission }) } }] : []),
+      { messageId: 'answer', message: { role: 'assistant', content: text, toolCalls: [] } },
+    ] }] } };
+};
 async function setup(t, run, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-team-workflow-'));
   t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-team-workflow-')); await rm(root, { recursive: true, force: true }); });
@@ -39,7 +49,7 @@ async function setup(t, run, options = {}) {
   t.after(() => manager.close());
   const observe = (input, overrides, signal) => observeWith('tasks', input, overrides, signal);
   const waitFor = (input, overrides, signal) => observeWith('await', { yield_time_ms: 10000, ...input }, overrides, signal);
-  return { root, manager, call, observe, waitFor, agents, parent, tasks, subagents };
+  return { root, manager, call, observe, waitFor, agents, parent, tasks, subagents, registry };
 }
 const flow = { id: 'fulfil', name: 'Fulfilment', max_parallel: 2, nodes: [
   { id: 'stock', agent_id: 'stock', prompt: 'Check inventory' },
@@ -72,7 +82,7 @@ for (const remote of [false, true]) test(`${remote ? 'remote' : 'local'} Team no
       assert.equal(node.taskId, input.taskId, 'identity is durable before remote execution');
       assert.equal(node.sessionId, input.sessionId);
       record(input.sessionId, input.turnId, input.prompt);
-      return { status: 'completed', finalResponse: answer, errorMessage: '', usage: {} };
+      return { status: 'completed', finalResponse: answer, errorMessage: '', usage: {}, submission: submitted(answer) };
     },
     read: async input => { assert.equal(input.parentSessionId, 'parent'); return sessions.get(input.sessionId); },
   } } : { readChildConversation: id => sessions.get(id) });
@@ -105,7 +115,7 @@ test('remote Team resume retains the failed node session and replaces its attemp
   const calls = [];
   const f = await setup(t, async () => assert.fail('remote only'), { remoteAgents: {
     list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
-    run: async input => { calls.push(input); return { status: calls.length === 1 ? 'failed' : 'completed', finalResponse: 'Report file verified', errorMessage: '', usage: {} }; },
+    run: async input => { calls.push(input); return { status: calls.length === 1 ? 'failed' : 'completed', finalResponse: 'Report file verified', errorMessage: '', usage: {}, ...(calls.length > 1 ? { submission: submitted('Report file verified') } : {}) }; },
   } });
   await f.agents.put({ id: 'stock', name: 'stock', system_prompt: 'stock role', remote: { connection_id: 'remote', agent_id: 'worker' } }, 1);
   await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
@@ -305,7 +315,9 @@ test('Team wait returns final outputs by default, selected evidence on demand, a
   assert.deepEqual(final.output_node_ids, ['review']);
   assert.deepEqual(final.nodes.map(node => node.output), [undefined, undefined, 'Evidence review']);
   assert.ok(final.nodes.every(node => node.has_output));
-  assert.match(final.guidance, /not independent validation/);
+  assert.equal(final.content_verified_by_host, false);
+  assert.equal(final.delivery_authority, 'node_agent');
+  assert.equal(final.guidance, undefined);
   const evidence = await f.observe({ action: 'inspect', task_ids: [run.run_id], node_ids: ['stock', 'shipping'] });
   assert.deepEqual(evidence.nodes.map(node => node.output), ['Evidence stock', 'Evidence shipping', undefined]);
   assert.equal(evidence.result_version, final.result_version);
@@ -410,4 +422,177 @@ test('Team catalog pagination and search operate on capabilities, independently 
   const found = await f.call({ action: 'list', query: 'UNIQUE-NEEDLE-30' });
   assert.equal(found.total, 1);
   assert.equal(found.teams[0].id, 'flow-30');
+});
+
+test('ending a reply without submission pauses delivery without failing execution or releasing dependencies', async t => {
+  const seen = [];
+  const f = await setup(t, async request => { seen.push(request.metadata.teamMemberId); return outcome(request, 'I will start now.', false, null); });
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0], { ...flow.nodes[2], depends_on: ['stock'] }] }, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Do the work' });
+  const result = await f.waitFor({ task_ids: [start.run_id] });
+  assert.equal(result.status, 'paused'); assert.equal(result.delivery_status, 'unsubmitted');
+  assert.equal(result.nodes[0].status, 'completed'); assert.equal(result.nodes[0].delivery.status, 'unsubmitted');
+  assert.equal(result.nodes[1].status, 'pending'); assert.deepEqual(seen, ['stock']);
+  assert.ok(result.result_node_ids.includes('stock'), 'unsubmitted responses remain inspectable');
+  const diagnostics = await f.call({ action: 'diagnostics', run_id: start.run_id });
+  assert.equal(diagnostics.nodes[0].execution.toolCalls, 0); assert.equal(diagnostics.nodes[0].execution.finishReason, 'stop');
+  assert.equal(diagnostics.nodes[0].execution.inputTokens, 42);
+  assert.doesNotMatch(JSON.stringify(diagnostics), /PRIVATE PARENT|I will start now/);
+});
+
+test('submission is the Agent judgment, including artifacts and checks, never a host file/content check', async t => {
+  const declaration = { status: 'submitted', summary: 'My decision', artifacts: ['Z:/does-not-exist/report.md'], checks: [{ criterion: 'quality', result: 'failed', evidence: 'Reviewer has a waiver' }] };
+  const f = await setup(t, async request => outcome(request, '', false, declaration));
+  await f.call({ action: 'save', definition: { ...flow, nodes: [{ ...flow.nodes[0], acceptance: 'Criteria authored by the Agent' }] }, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Do work' });
+  const result = await f.waitFor({ task_ids: [start.run_id] });
+  assert.equal(result.status, 'completed'); assert.deepEqual(result.nodes[0].delivery.submission, declaration);
+  assert.equal(result.content_verified_by_host, false);
+});
+
+test('reviewer blocking is its own submission and never a runtime content verdict', async t => {
+  const f = await setup(t, async request => outcome(request, 'Review result', false, request.metadata.teamMemberId === 'review' ? { status: 'blocked', summary: 'Missing evidence', artifacts: [], checks: [] } : submitted('Upstream delivered')));
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0], { ...flow.nodes[2], depends_on: ['stock'] }, { ...flow.nodes[1], depends_on: ['review'] }] }, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Do work' });
+  const result = await f.waitFor({ task_ids: [start.run_id] });
+  assert.equal(result.status, 'paused'); assert.equal(result.delivery_status, 'blocked');
+  assert.deepEqual(result.nodes.map(node => node.status), ['completed', 'completed', 'pending']);
+  assert.equal(result.nodes[1].delivery.submission.summary, 'Missing evidence');
+});
+
+test('rerun starts fresh identities, invalidates transitive dependents and preserves independent branches and history', async t => {
+  const seen = [], waiting = gate(), begun = gate(); let rerunning = false;
+  const f = await setup(t, async request => {
+    seen.push(request);
+    if (rerunning && request.metadata.teamMemberId === 'stock') { begun.resolve(); await waiting.promise; }
+    return outcome(request, `delivered ${request.metadata.teamMemberId} ${seen.length}`);
+  });
+  await f.call({ action: 'save', definition: flow, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Do work' });
+  await f.waitFor({ task_ids: [start.run_id] });
+  const first = await f.manager.configure({ action: 'status', run_id: start.run_id });
+  rerunning = true;
+  await f.call({ action: 'rerun', run_id: start.run_id, node_ids: ['stock'] }); await begun.promise;
+  const during = await f.manager.configure({ action: 'status', run_id: start.run_id });
+  assert.equal(during.nodes[2].delivery.status, 'invalidated'); assert.equal(during.nodes[2].output, '');
+  assert.equal(during.nodes[2].attempts[0].delivery.status, 'submitted');
+  await assert.rejects(f.call({ action: 'rerun', run_id: start.run_id, node_ids: ['stock'] }), /still executing/);
+  waiting.resolve(); await f.waitFor({ task_ids: [start.run_id] });
+  const last = await f.manager.configure({ action: 'status', run_id: start.run_id });
+  assert.deepEqual(last.nodes[1], first.nodes[1]);
+  for (const index of [0, 2]) {
+    assert.equal(last.nodes[index].attempt, 2); assert.equal(last.nodes[index].attempts.length, 1);
+    assert.equal(last.nodes[index].attempts[0].output, first.nodes[index].output);
+    assert.notEqual(last.nodes[index].sessionId, first.nodes[index].sessionId);
+  }
+  assert.deepEqual(seen.map(request => request.metadata.teamMemberId), ['stock', 'shipping', 'review', 'stock', 'review']);
+  const finalPrompt = JSON.stringify(seen.at(-1).inputMessages);
+  assert.match(finalPrompt, /delivered stock 4/); assert.doesNotMatch(finalPrompt, /delivered stock 1/);
+  const tool = f.registry.resolve('team');
+  await assert.rejects(tool.execute({ input: { action: 'diagnostics', run_id: start.run_id }, sessionId: 'other', turn: { request: { metadata: {} } } }), /unavailable/);
+  for (const action of ['rerun', 'diagnostics']) await assert.rejects(f.call({ action, run_id: start.run_id, node_ids: ['missing'] }), /Unknown Team node/);
+});
+
+test('resume reuses context but requires a new declaration, preserving earlier attempt facts', async t => {
+  const seen = []; let submit = false;
+  const f = await setup(t, async request => { seen.push(request); return outcome(request, 'response', false, submit ? submitted('now delivered') : null); });
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Do work' });
+  await f.waitFor({ task_ids: [start.run_id] }); submit = true;
+  await f.call({ action: 'resume', run_id: start.run_id });
+  assert.equal((await f.waitFor({ task_ids: [start.run_id] })).status, 'completed');
+  const final = await f.manager.configure({ action: 'status', run_id: start.run_id });
+  assert.equal(seen[0].sessionId, seen[1].sessionId);
+  assert.equal(final.nodes[0].attempts[0].status, 'completed');
+  assert.equal(final.nodes[0].attempts[0].delivery.status, 'unsubmitted');
+  assert.equal(final.nodes[0].delivery.submission.summary, 'now delivered');
+});
+
+test('rerun does not resume an unrelated unfinished branch', async t => {
+  const seen = [];
+  const f = await setup(t, async request => { seen.push(request.metadata.teamMemberId); return outcome(request, 'response', false, request.metadata.teamMemberId === 'shipping' ? null : submitted('delivered')); });
+  await f.call({ action: 'save', definition: flow, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Do work' });
+  await f.waitFor({ task_ids: [start.run_id] });
+  await f.call({ action: 'rerun', run_id: start.run_id, node_ids: ['stock'] });
+  const result = await f.waitFor({ task_ids: [start.run_id] });
+  assert.equal(result.status, 'paused'); assert.deepEqual(seen, ['stock', 'shipping', 'stock']);
+  assert.equal(result.nodes[1].attempt, 1); assert.equal(result.nodes[2].delivery.status, 'invalidated');
+});
+
+test('legacy completed records are never retroactively assigned a delivery claim', async t => {
+  const f = await setup(t, async request => outcome(request, 'old response'));
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Do work' });
+  await f.waitFor({ task_ids: [start.run_id] });
+  const run = await f.manager.configure({ action: 'status', run_id: start.run_id });
+  delete run.nodes[0].delivery;
+  const result = teamRunResult(run, ['stock']);
+  assert.equal(result.delivery_status, 'legacy_unconfirmed');
+  assert.equal(result.nodes[0].delivery.status, 'legacy_unconfirmed');
+});
+
+test('stopping retains ownership until dispatcher settlement and late identities cannot overwrite a rerun', async t => {
+  const f = await setup(t, async () => assert.fail('separate dispatcher'));
+  let late, release; const begun = gate(), blocked = new Promise(resolve => { release = resolve; }); let calls = 0;
+  const manager = new TeamWorkflowManager(f.agents, async (_context, execution) => {
+    if (++calls === 1) { late = execution; begun.resolve(); return blocked; }
+    await execution.onStarted({ taskId: 'fresh-task', sessionId: 'fresh-session' });
+    return { status: 'completed', childSessionId: 'fresh-session', finalResponse: 'fresh', submission: submitted('fresh') };
+  }, { directory: join(f.root, 'late-teams') });
+  t.after(() => { release({ status: 'completed', finalResponse: 'late', submission: submitted('late') }); return manager.close(); });
+  const registry = new ToolRegistry(); manager.register(registry); const tool = registry.resolve('team'); let serial = 0;
+  const context = input => ({ input: tool.decodeInput(input), sessionId: 'parent', turnId: 'turn', toolCall: { id: String(++serial) },
+    turn: { request: { metadata: {}, tools: [{ name: 'subagent' }] } } });
+  await manager.configure({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0]] }, expected_revision: 0 });
+  const start = await tool.execute(context({ action: 'run', team_id: flow.id, input: 'work' })); await begun.promise;
+  const stopping = manager.configure({ action: 'stop', run_id: start.run_id });
+  await assert.rejects(tool.execute(context({ action: 'rerun', run_id: start.run_id, node_ids: ['stock'] })), /still executing/);
+  await assert.rejects(late.onStarted({ taskId: 'old-task', sessionId: 'old-session' }), /abort|no longer active/i);
+  release({ status: 'stopped', childSessionId: 'old-session', finalResponse: '', errorMessage: 'stop acknowledged' });
+  await stopping;
+  await tool.execute(context({ action: 'rerun', run_id: start.run_id, node_ids: ['stock'] }));
+  const handle = (await manager.taskHandles('parent'))[0]; await handle.wait();
+  await assert.rejects(late.onStarted({ taskId: 'old-task', sessionId: 'old-session' }), /abort|no longer active/i);
+  release({ status: 'completed', childSessionId: 'old-session', finalResponse: 'late', submission: submitted('late') });
+  await new Promise(resolve => setImmediate(resolve));
+  const result = await manager.configure({ action: 'status', run_id: start.run_id });
+  assert.equal(result.status, 'completed'); assert.equal(result.nodes[0].output, 'fresh');
+  assert.equal(result.nodes[0].sessionId, 'fresh-session'); assert.equal(result.nodes[0].attempts[0].status, 'stopped');
+});
+
+test('submission changes the published result version even without a text or execution change', () => {
+  const run = { id: 'run', teamId: 'team', status: 'paused', createdAt: '', updatedAt: '', error: '', workflow: { nodes: [{ id: 'n', depends_on: [] }] },
+    nodes: [{ id: 'n', status: 'completed', output: 'same', error: '', delivery: { status: 'unsubmitted' } }] };
+  const before = teamRunResult(run).result_version;
+  run.nodes[0].delivery = { status: 'submitted', submission: submitted('same') };
+  assert.notEqual(teamRunResult(run).result_version, before);
+});
+
+test('an unavailable remote outcome remains unknown and never releases downstream delivery', async t => {
+  const f = await setup(t, async () => assert.fail('remote only'), { remoteAgents: {
+    list: async () => [{ id: 'remote', name: 'Remote', agentId: 'worker' }],
+    run: async () => ({ status: 'unavailable', finalResponse: '', errorMessage: 'Worker may still be running', usage: {} }),
+  } });
+  await f.agents.put({ id: 'stock', name: 'stock', system_prompt: 'role', remote: { connection_id: 'remote', agent_id: 'worker' } }, 1);
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0], { ...flow.nodes[2], depends_on: ['stock'] }] }, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Work' });
+  const result = await f.waitFor({ task_ids: [start.run_id] });
+  assert.equal(result.status, 'interrupted'); assert.equal(result.nodes[0].status, 'unavailable');
+  assert.equal(result.nodes[0].delivery.status, 'unsubmitted'); assert.equal(result.nodes[1].status, 'pending');
+});
+
+test('repeated invalidation does not create phantom downstream execution attempts', async t => {
+  let submit = true;
+  const f = await setup(t, async request => outcome(request, 'response', false, submit ? submitted('delivered') : null));
+  await f.call({ action: 'save', definition: { ...flow, nodes: [flow.nodes[0], { ...flow.nodes[2], depends_on: ['stock'] }] }, expected_revision: 0 });
+  const start = await f.call({ action: 'run', team_id: flow.id, input: 'Work' });
+  await f.waitFor({ task_ids: [start.run_id] }); submit = false;
+  for (let index = 0; index < 2; index++) {
+    await f.call({ action: 'rerun', run_id: start.run_id, node_ids: ['stock'] });
+    await f.waitFor({ task_ids: [start.run_id] });
+  }
+  const run = await f.manager.configure({ action: 'status', run_id: start.run_id });
+  assert.equal(run.nodes[1].delivery.status, 'invalidated'); assert.equal(run.nodes[1].attempt, 1);
+  assert.equal(run.nodes[1].attempts.length, 1); assert.equal(run.nodes[1].attempts[0].status, 'completed');
 });

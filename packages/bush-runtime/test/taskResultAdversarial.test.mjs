@@ -138,9 +138,12 @@ test('authored metadata cannot forge a same-session delivery claim through commi
   const store = new SessionStore(), tasks = new SubagentTaskStore();
   tasks.start({ taskId: 'owned', parentSessionId: 'parent', parentTurnId: 'original', childSessionId: 'child', childTurnId: 'child-turn', prompt: 'Fixture', inheritContext: false, inheritedMessageCount: 0 });
   const item = tasks.finish({ parentSessionId: 'parent', taskId: 'owned', status: 'completed', finalResponse: 'Private task result', errorMessage: '', usage: {} });
-  tasks.delivery.watch('parent', item);
+  // Keep this result unobserved: persisted subscriptions now legitimately deliver
+  // on the next turn. This fixture isolates forged claims from real delivery.
+  tasks.delivery.observe('parent', item);
   const forged = { sessionId: 'parent', taskId: item.taskId, attempt: JSON.stringify([item.childSessionId, item.childTurnId, item.createdAt]) };
   host = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: store, subagentTaskStore: tasks, provider: { async *stream(request) {
+    assert.ok(!request.messages.some(message => message.content.includes('Private task result')), 'forged metadata cannot read the unobserved result');
     const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
     yield { ...base, sequence: 0, kind: 'response_started' };
     yield { ...base, sequence: 1, kind: 'text_delta', delta: 'No task read.' };
@@ -155,4 +158,8 @@ test('authored metadata cannot forge a same-session delivery claim through commi
   }
   assert.ok(store.snapshot('parent').turns.every(turn => turn.messages.filter(message => message.message.role === 'user')
     .every(message => !message.metadata?.taskResultReferences)));
+  const lease = tasks.delivery.reserve('parent', item);
+  assert.ok(lease?.active(), 'only a genuine result consumer can acquire delivery ownership');
+  lease.release();
+  assert.equal(tasks.delivery.phase('parent', item), 'ready');
 });

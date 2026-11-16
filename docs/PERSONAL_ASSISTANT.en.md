@@ -31,6 +31,10 @@ While awaiting text, the stream/floating view shows a three-dot bubble; completi
 
 Text generation inherits the model's output limit, default 128,000 tokens including reasoning. No model events for 120 seconds means stalled transport and uses the shared three-attempt budget; reasoning/output refresh the timer. Late stopped responses cannot write into the page or a new context.
 
+New Assistant messages guide the current reply immediately by default; explicitly queued input remains for a subsequent turn. Immediate guidance arriving during reasoning, unpublished text generation or retry backoff cancels that model request and continues the same turn with the new input. The final reply references the inputs it handles. Quotes, attachments and context are retained; cancelled drafts and late output never enter the final reply or model history. Published replies remain, and subsequent messages start a new turn.
+
+Interrupting generation does not cancel a tool already executing or an independent child task. The tool receipt commits before new guidance enters the next model request, preventing repeated effects. The Webhook host still verifies external sources; local input cannot merge into an externally addressed reply. Ordinary conversations retain both queue and immediate-guidance modes. Immediate guidance interrupts reasoning, while the ordinary conversation setting does not change Assistant behavior.
+
 With default bottom input, short replies scroll fully into view; long replies start at the beginning while retaining a short current question where possible. Multiple publications in a Turn keep the initial reading position. Manual upward scrolling pauses following; return-to-bottom reveals the end, and a new send restores positioning.
 
 ## Page content and tasks
@@ -49,7 +53,7 @@ Delegation returns a task ID immediately so conversation can continue. Acceptanc
 
 Local children inherit the assistant's authorized CardBush tabs/browser selection and can use referenced pages. Adding new references when guiding/continuing a task updates its selection; absent new references, the child's selection remains. Closed/restarted tabs report stale references only when operated on, without blocking unrelated delegation or switching to Chrome/Edge. Remote children do not inherit local tab authorization.
 
-The text assistant uses `subagent`, `tasks` and Team to delegate, continue work and read results. Its final reply appears directly in the conversation. `subagent({prompt})` creates work; `subagent({task_id,prompt})` guides a running task or continues its original session/host. Realtime voice retains its shared protocol definitions for delegation, immediate status, paged results and page publication. Execution tools remain on the child under its permissions. Voice adds no dispatch confirmation but spoken consent cannot enable disabled tools or override host policy.
+The text assistant uses `subagent`, `tasks` and Team to delegate, continue work and read results. Its final reply appears directly in the conversation. `subagent({prompt})` creates work; `subagent({task_id,prompt})` guides a running task or continues its original session/host. Realtime voice retains its shared protocol definitions for delegation, immediate status, paged results and page publication. Terminal, file-writing and general plugin execution remain delegated. Host-registered bridge tools authorized in the current scope can run directly on the Assistant with the same file, recipient and permission checks. Voice adds no dispatch confirmation but spoken consent cannot enable disabled tools or override host policy.
 
 Text conversations and the transcription–Agent–speech path also provide direct management tools without starting a child:
 
@@ -91,6 +95,8 @@ Page messages, internal transcripts and results use a separate JSONL journal wit
 
 A host-writable `.model.jsonl` journal preserves actual assistant/tool/receipt/reasoning/provider-replay order. Future requests and restart append input instead of reconstructing context from UI bubbles and discarding tool exchanges. `page_write` projections are not duplicated in context, and internal exchanges do not appear on the page or as speech. Legacy migration cannot recover exchanges never saved. Interrupted calls without saved receipts are marked outcome unknown and are not automatically replayed.
 
+The journal also retains the input IDs owned by the unfinished reply. Retrying after accepted guidance restores the original request, accepted additions, attachments and quotes for subsequent delegation, including after compaction and restart. Completing the reply releases this ownership; new requests register separately. Environment queries that finish after stop or reset cannot write back into model history.
+
 Assistant compaction uses the ordinary token budget, including `contextWindowTokens`, tools, reasoning and receipts, rather than a fixed 20,000-character threshold. Only complete exchanges in a prefix are replaced; originals remain and checkpoints survive restart. User model/vision/persona changes and real compaction may change provider prefixes; no cache-hit percentage is guaranteed.
 
 This memory is distinct from cross-session `summary_for_user` habits and user message prediction. Opening assistant does not enable personalization. Model compaction and spoken task summaries consume text-model usage. Reset clears both page and model journals.
@@ -103,5 +109,6 @@ Right-click → Reset context requires confirmation, ends the assistant call, an
 - `packages/bush-runtime/src/assistantConversation.ts`, `conversationJournal.ts`, `assistantModelHistory.ts`: conversation, journals, limited tools and completion feedback.
 - `src/backend/realtimeAgent.ts`, `packages/bush-runtime/src/realtimeAgent.ts`: shared request preparation, child dispatch and ownership.
 - `electron/realtimeVoiceService.ts`, `src/features/voice`: calls, audio, recovery and maintenance.
+- `assistantImmediateGuidance.test.mjs`: immediate Assistant guidance, burst input, tool boundaries, attachment preparation, retry and reset races; `immediateGuidance.test.mjs` preserves the two ordinary-conversation modes.
 
 Run `npm run test:assistant`, `npm run test:voice-realtime`, and `npm run test:voice` for dictation/legacy calls. Mock Providers, loopback services and isolated windows verify persistence, idempotency, ownership, attachments, reset, background calls and compaction, not real-provider audio quality or live SSH networking. See [architecture](ARCHITECTURE.en.md).

@@ -338,6 +338,31 @@ test('worker queue and insert retain order, exact run identity and role revision
   } finally { gate.resolve(); await f.service.close(); }
 });
 
+test('remote result preserves explicit child submission and execution facts with exact turn ownership', async () => {
+  const request = { ...workerInput('submission'), connectionId: 'worker', agentId: 'instance' };
+  const submission = { status: 'submitted', summary: 'Agent decision', artifacts: ['remote:/report.md'], checks: [] };
+  let receiptTurn = request.turnId;
+  const manager = {
+    connect: async () => ({ id: 'instance', capabilities: { delegation: true } }),
+    call: async (_id, operation) => {
+      if (operation === 'delegation.submit') return {};
+      if (operation === 'chat.jobs') return [{ id: request.taskId, sessionId: request.sessionId, turnId: request.turnId, status: 'completed', delegation: { parentSessionId: request.parentSessionId } }];
+      if (operation === 'sessions.get') return { sessionId: request.sessionId, metadata: { delegationOwner: request.parentSessionId }, turns: [{ turnId: request.turnId,
+        status: 'completed', reason: 'model_completed', createdAt: 'start', completedAt: 'end', usage: {}, messages: [
+          { message: { role: 'assistant', content: '', toolCalls: [{ id: 'submit', name: 'team_submit', argumentsText: JSON.stringify(submission) }] } },
+          { message: { role: 'tool', toolCallId: 'submit', content: JSON.stringify({ protocol: 'bush.team_submission.v1', sessionId: request.sessionId, turnId: receiptTurn, submission }) } },
+          { message: { role: 'assistant', content: 'Finished', toolCalls: [] } },
+        ] }] };
+      assert.fail(operation);
+    },
+    async *events() { assert.fail('already complete'); },
+  };
+  const result = await runRemoteSubagent(manager, request);
+  assert.deepEqual(result.submission, submission); assert.equal(result.diagnostics.toolCalls, 1);
+  receiptTurn = 'previous-turn';
+  assert.equal((await runRemoteSubagent(manager, request)).submission, undefined);
+});
+
 test('unavailable observation and unconfirmed cancellation never report a remote task as stopped', async () => {
   const request = { ...workerInput('network'), connectionId: 'worker', agentId: 'instance' };
   let attempts = 0;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { teamDeliverySchema, childExecutionFactsSchema } from './teamSubmission.js';
 
 export const AGENT_REGISTRY_COMMAND = 'runtime.agent_registry' as const;
 export const TEAM_WORKFLOW_COMMAND = 'runtime.team_workflow' as const;
@@ -27,6 +28,7 @@ export const teamWorkflowSchema = z.object({
   max_parallel: z.number().int().min(1).max(8).default(3),
   nodes: z.array(z.object({
     id, agent_id: id, prompt: z.string().trim().min(1).max(40000),
+    acceptance: z.string().max(16000).optional().describe('Agent-authored criteria for this node or a reviewer node. Reference data for the Agent; the host does not evaluate these criteria.'),
     depends_on: z.array(id).max(TEAM_WORKFLOW_MAX_NODES).default([]),
     name: z.string().trim().min(1).max(160).optional().describe('Optional node label for the graph.'),
     position: z.object({ x: z.number().min(-100000).max(100000), y: z.number().min(-100000).max(100000) }).strict().optional(),
@@ -49,16 +51,21 @@ export const teamWorkflowSchema = z.object({
 export type TeamWorkflow = z.infer<typeof teamWorkflowSchema>;
 export interface DefinitionReceipt<T> { revision: number; updatedAt: string; definition: T }
 
-export const workflowNodeStateSchema = z.object({
-  id, status: z.enum(['pending', 'running', 'completed', 'failed', 'stopped']),
+const nodeAttemptSchema = z.object({
+  status: z.enum(['pending', 'running', 'completed', 'failed', 'stopped', 'unavailable']),
   taskId: z.string().optional(), sessionId: z.string().optional(),
   output: z.string().default(''), error: z.string().default(''),
+  attempt: z.number().int().nonnegative().optional(), attemptId: z.string().optional(),
+  delivery: teamDeliverySchema.optional(), diagnostics: childExecutionFactsSchema.optional(),
+});
+export const workflowNodeStateSchema = nodeAttemptSchema.extend({
+  id, attempts: z.array(nodeAttemptSchema).optional(),
 });
 export const teamRunSchema = z.object({
   id: z.string().min(1), teamId: id, teamRevision: z.number().int().positive(),
   parentSessionId: z.string().min(1), parentTurnId: z.string().min(1),
   originMessageIds: z.array(z.string().min(1).max(220)).max(256).optional(),
-  status: z.enum(['running', 'completed', 'failed', 'stopped', 'interrupted']),
+  status: z.enum(['running', 'completed', 'failed', 'stopped', 'interrupted', 'paused']),
   input: z.string(), createdAt: z.string(), updatedAt: z.string(),
   canvas: z.object({ path: z.string().min(1).max(8192), assignments: z.record(z.string(), z.array(z.string()).max(100)) }).strict().optional(),
   workflow: teamWorkflowSchema,

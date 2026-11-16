@@ -17,6 +17,7 @@ import {
 import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { assertParentAgent, CHILD_AGENT_ASSIGNMENT_PREFIX } from './childAgentPolicy.js';
 import { decodeCleanAgentSettings, type CleanAgentSettings, type SubagentModelSelection } from './cleanAgentSettings.js';
+import { childSubmission, childExecutionFacts } from './teamSubmission.js';
 
 export interface ChildTurnResult {
   terminal: RuntimeEvent;
@@ -112,6 +113,10 @@ export function buildChildTurnRequest(input: {
   // narrow the catalog; default child restrictions are enforced at execution.
   const toolAllowlist = input.toolAllowlist === undefined ? undefined : new Set(input.toolAllowlist);
   const childTools = structuredClone(parentRequest.tools.filter((tool) => requestedNames.has(tool.name) && (!toolAllowlist || toolAllowlist.has(tool.name))));
+  // Team submission is an assignment lifecycle capability, not access to a file,
+  // plugin or workspace. Explicit user-disabled tools still take precedence.
+  const submissionTool = input.metadata.teamRunId && !disabledTools.has('team_submit') ? childVisible.get('team_submit') : undefined;
+  if (submissionTool && !childTools.some(tool => tool.name === submissionTool.name)) childTools.push(structuredClone(submissionTool));
   const requestedPermissionRouting = parentRequest.metadata.subagentPermissionRouting;
   const defaultPermissionRouting = requestedPermissionRouting === "user" || requestedPermissionRouting === "parent"
     ? requestedPermissionRouting
@@ -222,6 +227,8 @@ export function resolveChildTurn(
   finalResponse: string;
   errorMessage: string;
   usage: SessionSnapshot["turns"][number]["usage"];
+  submission?: ReturnType<typeof childSubmission>;
+  diagnostics?: ReturnType<typeof childExecutionFacts>;
 } {
   if (result.terminal.kind !== "turn_terminal") {
     throw new Error("Child runner returned a non-terminal Runtime event.");
@@ -242,11 +249,16 @@ export function resolveChildTurn(
   let errorMessage = status === "completed"
     ? ""
     : String(result.terminal.payload.reason || "child_turn_failed");
-  if (status === "completed" && !finalResponse.trim()) {
+  const submission = childSubmission(committed, result.session?.sessionId ?? '');
+  if (status === "completed" && !finalResponse.trim() && !submission) {
     status = "failed";
     errorMessage = "child_turn_produced_no_terminal_response";
   }
-  return { status, finalResponse, errorMessage, usage };
+  const diagnostics = childExecutionFacts(committed);
+  const details = result.terminal.payload.details;
+  if (diagnostics && typeof details?.finishReason === 'string') diagnostics.finishReason = details.finishReason;
+  if (diagnostics && typeof details?.rounds === 'number') diagnostics.rounds = details.rounds;
+  return { status, finalResponse, errorMessage, usage, submission, diagnostics };
 }
 
 function childPrefixMessages(metadata: Record<string, unknown>): ModelMessage[] {

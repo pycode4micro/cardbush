@@ -580,6 +580,12 @@ for (const mode of ['question', 'script']) test(`host model loop continues indep
   registry.register({ definition: { name: 'independent', description: 'Independent operation', inputSchema: { type: 'object' } }, manifest, decodeInput: x => x, execute: () => { independent = true; gate.resolve({ rows: [9, 2, 5] }); return { done: true }; } });
   host = new InMemoryRuntimeHost({ dataRoot: f.root, toolRegistry: registry, provider: { async *stream(request) {
     requests.push(request); round++;
+    if (round === 2) {
+      const receipt = JSON.parse(request.messages.filter(message => message.role === 'tool').at(-1).content);
+      assert.equal(receipt.next_step, undefined);
+      assert.ok(receipt.task_id);
+      assert.ok(['running', 'waiting_user'].includes(receipt.status));
+    }
     const event = (sequence, kind, rest = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId, sequence, kind, createdAt: new Date().toISOString(), ...rest });
     if (round <= 2) {
       const name = round === 2 ? 'independent' : mode === 'question' ? 'request_user_input_async' : 'run_tools';

@@ -14,13 +14,15 @@ Old `mcp_call`, `parallel_tools`, separate task-management tools, synchronous qu
 
 ## MCP discovery
 
-`search_plugins` returns short summaries, loaded state and pagination. Fixed instructions belong to definitions rather than repeated protocol/session/server/underlying-name/next_step fields. Native execution records retain full facts.
+`search_plugins` returns short summaries, loaded state and pagination. Fixed instructions belong to definitions rather than repeated protocol/session/server/underlying-name fields. Native execution records retain full facts.
 
 Search matches whole terms, ignores common English stop words and prioritizes exact tool names, useful-term coverage and tool/server names, avoiding matches such as `web` inside `webp`. Browser Use descriptions include current-information/news searches through search-engine pages. Only visible session tools are searched; partial/no matches do not establish that browser capability is unavailable.
 
 Start with `query` (`*` lists the catalog; optional `server` narrows it). Follow `next_cursor` unchanged as `cursor`, optionally changing `limit` but omitting query/server/numeric offset. Cursors bind query/session/sort results. New queries or changed relevant catalogs require restarting. Reading the same cursor returns the same page and does not hide previously seen tools. Model results retain `more`/`next_cursor`.
 
-At Provider dispatch, `get_tool_schema` results omit protocol/session/next_step and false `more`, identically for ordinary calls/native tool search. Complete schema, revisions, pages, batch errors and `deferred` remain. Runtime history retains original identities for reconnect/compaction/recovery; saved messages and large archived bodies/offsets remain unchanged. Ordinary receipts and Hook replacement content are unaffected.
+At Provider dispatch, `get_tool_schema` results omit protocol/session and false `more`, identically for ordinary calls/native tool search. Complete schema, revisions, pages, batch errors and `deferred` remain. Runtime history retains original identities for reconnect/compaction/recovery; saved messages and large archived bodies/offsets remain unchanged. Ordinary receipts and Hook replacement content are unaffected.
+
+Built-in producers of `next_step` / `nextStep` action advice and the old Runtime / Provider filters for these fields have been deleted, without renaming or hiding the fields. Tasks still return current status, revision, results, controls and pagination. Browser and computer operations retain connection, execution-boundary and actionability facts, with permission and safety checks enforced. No generic field filter was added; saved user history and raw third-party output are not rewritten. See the [local action-guidance audit](RUNTIME_NEXT_ACTION_AUDIT_2026-11-15.md) for remaining mechanisms.
 
 ```json
 {"names":["mcp__server__first","mcp__server__second"]}

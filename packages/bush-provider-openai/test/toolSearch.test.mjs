@@ -538,7 +538,7 @@ for (const mode of ['native', 'function']) test(`progressive search then load th
 });
 
 for (const mode of ['function', 'native']) test(`${mode}: load receipts omit internal boilerplate without changing recovery history or appended prefixes`, () => {
-  const result = { ...JSON.parse(searchResult()), action: 'load', next_step: 'Repeated instructions',
+  const result = { ...JSON.parse(searchResult()), action: 'load',
     errors: [{ name: 'missing', error: 'Unavailable' }], deferred: ['large'],
     hostCapabilities: { interfaces: { mcpApps: true } } };
   const messages = searchMessages('load');
@@ -547,7 +547,7 @@ for (const mode of ['function', 'native']) test(`${mode}: load receipts omit int
   const options = { toolSearchMode: mode };
   const params = toResponsesCreateParams(request({ messages }), options);
   const receipt = JSON.parse(params.input.find(item => item.type === 'function_call_output').output);
-  for (const field of ['protocol', 'sessionId', 'next_step', 'more']) assert.equal(receipt[field], undefined, field);
+  for (const field of ['protocol', 'sessionId', 'more']) assert.equal(receipt[field], undefined, field);
   for (const field of ['action', 'errors', 'deferred', 'hostCapabilities']) assert.deepEqual(receipt[field], result[field]);
   if (mode === 'function') assert.deepEqual(receipt.matches, result.matches, 'complete schemas and revisions remain visible');
   else assertDisplayProjection(params.input.find(item => item.type === 'additional_tools').tools[0].parameters, tool.inputSchema);

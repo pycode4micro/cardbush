@@ -38,7 +38,8 @@ module.exports = async ({ read, until, frame, click, action, key, pointerClick, 
   await read('window.choicesBefore=teamChoiceRenders;window.dragCamera=document.querySelector(".md-graph-stage").style.transform');
   await read('window.deferSave=false;finishSave()'); await waitSave();
   assert.equal(await revision(), initial+1);
-  assert.equal(await read('records.teams[0].definition.nodes[0].position.y+"px"'), movedTop);
+  assert.ok(Math.abs(await read('records.teams[0].definition.nodes[0].position.y') - Number.parseFloat(movedTop)) < 0.001,
+    'saved position matches the rendered coordinate within CSS serialization precision');
   assert.equal(await read('teamChoiceRenders'), await read('choicesBefore'), 'saving coordinates does not update app/composer choices');
   assert.equal(await read('document.querySelector(".md-graph")===graphElement && document.querySelector(".md-graph-stage").style.transform===dragCamera'), true, 'save keeps the graph mounted at the same camera');
   const dragRequest = await read('dragRequest');

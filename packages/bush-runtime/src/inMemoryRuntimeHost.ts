@@ -226,6 +226,7 @@ import { asyncResultMessage } from './subagentTool.js';
 import { LocalSubagentInteractions } from './localSubagentInteractions.js';
 import { observationControl } from './subagentInteractions.js';
 import { childFinalMessageIds, childConversationReadHint, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
+import { childExecutionFacts, childSubmission } from './teamSubmission.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { RuntimeConversations, type RuntimeConversation } from './runtimeConversations.js';
 import { validateEnvironmentSource, RuntimeEnvironment, type EnvironmentSource } from './runtimeEnvironment.js';
@@ -2115,7 +2116,8 @@ export class InMemoryRuntimeHost {
         messages.push({ ...entry, message: entry.message as typeof messages[number]['message'], turnId: checkpoint.request.turnId, turnSequence: session.turns.length + 1, messageIndex: index, createdAt: 'createdAt' in entry && entry.createdAt ? entry.createdAt : checkpoint.createdAt });
       }
     }
-    return { sessionId, messages, supersededMessageIds: session.supersededMessageIds, finalMessageIds: childFinalMessageIds(session) };
+    return { sessionId, messages, supersededMessageIds: session.supersededMessageIds, finalMessageIds: childFinalMessageIds(session),
+      execution: session.turns.map(childExecutionFacts).filter(fact => fact !== undefined) };
   }
 
   #botRootSession(id: string, includeEvents = true): string {
@@ -4142,6 +4144,10 @@ export class InMemoryRuntimeHost {
             continue;
           }
           if (!completedRound.text.trim()) {
+            if (request.metadata.agentRole === 'child' && childSubmission({ turnId: request.turnId, messages: generatedMessages }, request.sessionId)) {
+              return await finalize({ status: 'completed', reason: 'child_delivery_declared',
+                finalMessageId: completedProjector.finalMessageId, details: { rounds: round, finishReason: completedRound.finishReason } });
+            }
             if (emptyStopRetries < 1) {
               emptyStopRetries += 1;
               const recoveryMessage: ModelMessage = {

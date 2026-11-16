@@ -15,6 +15,7 @@ import { botCapabilitiesSchema, type BotCapabilities, type BotContext, type BotS
 import { snapshotWebhookFiles, readBotAcknowledgement } from './contextWebhookFiles.mjs';
 import { bridgePluginsSchema, bridgeToolCallSchema, bridgeFilePaths, bridgeToolName, type BridgePlugin, type BridgeToolCall } from '@cardbush/bush-protocol';
 import { applyWebhookTurnPolicy, botContextMessage } from '@cardbush/bush-protocol';
+import { bridgeDeliveryResultSchema } from '@cardbush/bush-protocol';
 
 // Old encrypted records keep receipt and token identity across the Assistant merge.
 const owner = (id: string) => id === FRIENDS_SESSION ? PERSONAL_ASSISTANT_SESSION : id;
@@ -24,7 +25,8 @@ type Receipt = { id: string; connectionId: string; fingerprint: string; message:
   guidanceFor?: string;
   status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
 type BotDelivery = { id: string; sessionId: string; sourceRef: string; requestId: string; inputHash: string; fingerprint: string;
-  status: 'pending' | 'accepted' | 'unknown'; createdAt: string; code?: string; result?: unknown };
+  status: 'pending' | 'accepted' | 'unknown'; createdAt: string; code?: string; result?: unknown;
+  reportable?: boolean; finalResult?: z.infer<typeof bridgeDeliveryResultSchema>; reported?: boolean };
 type State = { version: 1; host: string; port: number; connections: Connection[]; receipts: Receipt[]; pairings: LocalWebhookPairing[]; botDeliveries: BotDelivery[] };
 const terminal = (status: Receipt['status']) => !['accepted', 'running'].includes(status);
 const serializeError = (error: unknown) => error instanceof WebhookError ? error.code : error instanceof z.ZodError ? 'invalid_parameters' : 'service_unavailable';
@@ -179,10 +181,34 @@ export class ContextWebhookHost {
         : connections.some(c => c.status === 'offline') ? 'bot_offline' : connections.length ? 'bot_disabled' : 'bot_not_connected') } : {}) };
   }
   private botReceipt(delivery: BotDelivery) {
+    const result = delivery.finalResult ?? delivery.result;
+    const confirmed = result && typeof result === 'object' && 'deliveryConfirmed' in result && result.deliveryConfirmed === true;
     return { status: delivery.status === 'pending' ? 'unknown' : delivery.status, eventId: delivery.id,
       requestId: delivery.requestId, sourceRef: delivery.sourceRef, ...(delivery.code ? { code: delivery.code } : {}),
-      ...(delivery.result === undefined ? {} : { result: delivery.result }),
-      ...(delivery.status === 'accepted' ? { deliveryConfirmed: false } : { retry: 'Reuse the same source_ref and request_id; do not create a new send.' }) };
+      ...(result === undefined ? {} : { result }),
+      ...(delivery.status === 'accepted' ? { deliveryConfirmed: Boolean(confirmed) } : { retry: 'Reuse the same source_ref and request_id for this identical invocation.' }) };
+  }
+  private async reportDelivery(connection: Connection, value: unknown) {
+    const input = z.object({ protocol: z.literal(contextWebhookProtocol), eventId: z.string().uuid(),
+      sourceRef: z.string().max(100), messageId: z.string().min(1), result: bridgeDeliveryResultSchema }).strict().parse(value);
+    const receipt = this.state.receipts.find(item => `webhook:${item.id}` === input.sourceRef && item.connectionId === connection.id && item.message.messageId === input.messageId);
+    const delivery = this.state.botDeliveries.find(item => item.id === input.eventId && item.sourceRef === input.sourceRef && item.reportable);
+    if (!receipt || !delivery || input.result.deliveryId !== input.eventId) throw new WebhookError('delivery_not_found', 404);
+    if (delivery.finalResult && webhookHash(delivery.finalResult) !== webhookHash(input.result)) throw new WebhookError('delivery_result_conflict', 409);
+    await this.write(state => {
+      const current = state.botDeliveries.find(item => item.id === input.eventId)!;
+      if (current.finalResult && webhookHash(current.finalResult) !== webhookHash(input.result)) throw new WebhookError('delivery_result_conflict', 409);
+      current.finalResult = input.result; current.status = 'accepted'; delete current.code;
+    });
+    if (!this.state.botDeliveries.find(item => item.id === input.eventId)!.reported && receipt.binding.kind === 'assistant') {
+      const session = await this.runtime.command('runtime.get_session', { sessionId: delivery.sessionId });
+      const context = session && await this.runtime.command('runtime.assistant_conversation', { action: 'read', sessionId: delivery.sessionId, after: Number.MAX_SAFE_INTEGER });
+      if (context?.generation === receipt.binding.generation) await this.runtime.command('runtime.assistant_conversation', {
+        action: 'delivery-update', sessionId: delivery.sessionId, generation: receipt.binding.generation, sourceRef: input.sourceRef, result: input.result,
+      });
+      await this.write(state => { state.botDeliveries.find(item => item.id === input.eventId)!.reported = true; });
+    }
+    return { protocol: contextWebhookProtocol, eventId: input.eventId, status: 'accepted' };
   }
   private pluginCatalog(sessionId: string) {
     if (this.abort.signal.aborted) return [];
@@ -207,7 +233,7 @@ export class ContextWebhookHost {
     const inputHash = webhookHash(input);
     const previous = this.state.botDeliveries.find(delivery => delivery.sessionId === sessionId && delivery.sourceRef === input.sourceRef && delivery.requestId === input.requestId);
     if (previous && previous.inputHash !== inputHash) throw new WebhookError('request_id_conflict');
-    if (previous?.status === 'accepted') return this.botReceipt(previous);
+    if (previous?.status === 'accepted' && !tool.readOnly) return this.botReceipt(previous);
     const files = await snapshotWebhookFiles(paths, source.capabilities, signal, access), descriptors = files.map(({ bytes: _bytes, ...file }) => file);
     const args = structuredClone(input.arguments); let index = 0;
     for (const key of tool.fileArguments) if (args[key] !== undefined)
@@ -216,7 +242,7 @@ export class ContextWebhookHost {
     if (previous && previous.fingerprint !== fingerprint) throw new WebhookError('request_id_conflict');
     const delivery = await this.write(state => {
       if (previous) { const found = state.botDeliveries.find(item => item.id === previous.id)!; found.status = 'pending'; delete found.code; return found; }
-      const next: BotDelivery = { id: randomUUID(), sessionId, sourceRef: input.sourceRef, requestId: input.requestId, inputHash, fingerprint, status: 'pending', createdAt: new Date().toISOString() };
+      const next: BotDelivery = { id: randomUUID(), sessionId, sourceRef: input.sourceRef, requestId: input.requestId, inputHash, fingerprint, status: 'pending', reportable: !tool.readOnly, createdAt: new Date().toISOString() };
       state.botDeliveries.push(next); return next;
     });
     try {
@@ -237,9 +263,10 @@ export class ContextWebhookHost {
         signal: AbortSignal.any([this.abort.signal, ...(signal ? [signal] : []), AbortSignal.timeout(60000)]) });
       const ack = await readBotAcknowledgement(response);
       if (!response.ok || ack.protocol !== contextWebhookProtocol || ack.eventId !== delivery.id || ack.status !== 'accepted') throw new WebhookError('bridge_ack_invalid');
-      await this.write(state => { const found = state.botDeliveries.find(item => item.id === delivery.id)!; found.status = 'accepted'; found.result = ack.result; });
+      await this.write(state => { const found = state.botDeliveries.find(item => item.id === delivery.id)!; found.status = 'accepted'; found.result = ack.result; delete found.code; });
     } catch (error) {
-      await this.write(state => { const found = state.botDeliveries.find(item => item.id === delivery.id)!; found.status = 'unknown'; found.code = serializeError(error); });
+      await this.write(state => { const found = state.botDeliveries.find(item => item.id === delivery.id)!;
+        if (!found.finalResult) { found.status = 'unknown'; found.code = serializeError(error); } });
     }
     return this.botReceipt(this.state.botDeliveries.find(item => item.id === delivery.id)!);
   }
@@ -362,11 +389,16 @@ export class ContextWebhookHost {
           throw new WebhookError('endpoint_not_found', 404);
         }
         const capabilityPath = /^\/api\/webhooks\/v1\/([\w-]+)\/capabilities$/.exec(req.url ?? '');
-        const match = capabilityPath ?? /^\/api\/webhooks\/v1\/([\w-]+)\/messages(?:\/([^/?]+))?$/.exec(req.url ?? '');
+        const deliveryPath = /^\/api\/webhooks\/v1\/([\w-]+)\/deliveries$/.exec(req.url ?? '');
+        const match = capabilityPath ?? deliveryPath ?? /^\/api\/webhooks\/v1\/([\w-]+)\/messages(?:\/([^/?]+))?$/.exec(req.url ?? '');
         const connection = match && this.state.connections.find(c => c.id === match[1] && c.enabled);
         if (!connection || req.headers.origin !== undefined) throw new WebhookError('unauthorized', 401);
         const wanted = Buffer.from(`Bearer ${connection.token}`), received = Buffer.from(req.headers.authorization ?? '');
         if (wanted.length !== received.length || !timingSafeEqual(wanted, received)) throw new WebhookError('unauthorized', 401);
+        if (deliveryPath) {
+          if (req.method !== 'POST') throw new WebhookError('endpoint_not_found', 404);
+          json(200, await this.reportDelivery(connection, await readWebhookJson(req, 16384))); return;
+        }
         if (capabilityPath) {
           if (req.method === 'DELETE') {
             const input = z.object({ protocol: z.literal(contextWebhookProtocol), instanceId: z.string().uuid() }).strict().parse(await readWebhookJson(req, 1024));
@@ -380,7 +412,7 @@ export class ContextWebhookHost {
           await this.write(state => { const current = state.connections.find(c => c.id === connection.id && c.enabled);
             if (!current) throw new WebhookError('bot_disconnected'); current.bot = { capabilities: input.capabilities, plugins: input.plugins,
               instanceId: input.instanceId, expiresAt: Date.now() + 45000 }; });
-          json(200, { protocol: contextWebhookProtocol, status: 'connected', leaseSeconds: 45, features: ['bridge_plugins'] }); return;
+          json(200, { protocol: contextWebhookProtocol, status: 'connected', leaseSeconds: 45, features: ['bridge_plugins', 'delivery_events'] }); return;
         }
         if (req.method === 'GET' && !match![2]) {
           json(200, { protocol: contextWebhookProtocol, type: 'connection.info', sessionId: owner(connection.binding.sessionId), title: connection.binding.title }); return;

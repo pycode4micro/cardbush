@@ -15,6 +15,7 @@ import { consumeTeamDocumentRequest, setTeamOpenDocument, useTeamWorkspaceNaviga
 import { TeamFlowDiagram } from './TeamFlowDiagram';
 import { TeamViewPicker } from './TeamViewPicker';
 import { TeamRunResults } from './TeamRunResults';
+import { TeamNodeDelivery } from './TeamNodeDelivery';
 import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
 import { teamNodeTitle, teamStatusLabel } from './teamFlowGraph';
 import { prepareTeamConversation, persistTeamConversation, resetTeamConversation } from './teamConversationStore';
@@ -52,7 +53,7 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
   const node = workflow?.nodes.find(item => item.id === nodeId), nodeState = run?.nodes.find(item => item.id === nodeId);
   const agents = useMemo(() => (run?.agents ?? state.agents).map(item => item.definition), [run?.agents, state.agents]);
   const graphReadOnly = !!run || !!imported || busy || !record;
-  const resumable = run && ['failed', 'stopped', 'interrupted'].includes(run.status);
+  const resumable = run && ['failed', 'stopped', 'interrupted', 'paused'].includes(run.status);
   const foreignRun = run && run.parentSessionId !== chat?.sessionId;
   const open = (id: string, runId?: string) => { setTeamId(id); setView(runId || 'definition'); setNodeId(''); setImported(undefined); setError(''); setDeleting(false); setMenu(false); };
   const create = () => open(`team-${crypto.randomUUID().slice(0, 12)}`);
@@ -160,7 +161,7 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
       <button type="button" onClick={() => setDeleting(false)}>{uiText(language)('agentConnectionForm.cancel')}</button></div>}
     <div className="team-flow-body">
       {workflow ? <>
-        {run && <div className="team-flow-run-caption"><span data-status={run.status}>{teamStatusLabel(run.status, language)}</span><span>{run.nodes.filter(item => item.status === 'completed').length} / {run.nodes.length} {uiText(language)('teamViewPicker.steps')} {uiText(language)('teamGraphWorkspace.v')}{run.teamRevision}</span><span title={run.input}>{run.input}</span>{record && <button type="button" disabled={busy} onClick={() => { setView('definition'); setNodeId(''); }}>{uiText(language)('teamGraphWorkspace.editCurrentWorkflow')}</button>}</div>}
+        {run && <div className="team-flow-run-caption"><span data-status={run.status}>{teamStatusLabel(run.status, language)}</span><span>{uiText(language)('teamDelivery.progress', { submitted: run.nodes.filter(item => item.status === 'completed' && item.delivery?.status === 'submitted').length, total: run.nodes.length })} {uiText(language)('teamGraphWorkspace.v')}{run.teamRevision}</span><span title={run.input}>{run.input}</span>{record && <button type="button" disabled={busy} onClick={() => { setView('definition'); setNodeId(''); }}>{uiText(language)('teamGraphWorkspace.editCurrentWorkflow')}</button>}</div>}
         {run?.error && <div className="team-flow-notice" role="alert">{run.error}</div>}
         {run && <TeamRunResults run={run} language={language} workspaceRoot={run.parentSessionId === chat?.sessionId ? chat.root : undefined} onOpenConversation={onOpenConversation}/>}
         <TeamFlowDiagram workflow={workflow} run={run || undefined} agents={agents} selectedId={nodeId} onSelect={id => setNodeId(current => current === id ? '' : id)} language={language}
@@ -171,6 +172,9 @@ export function TeamGraphWorkspace({ language, chatOptions = {}, onOpenConversat
             {!!node.depends_on.length && <details open={!run}><summary>{uiText(language)('teamGraphWorkspace.inputsAndUpstreamResults')}</summary>{node.depends_on.map(id => { const upstream = workflow.nodes.find(item => item.id === id)!; return <div key={id}>
               <div className="team-flow-dependency"><strong>{teamNodeTitle(upstream, agents)}</strong>{!run && !imported && <button type="button" disabled={graphReadOnly} aria-label={uiText(language)('teamGraphWorkspace.removeDependency', { value1: teamNodeTitle(upstream, agents) })} onClick={() => void saveGraph(record!.definition.nodes.map(item => item.id === node.id ? { ...item, depends_on: item.depends_on.filter(dependency => dependency !== id) } : item))}><Unlink size={13}/>{uiText(language)('teamGraphWorkspace.unlink')}</button>}</div>
               {run && <MessageFileReferenceScope workspaceRoot={run.parentSessionId === chat?.sessionId ? chat.root : undefined}><MarkdownContent content={run.nodes.find(item => item.id === id)?.output || uiText(language)('teamGraphWorkspace.availableWhenTheUpstreamStepCompletes')} language={language}/></MessageFileReferenceScope>}</div>; })}</details>}
+            {node.acceptance && <p>{uiText(language)('teamDelivery.criteria', { criteria: node.acceptance })}</p>}
+            {nodeState && <TeamNodeDelivery node={nodeState} language={language}/>}
+            {run && run.status !== 'running' && !foreignRun && <button type="button" disabled={!chat || chat.busy} onClick={() => ask(uiText(language)('teamDelivery.rerunRequest', { run: run.id, node: node.id }))}>{uiText(language)('teamDelivery.rerun')}</button>}
             {nodeState?.error && <p role="alert">{nodeState.error}</p>}{nodeState?.output && <div className="team-flow-result"><strong>{uiText(language)('teamGraphWorkspace.result')}</strong><MessageFileReferenceScope workspaceRoot={run?.parentSessionId === chat?.sessionId ? chat?.root : undefined}><MarkdownContent content={nodeState.output} language={language}/></MessageFileReferenceScope></div>}
           </div>{!imported && <button type="button" className="team-flow-edit-step" disabled={!chat} onClick={() => ask(uiText(language)('teamGraphWorkspace.changeTheStep', { value1: node.name || node.id }))}>{uiText(language)('teamGraphWorkspace.askAiToChangeThisStep')}</button>}
         </section>}

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { teamSubmissionSchema, childExecutionFactsSchema } from './teamSubmission.js';
 
 import { sessionUsageSchema } from "./session.js";
 import { remoteObservationSchema } from './remoteInteraction.js';
@@ -48,6 +49,8 @@ export const subagentTaskSchema = z.object({
   phase: z.enum(["discussion", "execution"]).optional(),
   status: subagentTaskStatusSchema,
   finalResponse: z.string(),
+  submission: teamSubmissionSchema.optional(),
+  diagnostics: childExecutionFactsSchema.optional(),
   errorMessage: z.string(),
   usage: sessionUsageSchema,
   revision: z.number().int().positive(),
@@ -77,6 +80,7 @@ export interface RemoteSubagentRequest {
 }
 export interface RemoteSubagentResult {
   status: 'completed' | 'failed' | 'stopped' | 'unavailable'; finalResponse: string; errorMessage: string; usage: SubagentTask['usage'];
+  submission?: SubagentTask['submission']; diagnostics?: SubagentTask['diagnostics'];
 }
 
 export const subagentEventSchema = z.object({

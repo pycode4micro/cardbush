@@ -100,6 +100,50 @@ const parent = (registry, voice = false) => ({ protocol: 'bush.session_turn_requ
   inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Check the files' } }], tools: registry?.definitions() ?? [],
   metadata: { assistantOutputMode: voice ? 'voice' : 'text' }, permissionMode: 'task_free' });
 
+test('delivery facts wake the current Assistant without changing its configuration, reopening stopped work or crossing a reset', async t => {
+  const journal = new ConversationJournal(temporary()), requests = [];
+  const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
+    delegate: async () => assert.fail('delivery notification must not force delegation'), provider: { async *stream(request) {
+      requests.push(request); yield* response(request, { text: 'Observed.' });
+    } } });
+  t.after(() => assistant.close());
+  const sourceRef = 'webhook:original';
+  assistant.command({ action: 'turn', sessionId: id, parent: parent(), profile: assistantProfileSchema.parse({}),
+    entry: { ...entry('original'), botSourceRef: sourceRef }, generation: 0 });
+  await until(() => !assistant.command({ action: 'read', sessionId: id }).busy);
+  const update = { action: 'delivery-update', sessionId: id, generation: 0, sourceRef,
+    result: { deliveryId: '11111111-1111-4111-8111-111111111111', status: 'delivered', deliveryConfirmed: true, filesSent: 1, textPartsSent: 1 } };
+  assistant.command(update); await until(() => requests.length === 2 && !assistant.command({ action: 'read', sessionId: id }).busy);
+  assert.ok(requests[1].messages.some(m => m.content.includes('bridge_delivery_result')));
+  const notice = journal.read(id).find(e => e.id === 'bridge-delivery-' + update.result.deliveryId);
+  assert.deepEqual(notice.responseTo, ['original']); assert.equal(notice.visibility, 'internal');
+  assistant.command(update); assert.equal(requests.length, 2, 'one terminal fact is consumed once');
+  assistant.command({ action: 'stop', sessionId: id });
+  assistant.command({ ...update, result: { ...update.result, deliveryId: '22222222-2222-4222-8222-222222222222' } });
+  assert.equal(requests.length, 2, 'a transport notification does not revoke a user stop');
+  assistant.command({ action: 'reset', sessionId: id });
+  assert.throws(() => assistant.command(update), /reset/);
+  assert.equal(journal.read(id).length, 0);
+});
+
+test('a delivery fact accepted before Assistant configuration is consumed after restart restoration', async t => {
+  const root = temporary(), journal = new ConversationJournal(root), sourceRef = 'webhook:restore';
+  journal.append(id, { ...entry('original'), botSourceRef: sourceRef });
+  journal.modelHistory(id).append([], ['original']);
+  const dependencies = { exists: () => true, tasks: () => [], checkpoint: () => ({}), delegate: async () => ({}) };
+  const first = new AssistantConversation(journal, dependencies);
+  first.command({ action: 'delivery-update', sessionId: id, generation: 0, sourceRef,
+    result: { deliveryId: '33333333-3333-4333-8333-333333333333', status: 'delivered', deliveryConfirmed: true, filesSent: 1, textPartsSent: 0 } });
+  first.close();
+  let calls = 0;
+  const restored = new AssistantConversation(new ConversationJournal(root), { ...dependencies, provider: { async *stream(request) {
+    calls++; assert.ok(request.messages.some(m => m.content.includes('bridge_delivery_result'))); yield* response(request, { text: 'Delivery observed.' });
+  } } });
+  t.after(() => restored.close());
+  restored.restore(parent(), assistantProfileSchema.parse({}));
+  await until(() => calls === 1 && !restored.command({ action: 'read', sessionId: id }).busy);
+});
+
 test('desktop corrections interrupt current reasoning and consume full input once before dispatch', async t => {
   const journal = new ConversationJournal(temporary()), held = gate(), requests = []; let actions = 0, firstSignal;
   const assistant = new AssistantConversation(journal, { exists: () => true, tasks: () => [], checkpoint: () => ({}),
@@ -505,6 +549,9 @@ for (const [foregroundRead, followUp] of [[false, false], [true, false], [true, 
   const host = new InMemoryRuntimeHost({ dataRoot: temporary(), sessionStore: sessions, toolRegistry: registry, provider: { async *stream(request) {
     if (request.metadata.agentRole === 'child') {
       children.push(request); await childGate.promise;
+      if (!request.messages.some(message => message.role === 'tool' && message.content.includes('bush.team_submission.v1'))) {
+        yield* response(request, { calls: [{ id: 'submit-inventory', name: 'team_submit', args: { status: 'submitted', summary: 'Inventory verified for order 42.' } }] }); return;
+      }
       yield* response(request, { text: 'Inventory verified for order 42.' }); return;
     }
     receipts.push(...request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content)));

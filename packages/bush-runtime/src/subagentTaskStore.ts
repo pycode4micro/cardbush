@@ -152,6 +152,7 @@ export class SubagentTaskStore {
     finalResponse: string;
     errorMessage: string;
     usage: SubagentTask["usage"];
+    submission?: SubagentTask['submission']; diagnostics?: SubagentTask['diagnostics'];
   }): SubagentTask {
     const before = this.get(input.parentSessionId, input.taskId);
     if (!before) throw new Error(`Subagent task ${input.taskId} does not exist.`);
@@ -161,7 +162,8 @@ export class SubagentTaskStore {
         before.status === input.status &&
         before.finalResponse === input.finalResponse &&
         before.errorMessage === input.errorMessage &&
-        JSON.stringify(before.usage) === JSON.stringify(input.usage)
+        JSON.stringify(before.usage) === JSON.stringify(input.usage) &&
+        JSON.stringify(before.submission) === JSON.stringify(input.submission) && JSON.stringify(before.diagnostics) === JSON.stringify(input.diagnostics)
       ) {
         return expected;
       }
@@ -174,6 +176,7 @@ export class SubagentTaskStore {
       finalResponse: input.finalResponse,
       errorMessage: input.errorMessage,
       usage: input.usage,
+      submission: input.submission, diagnostics: input.diagnostics,
       revision: before.revision + 1,
       updatedAt: now,
       completedAt: now,

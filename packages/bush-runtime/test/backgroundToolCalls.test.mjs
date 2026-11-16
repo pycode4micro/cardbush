@@ -94,7 +94,9 @@ test('declared MCP failure ends renewal, reports failed and delivers its native 
   t.after(() => f.jobs.endTurn('s', 't'));
   await f.run('start_mcp_tool', { name: remoteName, arguments: {}, repeat_while: { path: ['structuredContent', 'status'], equals: 'timeout' } });
   const delivered = await f.completions[0].promise;
-  const listed = await f.run('tasks', { action: 'list' });
+  const active = await f.run('tasks', { action: 'list' });
+  assert.deepEqual(active.result.tasks, [], 'a finished failure is not active work');
+  const listed = await f.run('tasks', { action: 'list', scope: 'all' });
   assert.equal(listed.result.tasks[0].status, 'failed');
   assert.equal(listed.result.tasks[0].revision, 'failed:1');
   assert.equal(attempts, 1);

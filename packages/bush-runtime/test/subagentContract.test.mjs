@@ -5,7 +5,7 @@ import { ToolRegistry, SubagentTaskStore, registerSubagentTool } from '../dist/i
 import { decodeSubagentInput } from '../dist/subagentTool.js';
 import { withToolDisplayTitle, stripToolDisplayTitle } from '../dist/toolDisplay.js';
 
-const title = { zh: '跟进审核', en: 'Continue review' };
+const title = 'Continue review';
 function schemas() {
   const registry = new ToolRegistry();
   registerSubagentTool(registry, new SubagentTaskStore(), async () => { throw Error('No execution permitted'); }, {
@@ -31,6 +31,8 @@ test('portable full and projected declarations explain the recorded follow-up er
     assert.throws(() => decodeSubagentInput({ ...stripToolDisplayTitle(input, definition), name: '安全与权限审核' }), /Remove name.*has not started or guided/);
     assert.equal(decodeSubagentInput(stripToolDisplayTitle(input, definition)).taskId, 'child-task');
   }
+  assert.match(full.inputSchema.properties.action.description, /save.*only action, agent, expected_revision/);
+  assert.throws(() => decodeSubagentInput({ action: 'save', agent: { id: 'a', name: 'A', system_prompt: 'role' }, expected_revision: 0, prompt: 'register' }), /No prompt/);
 });
 test('documented variants validate and invalid cross-field combinations fail before execution', () => {
   const { full } = schemas(), validate = new Ajv({ strict: false }).compile(withToolDisplayTitle(full).inputSchema);

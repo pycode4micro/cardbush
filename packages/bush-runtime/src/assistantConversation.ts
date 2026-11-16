@@ -164,6 +164,19 @@ export class AssistantConversation {
     if (input.sessionId === PERSONAL_ASSISTANT_SESSION && input.generation !== undefined && input.generation !== this.generation) throw new RuntimeUiError('assistantRuntime.reset', undefined, language);
     if (input.action === 'react') return { reactions: this.journal.setReaction(input.sessionId, input.messageId, input.reaction) };
     if (input.action === 'append') return this.journal.append(input.sessionId, input.entry);
+    if (input.action === 'delivery-update') {
+      const entries = this.journal.read(input.sessionId);
+      const original = entries.find(entry => entry.role === 'user' && entry.botSourceRef === input.sourceRef && ['text', 'voice'].includes(entry.source));
+      if (!original) return { status: 'ignored' };
+      const eventId = `bridge-delivery-${input.result.deliveryId}`;
+      if (entries.some(entry => entry.id === eventId)) return { status: 'accepted' };
+      this.journal.append(input.sessionId, { id: eventId, role: 'user', source: 'task', visibility: 'internal',
+        responseTo: [original.id], botSourceRef: input.sourceRef, botRecipientKey: original.botRecipientKey,
+        createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'bridge_delivery_result', ...input.result }) });
+      this.pending = true;
+      void this.pump();
+      return { status: 'accepted' };
+    }
     if (input.action === 'stop') {
       this.replyExpression = undefined;
       this.directTools.clear();
@@ -205,7 +218,10 @@ export class AssistantConversation {
     this.configured = { parent: { ...parent, sessionId: PERSONAL_ASSISTANT_SESSION }, profile };
     this.restoreResults();
     if (this.results.watching(PERSONAL_ASSISTANT_SESSION)) this.schedule();
-    if (this.results.ready(PERSONAL_ASSISTANT_SESSION).length) { this.pending = true; void this.pump(); }
+    const consumed = this.journal.modelHistory(PERSONAL_ASSISTANT_SESSION).read().entryIds;
+    const deliveryPending = this.journal.read(PERSONAL_ASSISTANT_SESSION).some(entry =>
+      entry.source === 'task' && entry.id.startsWith('bridge-delivery-') && !consumed.has(entry.id));
+    if (this.pending || deliveryPending || this.results.ready(PERSONAL_ASSISTANT_SESSION).length) { this.pending = true; void this.pump(); }
   }
   private restoreResults() {
     const id = PERSONAL_ASSISTANT_SESSION;
@@ -277,6 +293,7 @@ export class AssistantConversation {
   }
   private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal, executionId: string, retryRequested: boolean) {
     parent = await this.deps.prepareParent?.(parent, signal) ?? parent;
+    signal.throwIfAborted();
     const id = PERSONAL_ASSISTANT_SESSION;
     const memoryTools = this.deps.memory?.definitions() ?? [];
     const managementTools = this.deps.management?.definitions(parent) ?? [];
@@ -348,21 +365,23 @@ export class AssistantConversation {
     // A completion can wake Assistant after another Bot/user has spoken. Child
     // tasks inherit the sources being handled now, never the last configured sender.
     const activeInputs = remaining.filter(item => item.role === 'user');
-    const handledInputs = activeInputs.length ? activeInputs : entries.filter(item => item.role === 'user').slice(-1);
+    // A retry resumes one unfinished reply, including every accepted correction.
+    // These journal IDs are host state, not model-authored text or new user input.
+    const resuming = retryRequested && !remaining.length;
+    const replyInputs = resuming ? history.replyInputs()?.flatMap(inputId => entries.filter(entry => entry.id === inputId)) ?? [] : [];
+    const handledInputs = activeInputs.length ? activeInputs : replyInputs.length ? replyInputs : entries.filter(item => item.role === 'user').slice(-1);
+    if (resuming) authored = handledInputs.filter(isAuthoredInput).at(-1);
     const activeSources = new Set(handledInputs
       .flatMap(sourceRefs).filter((ref): ref is string => typeof ref === 'string'));
     parent = { ...parent, metadata: { ...parent.metadata, environmentExecutionId: executionId } };
     const evidence = handledInputs.flatMap(originalInputs).filter(isAuthoredInput);
     parent.metadata.assistantEventEvidence = evidence.map(item => ({ id: item.id, sourceRef: item.botSourceRef }));
-    parent.metadata.assistantUserRequest = Boolean(authored || (retryRequested && !remaining.length && handledInputs.some(isAuthoredInput)));
+    parent.metadata.assistantUserRequest = Boolean(authored);
     const completion = handledInputs.length === 1 && handledInputs[0].source === 'task' ? handledInputs[0] : undefined;
     const brief = completion ? delegatedRequestContext(evidence, entries) : undefined;
     // A verification task can return to the same assignment. Reuse the latest
     // retained brief unless the originating input or later corrections changed.
     const previousBrief = brief && prior.slice().reverse().find(item => item.role === 'user' && item.name === 'delegated_user_request');
-    if (authored && authored.originTurnId !== parent.turnId) {
-      parent.inputMessages = evidence.map(item => ({ messageId: item.id, message: { role: 'user', content: promptModelContent({ text: item.content, context: item.promptContext }) } }));
-    }
     if (completion && brief) {
       // Downstream delegation must not inherit the latest unrelated draft.
       parent.inputMessages = [{ messageId: evidence[0]?.id ?? `origin-${completion.id}`, message: brief },
@@ -398,8 +417,12 @@ export class AssistantConversation {
           url: await this.deps.snapshotImage!(image.url, signal) })));
       }
     };
-    const incoming = remaining.flatMap(modelInput);
-    await prepareImages(incoming);
+    const preparedInputs = remaining.map(entry => ({ entry, messages: modelInput(entry) }));
+    const resumedInputs = resuming ? handledInputs.map(entry => ({ entry, messages: modelInput(entry) })) : [];
+    const incoming = preparedInputs.flatMap(item => item.messages);
+    await prepareImages([...incoming, ...resumedInputs.flatMap(item => item.messages)]);
+    if (authored) parent.inputMessages = [...preparedInputs, ...resumedInputs].filter(item => isAuthoredInput(item.entry))
+      .map(({ entry, messages }) => ({ messageId: entry.id, message: messages.find(message => message.role === 'user' && !message.name)! }));
     if (authored && this.deps.memory) {
       const reference = await this.deps.memory.recall(parent, authored.content, [...history.read().messages, ...incoming], signal);
       if (reference) incoming.push(reference);
@@ -408,7 +431,7 @@ export class AssistantConversation {
     // Commit the reference and consumed input together. Retries/restart keep the
     // same delivered prefix; reset cannot resurrect an in-flight recall.
     const notificationEntry = this.notification ? remaining.find(item => item.source === 'task') : undefined;
-    history.append(incoming, remaining.map(item => item.id), this.notification ? [this.notification.reference] : []);
+    history.append(incoming, remaining.map(item => item.id), this.notification ? [this.notification.reference] : [], handledInputs.map(item => item.id));
     this.notification?.commit(); this.notification = undefined;
     // The visible journal is a projection; the durable context owns delivery.
     if (notificationEntry) this.journal.append(id, notificationEntry);
@@ -426,6 +449,7 @@ export class AssistantConversation {
       }),
     }] : [];
     const preferredName = await this.deps.preferredName?.(signal);
+    signal.throwIfAborted();
     if (preferredName !== undefined) incomingPreferences.push({ role: 'user', name: 'registered_user_profile', visibility: 'internal', content: JSON.stringify({ preferredName }) });
     system.content += '\n' + renderPromptTemplate('tool-display-instructions') + '\n' + renderPromptTemplate('coordination-tool-boundaries');
     if (this.deps.memory) system.content += renderPromptTemplate('assistant-memory');
@@ -448,6 +472,7 @@ export class AssistantConversation {
           if (previous?.content !== preference) history.append([{ role: 'user', name: 'individuation_preference', visibility: 'internal', content: preference }]);
         }
         const environment = await this.deps.environment?.message(parent, history.read().messages, signal);
+        signal.throwIfAborted();
         if (environment) history.append([environment]);
         const state = history.read();
         // Retries and subsequent model rounds must not reuse a persisted online
@@ -486,7 +511,7 @@ export class AssistantConversation {
     };
     const publish = (entry: Parameters<ConversationJournal['append']>[1]) => {
       signal.throwIfAborted();
-      this.journal.append(id, { ...entry, responseTo: [...new Set(remaining.flatMap(item => item.role === 'user'
+      this.journal.append(id, { ...entry, responseTo: [...new Set(handledInputs.flatMap(item => item.role === 'user'
         ? ['text', 'voice'].includes(item.source) ? [item.id] : item.responseTo ?? [] : []))].slice(-256) });
       history.append([], [entry.id]);
     };
@@ -499,24 +524,35 @@ export class AssistantConversation {
     const consumeGuidance = async () => {
       if (!live?.entries.length) return;
       expression = undefined;
-      const additions = live.entries.splice(0);
-      for (const entry of additions) {
-        if (!remaining.some(item => item.id === entry.id)) {
-          const messages = modelInput(entry);
-          await prepareImages(messages);
-          signal.throwIfAborted();
-          history.append(messages, [entry.id]);
-          remaining.push(entry); handledInputs.push(entry);
-        }
-        authored = entry;
+      const count = live.entries.length;
+      const consumed = history.read().entryIds;
+      const additions = live.entries.slice(0, count).filter(entry => !consumed.has(entry.id));
+      if (!additions.length) { live.entries.splice(0, count); return; }
+      if (!this.deps.environment && this.deps.botContext) for (const ref of new Set(additions.flatMap(sourceRefs))) {
+        if (!botContexts.has(ref)) botContexts.set(ref, await this.deps.botContext(ref, signal));
       }
-      // The webhook host already matched the bridge, sender and external chat.
-      // New media and child delegation now resolve against the latest message.
-      const ref = authored!.botSourceRef;
-      if (ref) { parent.metadata.botSourceRef = ref; parent.metadata.botSourceRefs = [ref]; }
-      parent.metadata.assistantUserRequest = true;
+      const prepared = additions.map(entry => ({ entry, messages: modelInput(entry) }));
+      const messages = prepared.flatMap(item => item.messages);
+      await prepareImages(messages);
+      const ref = additions.at(-1)!.botSourceRef;
+      const updatedParent: RuntimeSessionTurnRequest = { ...parent,
+        inputMessages: [...parent.inputMessages, ...prepared.map(({ entry, messages }) => ({ messageId: entry.id,
+          message: messages.find(message => message.role === 'user' && !message.name)! }))],
+        metadata: { ...parent.metadata, botSourceRefs: ref ? [ref] : [], assistantUserRequest: true,
+          assistantEventEvidence: [...evidence, ...additions].slice(-256).map(entry => ({ id: entry.id, sourceRef: entry.botSourceRef })) } };
+      if (ref) updatedParent.metadata.botSourceRef = ref;
+      else delete updatedParent.metadata.botSourceRef;
+      if (this.deps.memory) {
+        const reference = await this.deps.memory.recall(updatedParent, additions.at(-1)!.content, [...history.read().messages, ...messages], signal);
+        if (reference) messages.push(reference);
+      }
+      signal.throwIfAborted();
+      history.append(messages, additions.map(entry => entry.id), [], [...handledInputs, ...additions].map(entry => entry.id));
+      live.entries.splice(0, count);
+      remaining.push(...additions); handledInputs.push(...additions);
+      authored = additions.at(-1)!;
+      parent = updatedParent;
       evidence.push(...additions);
-      parent.metadata.assistantEventEvidence = evidence.slice(-256).map(entry => ({ id: entry.id, sourceRef: entry.botSourceRef }));
     };
     let published = false;
     const directTools = this.directTools;
@@ -530,7 +566,7 @@ export class AssistantConversation {
       if (live?.entries.length) { round--; continue; }
       let result: Awaited<ReturnType<typeof executeBufferedModelRound>>;
       try {
-        result = await this.reasoning.run(parent.turnId, signal, attempt => executeBufferedModelRound(this.deps.provider, request,
+        result = await this.reasoning.run(live?.turnId ?? parent.turnId, signal, attempt => executeBufferedModelRound(this.deps.provider, request,
           { signal: attempt, wait: this.deps.wait, onRetry: status => { if (!attempt.aborted) this.retry = status; } }));
       } catch (error) {
         if (!(error instanceof ModelRequestInterrupted)) throw error;
@@ -564,6 +600,7 @@ export class AssistantConversation {
           publish({ id: replyId, role: 'assistant', content: text, createdAt: new Date().toISOString(), source: spoken ? 'voice' : 'text', visibility: 'conversation', ...(spoken ? { voiceMode: 'chained' as const } : {}) });
           this.replyExpression = expression ? { mood: expression, replyId, expiresAt: Date.now() + 6000 } : undefined;
         }
+        history.append([], [], [], []);
         return;
       }
       // A new tool round supersedes an earlier final-display signal.
