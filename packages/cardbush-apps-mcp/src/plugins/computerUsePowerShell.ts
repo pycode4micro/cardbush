@@ -34,6 +34,7 @@ export async function runComputerUsePowerShell(script: string, options: {
   signal?: AbortSignal;
   timeoutMs: number;
   afterAction?: (acknowledgement: Record<string, unknown>) => Promise<void>;
+  beforeExecute?: (processId: number) => Promise<Record<string, string>>;
 }): Promise<string> {
   // Script-local values travel through stdin too. Assigning a large payload to
   // $env would still hit Windows' 32K per-environment-variable limit.
@@ -88,8 +89,15 @@ ${script}
     // Handle that error as part of the same call instead of emitting it unhandled.
     stdin.once('error', error => { execution.child.kill(); reject(error); });
     const sent = (error?: Error | null) => error ? reject(error) : resolve();
-    if (options.afterAction) stdin.write(source, 'utf8', sent);
-    else stdin.end(source, 'utf8', sent);
+    const send = (extra: Record<string, string> = {}) => {
+      options.signal?.throwIfAborted();
+      if (execution.child.killed) throw new Error('Native worker terminated before dispatch.');
+      const data = Object.keys(extra).length ? Buffer.from(computerUsePowerShellParameters(extra) + '\n' + wrapped, 'utf8').toString('base64') + '\n' : source;
+      if (options.afterAction) stdin.write(data, 'utf8', sent);
+      else stdin.end(data, 'utf8', sent);
+    };
+    if (options.beforeExecute && execution.child.pid) void options.beforeExecute(execution.child.pid).then(send).catch(error => { execution.child.kill(); reject(error); });
+    else { try { send(); } catch (error) { execution.child.kill(); reject(error); } }
   });
   try {
     const [{ stdout }] = await Promise.all([execution, input]);

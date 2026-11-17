@@ -33,6 +33,11 @@ public static class CardBushPresentation {
   [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd,System.Text.StringBuilder name,int length);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT point);
+  [DllImport("user32.dll", SetLastError=true)] static extern bool AllowSetForegroundWindow(uint processId);
   [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
   [DllImport("user32.dll")] static extern IntPtr SetParent(IntPtr child, IntPtr parent);
   [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hwnd);
@@ -48,6 +53,15 @@ public static class CardBushPresentation {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool SetWindowText(IntPtr hwnd,string text);
 
   static Form dispatcher;
+  static bool shellClick, shellClickDispatched;
+  static int shellX, shellY;
+  static IntPtr shellForeground;
+  static bool ShellPoint(IntPtr hwnd,int x,int y) {
+    uint pid,shellPid; GetWindowThreadProcessId(hwnd,out pid); GetWindowThreadProcessId(GetShellWindow(),out shellPid);
+    var name=new System.Text.StringBuilder(256); GetClassName(hwnd,name,name.Capacity);
+    return pid!=0 && pid==shellPid && (name.ToString()=="Shell_TrayWnd" || name.ToString()=="Shell_SecondaryTrayWnd")
+      && GetAncestor(WindowFromPoint(new POINT{X=x,Y=y}),2)==hwnd;
+  }
   static Layer frame, badge;
   static IntPtr target;
   static string scope = "";
@@ -178,12 +192,27 @@ public static class CardBushPresentation {
         EnableLayers(true);
         if (paused && RemainingUserIdleMs()==0) paused=false;
         touched=DateTime.UtcNow; timer.Interval=250; SyncWindow();
+      } else if(op=="foreground_grant") {
+        if(!active || !acting || !windowAction || paused || contextChanged || scope!=requestScope)
+          throw new Exception("No active window operation owns this foreground grant.");
+        long processId=Number(v,"process_id");
+        if(processId<=0 || processId>=UInt32.MaxValue) throw new Exception("Invalid foreground recipient process.");
+        bool granted=AllowSetForegroundWindow((uint)processId);
+        int error=granted?0:Marshal.GetLastWin32Error();
+        Emit(new { kind="ack", id=id, foreground_granted=granted, grant_error=error }); return;
       } else if(op=="action") {
         if(!active || scope!=requestScope || target.ToInt64()!=Number(v,"hwnd")) throw new Exception("Observe the exact target window before control.");
         if(paused) throw new Exception("User has taken over. Observe again after the user finishes.");
         if(contextChanged) throw new Exception("The foreground window changed. Observe again before input; this is not evidence of user input.");
         windowAction=Text(v,"action")=="window";
-        if(Text(v,"action")!="window" && GetAncestor(GetForegroundWindow(),2)!=target) throw new Exception("The target window is not foreground; no input was sent. Observe the exact hwnd for a fresh state_id, use action=window with operation=activate and that state_id/hwnd, then observe again to verify foreground before input. Observing alone does not activate the window.");
+        shellClick=false; shellClickDispatched=false; shellForeground=GetForegroundWindow();
+        RECT shellRect;
+        if(Number(v,"coordinate_click")==1 && Text(v,"action")=="click" && Text(v,"button")!="right" && Text(v,"button")!="middle" && Number(v,"clicks")<=1
+          && v.ContainsKey("x") && v["x"]!=null && v.ContainsKey("y") && v["y"]!=null && GetWindowRect(target,out shellRect)) {
+          shellX=shellRect.Left+(int)Number(v,"x"); shellY=shellRect.Top+(int)Number(v,"y");
+          shellClick=ShellPoint(target,shellX,shellY);
+        }
+        if(!windowAction && !shellClick && GetAncestor(GetForegroundWindow(),2)!=target) throw new Exception("The target window is not foreground; no input was sent.");
         pointer=v.ContainsKey("x") && v["x"]!=null && v.ContainsKey("y") && v["y"]!=null;
         if(pointer) {
           RECT wr; POINT origin=new POINT(); GetWindowRect(target,out wr); ClientToScreen(target,ref origin);
@@ -204,7 +233,7 @@ public static class CardBushPresentation {
     Application.EnableVisualStyles();
     dispatcher=new Form(); IntPtr handle=dispatcher.Handle;
     onWindow=(hook,evt,hwnd,obj,child,thread,time)=> {
-      if(evt==3 && active && !windowAction && GetAncestor(GetForegroundWindow(),2)!=target) ContextChanged("foreground_changed");
+      if(evt==3 && active && !windowAction && !(acting && shellClick && shellClickDispatched) && GetAncestor(GetForegroundWindow(),2)!=target) ContextChanged("foreground_changed");
       if(evt==3 || (hwnd==target && obj==0)) SyncWindow();
     };
     eventHooks.Add(SetWinEventHook(3,3,IntPtr.Zero,onWindow,0,0,2));
@@ -214,11 +243,14 @@ public static class CardBushPresentation {
         MOUSE input=(MOUSE)Marshal.PtrToStructure(data,typeof(MOUSE));
         long inputMessage=msg.ToInt64();
         bool buttonUp=inputMessage==0x202 || inputMessage==0x205 || inputMessage==0x208;
-        if(input.extra==inputTag && !buttonUp && (!active || paused || contextChanged || GetAncestor(GetForegroundWindow(),2)!=target)) {
+        bool shellAllowed=acting && shellClick && !shellClickDispatched && GetForegroundWindow()==shellForeground
+          && ShellPoint(target,shellX,shellY) && input.pt.X==shellX && input.pt.Y==shellY;
+        if(input.extra==inputTag && !buttonUp && (!active || paused || contextChanged || (!shellAllowed && GetAncestor(GetForegroundWindow(),2)!=target))) {
           if(active && !paused) ContextChanged("foreground_changed");
           return new IntPtr(1);
         }
         if(input.extra==inputTag) {
+          if(shellAllowed && inputMessage==0x201) shellClickDispatched=true;
           if(active && !paused) touched=DateTime.UtcNow;
           long message=msg.ToInt64();
           if(message==0x201) heldMouse|=4; else if(message==0x202) heldMouse&=~4u;

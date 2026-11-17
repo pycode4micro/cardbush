@@ -2,7 +2,7 @@ const maxErrorCharacters = 1600;
 
 export type ComputerUseExecution = 'not_dispatched' | 'dispatched' | 'unknown';
 export type ComputerUseErrorCode =
-  | 'user_takeover' | 'user_stopped' | 'window_changed' | 'window_unavailable'
+  | 'user_takeover' | 'user_stopped' | 'window_changed' | 'window_unavailable' | 'activation_failed'
   | 'stale_state' | 'display_changed' | 'observation_failed' | 'control_unavailable' | 'timeout'
   | 'application_control_blocked' | 'policy_blocked' | 'observation_required' | 'progress_unverified' | 'invalid_action' | 'computer_use_failed';
 export interface ComputerUseFailureInfo {

@@ -27,6 +27,46 @@ async function seedConnections(root,connections,receipts=[]) {
 }
 const message = (messageId, text = 'Continue') => ({ messageId, text, senderId: 'u-1', conversationId: 'remote-chat' });
 const until = async fn => { for (let n = 0; n < 160; n++) { const value = await fn(); if (value) return value; await new Promise(r => setTimeout(r, 50)); } throw Error('Timed out'); };
+
+test('late committed replies remain deliverable after failed, interrupted and stopped execution, while busy and after restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-late-replies-'));
+  const entries = [], delivered = [];
+  const runtime = { command: async (_kind, input) => ({ generation: 0, busy: true,
+    entries: entries.slice(input.after ?? 0), cursor: entries.length }) };
+  const receiver = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    delivered.push(JSON.parse(raw)); res.writeHead(200).end();
+  });
+  receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
+  const connection = { ...config({ url: `http://127.0.0.1:${receiver.address().port}/reply` }),
+    id: randomUUID(), token: 'a'.repeat(64), binding: binding() };
+  const receipts = ['failed', 'interrupted', 'stopped'].map(status => ({ id: randomUUID(), connectionId: connection.id,
+    fingerprint: status, message: message(status), binding: binding(), status, errorCode: 'original_' + status,
+    errorMessage: 'Retained diagnostic', reply: '', createdAt: new Date().toISOString(), delivered: true, sequence: 3, attempts: 0 }));
+  const oldGeneration = { ...receipts[0], id: randomUUID(), message: message('old-generation'), binding: { ...binding(), generation: 7 } };
+  let host;
+  try {
+    await seedConnections(root, [connection], [...receipts, oldGeneration]);
+    host = await new ContextWebhookHost(root, secrets, runtime, { port: 0, execute: async () => assert.fail('must not rerun execution') }).start();
+    for (const receipt of receipts) entries.push({ id: 'reply-' + receipt.id, role: 'assistant', visibility: 'conversation',
+      content: 'Finished ' + receipt.status, responseTo: ['webhook-input-' + receipt.id] });
+    entries.push({ id: 'unrelated', role: 'assistant', visibility: 'conversation', content: 'another recipient', responseTo: ['not-ours'] });
+    entries.push({ id: 'old-generation', role: 'assistant', visibility: 'conversation', content: 'another generation', responseTo: ['webhook-input-' + oldGeneration.id] });
+    await until(() => delivered.length === 3);
+    assert.deepEqual(delivered.map(r => r.text).sort(), ['Finished failed', 'Finished interrupted', 'Finished stopped']);
+    const stored = JSON.parse(secrets.decrypt(JSON.parse(await readFile(join(root, 'webhooks/state.json'), 'utf8')).encrypted));
+    assert.deepEqual(stored.receipts.slice(0, 3).map(r => [r.status, r.errorCode, r.sequence]), receipts.map(r => [r.status, r.errorCode, 4]));
+    assert.ok(stored.receipts.every(r => r.errorMessage === 'Retained diagnostic'));
+    assert.equal(stored.receipts[3].sequence, 3);
+    await host.close();
+    host = await new ContextWebhookHost(root, secrets, runtime, { port: 0, execute: async () => assert.fail('must not replay') }).start();
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    assert.equal(delivered.length, 3, 'restart retains projection and delivery acknowledgement');
+    entries.push({ id: 'reply-later', role: 'assistant', visibility: 'conversation', content: 'Another result', responseTo: ['webhook-input-' + receipts[0].id] });
+    await until(() => delivered.length === 4);
+    assert.equal(delivered.at(-1).text, 'Finished failed\n\nAnother result');
+  } finally { await host?.close(); receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); await rm(root, { recursive: true, force: true }); }
+});
 async function* answer(request, text) {
   const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
   yield { ...base, sequence: 0, kind: 'response_started' };

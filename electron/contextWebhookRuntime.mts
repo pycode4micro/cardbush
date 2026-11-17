@@ -18,7 +18,7 @@ export const storedWebhookBindingSchema = z.union([
   }).strict().refine(value => value.parent.sessionId === value.sessionId && value.sessionId !== PERSONAL_ASSISTANT_SESSION && value.sessionId !== FRIENDS_SESSION),
   z.object({ kind: z.literal('friends'), sessionId: z.literal(FRIENDS_SESSION), title: bindingFields.title }).strict(),
 ]);
-export type WebhookResult = { status: 'completed' | 'failed' | 'interrupted' | 'stopped'; reply: string; errorCode?: string };
+export type WebhookResult = { status: 'completed' | 'failed' | 'interrupted' | 'stopped'; reply: string; errorCode?: string; errorMessage?: string };
 export type WebhookRuntime = { command(kind: string, payload: unknown): Promise<any>;
   prepareParent?(parent: RuntimeSessionTurnRequest, signal: AbortSignal): Promise<RuntimeSessionTurnRequest> };
 
@@ -80,7 +80,8 @@ export async function runContextWebhook(runtime: WebhookRuntime, binding: Stored
       entry.role === 'assistant' && entry.visibility === 'conversation' && entry.responseTo?.includes(inputId));
     if (!journal.busy) {
       const reply = replies.map((entry: { content: string }) => entry.content).join('\n\n');
-      return journal.error ? { status: 'failed', reply, errorCode: 'assistant_failed' }
+      return journal.error ? { status: 'failed', reply, errorCode: 'assistant_failed',
+        ...(typeof journal.error === 'string' ? { errorMessage: journal.error.slice(0, 2000) } : {}) }
         : replies.length ? { status: 'completed', reply } : { status: 'interrupted', reply, errorCode: 'response_unavailable' };
     }
     await delay(500, undefined, { signal });

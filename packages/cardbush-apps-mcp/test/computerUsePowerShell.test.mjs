@@ -96,3 +96,14 @@ test('script timeouts and cancellation still terminate the owned PowerShell proc
 test('spawn failures settle the pending script input instead of hanging', windowsOnly, async () => {
   await assert.rejects(execute('# padding\n'.repeat(100000), { cwd: join(tmpdir(), 'cardbush-missing-' + randomUUID()) }), { code: 'ENOENT' });
 });
+
+test('foreground coordination targets the actual child before any native script can execute', windowsOnly, async () => {
+  let pid;
+  const result = JSON.parse(await execute('[PSCustomObject]@{pid=$PID;grant=$script:CARDBUSH_TEST_GRANT} | ConvertTo-Json -Compress', {
+    beforeExecute: async processId => { pid = processId; return { CARDBUSH_TEST_GRANT: 'fixture' }; },
+  }));
+  assert.equal(result.pid, pid); assert.equal(result.grant, 'fixture');
+  await assert.rejects(execute("throw 'must not execute'", { beforeExecute: async () => { throw Error('grant cancelled'); } }), /grant cancelled/);
+  const controller = new AbortController();
+  await assert.rejects(execute("throw 'must not execute'", { signal: controller.signal, beforeExecute: async () => { controller.abort(); return {}; } }), { name: 'AbortError' });
+});

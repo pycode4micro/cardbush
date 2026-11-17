@@ -10,7 +10,7 @@ export function prepareComputerUsePresentation(directory?: string): Promise<stri
     + computerUsePresentationNative + "\n'@\n[CardBushPresentation]::Run()", directory);
 }
 
-export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number; retry_after_ms?: number; user_idle_ms?: number };
+export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number; retry_after_ms?: number; user_idle_ms?: number; foreground_granted?: boolean; grant_error?: number };
 type Notice = ComputerUseNotice;
 
 export function computerUseNoticeFailure(notice: Notice): ComputerUseFailure {
@@ -60,6 +60,12 @@ export class ComputerUsePresentation {
   }
 
   isPaused(scope: string): boolean { return this.#paused.has(scope) && !this.#stopped.has(scope); }
+  async grantForeground(processId: number): Promise<Record<string, string>> {
+    if (!Number.isSafeInteger(processId) || processId <= 0 || processId >= 0xffffffff) throw new Error('Invalid native worker process.');
+    this.assertAvailable(this.#owner);
+    const reply = await this.#send({ op: 'foreground_grant', scope: this.#owner, process_id: processId });
+    return { CARDBUSH_FOREGROUND_GRANTED: reply.foreground_granted ? '1' : '0', CARDBUSH_FOREGROUND_GRANT_ERROR: String(reply.grant_error ?? 0) };
+  }
   interruption(scope: string): ComputerUseFailure | undefined { return this.#interruptions.get(scope); }
 
   async action(scope: string, input: Record<string, unknown>, target: Target, signal?: AbortSignal) {
@@ -73,7 +79,8 @@ export class ComputerUsePresentation {
     const controller = new AbortController();
     this.#controller = controller;
     try {
-      await this.#send({ op: 'action', scope, hwnd: target.hwnd, action: input.action, x, y });
+      await this.#send({ op: 'action', scope, hwnd: target.hwnd, action: input.action, button: input.button, clicks: input.clicks, x, y,
+        coordinate_click: input.action === 'click' && input.element_index == null && typeof input.x === 'number' && typeof input.y === 'number' ? 1 : 0 });
       // Long paced input is active work. Native input activity maintains its
       // own watchdog; release/finish re-arms this process's idle cleanup.
       if (this.#idleTimer) { clearTimeout(this.#idleTimer); this.#idleTimer = undefined; }

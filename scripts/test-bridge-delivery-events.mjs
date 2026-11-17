@@ -46,12 +46,17 @@ test('delivery observations authenticate their source, survive acknowledgement r
   const catalog = await gateway.botRequest({ action: 'catalog', sessionId: 'personal-assistant' });
   const call = (tool, requestId, args = {}) => gateway.botRequest({ action: 'call', sessionId: 'personal-assistant', input: {
     connectionId: connection.id, pluginId: 'fixture', revision: catalog[0].revision, sourceRef: source.sourceRef, tool, requestId, arguments: args } });
-  const result = id => ({ deliveryId: id, status: 'delivered', deliveryConfirmed: true, textPartsSent: 1, filesSent: 1 });
+  const result = id => ({ deliveryId: id, status: 'delivered', deliveryConfirmed: true, textPartsSent: 1, filesSent: 1,
+    lastError: { code: 'weixin_error_-2', at: 100, phase: 'sending_text', details: {
+      operation: 'sendmessage', httpStatus: 200, ret: -2, errcode: -2, message: 'Platform rejected the request.' } } });
   const report = id => ({ protocol: 'cardbush.webhook.v1', eventId: id, sourceRef: source.sourceRef, messageId: 'original', result: result(id) });
   early = async payload => { assert.equal((await post('/deliveries', report(payload.eventId))).status, 200); };
   const send = await call('send_text', 'send-1');
   assert.equal(send.result.status, 'delivered', 'a late queued ack cannot replace the terminal fact');
   assert.equal(send.deliveryConfirmed, true); assert.equal(notifications.length, 1);
+  assert.deepEqual(send.result.lastError, result(send.eventId).lastError);
+  assert.equal((await post('/deliveries', { ...report(send.eventId), result: { ...result(send.eventId), lastError: {
+    ...result(send.eventId).lastError, details: { ...result(send.eventId).lastError.details, token: 'must-not-be-accepted' } } } })).status, 400);
   await post('/deliveries', report(send.eventId)); assert.equal(notifications.length, 1);
   assert.equal((await post('/deliveries', report(send.eventId), 'wrong-token')).status, 401);
   assert.equal((await post('/deliveries', { ...report(send.eventId), messageId: 'other-message' })).status, 404);

@@ -563,7 +563,7 @@ async function executeComputerUseRequest(
     const interruption = computerUsePresentation.interruption(scopeId);
     const failure = computerUseFailure(
       interruption?.info.code === 'user_takeover' || interruption?.info.code === 'user_stopped' ? interruption : error,
-      actionRecorded ? 'dispatched' : actionMayHaveDispatched ? 'unknown' : 'not_dispatched',
+      actionRecorded || error instanceof ComputerUseFailure && error.info.code === 'activation_failed' ? 'dispatched' : actionMayHaveDispatched ? 'unknown' : 'not_dispatched',
     );
     if (failure.info.code === 'application_control_blocked') computerUseSafety.recordApplicationControlBlock(scopeId, failure);
     if (failure.info.code === 'user_takeover') {
@@ -576,11 +576,11 @@ async function executeComputerUseRequest(
     }
     await releaseAction();
     if (input.observe_after !== false && actionObservation && actionMayHaveDispatched &&
-        (failure.info.code === 'window_changed' || failure.info.code === 'window_unavailable')) {
+        (failure.info.code === 'window_changed' || failure.info.code === 'window_unavailable' || failure.info.code === 'activation_failed')) {
       // A click may have opened a dialog before its ACK arrived. Return evidence,
       // never replay the click. This consumes no human-takeover budget.
       const recovery = await observeAfterAction(input, config, scopeId, actionObservation,
-        { action, execution: failure.info.execution }, requestSignal);
+        { action, execution: failure.info.execution }, requestSignal, nativeAction);
       return { ...recovery, error: failure.info };
     }
     if (failure.info.code === 'user_takeover') {
@@ -904,6 +904,7 @@ async function captureWindowState(
     is_foreground: isForeground,
     capture_consistent: consistent,
     actionable: consistent && isForeground && rawOutput.visual_evidence_verified !== false,
+    pointer_activation_available: consistent && rawOutput.shell_taskbar === true && rawOutput.visual_evidence_verified !== false,
     window_action_available: consistent,
     ...(accessibility ? { accessibility } : {}),
   };
@@ -982,6 +983,7 @@ async function observeWindow(
       coordinate_space: 'window',
       ...capture.output,
       actionable: Boolean(stateId) && capture.output.actionable && !paused,
+      pointer_activation_available: Boolean(stateId) && capture.output.pointer_activation_available && !paused,
       window_action_available: Boolean(stateId) && !paused,
       ...(paused ? { control_state: 'user_takeover', ...computerUsePresentation.interruption(scopeId)?.info.details } : {}),
       ...(interrupted?.info.code === 'user_stopped' ? { control_state: 'user_stopped', error: interrupted.info } : {}),
@@ -1035,6 +1037,7 @@ public static class CardBushWindowCapture {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr GetShellWindow();
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint command);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder value, int capacity);
@@ -1049,6 +1052,8 @@ public static class CardBushWindowCapture {
   public static string WindowTitle(IntPtr hwnd) { var value = new StringBuilder(2048); GetWindowText(hwnd, value, value.Capacity); return value.ToString(); }
   public static uint WindowProcessId(IntPtr hwnd) { uint processId; GetWindowThreadProcessId(hwnd, out processId); return processId; }
   public static string WindowClass(IntPtr hwnd) { var value=new StringBuilder(256); GetClassName(hwnd,value,value.Capacity); return value.ToString(); }
+  public static bool IsShellTaskbar(IntPtr hwnd) { uint pid=WindowProcessId(hwnd); string name=WindowClass(hwnd);
+    return pid!=0 && pid==WindowProcessId(GetShellWindow()) && (name=="Shell_TrayWnd" || name=="Shell_SecondaryTrayWnd"); }
   public static bool IsOwnedBy(IntPtr child, IntPtr owner) {
     if(owner==IntPtr.Zero || child==owner) return false;
     for(int depth=0;child!=IntPtr.Zero && depth<32;depth++) {
@@ -1161,6 +1166,7 @@ elseif ([CardBushWindowCapture]::IsOwnedBy($h, $finalForeground)) { $foregroundR
   display_signature = $displaySignature
   window_dpi = $windowDpi
   foreground_hwnd = $finalForeground.ToInt64()
+  shell_taskbar = [CardBushWindowCapture]::IsShellTaskbar($h)
   capture_consistent = $foreground -eq $finalForeground
   visual_fingerprint = [Convert]::ToBase64String($fingerprint)
   focused_fingerprint = $focusedFingerprint
@@ -1255,7 +1261,7 @@ async function controlWindow(
   };
   if (normalized === 'move' && (bounds.x == null || bounds.y == null)) throw new Error('move requires x and y.');
   if (normalized === 'resize' && (bounds.width == null || bounds.height == null)) throw new Error('resize requires width and height.');
-  await runNativeAction(`${windowControlScript}\n[PSCustomObject]@{action='window';operation=$op} | ConvertTo-Json -Compress`, {
+  const result = await runNativeAction(`${windowControlScript}\n[PSCustomObject]@{action='window';operation=$op;activation=$cardbushActivation} | ConvertTo-Json -Depth 5 -Compress`, {
     CARDBUSH_WINDOW_HWND: String(target.hwnd),
     CARDBUSH_WINDOW_OPERATION: normalized,
     CARDBUSH_EXPECTED_WINDOW_PID: String(observation.processId ?? 0),
@@ -1268,7 +1274,9 @@ async function controlWindow(
     CARDBUSH_EXPECTED_WINDOW_WIDTH: String(observation.bounds.width),
     CARDBUSH_EXPECTED_WINDOW_HEIGHT: String(observation.bounds.height),
   }, signal, 15_000, nativeAction);
-  return { action: 'window', operation: normalized, target };
+  const activation = recordOrEmpty(result.activation);
+  if (activation.activated === false) throw new ComputerUseFailure('activation_failed', 'The activation request completed, but the target did not become foreground.', 'dispatched', activation);
+  return { action: 'window', operation: normalized, target, ...(result.activation ? { activation } : {}) };
 }
 
 export function selectWindowTarget(
@@ -1691,6 +1699,8 @@ using System.Runtime.InteropServices;
 public static class CardBushWindowControl {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int c);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -1722,14 +1732,23 @@ if (
   [Math]::Abs(($rect.Bottom - $rect.Top) - $expectedHeight) -gt 2
 ) { throw 'The target window bounds changed after observation. Observe again.' }
 $inputTimer = [Diagnostics.Stopwatch]::StartNew()
+$cardbushActivation = $null
 ${computerUseDisplayGuardScript}
 switch ($op) {
   'focus' {
-    [void][CardBushWindowControl]::ShowWindow($h,9)
-    [void][CardBushWindowControl]::SetForegroundWindow($h)
+    $before = [CardBushWindowControl]::GetForegroundWindow()
+    $restored = [CardBushWindowControl]::IsIconic($h)
+    if ($restored) { [void][CardBushWindowControl]::ShowWindowAsync($h,9) }
+    $requested = [CardBushWindowControl]::SetForegroundWindow($h)
     $focusWait = [Diagnostics.Stopwatch]::StartNew()
-    while ([CardBushWindowControl]::GetForegroundWindow() -ne $h -and $focusWait.ElapsedMilliseconds -lt 250) { Start-Sleep -Milliseconds 25 }
-    if ([CardBushWindowControl]::GetForegroundWindow() -ne $h) { throw 'Windows did not activate the target window. Do not send input or repeat activation blindly; report the blocker and ask the user to bring the target forward.' }
+    while ([CardBushWindowControl]::GetForegroundWindow() -ne $h -and $focusWait.ElapsedMilliseconds -lt 1000) { Start-Sleep -Milliseconds 25 }
+    $after = [CardBushWindowControl]::GetForegroundWindow()
+    [uint32]$foregroundPid = 0
+    [void][CardBushWindowControl]::GetWindowThreadProcessId($after, [ref]$foregroundPid)
+    $cardbushActivation = [PSCustomObject]@{ activated=($after -eq $h); native_request_accepted=$requested;
+      target_hwnd=$h.ToInt64(); target_process_id=$actualPid; foreground_before=$before.ToInt64(); foreground_after=$after.ToInt64();
+      foreground_process_id=$foregroundPid; restored=$restored; elapsed_ms=$focusWait.ElapsedMilliseconds;
+      foreground_granted=($script:CARDBUSH_FOREGROUND_GRANTED -eq '1'); grant_error=[int]$script:CARDBUSH_FOREGROUND_GRANT_ERROR }
   }
   'minimize' { [void][CardBushWindowControl]::ShowWindow($h,6) }
   'maximize' { [void][CardBushWindowControl]::ShowWindow($h,3) }
@@ -1845,9 +1864,21 @@ public static class CardBushInput {
   public static uint ExpectedProcessId;
   public static RECT ExpectedBounds;
   public static uint ExpectedDpi;
+  public static bool ShellClick;
+  public static int ShellX,ShellY;
+  public static IntPtr ShellForeground;
+  [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd,System.Text.StringBuilder name,int length);
+  public static bool ShellPoint(IntPtr hwnd,int x,int y) {
+    uint pid,shellPid; GetWindowThreadProcessId(hwnd,out pid); GetWindowThreadProcessId(GetShellWindow(),out shellPid);
+    var name=new System.Text.StringBuilder(256); GetClassName(hwnd,name,name.Capacity);
+    return pid!=0 && pid==shellPid && (name.ToString()=="Shell_TrayWnd" || name.ToString()=="Shell_SecondaryTrayWnd")
+      && RootWindowAt(x,y)==hwnd.ToInt64();
+  }
   public static void CheckTarget(){
     uint pid; GetWindowThreadProcessId(ExpectedWindow,out pid);
-    if(GetForegroundWindow()!=ExpectedWindow || pid==0 || (ExpectedProcessId!=0 && pid!=ExpectedProcessId))
+    bool shellAllowed=ShellClick && GetForegroundWindow()==ShellForeground && ShellPoint(ExpectedWindow,ShellX,ShellY);
+    if((GetForegroundWindow()!=ExpectedWindow && !shellAllowed) || pid==0 || (ExpectedProcessId!=0 && pid!=ExpectedProcessId))
       throw new InvalidOperationException("The target window or foreground changed during input. Input stopped; observe again before resuming.");
     RECT rect;
     if(ExpectedDpi>0 && (GetDpiForWindow(ExpectedWindow)!=ExpectedDpi || !GetWindowRect(ExpectedWindow,out rect) ||
@@ -1976,6 +2007,9 @@ try {
   ${computerUseDisplayGuardScript}
   [CardBushInput]::ExpectedBounds=$currentBounds
   [CardBushInput]::ExpectedDpi=[uint32]$script:CARDBUSH_WINDOW_DPI
+  [CardBushInput]::ShellForeground=[CardBushInput]::GetForegroundWindow()
+  [CardBushInput]::ShellX=$screenX; [CardBushInput]::ShellY=$screenY
+  [CardBushInput]::ShellClick=($p.action -eq 'click' -and $p.button -ne 'right' -and $p.button -ne 'middle' -and ($null -eq $p.clicks -or [int]$p.clicks -eq 1) -and [CardBushInput]::ShellPoint([IntPtr]$expectedHwnd,$screenX,$screenY))
   [CardBushInput]::CheckTarget()
   switch ($p.action) {
     'click' { $expectedPointerX=$screenX;$expectedPointerY=$screenY;$b=if($p.button -eq 'right'){@(8,16)}elseif($p.button -eq 'middle'){@(32,64)}else{@(2,4)};$clicks=if($null -ne $p.clicks){[int]$p.clicks}else{1};[CardBushInput]::MovePointer($screenX,$screenY);1..$clicks|%{[CardBushInput]::mouse_event($b[0],0,0,0,[CardBushInput]::InputTag);[CardBushInput]::mouse_event($b[1],0,0,0,[CardBushInput]::InputTag)} }
@@ -1987,7 +2021,7 @@ try {
   }
 } finally {
   if ($null -ne $script:CardBushTimings) { $script:CardBushTimings.input_ms += $inputTimer.ElapsedMilliseconds }
-  if ($restorePointer -and $mouseAction) {
+  if ($restorePointer -and $mouseAction -and -not [CardBushInput]::ShellClick) {
     $afterActionPointer = New-Object CardBushInput+POINT
     [void][CardBushInput]::GetCursorPos([ref]$afterActionPointer)
     if ($afterActionPointer.x -eq $expectedPointerX -and $afterActionPointer.y -eq $expectedPointerY) {
@@ -1999,6 +2033,7 @@ try {
   }
 }
 $result=[ordered]@{action=$p.action; input_mode='send_input'; coordinate_space=$p.coordinate_space; yielded_to_user=$false; input_wait_ms=$wait.ElapsedMilliseconds; pointer_restored=$pointerRestored; pointer_restore_skipped_for_user=$pointerRestoreSkippedForUser; foreground_hwnd=[CardBushInput]::ForegroundWindow(); last_input_tick=[CardBushInput]::LastInputTick()}
+if ([CardBushInput]::ShellClick) { $result.shell_activation_click=$true; $result.pointer_restore_skipped_for_context=$restorePointer }
 if($p.action -eq 'clipboard') { $result.input_mode='clipboard'; $result.format=if($null -ne $p.files){'files'}else{'text'}; $result.verified=$true; $result.pasted=$false; $result.clipboard_sequence=[CardBushInput]::GetClipboardSequenceNumber(); if($null -ne $p.files){$result.file_count=@($p.files).Count}else{$result.text_length=([string]$p.text).Length} }
 [PSCustomObject]$result | ConvertTo-Json -Compress`;
 
@@ -2060,6 +2095,7 @@ async function powershell(
       env: process.env,
       parameters,
       afterAction,
+      beforeExecute: parameters.CARDBUSH_WINDOW_OPERATION === 'focus' ? pid => computerUsePresentation.grantForeground(pid) : undefined,
     });
   } catch (error) {
     throwIfAborted(signal);

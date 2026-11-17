@@ -23,7 +23,7 @@ type Connection = ContextWebhookConfig & { id: string; token: string; binding: S
   bot?: { capabilities: BotCapabilities; expiresAt: number; plugins?: BridgePlugin[]; instanceId?: string } };
 type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: StoredWebhookBinding;
   guidanceFor?: string;
-  status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
+  status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; errorMessage?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
 type BotDelivery = { id: string; sessionId: string; sourceRef: string; requestId: string; inputHash: string; fingerprint: string;
   status: 'pending' | 'accepted' | 'unknown'; createdAt: string; code?: string; result?: unknown;
   reportable?: boolean; finalResult?: z.infer<typeof bridgeDeliveryResultSchema>; reported?: boolean };
@@ -101,7 +101,7 @@ export class ContextWebhookHost {
     return { protocol: 'cardbush.webhook.v1', type: terminal(record.status) ? 'message.completed' : 'message.updated',
       eventId: `${record.id}:${record.sequence}`, sequence: record.sequence, messageId: record.message.messageId, sessionId: record.binding.sessionId,
       conversationId: record.message.conversationId ?? '', senderId: record.message.senderId ?? '',
-      status: record.status, reply: record.reply, errorCode: record.errorCode ?? '' };
+      status: record.status, reply: record.reply, errorCode: record.errorCode ?? '', ...(record.errorMessage ? { errorMessage: record.errorMessage } : {}) };
   }
   private snapshot(): ContextWebhookSnapshot {
     const address = this.server?.address(); const port = address && typeof address === 'object' ? address.port : this.state.port;
@@ -572,7 +572,9 @@ export class ContextWebhookHost {
     if (!this.state.receipts.some(r => r.binding.kind === 'assistant'
       && this.state.connections.some(c => c.id === r.connectionId && c.enabled))) return;
     const journal = await this.runtime.command('runtime.assistant_conversation', { action: 'read', sessionId: 'personal-assistant', after: this.followupCursor });
-    if (journal.busy || this.abort.signal.aborted) return;
+    // The journal contains committed replies, not streaming drafts. An unrelated
+    // active turn must not hold back delivery of an earlier completed reply.
+    if (this.abort.signal.aborted) return;
     if (this.followupGeneration !== undefined && this.followupGeneration !== journal.generation) {
       this.followupCursor = 0; this.followupEntries.clear(); this.followupGeneration = journal.generation; return;
     }
@@ -588,7 +590,11 @@ export class ContextWebhookHost {
     }
     this.followupCursor = journal.cursor;
     for (const record of records) {
-      if (record.status !== 'completed' || record.binding.kind !== 'assistant' || record.binding.generation !== journal.generation
+      // Execution disposition and reply delivery are independent. A failed or
+      // interrupted foreground round can still have a later reply from its
+      // delegated work. Project committed replies without replaying execution
+      // or rewriting the original terminal outcome.
+      if (!terminal(record.status) || record.binding.kind !== 'assistant' || record.binding.generation !== journal.generation
         || !this.state.connections.some(c => c.id === record.connectionId && c.enabled)) continue;
       const reply = [...this.followupEntries.get(`webhook-input-${record.id}`)?.values() ?? []].join('\n\n');
       if (!reply || reply === record.reply || reply.length > 128000) continue;
