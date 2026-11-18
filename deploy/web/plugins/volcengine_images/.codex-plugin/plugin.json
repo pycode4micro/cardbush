@@ -1,7 +1,7 @@
 {
   "name": "volcengine_images",
-  "version": "1.2.0",
-  "description": "兆君服饰招财：原生异步图片生成、本地尺寸格式转换与多图拼接",
+  "version": "1.3.0",
+  "description": "兆君服饰招财：异步图片生成、Seedream 5.5 图层编辑、尺寸格式转换与拼接",
   "author": {
     "name": "CardBush"
   },
@@ -9,7 +9,7 @@
   "mcpServers": "./mcp.json",
   "interface": {
     "displayName": "火山图片生成",
-    "shortDescription": "Seedream 图片生成与编辑、本地转换与多图拼接；按账号授权",
+    "shortDescription": "Seedream 图片生成、分层编辑与单层导出；按账号授权",
     "category": "Productivity"
   }
 }

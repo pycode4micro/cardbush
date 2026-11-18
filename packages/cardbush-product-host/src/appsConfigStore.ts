@@ -172,16 +172,19 @@ export class CardbushAppsConfigStore {
     plugin: CardbushAppPluginConfig,
     commit: () => Promise<CardbushAppsConfigSnapshot>,
     otherPlugins: CardbushAppPluginConfig[],
-  ) => Promise<CardbushAppsConfigSnapshot>): Promise<CardbushAppsConfigSnapshot> {
+    pendingSnapshot: CardbushAppsConfigSnapshot,
+  ) => Promise<CardbushAppsConfigSnapshot>, options?: { ignoreMissing?: boolean; signal?: AbortSignal }): Promise<CardbushAppsConfigSnapshot> {
     return withConfigFileLock(this.#path, async () => {
       const existing = await this.#read();
+      options?.signal?.throwIfAborted();
       const plugin = existing.plugins.find(item => item.id === pluginId);
+      if (!plugin && options?.ignoreMissing) return existing;
       if (!plugin) throw new Error('Plugin not found. Refresh the list.');
       if (plugin.source !== 'user') throw new Error('Bundled components can be disabled, not uninstalled.');
       const disabled = await this.#persist({ ...existing, revision: existing.revision + 1,
         plugins: existing.plugins.map(item => item.id === pluginId ? { ...item, installed: true, enabled: false, removalPending: true } : item) });
       return remove(plugin, () => this.#persist({ ...disabled, revision: disabled.revision + 1,
-        plugins: disabled.plugins.filter(item => item.id !== pluginId) }), existing.plugins.filter(item => item.id !== pluginId));
+        plugins: disabled.plugins.filter(item => item.id !== pluginId) }), existing.plugins.filter(item => item.id !== pluginId), disabled);
     });
   }
 

@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { configurePluginConnectionSchema, pluginConnectionIdentitySchema, type ConfigurePluginConnectionInput, type PluginConnectionIdentity } from './pluginConnectionManagement.mjs';
 import { mcpManagementView } from './productMcpManagementView.mjs';
 import { registerHomeComponentTools, type HomeToolHost, type HomePreview } from './homeComponentTools.mjs';
+import { registerProductPluginTools, type ProductPluginToolHost } from './productPluginTools.mjs';
+import type { PluginMarketplaceService } from './pluginMarketplaces.js';
 
 export const PRODUCT_MCP_MANAGEMENT_ID = 'cardbush_management';
 const reservedIds = new Set([PRODUCT_MCP_MANAGEMENT_ID, 'cardbush_apps', 'browser_use', 'chrome_devtools']);
@@ -104,9 +106,12 @@ function asRecord(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown> : {};
 }
 
-export function createProductMcpManagementServer(getHost: () => ProductMcpManagementHost, home?:()=>HomeToolHost, preview?:HomePreview) {
+type PluginTools = { host: () => ProductPluginToolHost; marketplace: () => PluginMarketplaceService };
+
+export function createProductMcpManagementServer(getHost: () => ProductMcpManagementHost, home?:()=>HomeToolHost, preview?:HomePreview, plugins?: PluginTools) {
   const server = new McpServer({ name: PRODUCT_MCP_MANAGEMENT_ID, version: '1.0.0' });
   if (home) registerHomeComponentTools(server,home,preview);
+  if (plugins) registerProductPluginTools(server, plugins.host, plugins.marketplace);
   const result = async (operation: () => Promise<unknown>) => {
     try {
       return { content: [{ type: 'text' as const, text: JSON.stringify(await operation()) }] };
@@ -156,6 +161,6 @@ export function createProductMcpManagementServer(getHost: () => ProductMcpManage
 }
 
 /** Standard MCP over an authenticated loopback endpoint; Product Host remains the owner. */
-export function startProductMcpManagement(getHost: () => ProductMcpManagementHost, home?:()=>HomeToolHost, preview?:HomePreview) {
-  return startDesktopMcpServer(() => createProductMcpManagementServer(getHost, home, preview));
+export function startProductMcpManagement(getHost: () => ProductMcpManagementHost, home?:()=>HomeToolHost, preview?:HomePreview, plugins?: PluginTools) {
+  return startDesktopMcpServer(() => createProductMcpManagementServer(getHost, home, preview, plugins));
 }

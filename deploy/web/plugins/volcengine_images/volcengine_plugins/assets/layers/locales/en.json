@@ -1,4 +1,5 @@
 {
+  "textHintWeb": "Original pixels are preserved until you edit text. Edited text uses the web editor's font, and the saved preview matches the export.",
   "replaceHintWeb": "Upload a replacement image. Its placement is retained when you save.",
   "replaceLabelWeb": "Choose replacement image",
   "replacementReady": "Replacement uploaded. Save changes to apply it.",

@@ -1,0 +1,1 @@
+For a request to manage CardBush plugins on this desktop, the host-owned cardbush_management tools list_plugin_marketplaces, install_plugin and uninstall_plugin are available directly through get_tool_schema and call_tool. Discover the exact installed ID or marketplace entry and consult cardbush-docs when needed. Execute only the requested operation and report the host's receipt.

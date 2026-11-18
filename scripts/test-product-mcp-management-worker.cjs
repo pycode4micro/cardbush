@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdirSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } = require('node:fs');
 const { resolve, join, sep } = require('node:path');
 const { tmpdir } = require('node:os');
 const electron = require('electron');
@@ -32,12 +32,20 @@ async function run() {
   const { RuntimeUtilityProcessController } = await import('../dist-electron/runtimeHostController.mjs');
   const { ElectronProductHostController } = await import('../dist-electron/productHostController.mjs');
   const { startProductMcpManagement } = await import('../dist-electron/productMcpManagement.mjs');
+  const { PluginMarketplaceService } = require('../dist-electron/pluginMarketplaces.js');
+  const { loadPluginSearchPackages } = await import('../dist-electron/pluginSearchPackages.mjs');
   await app.whenReady();
   let host;
-  const endpoint = await startProductMcpManagement(() => host);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('CARDBUSH_')));
-  const appsConfig = join(root, 'apps.json');
+  const configRoot = join(root, 'product', 'config');
+  mkdirSync(configRoot, { recursive: true });
+  const appsConfig = join(configRoot, 'apps.json');
   const pluginRoot = join(root, 'user-plugins');
+  const markets = new PluginMarketplaceService({
+    dataRoot: join(root, 'markets'), userPluginRoot: pluginRoot, bundledPluginRoot: join(root, 'plugins'),
+    fetch: () => assert.fail('The marketplace test uses isolated local catalogs'),
+  });
+  const endpoint = await startProductMcpManagement(() => host, undefined, undefined, { host: () => host, marketplace: () => markets });
   writeFileSync(appsConfig, JSON.stringify({ protocol: 'cardbush.apps_config.v1', revision: 1, serviceEnabled: false, plugins: [] }));
   const controller = new RuntimeUtilityProcessController({
     modulePath: resolve('dist-electron/runtimeHostWorker.mjs'),
@@ -121,6 +129,9 @@ async function run() {
     assert.ok(catalog.result.some(tool => tool.name === 'mcp__worker_echo__echo'));
     assert.ok(catalog.result.some(tool => tool.name === 'mcp__cardbush_management__configure_mcp_server'));
     assert.ok(catalog.result.some(tool => tool.name === 'mcp__cardbush_management__reconnect_mcp_server'));
+    for (const tool of ['list_plugin_marketplaces', 'install_plugin', 'uninstall_plugin']) {
+      assert.ok(catalog.result.some(entry => entry.name === `mcp__cardbush_management__${tool}`));
+    }
     writeFileSync(fixture, fixtureCode.replace("registerTool('echo'", "registerTool('echo_after_update'"));
     const reconnect = await client.callTool({ name: 'reconnect_mcp_server', arguments: { id: 'worker_echo' } });
     assert.notEqual(reconnect.isError, true, JSON.stringify(reconnect));
@@ -159,6 +170,70 @@ async function run() {
     const pluginReconnect = await client.callTool({ name: 'reconnect_mcp_server', arguments: { id: 'plugin_hot_main' } });
     assert.notEqual(pluginReconnect.isError, true, JSON.stringify(pluginReconnect));
     assert.equal((await applied()).servers.find(s => s.id === 'plugin_hot_main').health, 'ready');
+
+    const invoke = async (name, args) => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.notEqual(result.isError, true, JSON.stringify(result));
+      return JSON.parse(result.content[0].text);
+    };
+    const packages = () => loadPluginSearchPackages([{ path: pluginRoot, source: 'user' }], appsConfig);
+    for (const format of ['openai', 'claude']) {
+      const id = `lifecycle-${format}`;
+      const path = join(root, id);
+      const catalogDir = join(path, format === 'openai' ? '.agents/plugins' : '.claude-plugin');
+      const manifestPath = `${format === 'openai' ? '.codex-plugin' : '.claude-plugin'}/plugin.json`;
+      const source = join(path, 'package');
+      mkdirSync(catalogDir, { recursive: true });
+      mkdirSync(join(source, manifestPath, '..'), { recursive: true });
+      mkdirSync(join(source, 'skills', id), { recursive: true });
+      const entry = format === 'openai'
+        ? { name: id, source: { source: 'local', path: './package' }, policy: { installation: 'AVAILABLE' } }
+        : { name: id, source: './package' };
+      writeFileSync(join(catalogDir, 'marketplace.json'), JSON.stringify({ name: id, plugins: [entry] }));
+      const sourceManifest = JSON.stringify({ name: id, version: '1.2.3', description: 'Disposable lifecycle fixture', mcpServers: './.mcp.json', skills: './skills' });
+      writeFileSync(join(source, manifestPath), sourceManifest);
+      writeFileSync(join(source, 'skills', id, 'SKILL.md'), `---\nname: ${id}\ndescription: Disposable fixture\n---\nRead only.\n`);
+      writeFileSync(join(source, '.mcp.json'), readFileSync(join(plugin, '.mcp.json')));
+      writeFileSync(join(source, 'server.mjs'), fixtureCode);
+      const registered = await markets.addLocal(path);
+      assert.ok((await invoke('list_plugin_marketplaces', {})).sources.some(item => item.source_id === registered.id));
+      assert.deepEqual((await invoke('list_plugin_marketplaces', { source_id: registered.id, query: id })).entries.map(item => item.plugin_id), [id]);
+      const args = { plugin_id: id, source: { kind: 'marketplace', source_id: registered.id } };
+      assert.ok(!(await packages()).packages.some(item => item.name === id));
+      const installed = await invoke('install_plugin', args);
+      assert.equal(installed.status, 'installed');
+      assert.equal(installed.version, '1.2.3');
+      assert.equal(installed.format, format);
+      assert.equal(installed.enabled, true);
+      assert.equal(readFileSync(join(pluginRoot, id, manifestPath), 'utf8'), sourceManifest);
+      assert.ok((await packages()).packages.some(item => item.name === id && item.installed && item.enabled));
+      assert.equal((await invoke('install_plugin', args)).status, 'already_installed');
+      const serverId = `plugin_${id}_main`;
+      assert.ok((await applied()).servers.some(server => server.id === serverId));
+      await invoke('reconnect_mcp_server', { id: serverId });
+      assert.deepEqual((await applied()).servers.find(server => server.id === serverId).tools.map(tool => tool.remoteName), ['echo']);
+      assert.equal((await invoke('uninstall_plugin', { plugin_id: id })).status, 'uninstalled');
+      assert.equal(existsSync(join(pluginRoot, id)), false);
+      assert.ok(existsSync(join(source, manifestPath)));
+      assert.ok(!(await packages()).packages.some(item => item.name === id));
+      assert.ok(!(await applied()).servers.some(server => server.id === serverId));
+      assert.equal((await invoke('uninstall_plugin', { plugin_id: id })).status, 'already_absent');
+      console.log(`${format} marketplace: listed, installed, discovered, connected, uninstalled, and verified repeat calls.`);
+    }
+
+    const zip = new (require('jszip'))();
+    zip.file('.claude-plugin/plugin.json', JSON.stringify({ name: 'local-zip', version: '2.0.0', description: 'Isolated ZIP fixture' }));
+    zip.file('skills/local-zip/SKILL.md', '---\nname: local-zip\ndescription: Disposable fixture\n---\nRead only.\n');
+    const archive = join(root, 'local.zip');
+    writeFileSync(archive, await zip.generateAsync({ type: 'nodebuffer' }));
+    const wrongId = await client.callTool({ name: 'install_plugin', arguments: { plugin_id: 'wrong-id', source: { kind: 'local', path: archive } } });
+    assert.equal(wrongId.isError, true);
+    assert.equal(existsSync(join(pluginRoot, 'local-zip')), false);
+    const local = await invoke('install_plugin', { plugin_id: 'local-zip', source: { kind: 'local', path: archive } });
+    assert.equal(local.status, 'installed');
+    assert.equal(local.format, 'claude');
+    assert.deepEqual(local.mcp, []);
+    assert.equal((await invoke('uninstall_plugin', { plugin_id: 'local-zip' })).status, 'uninstalled');
     console.log('Real Electron worker passed: management tools, targeted reconnect, unchanged saved config, source/version-only plugin replacement and new tool discovery without restarting the worker.');
   } finally {
     writeFileSync(gate, 'ready');

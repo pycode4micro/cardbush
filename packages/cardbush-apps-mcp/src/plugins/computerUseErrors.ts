@@ -1,10 +1,12 @@
+import { cardbushTargetBlocked } from './computerUseTargetPolicy.js';
+
 const maxErrorCharacters = 1600;
 
 export type ComputerUseExecution = 'not_dispatched' | 'dispatched' | 'unknown';
 export type ComputerUseErrorCode =
   | 'user_takeover' | 'user_stopped' | 'window_changed' | 'window_unavailable' | 'activation_failed'
   | 'stale_state' | 'display_changed' | 'observation_failed' | 'control_unavailable' | 'timeout'
-  | 'application_control_blocked' | 'policy_blocked' | 'observation_required' | 'progress_unverified' | 'invalid_action' | 'computer_use_failed';
+  | 'application_control_blocked' | 'cardbush_target_blocked' | 'policy_blocked' | 'observation_required' | 'progress_unverified' | 'invalid_action' | 'computer_use_failed';
 export interface ComputerUseFailureInfo {
   code: ComputerUseErrorCode;
   message: string;
@@ -25,9 +27,11 @@ export class ComputerUseFailure extends Error {
 /** Normalize native diagnostics while retaining dispatch uncertainty and the source of an interruption. */
 export function computerUseFailure(error: unknown, execution?: ComputerUseExecution): ComputerUseFailure {
   if (error instanceof ComputerUseFailure) {
+    if (error.info.code === 'cardbush_target_blocked') return error;
     return execution === undefined ? error : new ComputerUseFailure(error.info.code, error.message, execution, error.info.details);
   }
   const message = formatComputerUseError(error);
+  if (message.includes('CARDBUSH_PROTECTED_TARGET')) return new ComputerUseFailure('cardbush_target_blocked', cardbushTargetBlocked);
   let code: ComputerUseErrorCode = 'computer_use_failed';
   if (/0x8007(?:11c7|04ec|0241)\b|application\s+control\s+policy\s+has\s+blocked|blocked by group policy|应用程序控制策略.*阻止/i.test(message.replace(/\r?\n/g, ' '))) code = 'application_control_blocked';
   else if (/user.*(?:actively|taken over)|yielded.*user input/i.test(message)) code = 'user_takeover';

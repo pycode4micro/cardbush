@@ -212,7 +212,7 @@ type DesktopControlTurn = { sessionId: string; turnId: string; toolCallId: strin
 let browserConnectorBroker: BrowserConnectorHandle | null = null;
 let browserConnectorLifecycle: BrowserConnectorLifecycle | null = null;
 let browserConnectorRegistrationCache: { state: string; value: ReturnType<typeof browserConnectorRegistrationStatus> } | null = null;
-let productHostController: {
+let productHostController: import('./productPluginTools.mjs', { with: { 'resolution-mode': 'import' } }).ProductPluginToolHost & {
   exportSharedConfiguration: () => Promise<{ models: Record<string, unknown>; subagents: Record<string, unknown>; sandbox?: { version: 1; enabled: boolean } }>;
   execute: (command: unknown) => Promise<unknown>;
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
@@ -4162,10 +4162,13 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
   const bundledRipgrep = resolveBundledRipgrepPath();
   const managementModule = await runtimeStartupStep('management-module', () => import(pathToFileURL(path.join(__dirname, 'productMcpManagement.mjs')).href));
   signal.throwIfAborted();
-  const management = await runtimeStartupStep<NonNullable<typeof productMcpManagement>>('management-bridge', () => managementModule.startProductMcpManagement(() => {
+  const managementHost = () => {
     if (!productHostController) throw new Error('CardBush Product Host is not ready.');
     return productHostController;
-  }, desktopHomeLibrary, (item: HomeItem, abort: AbortSignal) => previewHomeComponent(item,abort,devServerUrl)));
+  };
+  const management = await runtimeStartupStep<NonNullable<typeof productMcpManagement>>('management-bridge', () =>
+    managementModule.startProductMcpManagement(managementHost, desktopHomeLibrary,
+      (item: HomeItem, abort: AbortSignal) => previewHomeComponent(item,abort,devServerUrl), { host: managementHost, marketplace: pluginMarkets }));
   if (signal.aborted) { await management.close(); signal.throwIfAborted(); }
   productMcpManagement = management;
   const browserModule = await runtimeStartupStep('browser-module', () => import(pathToFileURL(path.join(__dirname, 'browserUseHost.mjs')).href));
@@ -4195,6 +4198,7 @@ async function prepareRuntimeHost(signal: AbortSignal): Promise<RuntimeHostContr
         CARDBUSH_SANDBOX_SETTINGS_PATH: sandboxSettingsPath,
         CARDBUSH_MCP_MANAGEMENT_URL: productMcpManagement!.url,
         CARDBUSH_MCP_DESKTOP_BRIDGE: '1',
+        CARDBUSH_DESKTOP_PROCESS_ID: String(process.pid),
         CARDBUSH_PROCESS_HOST_DIRECTORY: cardbushRuntimeIsPackaged
           ? path.join(process.resourcesPath, 'process-guard')
           : path.join(app.getAppPath(), 'dist-native', 'process-guard'),

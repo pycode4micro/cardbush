@@ -1,4 +1,4 @@
-"""Account-local Seedream 5.5 layer editor. Only called by the private Web Agent."""
+"""Account-local Seedream 5.5 operations shared by the Web editor and its image plugin."""
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +14,7 @@ from volcengine_plugins.image_jobs import account_scope
 from volcengine_plugins.layer_models import ExportFormat, LayerChange, LayerError
 from volcengine_plugins.layers import LayerStore
 from volcengine_plugins.models import ImageRequest, LayerDecompositionOptions, LocalOptions
-from web_image_server import ROOT, authorize_local_processing, client, jobs
+from web_image_context import ROOT, authorize_local_processing, client, jobs
 
 MODEL = "doubao-seedream-5-5-261028"
 REQUEST_PREFIX = "web-layers-"
@@ -24,7 +24,7 @@ STORE = LayerStore(ROOT / "generated" / "layer-projects")
 class Command(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["list", "create", "status", "open", "restore", "edit", "export"]
-    request_id: str | None = Field(default=None, pattern=r"^[0-9a-f-]{36}$")
+    request_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{8,100}$")
     task_id: str | None = Field(default=None, pattern=r"^img-[a-f0-9]{32}$")
     project_id: str | None = Field(default=None, pattern=r"^layers-[a-f0-9]{32}$")
     reference_path: str | None = Field(default=None, max_length=4096)
@@ -80,11 +80,20 @@ def snapshot(scope):
     return {"projects": STORE.list(), "tasks": tasks}
 
 
-def panel(document):
-    return {"_meta": {"seedream_layers": STORE.view(document)}}
+def project_view(document, view):
+    if view:
+        return {"_meta": {"seedream_layers": STORE.view(document)}}
+    layers = []
+    for layer in document["layers"]:
+        entry = {key: value for key, value in layer.items() if key not in {"asset", "metadata"}}
+        recognition = layer.get("metadata", {}).get("text_recognition")
+        if isinstance(recognition, dict) and isinstance(recognition.get("text"), str):
+            entry["recognized_text"] = recognition["text"][:1000]
+        layers.append(entry)
+    return {"project_id": document["id"], **{key: document[key] for key in ("title", "revision", "width", "height")}, "layers": layers}
 
 
-def local_command(command, scope):
+def local_command(command, scope, view):
     action = command.action
     if action == "list":
         return snapshot(scope)
@@ -102,27 +111,27 @@ def local_command(command, scope):
         project = STORE.import_result(task["result"], title_for(task["id"]), source=task["id"])
         return {"task": {"id": task["id"], "status": "succeeded"}, "project_id": project["id"]}
     if action == "open":
-        return panel(STORE.get(command.project_id, command.revision))
+        return project_view(STORE.get(command.project_id, command.revision), view)
     if action == "restore":
         if command.source_revision is None or command.expected_revision is None:
             raise LayerError("invalid_request")
-        return panel(STORE.restore(command.project_id, command.expected_revision, command.source_revision))
+        return project_view(STORE.restore(command.project_id, command.expected_revision, command.source_revision), view)
     if action == "edit":
         for change in command.changes:
             if change.replacement_path is not None:
                 change.replacement_path = str(personal_image(change.replacement_path))
             if change.text and change.text.font_path:
                 raise LayerError("invalid_request")
-        return panel(STORE.edit(command.project_id, command.expected_revision, command.changes))
+        return project_view(STORE.edit(command.project_id, command.expected_revision, command.changes), view)
     return {"structuredContent": STORE.export(command.project_id, command.revision, command.format, command.layer_id)}
 
 
-async def dispatch(raw):
+async def dispatch(raw, *, view):
     command = Command.model_validate(raw)
     await authorize_local_processing()
     image_client = client()
     if command.action != "create":
-        return await asyncio.to_thread(local_command, command, account_scope(image_client))
+        return await asyncio.to_thread(local_command, command, account_scope(image_client), view)
     if not command.request_id or not command.prompt or not command.prompt.strip():
         raise LayerError("invalid_request")
     path = personal_image(command.reference_path)
@@ -140,17 +149,22 @@ async def dispatch(raw):
     return {"task": {key: receipt["task"][key] for key in ("id", "status")}}
 
 
+async def run_command(raw, *, view):
+    try:
+        return await dispatch(raw, view=view)
+    except (ValidationError, ValueError, OSError, KeyError, TypeError) as error:
+        code = error.code if isinstance(error, LayerError) else "invalid_request"
+        details = error.details if isinstance(error, LayerError) else {}
+        return {"isError": True, "structuredContent": {"error": {"code": code, "details": details}}}
+    except Exception:
+        return {"isError": True, "structuredContent": {"error": {"code": "service_unavailable"}}}
+
+
 async def serve():
     try:
         while line := await asyncio.to_thread(sys.stdin.buffer.readline):
             request = json.loads(line)
-            try:
-                value = await dispatch(request["input"])
-            except (ValidationError, ValueError, OSError, KeyError, TypeError) as error:
-                code = error.code if isinstance(error, LayerError) else "invalid_request"
-                value = {"isError": True, "structuredContent": {"error": {"code": code}}}
-            except Exception:
-                value = {"isError": True, "structuredContent": {"error": {"code": "service_unavailable"}}}
+            value = await run_command(request["input"], view=True)
             print(json.dumps({"id": request["id"], "value": value}, ensure_ascii=False), flush=True)
     finally:
         await jobs.close()

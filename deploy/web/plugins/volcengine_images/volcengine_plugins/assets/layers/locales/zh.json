@@ -1,4 +1,5 @@
 {
+  "textHintWeb": "改字前保留原图像素。文字使用网页编辑器的字体，保存后的预览与导出一致。",
   "replaceHintWeb": "上传新的图片，保存后替换此图层并保留原位置。",
   "replaceLabelWeb": "选择替换图片",
   "replacementReady": "已上传替换图片。保存后生效。",

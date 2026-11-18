@@ -375,6 +375,7 @@ export class AssistantConversation {
       ? (this.deps.delegationTools?.() ?? []).filter(tool => parent.tools.some(allowed => allowed.name === tool.name)) : [];
     const presentedNative = this.deps.management?.projectDelegation(parent, nativeTools) ?? nativeTools;
     const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...presentedNative, ...memoryTools, ...managementTools];
+    const modelTools = this.deps.management?.projectModelDefinitions(parent, tools) ?? tools;
     const entries = this.journal.read(id);
     const history = this.journal.modelHistory(id);
     // Foreground work owns its reply. Completion delivery is selected only once
@@ -522,6 +523,9 @@ export class AssistantConversation {
     system.content += renderPromptTemplate('assistant-execution');
     if (managementTools.length) system.content += renderPromptTemplate('assistant-management');
     if (tools.some(tool => tool.name === 'call_tool')) system.content += '\n' + renderPromptTemplate('assistant-tool-disclosure');
+    if (modelTools.length < tools.length && modelTools.some(tool => tool.name === 'call_tool')) {
+      system.content += '\n' + renderPromptTemplate('assistant-plugin-management');
+    }
     const context = async (): Promise<ModelMessage[]> => {
       if (this.deps.memory) {
         const changes = await this.deps.memory.changes(parent, history.read().messages, signal);
@@ -551,7 +555,7 @@ export class AssistantConversation {
           ...state.messages.map(item => !parent.requestCapabilities?.vision && 'images' in item ? { ...item, images: undefined } : item), ...currentBots];
         // Use the same token/context policy as normal turns, including tools,
         // reasoning and receipts. A large context no longer hits a 20k-character cap.
-        const pressure = estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages, tools,
+        const pressure = estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages, tools: modelTools,
           maxOutputTokens: parent.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, metadata: { ...parent.metadata, contextWindowTokens: Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS } }, messages);
         const units = completeContextUnits(state.messages);
         if (!pressure || !requiresContextCompactionBeforeRound(pressure) || units.length <= 2) return messages;
@@ -649,7 +653,7 @@ export class AssistantConversation {
       await consumeGuidance();
       await consumeCompletions();
       const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1',
-        requestId: randomUUID(), messages: await context(), tools, requestCapabilities: { vision: parent.requestCapabilities?.vision === true, interactiveRequests: false },
+        requestId: randomUUID(), messages: await context(), tools: modelTools, requestCapabilities: { vision: parent.requestCapabilities?.vision === true, interactiveRequests: false },
         metadata: { ...parent.metadata, personalAssistant: true } };
       if (live?.entries.length || completionState?.dirty) { round--; continue; }
       let result: Awaited<ReturnType<typeof executeBufferedModelRound>>;

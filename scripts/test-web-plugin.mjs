@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AgentService } from '../dist-electron/agentService.mjs';
+import { WEB_IMAGE_TOOLS } from '@cardbush/bush-runtime/web-policy';
 const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
 const prefix='mcp__plugin_volcengine_images_images__';
 test('native image plugin installation, restricted schema, durable async task and private output', { timeout:60000 }, async t=>{
@@ -26,9 +27,8 @@ test('native image plugin installation, restricted schema, durable async task an
     if(req.url.endsWith('input_tokens')){res.end(JSON.stringify({input_tokens:100}));return;}
     round++;
     const names=body.tools.map(tool=>tool.name ?? tool.function?.name);
-    if(round<12) for(const name of ['seedream_create_task','seedream_get_task','generation_wait_tasks','image_convert','image_stitch'])assert.ok(names.includes(prefix+name),JSON.stringify(names));
     const expected = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_plugins', 'run_skill', 'list_subagent_options', 'subagent', 'tasks'];
-    if (round < 12) expected.push(...['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch'].map(name => prefix + name));
+    if (round < 12) expected.push(...WEB_IMAGE_TOOLS.map(name => prefix + name));
     assert.deepEqual([...names].sort(), expected.sort());
     if(round===2){const db=new DatabaseSync(join(root,'plugin-state/images/jobs.sqlite3'),{readOnly:true});taskId=db.prepare('SELECT id FROM jobs').get().id;db.close();}
     let item;
@@ -65,7 +65,7 @@ test('native image plugin installation, restricted schema, durable async task an
   await service.call('chat.send',{requestId:'convert-round',sessionId:'images',text:'Convert the existing image to 200 by 300 JPG.',modelId:'fixture'});
   for(let i=0;i<200;i++){jobs=await service.call('chat.jobs',{});if(jobs.every(job=>!['running','queued'].includes(job.status)))break;await pause(100);}
   assert.equal(jobs.find(job=>job.id==='convert-round').status,'completed',JSON.stringify(jobs));assert.equal(round,5);
-  assert.equal(JSON.parse(await readFile(join(installed,'.codex-plugin/plugin.json'),'utf8')).version,'1.2.0');
+  assert.equal(JSON.parse(await readFile(join(installed,'.codex-plugin/plugin.json'),'utf8')).version,'1.3.0');
   const folders=await readdir(join(root,'workspaces/generated'));
   const converted=folders.filter(name=>name.startsWith('converted-'));assert.equal(converted.length,1);
   const directory=join(root,'workspaces/generated',converted[0]),file=(await readdir(directory))[0];

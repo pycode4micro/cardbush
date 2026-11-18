@@ -32,6 +32,12 @@ export type ProductPluginReplacement = (pluginId: string,
   replace: () => Promise<{ id: string; manifestPath: string }>,
 ) => Promise<{ id: string; manifestPath: string }>;
 
+export interface ProductPluginInstallOptions {
+  expectedId: string;
+  checkNewPackage: (pluginId: string) => Promise<void>;
+  signal?: AbortSignal;
+}
+
 interface MarketplaceEntry {
   name: string;
   path: string;
@@ -225,13 +231,21 @@ export async function installProductPlugin(
   sourcePath: string,
   userPluginRoot: string,
   replacePlugin?: ProductPluginReplacement,
+  options?: ProductPluginInstallOptions,
 ): Promise<{ id: string; manifestPath: string }> {
   return withProductPluginLifecycle(async () => {
+    options?.signal?.throwIfAborted();
     const install = (expectedId?: string) => {
-      const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot, expectedId));
+      const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot, expectedId, options));
       pluginInstallQueue = result.then(() => undefined, () => undefined);
       return result;
     };
+    if (options) {
+      // Check while sharing the lock used by the installer and uninstaller.
+      await options.checkNewPackage(options.expectedId);
+      if (await ownedDirectory(userPluginRoot, options.expectedId)) throw new Error('A directory already exists for this plugin. Inspect the existing package before installing.');
+      return install(options.expectedId);
+    }
     if (replacePlugin) {
       const manifest = await resolvePluginManifest(resolve(sourcePath));
       const plugin = await decodeManifest({ resolved: manifest, source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
@@ -300,7 +314,8 @@ async function renamePluginDirectory(from: string, to: string) {
   }
 }
 
-async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string, expectedId?: string) {
+async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string, expectedId?: string, options?: ProductPluginInstallOptions) {
+  options?.signal?.throwIfAborted();
   const source = resolve(sourcePath);
   const resolved = await resolvePluginManifest(source);
   const { manifest } = resolved;
@@ -334,14 +349,18 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
       source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
     validateRuntimeExtensions(staged);
     if (staged.manifest.name !== id) throw new Error('Plugin manifest name changed during installation. Try again.');
+    // Once replacement starts, finish the transaction or restore the backup.
+    options?.signal?.throwIfAborted();
     let movedExisting = false;
-    try { await renamePluginDirectory(target, backup); movedExisting = true; }
-    catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'EBUSY' || code === 'EPERM') {
-        throw new Error(`插件 ${id} 的目录仍被其他进程占用，旧版本未替换。请关闭使用该插件目录的程序后重试。`, { cause: error });
+    if (!options) {
+      try { await renamePluginDirectory(target, backup); movedExisting = true; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EBUSY' || code === 'EPERM') {
+          throw new Error(`插件 ${id} 的目录仍被其他进程占用，旧版本未替换。请关闭使用该插件目录的程序后重试。`, { cause: error });
+        }
+        if (code !== 'ENOENT') throw error;
       }
-      if (code !== 'ENOENT') throw error;
     }
     try { await renamePluginDirectory(temporary, target); }
     catch (error) {

@@ -4,7 +4,7 @@ import { dirname, join, resolve, relative, isAbsolute, basename } from 'node:pat
 import JSZip from 'jszip';
 import { extractPluginArchiveFile, pluginArchiveLimits } from './pluginArchives';
 export { extractPluginArchive } from './pluginArchives';
-import { installProductPlugin, inspectProductPlugin, type ProductPluginReplacement } from './productPlugins';
+import { installProductPlugin, inspectProductPlugin, type ProductPluginInstallOptions, type ProductPluginReplacement } from './productPlugins';
 import { resolvePluginManifest } from './pluginManifest';
 import { safePackagePath as safeRelative, withinPackage as within } from './pluginPackagePaths';
 import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPluginArchive, gitPluginArchiveFile, acquireNpmPlugin, type NpmPluginSource, type AcquisitionCommand } from './pluginAcquisition';
@@ -278,13 +278,14 @@ export class PluginMarketplaceService {
     for (const token of this.installs.keys()) this.cancelInstall(token);
   }
 
-  install(token: string): Promise<PluginMarketInstallResult> {
+  install(token: string, options?: ProductPluginInstallOptions): Promise<PluginMarketInstallResult> {
+    options?.signal?.throwIfAborted();
     const active = this.installs.get(token)?.promise;
     if (active) return active;
     for (const [id, task] of this.installs) if (!task.promise && this.installs.size >= 64) this.installs.delete(id);
     const task: InstallTask = { controller: new AbortController(), progress: { phase: 'queued', downloadedBytes: 0, cancellable: true } };
     this.installs.set(token, task);
-    const { signal } = task.controller;
+    const signal = options?.signal ? AbortSignal.any([task.controller.signal, options.signal]) : task.controller.signal;
     const phase = (value: PluginMarketInstallProgress['phase']) => { task.progress = { ...task.progress, phase: value, cancellable: !['installing', 'completed', 'cancelled', 'failed'].includes(value) }; };
     const pending = this.serial(async () => {
       signal.throwIfAborted();
@@ -334,7 +335,8 @@ export class PluginMarketplaceService {
         if (issues.length) throw new Error(`This plugin is not compatible with CardBush: ${issues.map(issue => issue.detail || issue.code).join('; ')}`);
         const variables = missingPluginVariables(await mcpConfig(root, resolved.manifest));
         signal.throwIfAborted(); phase('installing');
-        const result = await installProductPlugin(root, this.options.userPluginRoot, this.options.replacePlugin);
+        const result = await installProductPlugin(root, this.options.userPluginRoot, this.options.replacePlugin,
+          options && { ...options, signal });
         this.prepared.delete(token);
         phase('completed');
         return { ...result, warnings: variables.length ? [{ code: 'variables', detail: variables.join(', ') }] : [] };

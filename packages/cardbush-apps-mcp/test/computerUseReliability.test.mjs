@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { computerUseTargetPolicyScript } from '../dist/plugins/computerUseTargetPolicy.js';
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
@@ -100,7 +101,7 @@ try { [InputSink]::Text("A"+[char]10+"SHOULD NOT BE SENT") } catch { $failure=$_
 const launchScript = source.match(/const openApplicationScript = String.raw`([\s\S]*?)`;/)?.[1];
 async function launchFixture({ before = [], after = [], failBefore = false, failAfter = false }) {
   assert.ok(launchScript);
-  const script = launchScript.replace('function Get-CardBushLaunchWindows { @([CardBushWindowList]::Read()) }', String.raw`
+  const script = launchScript.replace(/function Get-CardBushLaunchWindows \{[\s\S]*?\r?\n\}/, String.raw`
 function Get-CardBushLaunchWindows {
   if (-not $script:fixtureLaunched) {
     if ($env:FIXTURE_FAIL_BEFORE -eq '1') { throw 'baseline unavailable' }
@@ -112,6 +113,7 @@ function Get-CardBushLaunchWindows {
 }`);
   assert.notEqual(script, launchScript);
   return powershell(String.raw`
+${computerUseTargetPolicyScript}
 ${computerUsePowerShellParameters({ CARDBUSH_APP_TARGET: process.env.ComSpec })}
 $script:fixtureLaunched=$false
 function Start-Process {

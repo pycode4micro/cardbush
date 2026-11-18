@@ -252,6 +252,7 @@ addEventListener('message', event => {
 });
 if (web) {
   $('font-choice').hidden = true;
+  $('text-hint').dataset.i18n = 'textHintWeb';
   $('replace-hint').dataset.i18n = 'replaceHintWeb';
   $('replace-label').dataset.i18n = 'replaceLabelWeb';
   const replacement = $('replacement_path');

@@ -104,7 +104,7 @@ const command = {
 
 声明独立 MCP 的插件 Agent 在子任务期间保留隔离连接。真正替换或删除包文件时还需等待使用该包的隔离子任务释放连接，其他插件的子任务不阻挡；普通配置及共享服务热更新不等待这些子任务。
 
-插件详情和管理列表提供真正的卸载入口：界面 uninstallPlugin IPC 调用 Product Host 的 uninstallPlugin。先停用并等待该插件已发出的工具调用、扩展命令和 Hook 完成，停止服务后再删除个人安装目录、插件专属数据和凭据，最后移除配置条目。共享账户及独立 MCP 保留；内置组件只能停用。无关会话不阻挡卸载或包替换；清理失败会保留待移除记录以便重试。不要用 apps.update 改 installed=false 代替卸载。Runtime 没有通用插件创建/安装/卸载 Built-in Tool；没有可调用宿主入口时，skill 不能独自补足能力。
+桌面 `cardbush_management` 提供 `list_plugin_marketplaces`、`install_plugin` 和 `uninstall_plugin`。这些工具与插件页复用宿主的市场、本地包校验和卸载流程。先停用并等待该插件已发出的工具调用、扩展命令和 Hook 完成，停止服务后再删除个人安装目录、插件专属数据和凭据，最后移除配置条目。共享账户及独立 MCP 保留；内置组件只能停用。无关会话不阻挡卸载或包替换；清理失败会保留待移除记录以便重试。不要用 apps.update 改 installed=false 代替卸载。在未暴露宿主管理入口的 Agent 上，按已授权的管理通道处理。
 
 ## 验证
 

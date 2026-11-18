@@ -54,6 +54,27 @@ def image_file(value):
         raise LayerError("invalid_image") from None
 
 
+def text_style_for(layer, fields, height):
+    previous = layer.get("text")
+    if previous is not None:
+        return TextStyle.model_validate({**previous, **fields})
+    recognition = layer.get("metadata", {}).get("text_recognition")
+    lines = recognition.get("lines") if isinstance(recognition, dict) else None
+    first = lines[0] if isinstance(lines, list) and lines else None
+    runs = first.get("runs") if isinstance(first, dict) else None
+    run = runs[0] if isinstance(runs, list) and runs else None
+    style = run.get("style") if isinstance(run, dict) else None
+    style = style if isinstance(style, dict) else {}
+    color = style.get("foreground_color")
+    initial = {
+        "font_size": min(1000, max(1, round(height * .8 / len(fields["content"].split("\n"))))),
+        "color": color if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color) else "#202020",
+        "bold": style.get("bold") is True,
+        "italic": style.get("italic") is True,
+    }
+    return TextStyle.model_validate({**initial, **fields})
+
+
 class LayerStore:
     def __init__(self, root: Path | None = None):
         self.root = root or Path(get_config("SEEDREAM_OUTPUT_DIR", str(Path.home() / "Pictures" / "Seedream"))) / "layer-projects"
@@ -195,7 +216,9 @@ class LayerStore:
                 layer["asset"] = self._asset(project_id, image_file(change.replacement_path))
                 layer["text"] = None
             if patch.get("text") is not None:
-                font_for(TextStyle.model_validate(patch["text"]))
+                style = text_style_for(layer, patch["text"], patch.get("height", layer["height"]))
+                font_for(style)
+                patch["text"] = style.model_dump()
             layer.update(patch)
             if layer["width"] * layer["height"] > 36_000_000:
                 raise LayerError("invalid_geometry")

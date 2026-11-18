@@ -4,7 +4,7 @@ import type { OpenDialogOptions } from 'electron';
 import { readHandleBytes } from './fileRead';
 import { extractLocalPluginArchive, pluginArchiveLimits } from './pluginArchives';
 import { findPluginPackageRoot } from './pluginManifest';
-import { installProductPlugin, type ProductPluginReplacement } from './productPlugins';
+import { installProductPlugin, type ProductPluginInstallOptions, type ProductPluginReplacement } from './productPlugins';
 import { collectTemporaryDirectories, leaseTemporaryDirectory } from './cacheMaintenance';
 
 export function localPluginInstallDialog(kind: unknown = 'directory'): OpenDialogOptions {
@@ -13,9 +13,11 @@ export function localPluginInstallDialog(kind: unknown = 'directory'): OpenDialo
   throw new Error('Unsupported local plugin source.');
 }
 
-export async function installLocalProductPlugin(sourcePath: string, userPluginRoot: string, replacePlugin?: ProductPluginReplacement) {
+export async function installLocalProductPlugin(sourcePath: string, userPluginRoot: string, replacePlugin?: ProductPluginReplacement,
+  options?: ProductPluginInstallOptions) {
+  options?.signal?.throwIfAborted();
   const source = resolve(sourcePath);
-  if ((await lstat(source)).isDirectory()) return installProductPlugin(await findPluginPackageRoot(source), userPluginRoot, replacePlugin);
+  if ((await lstat(source)).isDirectory()) return installProductPlugin(await findPluginPackageRoot(source), userPluginRoot, replacePlugin, options);
   if (extname(source).toLowerCase() !== '.zip') throw new Error('请选择插件文件夹或 ZIP 文件。');
   const handle = await open(source, 'r');
   let archive: Buffer;
@@ -34,7 +36,7 @@ export async function installLocalProductPlugin(sourcePath: string, userPluginRo
     const payload = join(stage, 'package');
     await mkdir(payload);
     await extractLocalPluginArchive(archive, payload);
-    return await installProductPlugin(await findPluginPackageRoot(payload), userPluginRoot, replacePlugin);
+    return await installProductPlugin(await findPluginPackageRoot(payload), userPluginRoot, replacePlugin, options);
   } finally {
     release();
     const child = relative(parent, resolve(stage));

@@ -238,5 +238,10 @@
     "name": "assistant-tool-disclosure",
     "slots": [],
     "sha256": "befbbee7360e62d870653ecd9a38ce52b307af756b1f7d488de8558f146844b4"
+  },
+  {
+    "name": "assistant-plugin-management",
+    "slots": [],
+    "sha256": "21699f34dae5bc97d05fae7444ca46ab7d0c5b87487613db68ae4c8f27d6f595"
   }
 ]

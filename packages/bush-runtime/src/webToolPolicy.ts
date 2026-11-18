@@ -13,7 +13,10 @@ export async function normalizeWebImage(bytes: Buffer) {
 }
 
 export const WEB_BASE_TOOLS = ['read_file', 'inject_image_input', 'request_user_input_async', 'checkpoint_context', 'search_plugins', 'run_skill'] as const;
-export const WEB_IMAGE_TOOLS = ['seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch'] as const;
+export const WEB_IMAGE_TOOLS = [
+  'seedream_capabilities', 'seedream_create_task', 'seedream_get_task', 'generation_wait_tasks', 'image_convert', 'image_stitch',
+  'seedream_layer_create_task', 'seedream_layer_project', 'seedream_layer_edit', 'seedream_layer_export',
+] as const;
 export const WEB_IMAGE_PREFIX = 'mcp__plugin_volcengine_images_images__';
 export const WEB_REMOTE_TOOLS = ['list_subagent_options', 'subagent', 'tasks'] as const;
 export function webToolAllowed(name: string) {

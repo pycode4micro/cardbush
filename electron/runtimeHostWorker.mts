@@ -551,6 +551,7 @@ function withBundledAppsServer(input: unknown): unknown {
         read_home_component: { permission: 'allow', parallelSafe: true, visibleToChild: true },
         preview_home_component: { permission: 'allow', parallelSafe: false, visibleToChild: true },
         list_plugin_connections: { permission: 'allow', parallelSafe: true, visibleToChild: true },
+        list_plugin_marketplaces: { permission: 'allow', parallelSafe: true, visibleToChild: true },
       },
     });
   }
@@ -568,6 +569,7 @@ function withBundledAppsServer(input: unknown): unknown {
         args: [appsEntry],
         env: runtimeChildEnvironment({
           ELECTRON_RUN_AS_NODE: '1',
+          ...(process.env.CARDBUSH_DESKTOP_PROCESS_ID ? { CARDBUSH_DESKTOP_PROCESS_ID: process.env.CARDBUSH_DESKTOP_PROCESS_ID } : {}),
           ...(appsConfigPath ? { CARDBUSH_APPS_CONFIG_PATH: appsConfigPath } : {}),
           // The bundled Apps process reads its config at launch. Only that
           // connection needs replacement when its effective config changes.

@@ -110,6 +110,21 @@ test('pending/failed runtime cannot report success or delete files; retry remain
   assert.equal((await store.read()).plugins.some(p => p.id === 'alpha'), false);
 });
 
+test('the model-facing removal reports pending, then resumes the same removal and is idempotent', async t => {
+  const { host, state, store, root } = await fixture(t);
+  const signal = new AbortController().signal;
+  const path = join(root, 'plugins', 'alpha', '.codex-plugin', 'plugin.json');
+  state.phase = 'pending';
+  const pending = await host.uninstallPluginForTool('alpha', signal);
+  assert.deepEqual(pending, { plugin_id: 'alpha', status: 'removal_pending', phase: 'waiting_for_runtime', installed: true, enabled: false });
+  assert.ok(await readFile(path));
+  assert.equal((await store.read()).plugins.find(p => p.id === 'alpha').removalPending, true);
+  state.phase = 'applied';
+  assert.equal((await host.uninstallPluginForTool('alpha', signal)).status, 'uninstalled');
+  await assert.rejects(stat(path), { code: 'ENOENT' });
+  assert.equal((await host.uninstallPluginForTool('alpha', signal)).status, 'already_absent');
+});
+
 test('update stops only the old service before replacement and preserves settings, data and credentials', async t => {
   const f = await fixture(t), { host, state, store, root, vault } = f;
   await host.refreshMcp();

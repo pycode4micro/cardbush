@@ -16,6 +16,7 @@ import { prepareComputerUseNativeCode } from './computerUseNativeCode.js';
 import { collectComputerUseTimings, type ComputerUseTimings } from './computerUseTimings.js';
 import { computerUseImageScript, saveComputerUseImageScript } from './computerUseImage.js';
 import { computerUseDisplaysScript, computerUseDisplayGuardScript } from './computerUseDisplays.js';
+import { cardbushTargetBlocked, computerUseTargetPolicyScript, isCardbushApplicationName } from './computerUseTargetPolicy.js';
 
 export interface ComputerUseArtifact {
   artifact_id: string;
@@ -447,9 +448,12 @@ async function executeComputerUseRequest(
     computerUseSafety.recordInputTick(scopeId, output.last_input_tick);
     await releaseAction();
   };
-  const prepareAction = (previous: ComputerUseObservationBinding): NativeActionContext => ({
-    input, config, previous, acknowledge: acknowledgeAction,
-  });
+  const prepareAction = (previous: ComputerUseObservationBinding): NativeActionContext => {
+    if (previous.processId === Number(process.env.CARDBUSH_DESKTOP_PROCESS_ID) || isCardbushApplicationName(previous.processName)) {
+      throw new ComputerUseFailure('cardbush_target_blocked', cardbushTargetBlocked);
+    }
+    return { input, config, previous, acknowledge: acknowledgeAction };
+  };
   const completeAction = async (output: Record<string, unknown>): Promise<ComputerUseResult> => {
     await acknowledgeAction(output);
     return observeAfterAction(input, config, scopeId, actionObservation!, output, requestSignal, nativeAction);
@@ -471,7 +475,7 @@ async function executeComputerUseRequest(
         return observation;
       }
       const desktop = await readDesktopState(signal);
-      const windows = desktop.windows as Array<Record<string, unknown>>;
+      const windows = (desktop.windows as Array<Record<string, unknown>>).filter(window => window.control_blocked !== true);
       if (action === 'observe' && !input.display_id) {
         const discoveryFingerprint = windowListFingerprint(windows);
         computerUseSafety.recordObservation(
@@ -500,9 +504,10 @@ async function executeComputerUseRequest(
       };
     }
     if (action === 'open_app') {
+      const app = requiredString(input.app, 'app');
+      if (isCardbushApplicationName(app)) throw new ComputerUseFailure('cardbush_target_blocked', cardbushTargetBlocked);
       if (!config.allowOpenApp) throw new Error('Opening applications is disabled in Computer Use settings.');
       await yieldForUserIfNeeded(config, computerUseSafety.expectedInputTick(scopeId), signal);
-      const app = requiredString(input.app, 'app');
       actionMayHaveDispatched = true;
       const launch = record(json(await powershell(`${windowListScript}\n${openApplicationScript}`, {
         CARDBUSH_APP_TARGET: app,
@@ -565,14 +570,15 @@ async function executeComputerUseRequest(
   } catch (error) {
     if (requestSignal?.aborted || isAbortError(error)) throw error;
     const interruption = computerUsePresentation.interruption(scopeId);
+    const protectedTarget = error instanceof ComputerUseFailure && error.info.code === 'cardbush_target_blocked';
     const failure = computerUseFailure(
-      interruption?.info.code === 'user_takeover' || interruption?.info.code === 'user_stopped' ? interruption : error,
+      !protectedTarget && (interruption?.info.code === 'user_takeover' || interruption?.info.code === 'user_stopped') ? interruption : error,
       actionRecorded || error instanceof ComputerUseFailure && error.info.code === 'activation_failed' ? 'dispatched' : actionMayHaveDispatched ? 'unknown' : 'not_dispatched',
     );
     if (failure.info.code === 'application_control_blocked') computerUseSafety.recordApplicationControlBlock(scopeId, failure);
     if (failure.info.code === 'user_takeover') {
       computerUseSafety.recordUserYield(scopeId);
-    } else if (!isObservationAction(action) && !actionRecorded) {
+    } else if (!isObservationAction(action) && !actionRecorded && failure.info.code !== 'cardbush_target_blocked') {
       // Once dispatched, failed input may have partially reached the desktop.
       // Presentation/state validation failures occur before target input starts.
       if (actionMayHaveDispatched) computerUseSafety.recordAction(scopeId, input, false, actionObservation);
@@ -606,7 +612,7 @@ async function executeComputerUseRequest(
     await attachActivation();
     if (failure.info.code === 'user_takeover') {
       await computerUsePresentation.pause(scopeId).catch(() => undefined);
-    } else if (['user_stopped', 'control_unavailable', 'application_control_blocked'].includes(failure.info.code)) {
+    } else if (['user_stopped', 'control_unavailable', 'application_control_blocked', 'cardbush_target_blocked'].includes(failure.info.code)) {
       await computerUsePresentation.finish(scopeId).catch(() => undefined);
     } else {
       await computerUsePresentation.hold(scopeId).catch(() => undefined);
@@ -625,8 +631,11 @@ async function executeComputerUseRequest(
 const openApplicationScript = String.raw`
 $requested = $script:CARDBUSH_APP_TARGET.Trim()
 if (-not $requested) { throw 'Application target is empty.' }
+[CardBushComputerUseTargets]::AssertLaunch($requested)
 
-function Get-CardBushLaunchWindows { @([CardBushWindowList]::Read()) }
+function Get-CardBushLaunchWindows {
+  @([CardBushWindowList]::Read() | Where-Object { -not [CardBushComputerUseTargets]::IsProtectedWindow([IntPtr]$_.hwnd) })
+}
 
 function Complete-CardBushLaunch([string]$target, [string]$resolution, $processId, [string]$workingDirectory, $before, [bool]$beforeAvailable) {
   $candidates = @()
@@ -670,6 +679,11 @@ function Complete-CardBushLaunch([string]$target, [string]$resolution, $processI
 }
 
 function Launch-CardBushApplication([string]$target, [string]$resolution) {
+  [CardBushComputerUseTargets]::AssertLaunch($target)
+  if ([IO.Path]::GetExtension($target) -ieq '.lnk') {
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($target)
+    if ($shortcut.TargetPath) { [CardBushComputerUseTargets]::AssertLaunch($shortcut.TargetPath) }
+  }
   $workingDirectory = (Get-Location).Path
   # Keep a resolved executable's own directory; shell shortcuts retain their launch semantics.
   if ([IO.Path]::GetExtension($target) -ieq '.exe') {
@@ -718,6 +732,7 @@ $startAppMatches = @(Get-StartApps -ErrorAction SilentlyContinue | Where-Object 
 })
 if ($startAppMatches.Count -eq 1) {
   $appId = $startAppMatches[0].AppID
+  [CardBushComputerUseTargets]::AssertLaunch($appId)
   $workingDirectory = (Get-Location).Path
   $beforeAvailable = $true
   try { $before = @(Get-CardBushLaunchWindows) } catch { $before = @(); $beforeAvailable = $false }
@@ -1044,6 +1059,7 @@ async function observeAfterAction(
 }
 
 export const windowStateCaptureScript = String.raw`
+${computerUseTargetPolicyScript}
 ${computerUseDisplaysScript}
 ${computerUseImageScript}
 Add-Type -AssemblyName System.Drawing
@@ -1104,6 +1120,7 @@ if ($script:CARDBUSH_FOLLOW_OWNED_WINDOW -eq '1' -and $foreground -ne $h -and $e
   }
 }
 if (-not [CardBushWindowCapture]::IsWindow($h)) { throw 'The target window is no longer available. Observe again.' }
+[CardBushComputerUseTargets]::AssertWindow($h)
 $rect = New-Object CardBushWindowCapture+RECT
 if (-not [CardBushWindowCapture]::GetWindowRect($h, [ref]$rect)) { throw 'Unable to read the target window bounds.' }
 $width = $rect.Right - $rect.Left
@@ -1206,6 +1223,7 @@ elseif ([CardBushWindowCapture]::IsOwnedBy($h, $finalForeground)) { $foregroundR
 const windowObservationScript = `${computerUseCaptureLayersScript}\n${computerUseVisualProgressScript}\n${windowStateCaptureScript}`;
 
 const windowListScript = String.raw`
+${computerUseTargetPolicyScript}
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -1248,7 +1266,11 @@ async function listWindows(signal?: AbortSignal): Promise<unknown[]> {
 async function readDesktopState(signal?: AbortSignal): Promise<{ windows: unknown[]; displays: unknown[]; display_signature: string }> {
   return json(await powershell(`${computerUseDisplaysScript}\n${windowListScript}
 $displays=[CardBushDesktop]::Read()
-$windows=@([CardBushWindowList]::Read() | ForEach-Object { $_ | Add-Member -NotePropertyName display_id -NotePropertyValue ([CardBushDesktop]::WindowDisplay([IntPtr]$_.hwnd)) -PassThru })
+$windows=@([CardBushWindowList]::Read() | ForEach-Object {
+  $window = $_ | Add-Member -NotePropertyName display_id -NotePropertyValue ([CardBushDesktop]::WindowDisplay([IntPtr]$_.hwnd)) -PassThru
+  if ([CardBushComputerUseTargets]::IsProtectedWindow([IntPtr]$_.hwnd)) { $window | Add-Member -NotePropertyName control_blocked -NotePropertyValue $true }
+  $window
+})
 @{windows=$windows;displays=$displays;display_signature=[CardBushDesktop]::Signature($displays)} | ConvertTo-Json -Depth 6 -Compress`, {}, signal)) as { windows: unknown[]; displays: unknown[]; display_signature: string };
 }
 
@@ -1311,7 +1333,7 @@ export function selectWindowTarget(
     throw new Error('Window action requires app, title_pattern, or hwnd.');
   }
 
-  const matches = windows.filter((window) => {
+  const candidatesForSelector = windows.filter((window) => {
     if (hwnd != null && Number(window.hwnd) !== hwnd) return false;
     if (
       app &&
@@ -1327,7 +1349,9 @@ export function selectWindowTarget(
     }
     return true;
   });
+  const matches = candidatesForSelector.filter(window => window.control_blocked !== true);
   if (matches.length === 1) return matches[0];
+  if (!matches.length && candidatesForSelector.length) throw new ComputerUseFailure('cardbush_target_blocked', cardbushTargetBlocked);
 
   const selector = [
     hwnd != null ? `hwnd=${hwnd}` : '',
@@ -1662,7 +1686,9 @@ async function runNativeAction(
 ): Promise<Record<string, unknown>> {
   parameters = { ...parameters, CARDBUSH_DISPLAY_SIGNATURE: context?.previous.displaySignature ?? '',
     CARDBUSH_DISPLAY_HWND: String(context?.previous.hwnd ?? 0), CARDBUSH_WINDOW_DPI: String(context?.previous.windowDpi ?? 0) };
-  script = `${computerUseDisplaysScript}\n${computerUseDisplayGuardScript}\n${script}`;
+  script = `${computerUseTargetPolicyScript}
+[CardBushComputerUseTargets]::AssertWindow([IntPtr]([Int64]$script:CARDBUSH_DISPLAY_HWND))
+${computerUseDisplaysScript}\n${computerUseDisplayGuardScript}\n${script}`;
   if (!context || context.input.observe_after === false) return record(json(await powershell(script, parameters, signal, timeoutMs)));
   const { input, previous, config } = context;
   const request = prepareWindowCapture(config.screenshotDirectory, previous.hwnd,

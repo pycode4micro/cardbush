@@ -12,6 +12,7 @@ import { loadEnabledProductPluginMcpServers } from '../dist-electron/productPlug
 import { PluginConnectionManager } from '../dist-electron/pluginConnectionManagement.mjs';
 import { troubleshootingLaunch } from '../dist-electron/pluginTroubleshooting.mjs';
 import { pluginHostEnvironment } from '../dist-electron/pluginEnvironment.js';
+import { unprotectConfiguration } from '@cardbush/platform/credentials';
 
 test('troubleshooting drafts resolve the CardBush installation and overrides without changing connections', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-plugin-troubleshooting-'));
@@ -149,7 +150,9 @@ test('plugin owner tools configure connections and save private credentials with
     assert.equal(result.connections.calendar.tools.list.parallel_safe, true, 'tool policy patches preserve other fields');
     assert.equal(result.connections.calendar.oauth.clientSecretRef, ref);
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE_HEADER_FIXTURE/);
-    const stored = JSON.parse(await readFile(configPath, 'utf8'));
+    const rawConfig = await readFile(configPath, 'utf8');
+    if (process.platform === 'win32') assert.doesNotMatch(rawConfig, /PRIVATE_HEADER_FIXTURE/);
+    const stored = unprotectConfiguration(JSON.parse(rawConfig));
     assert.equal(stored.plugins.find(plugin => plugin.id === 'fixture').config.mcp_servers.files.connection.headers.Authorization, 'PRIVATE_HEADER_FIXTURE');
     assert.deepEqual(stored.plugins.find(plugin => plugin.id === 'fixture').config.mcp_servers.files.providerOption, { preserved: true });
     // A concurrent configuration update after vault write must roll back only the uncommitted secret.

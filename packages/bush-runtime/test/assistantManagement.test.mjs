@@ -224,6 +224,39 @@ test('overall plan uses revision checks and durable projection, then clears dura
   assert.equal(replacement.revision, 1); assert.notEqual(replacement.plan.plan_id, first.plan.plan_id);
 });
 
+test('Assistant uses the local plugin lifecycle tool through its existing permission and receipt pipeline', async t => {
+  const f = await fixture(t), performed = [];
+  const name = 'mcp__cardbush_management__uninstall_plugin';
+  f.registry.register({
+    definition: { name, description: 'Uninstall a local fixture plugin', inputSchema: { type: 'object',
+      properties: { plugin_id: { type: 'string' } }, required: ['plugin_id'], additionalProperties: false } },
+    registrationOwner: 'runtime_mcp',
+    manifest: { effect_kind: 'external_mcp', operation: 'mcp.cardbush_management.uninstall_plugin',
+      risk: 'requires_user_permission', owner: 'mcp:cardbush_management', dispatch_scope: 'external', mutating: true },
+    mcpHook: { server: 'cardbush_management', tool: 'uninstall_plugin', modelVisible: true, call: async () => ({}) },
+    decodeInput: input => input,
+    authorize: () => ({ kind: 'ask', request: { reason: 'Uninstall requires approval', actions: ['external_tool_call'],
+      targets: [{ kind: 'mcp_resource', value: name }], capabilityIds: ['uninstall-fixture'] } }),
+    execute: ({ input }) => { performed.push(input.plugin_id); return { status: 'uninstalled', plugin_id: input.plugin_id }; },
+  });
+  const schema = await f.invoke('get_tool_schema', { name });
+  assert.equal(schema.matches[0].name, name);
+  assert.ok(!f.requests.at(-1).tools.some(tool => tool.name === name), 'marketplace tool schemas are loaded on demand');
+  const requested = await f.begin('call_tool', { name, arguments: { plugin_id: 'isolated-test' } });
+  await until(async () => {
+    const current = await f.read();
+    if (!current.busy) assert.fail(JSON.stringify({ receipt: f.results.get(requested), error: current.error, performed }));
+    return current.management.permissions.length === 1;
+  });
+  assert.deepEqual(performed, []);
+  await f.answer((await f.read()).management.permissions[0], 'allow_once');
+  assert.equal((await f.complete(requested)).status, 'uninstalled');
+  assert.deepEqual(performed, ['isolated-test']);
+  const restricted = await f.invoke(name, { plugin_id: 'isolated-test' }, { metadata: { toolExecutionPolicy: 'web_restricted' } });
+  assert.equal(restricted.code, 'tool_unavailable');
+  assert.deepEqual(performed, ['isolated-test']);
+});
+
 for (const decision of ['deny', 'cancel', 'allow_once', 'allow_session', 'reset']) test(`management permission ${decision} follows the host broker and records the actual outcome`, async t => {
   const f = await fixture(t); await f.configureEvents();
   f.registry.resolve('assistant_event').authorize = () => ({ kind: 'ask', request: { reason: 'Reminder needs approval', actions: ['event.create'], targets: [{ kind: 'path', value: f.root }], capabilityIds: ['event.create'] } });

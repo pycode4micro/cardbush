@@ -9,6 +9,7 @@ Use `computer_use` for visible Windows UI, including a browser's native dialogs 
 
 ## Route Before Acting
 
+- CardBush itself is a protected target. For CardBush settings or plugin management, use `cardbush-docs` and the available product management tools. If the required operation is unavailable, explain the gap and name the product entry point for the user. Do not fall back to GUI automation or shell scripts against CardBush.
 - Prefer a dedicated app connector or API when one can complete the request.
 - Prefer filesystem and terminal tools for files, scripts, processes, and command-line workflows.
 - Prefer Chrome or browser tools for webpage content and browser-tab automation.

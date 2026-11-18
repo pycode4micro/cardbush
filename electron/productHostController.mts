@@ -7,7 +7,7 @@ import {
   rm,
   stat,
 } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { uiText } from '@cardbush/platform/i18n';
 import { clearDiagnosticFiles, mergeCleanup, scheduleDiagnosticRetention, type CleanupResult } from './cacheMaintenance.js';
@@ -24,7 +24,8 @@ import {
 } from '@cardbush/product-host';
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { ElectronRuntimeTransport } from '@cardbush/bush-runtime-electron';
-import { loadProductPluginCatalog, removeProductPlugin, withProductPluginLifecycle } from './productPlugins.js';
+import { loadProductPluginCatalog, removeProductPlugin, withProductPluginLifecycle, type ProductPluginInstallOptions } from './productPlugins.js';
+import { installLocalProductPlugin } from './localPluginInstall.js';
 import { PluginConnectionManager } from './pluginConnectionManagement.mjs';
 import type { McpCredentialStore } from '@cardbush/bush-mcp-client';
 import type { ClientCredentialsPrompt, ClientCredentialsAnswer } from './pluginConnectionManagement.mjs';
@@ -244,17 +245,71 @@ export class ElectronProductHostController {
   }
 
   async uninstallPlugin(pluginId: string) {
-    return withProductPluginLifecycle(() => this.#apps.uninstall(pluginId, async (plugin, commit, otherPlugins) => {
-      const state = mcpSnapshotResultSchema.parse(await this.refreshMcp(plugin.id));
+    return (await this.#removePlugin(pluginId)).snapshot;
+  }
+
+  async uninstallPluginForTool(pluginId: string, signal: AbortSignal) {
+    const result = await this.#removePlugin(pluginId, { ignoreMissing: true, signal });
+    if (result.pending) return { plugin_id: pluginId, status: 'removal_pending', phase: result.pending, installed: true, enabled: false };
+    return { plugin_id: pluginId, status: result.removed ? 'uninstalled' : 'already_absent', installed: false };
+  }
+
+  async #removePlugin(pluginId: string, options?: { ignoreMissing: boolean; signal: AbortSignal }) {
+    let removed = false;
+    let pending: string | undefined;
+    const snapshot = await withProductPluginLifecycle(() => this.#apps.uninstall(pluginId, async (plugin, commit, otherPlugins, pendingSnapshot) => {
+      const state = mcpSnapshotResultSchema.parse(await this.refreshMcp(plugin.id, undefined, options?.signal));
       if (state.applicationState !== 'applied' || state.applicationError) {
+        if (options && state.applicationState === 'pending' && !state.applicationError) {
+          pending = state.applicationPhase ?? 'waiting_for_runtime';
+          return pendingSnapshot;
+        }
         throw new Error(state.applicationError || '插件调用尚未完成，请稍后重试卸载。');
       }
       await this.#pluginConnections.clearPluginCredentials(plugin, otherPlugins);
-      return removeProductPlugin(plugin, this.#userPluginRoot, [
+      const result = await removeProductPlugin(plugin, this.#userPluginRoot, [
         { root: join(dirname(this.#userPluginRoot), 'plugin-data'), name: plugin.id },
         { root: join(this.#runtimeStateRoot, 'plugin-data'), name: createHash('sha256').update(plugin.id).digest('hex').slice(0, 24) },
       ], commit);
-    }));
+      removed = true;
+      return result;
+    }, options));
+    return { snapshot, removed, pending };
+  }
+
+  pluginInstallOptions(pluginId: string, signal: AbortSignal): ProductPluginInstallOptions {
+    return { expectedId: pluginId, signal, checkNewPackage: async id => {
+      const plugin = (await this.#apps.read()).plugins.find(item => item.id === id);
+      if (plugin?.removalPending) throw new Error('Finish uninstalling this plugin before reinstalling it.');
+      if (plugin?.installed) throw Object.assign(new Error('The plugin is already installed.'), { code: 'plugin_already_installed' });
+      if (plugin) throw new Error('This plugin is already managed by CardBush. Use the product plugin page to change its state.');
+    } };
+  }
+
+  installLocalPlugin(sourcePath: string, options: ProductPluginInstallOptions) {
+    return installLocalProductPlugin(sourcePath, this.#userPluginRoot, undefined, options);
+  }
+
+  async pluginInstallation(pluginId: string) {
+    const state = await this.#apps.read();
+    const plugin = state.plugins.find(item => item.id === pluginId);
+    if (!plugin || !plugin.installed || plugin.removalPending) return undefined;
+    const manifestDirectory = basename(dirname(plugin.manifestPath));
+    const format = manifestDirectory === '.codex-plugin' ? 'openai'
+      : manifestDirectory === '.claude-plugin' || basename(plugin.manifestPath) === '.cardbush-marketplace.json' ? 'claude' : 'agent-plugins';
+    const { connections, runtime } = await this.#pluginConnections.list(pluginId);
+    const snapshot = mcpSnapshotResultSchema.safeParse(runtime).data;
+    const mcp = connections.map(connection => {
+      const service = snapshot?.servers.find(server => server.id === connection.serverId);
+      const status = !state.serviceEnabled || !plugin.enabled ? 'disabled'
+        : connection.configurationError ? 'configuration_required'
+        : !snapshot ? 'unverified' : service?.updateState ?? service?.health ?? 'not_connected';
+      return { server_id: connection.serverId, status, tool_count: service?.tools.length ?? 0 };
+    });
+    return {
+      plugin_id: plugin.id, version: plugin.version, format, source: plugin.source,
+      installed: true, enabled: state.serviceEnabled && plugin.enabled, mcp,
+    };
   }
 
   async listMcpServers(): Promise<unknown> {

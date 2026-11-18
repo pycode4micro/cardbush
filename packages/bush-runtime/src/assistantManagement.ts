@@ -15,6 +15,7 @@ import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 
 const allowed = new Set<string>(ASSISTANT_MANAGEMENT_TOOLS);
 const disclosureNames = ['get_tool_schema', 'call_tool'] as const;
+const productPluginTools = new Set(['list_plugin_marketplaces', 'install_plugin', 'uninstall_plugin']);
 
 /** Uses the ordinary validators, permission grants and receipts, without a child or a second scheduler. */
 export class AssistantManagement {
@@ -55,7 +56,8 @@ export class AssistantManagement {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' || parent.metadata.toolExecutionPolicy === 'none') return [];
     const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [] };
     const catalog = this.options.registry.definitions().filter(tool => allowed.has(tool.name) ||
-      parent.metadata.toolExecutionPolicy !== 'web_restricted' && this.isBridgeTool(tool.name));
+      parent.metadata.toolExecutionPolicy !== 'web_restricted' && (this.isBridgeTool(tool.name) ||
+        this.isProductPluginTool(tool.name, parent)));
     return catalog.filter(tool => parent.tools.some(item => item.name === tool.name) &&
       this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
         if (tool.name === 'search_plugins') return { ...tool, description: 'Discover MCP tools, Skills and local packages (bundled or user-installed) on this Runtime before delegation. Start with query, default mode=all. Narrow with mcp, skill or plugins. Use * to browse; pass a standby server ID in mcp mode or continue with cursor alone. Give the child the matched Skill mainResource or exact tool/package identity. The child reads instructions and executes on its own host.' };
@@ -66,6 +68,15 @@ export class AssistantManagement {
     const registration = this.options.registry.resolve(name);
     return registration?.registrationOwner === `bridge:${PERSONAL_ASSISTANT_SESSION}` &&
       registration.manifest?.operation === 'bridge.plugin.call' && registration.mcpHook?.modelVisible !== false;
+  }
+  private isProductPluginTool(name: string, parent: RuntimeSessionTurnRequest) {
+    if (parent.metadata.botSourceRef || (Array.isArray(parent.metadata.botSourceRefs) && parent.metadata.botSourceRefs.length)) return false;
+    const registration = this.options.registry.resolve(name);
+    return registration?.registrationOwner === 'runtime_mcp' && registration.mcpHook?.server === 'cardbush_management' &&
+      registration.mcpHook.modelVisible !== false && productPluginTools.has(registration.mcpHook.tool);
+  }
+  projectModelDefinitions(parent: RuntimeSessionTurnRequest, tools: ToolDefinition[]) {
+    return tools.filter(tool => !this.isProductPluginTool(tool.name, parent));
   }
   private disclosureDefinitions(parent: RuntimeSessionTurnRequest) {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' ||
@@ -85,13 +96,14 @@ export class AssistantManagement {
     return projectBuiltinDefinitions(this.options.registry, { ...parent, protocol: 'bush.model_request.v1', messages: [], tools }, tools);
   }
   private disclosureRequest(parent: RuntimeSessionTurnRequest, request: ModelRequest, nativeTools: ToolDefinition[]): ModelRequest {
-    // Ordinary execution tools remain delegated. Host-owned bridge registrations
-    // can run directly, through the same source and file admission as children.
+    // Host-owned bridge and plugin management registrations can run directly
+    // through the normal permission and execution pipeline.
     const candidates = [...nativeTools, ...this.definitions(parent), ...this.disclosureDefinitions(parent)];
     const tools = candidates.flatMap(tool => {
       const registration = this.options.registry.resolve(tool.name);
-      return registration && (!registration.mcpHook || this.isBridgeTool(tool.name)) && parent.tools.some(item => item.name === tool.name) &&
-        request.tools.some(item => item.name === tool.name) && registration.modelAvailable?.(request) !== false
+      const productPlugin = this.isProductPluginTool(tool.name, parent);
+      return registration && (!registration.mcpHook || this.isBridgeTool(tool.name) || productPlugin) && parent.tools.some(item => item.name === tool.name) &&
+        (productPlugin || request.tools.some(item => item.name === tool.name)) && registration.modelAvailable?.(request) !== false
         ? [registration.definition] : [];
     });
     return { ...request, tools, metadata: { ...request.metadata }, requestCapabilities: parent.requestCapabilities };
@@ -126,7 +138,7 @@ export class AssistantManagement {
     // the small conversational schema. Schema lookup alone uses the restricted scope.
     const executionRequest: ModelRequest = disclosure ? this.disclosureRequest(parent, request, nativeTools)
       : { ...request, tools: [...parent.tools, ...this.definitions(parent).filter(tool => !parent.tools.some(item => item.name === tool.name))], requestCapabilities: parent.requestCapabilities };
-    if (this.isBridgeTool(call.name)) synchronizeMcpDiscovery(this.options.registry, executionRequest, request.messages);
+    if (this.isBridgeTool(call.name) || this.isProductPluginTool(call.name, parent)) synchronizeMcpDiscovery(this.options.registry, executionRequest, request.messages);
     if (call.name === 'schedule_task') {
       const action = JSON.parse(call.argumentsText).action;
       if (action === 'update') {

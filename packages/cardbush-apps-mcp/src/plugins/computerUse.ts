@@ -208,6 +208,7 @@ export function registerComputerUsePlugin(
     title: 'Computer use',
     description: [
       "Observe and interact with the user's current desktop through visible application UI.",
+      'CardBush itself is a protected target. For CardBush settings and plugin management, consult cardbush-docs and use available CardBush management tools. If the required operation is unavailable, report the missing capability and direct the user to the product entry point.',
       'Also use for browser system file dialogs, crop/canvas/drag controls and interactions Browser Use cannot operate. Prefer Browser Use upload_file for ordinary local file selection. Preserve the authorized browser/profile/tab, observe its exact window, and verify the page after input; do not switch tools to bypass a permission refusal or user stop.',
       "Input shares the user's mouse and keyboard, yields while the user is active, and restores the pointer after mouse actions by default.",
       'Call observe once to discover windows, then observe an exact hwnd to receive a one-use state_id and a screenshot directly as an image. Set include_text=true to also receive accessibility elements.',
