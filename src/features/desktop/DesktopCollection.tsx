@@ -13,6 +13,7 @@ import { eventBackend } from '../assistant/events/eventBackend';
 import { confirmEventDeletion, eventActionLabels, type EventAction } from '../assistant/events/eventManagement';
 import { useSidebarContextMenu, type SidebarMenuEvent, type SidebarContextMenuItem } from '../sidebar/SidebarContextMenu';
 import { showUiError } from '../../shared/showUiError';
+import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import type { HomePage } from '../navigation/appPage';
 import type { PageOffsets } from '../navigation/usePageScroll';
 import { DesktopHomeView, ExploreView, type LibraryReadingState } from './DesktopCollectionView';
@@ -25,16 +26,19 @@ type Props = {
   onProject(project: ProjectItem): void; onConversation(id: string): void; onAssistant(): void;
   onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void; onExplore(): void;
 };
-// Keep small browsing preferences at the window boundary. Only the current page
-// mounts its library, event polling, project portal and embedded documents.
+// Retain a visited Home and its live guests; only active Home pages poll events.
+// Activity would disconnect guest effects and reload their src on return.
 export function DesktopCollection({section, ...props}: Props & {section: AppSection}) {
   const [reading] = useState<LibraryReadingState>(() => ({offsets: new Map(), detailOffsets: new Map(), expanded: new Set()}));
   const [query, setQuery] = useState('');
+  const active = section === 'home' && props.visible;
+  const home = useSoftPanelPresence(active, 0, {keepMounted:true});
   const needsEvents = props.page.kind === 'overview' || props.page.kind === 'events' || props.page.kind === 'event';
-  const execution = useEventExecution(section === 'home' && props.ready && props.visible && needsEvents, props.page.kind === 'event' ? 1500 : 15000);
-  if (section === 'home') return <DesktopHome {...props} execution={execution} reading={reading}/>;
-  if (section === 'explore') return <DesktopExplore language={props.language} offsets={reading.offsets} query={query} onQuery={setQuery}/>;
-  return null;
+  const execution = useEventExecution(active && props.ready && needsEvents, props.page.kind === 'event' ? 1500 : 15000);
+  return <>
+    {home.mounted && <DesktopHome {...props} visible={active} execution={execution} reading={reading}/>}
+    {section === 'explore' && <DesktopExplore language={props.language} offsets={reading.offsets} query={query} onQuery={setQuery}/>}
+  </>;
 }
 function DesktopHome(props: Props & {execution: ReturnType<typeof useEventExecution>; reading: LibraryReadingState}) {
   const { snapshot, error, refresh, refreshAfterChange } = props.execution;

@@ -20,6 +20,7 @@ import { webToolAllowed, webToolDefinition } from '@cardbush/bush-runtime/web-po
 import { callWebRemoteAgent } from './agentWebRemoteAgents.mjs';
 import { AgentWebPolicy } from './agentWebPolicy.mjs';
 import { AgentWebFiles } from './agentWebFiles.mjs';
+import { AgentWebLayers } from './agentWebLayers.mjs';
 import { sourcePreferenceText } from '@cardbush/bush-product-agent';
 import { individuationSettingsSchema, normalizeIndividuation, type IndividuationSettings } from '@cardbush/bush-protocol';
 import { AgentSharedConfiguration, recoverSharedConfiguration } from './agentSharedConfiguration.mjs';
@@ -129,6 +130,7 @@ export class AgentService {
   #releaseLock: () => Promise<void>;
   #pastedTextStores = new Map<string, PastedTextAttachments>();
   readonly #modelImages: ModelImageStore;
+  readonly #webLayers?: AgentWebLayers;
   readonly #disposeModelAccess?: () => void;
 
   private constructor(root: string, state: AgentState, release: () => Promise<void>, options: AgentServiceOptions, sandbox: SandboxSetup, desktop?: AgentDesktop) {
@@ -136,6 +138,7 @@ export class AgentService {
     this.#toolsEnabled = options.toolsEnabled !== false;
     this.#webRestricted = options.webRestricted === true;
     this.#webFiles = this.#webRestricted ? new AgentWebFiles(root) : undefined;
+    this.#webLayers = this.#webRestricted ? new AgentWebLayers(root) : undefined;
     this.root = root; this.#state = state; this.#releaseLock = release;
     const configurationRoot = this.#configurationRoot = options.localProfileRoot ? join(options.localProfileRoot, 'product-host') : root;
     const extensionRoot = this.#extensionRoot = options.localProfileRoot ?? root;
@@ -486,7 +489,7 @@ export class AgentService {
       if (operation === 'sessions.create' && data.projectId) throw new Error('Project binding is disabled on this service.');
     }
     if (this.#webRestricted) {
-      const allowed = ['info', 'sessions.list', 'sessions.get', 'sessions.page', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.delete', 'chat.send', 'chat.jobs', 'chat.stop', 'chat.events', 'web.configure', 'web.files', 'web.activity'];
+      const allowed = ['info', 'sessions.list', 'sessions.get', 'sessions.page', 'sessions.create', 'sessions.rename', 'sessions.update', 'sessions.delete', 'chat.send', 'chat.jobs', 'chat.stop', 'chat.events', 'web.configure', 'web.files', 'web.layers', 'web.activity'];
       const safeProduct = operation === 'product.command' && ['models.get', 'models.update'].includes(String(data.kind));
       const safeRuntime = operation === 'runtime.command' && ['runtime.list_solution_selections', 'runtime.answer_solution_selection', 'runtime.list_turn_tool_executions'].includes(String(data.kind));
       if (!allowed.includes(operation) && !safeProduct && !safeRuntime) throw new Error('Operation unavailable in restricted web mode.');
@@ -516,6 +519,11 @@ export class AgentService {
       }
       case 'web.configure': if (!this.#webPolicy) throw new Error('Unavailable'); return this.#webPolicy.configure(data);
       case 'web.files': if (!this.#webFiles) throw new Error('Unavailable'); return this.#webFiles.call(data);
+      case 'web.layers': {
+        const connection = this.#webPolicy?.imageConnection;
+        if (!this.#webLayers || !connection) throw new Error('LAYER_SERVICE_UNAVAILABLE');
+        return this.#webLayers.call(data, connection);
+      }
       case 'web.activity': return { active: await this.#webPolicy?.active() ?? false };
 
       case 'devices.command': { if (!this.#embodied) throw new Error('Device access is unavailable on this service.'); return this.#embodied.command(data); }
@@ -1207,6 +1215,7 @@ export class AgentService {
       await attempt('Model access', () => this.#disposeModelAccess?.());
       await attempt('Worker connections', async () => { if (this.#workers) await (await this.#workers).close(); });
       await attempt('Pending mutations', () => this.#mutations);
+      await attempt('Seedream layers', () => this.#webLayers?.close());
       await attempt('Webhooks', () => this.#webhooks?.close());
       await attempt('Embodied host', () => this.#embodied?.close());
       await attempt('Voice sessions', () => this.#embodied?.voice.closeAll());

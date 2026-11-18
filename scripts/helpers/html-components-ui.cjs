@@ -13,7 +13,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.componentHtml='<h1>HTML component</h1><textarea id="draft">saved draft</textarea><script>cardbush.ready.then(async context=>{try {await cardbush.state.write({draft:"kept"}); const results=await Promise.all([cardbush.invoke("conversation.send",{text:"component task"},"once"),cardbush.invoke("conversation.send",{text:"component task"},"once")]); parent.postMessage({test:"component-ready",context,results},"*");}catch(error){parent.postMessage({test:"component-ready",error:error.message},"*");}});</script>';
     window.component={id:'fixture',title:'Fixture',html:componentHtml,allowActions:true,width:6,height:280,order:0};
     window.componentActive=true;
-    window.showSurface=()=>renderView(h(views.HtmlComponentContext.Provider,{value:componentHost},h('div',{style:{height:400}},h(views.HtmlComponentSurface,{component,active:componentActive}))));
+    window.showSurface=()=>renderView(h(views.HtmlComponentContext.Provider,{value:componentHost},h('div',{style:{height:400}},h(views.HtmlComponentSurface,{component,active:componentActive,onHome:true}))));
     showSurface();
   `);
   await until('componentReports.length>0','HTML SDK handshake and actions');
@@ -37,9 +37,16 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await guest.executeJavaScript('location.href="https://example.invalid/component-navigation";void 0');
   await pause();
   assert.equal(guest.url,'about:srcdoc','Electron navigation guard retains the controlled HTML document');
+  await guest.executeJavaScript('document.querySelector("#draft").value="unsaved live draft";void 0');
+  await run('window.retainedComponent=document.querySelector(".html-component-frame");void 0');
   await run('componentActive=false;showSurface()');await pause();
+  assert.equal(await run('retainedComponent===document.querySelector(".html-component-frame")'),true,'hiding Home retains its iframe');
   assert.equal(await guest.executeJavaScript('cardbush.invoke("conversation.send",{text:"editing"}).then(()=>"bad",e=>e.message)'),'INACTIVE_SURFACE');
+  assert.equal(await guest.executeJavaScript('cardbush.state.write({draft:"hidden"}).then(()=>"bad",e=>e.message)'),'INACTIVE_SURFACE');
+  assert.equal(await run('JSON.parse(localStorage.getItem("cardbush.component-state.fixture")).draft'),'kept','hidden component cannot overwrite stored state');
   await run('componentActive=true;showSurface()');await pause();
+  assert.equal(await run('retainedComponent===document.querySelector(".html-component-frame")'),true,'returning Home retains its iframe');
+  assert.equal(await guest.executeJavaScript('document.querySelector("#draft").value'),'unsaved live draft','document state survives hide and show');
   assert.equal(await guest.executeJavaScript('cardbush.invoke("conversation.send",{text:"component task"},"once").then(x=>x.status)'),'accepted');
   assert.equal(await run('componentEvents.length'),1,'editing retains action deduplication');
   await guest.executeJavaScript('cardbush.context.revision="stale";void 0');

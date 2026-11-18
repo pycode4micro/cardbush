@@ -6,7 +6,7 @@ module.exports = async ({ run, until, pause }) => {
     crypto.randomUUID ??= require('node:crypto').randomUUID;
     window.modelScope='conversation-model-fixture';
     window.clearModelFixture=scope=>{
-      for(const id of ['','a','b','c','untouched','loading']) views.selectConversationModel('',id,scope);
+      for(const id of ['','a','b','c','untouched','loading','local-queue']) views.selectConversationModel('',id,scope);
     };
     clearModelFixture(modelScope);clearModelFixture(modelScope+'-other');
     localStorage.setItem(modelScope+':cardbush.selected_model','a');
@@ -33,12 +33,16 @@ module.exports = async ({ run, until, pause }) => {
         });
       }
     });
-    window.ModelConversationFixture=({scope=modelScope,initialSession='a',initialDefault='a',initialReady=true})=>{
+    window.ModelConversationFixture=({scope=modelScope,initialSession='a',initialDefault='a',initialReady=true,localQueue=false})=>{
       const [session,setSession]=React.useState(initialSession);
       const [defaultModelId,setDefault]=React.useState(initialDefault);
       const [models,setModels]=React.useState(conversationModels);
       const [modelsReady,setModelsReady]=React.useState(initialReady);
-      const backend=React.useMemo(()=>makeModelBackend(scope),[scope]);
+      const backend=React.useMemo(()=>{
+        const backend=makeModelBackend(scope);
+        if(localQueue)delete backend.queue;
+        return backend;
+      },[scope,localQueue]);
       window.switchModelSession=setSession;window.changeModelDefault=setDefault;window.replaceConversationModels=setModels;window.finishModelLoad=()=>setModelsReady(true);
       window.conversationChat=views.useCardbushChat(models,models,{
         activeConversationId:session,runtimeReady:false,defaultModelId,modelsReady
@@ -105,6 +109,30 @@ module.exports = async ({ run, until, pause }) => {
   assert.equal(await run('views.readConversationModel("loading",modelScope)'), '', 'cached configuration cannot pin a stale default before initial load');
   await run('changeModelDefault("b");finishModelLoad()');
   await until('conversationChat.selectedModel==="b" && views.readConversationModel("loading",modelScope)==="b"', 'first session selection uses the loaded default');
+  await run('renderView(null)'); await pause();
+
+  await run('modelRequests.length=0;finishModelStreams.length=0;renderView(h(ModelConversationFixture,{initialSession:"local-queue",localQueue:true}))');
+  await until('conversationChat.selectedModel==="a"', 'local queue fixture starts on Responses');
+  await run('void conversationChat.sendMessage("active A")');
+  await until('modelRequests.length===1', 'first turn holds the local queue');
+  await run('conversationChat.setSelectedModel("b")');
+  await until('conversationChat.selectedModel==="b"', 'Anthropic selected');
+  await run('conversationChat.sendMessage("queued B")');
+  await run('conversationChat.setSelectedModel("c")');
+  await until('conversationChat.selectedModel==="c"', 'Chat Completions selected');
+  await run('conversationChat.sendMessage("queued C")');
+  await until('conversationChat.queuedMessages.length===2', 'both messages wait in the local queue');
+  assert.equal(await run('modelRequests.length'), 1);
+  await run('finishModelStreams[0]()');
+  await until('modelRequests.length===2', 'first queued turn dispatches');
+  assert.equal(await run('conversationChat.selectedModel'), 'c', 'queued B leaves the composer selection on C');
+  await run('finishModelStreams[1]()');
+  await until('modelRequests.length===3', 'second queued turn dispatches');
+  await run('finishModelStreams[2]()');
+  await until('!conversationChat.sending && conversationChat.queuedMessages.length===0', 'queue drains once');
+  assert.deepEqual(await run('modelRequests.map(({id,protocol,reasoning})=>[id,protocol,reasoning])'), [
+    ['a','openai_responses','low'], ['b','anthropic_messages','high'], ['c','openai_chat_completions','medium'],
+  ]);
   await run('renderView(null)'); await pause();
 
   // The normal local controller owns navigation internally. Draft choices

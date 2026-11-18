@@ -39,6 +39,7 @@ export const modelReplayStateSchema = modelReplayDataSchema.extend({
   model: z.string().min(1),
   providerBinding: runtimeProviderBindingRefSchema.optional(),
   messageHash: z.string().regex(/^[a-f0-9]{64}$/),
+  toolCallIds: z.record(z.string().min(1), z.string().min(1)).optional(),
 });
 export type ModelReplayState = z.infer<typeof modelReplayStateSchema>;
 

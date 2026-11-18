@@ -16,6 +16,7 @@ export class AgentWebPolicy {
   #pending?: Promise<void>;
   constructor(readonly root: string, readonly product: ElectronProductHostController) {}
   get imageEnabled() { return this.#desired?.imageEnabled === true; }
+  get imageConnection() { return this.imageEnabled ? this.#desired : undefined; }
   get remoteAgents() { return this.#desired?.remoteAgents; }
   async active() {
     const file = join(this.root, 'plugin-state', 'images', 'jobs.sqlite3');

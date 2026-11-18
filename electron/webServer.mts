@@ -19,12 +19,14 @@ import { WebModelRequests, WEB_MODEL_REQUEST_MAX_BYTES } from './webModelRequest
 import { WebRemoteAgents, PostgresRemoteAgentRepository } from './webRemoteAgents.mjs';
 import { WebRemoteAgentBridge } from './webRemoteAgentBridge.mjs';
 import { WebRemoteQuestions } from './webRemoteQuestions.mjs';
+import { serveLayerEditor } from './webLayerEditor.mjs';
 import { runtimeSolutionAnswerSchema, type SessionSnapshot } from '@cardbush/bush-protocol';
 import { cookie, csrfToken, digest, equalSecret, json, imageToken, modelToken, readJson, WebError, type WebModel, type WebUser } from './webCommon.mjs';
 
 export type WebServerConfig = { origin: string; port?: number; host?: string; staticRoot: string; modelSecret: string; models: WebModel[]; defaultModelId: string; imageModel?: { model: string; baseURL: string; apiKey: string } };
 type Job = { id: string; sessionId: string; turnId: string; status: string; text: string; modelId: string; error?: string };
 const prefix = '/api/web/v1';
+const LAYER_MODEL = 'doubao-seedream-5-5-261028';
 const visibleEvents = new Set(['turn_accepted', 'turn_started', 'assistant_segment_started', 'assistant_segment_delta', 'assistant_segment_completed', 'turn_terminal', 'model_request_usage', 'guidance_queued', 'guidance_applied', 'tool_queued', 'tool_running', 'tool_returned', 'tool_failed', 'tool_cancelled', 'solution_selection_requested', 'solution_selection_answered', 'solution_selection_cancelled', 'context_compaction_started', 'context_compaction_completed']);
 const messageSchema = z.object({ requestId: z.string().uuid(), text: z.string().trim().min(1).max(100_000), modelId: z.string().min(1).max(160), attachments: z.array(z.string().uuid()).max(8).default([]) }).strict();
 
@@ -68,7 +70,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
   const server = createServer((request, response) => {
     response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer'); response.setHeader('X-Frame-Options', 'DENY');
-    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    response.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; frame-src ${publicOrigin}${prefix}/layers/editor; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
     const abort = new AbortController(); response.once('close', () => { if (!response.writableFinished) abort.abort(); });
     void (async () => {
       const url = new URL(request.url ?? '/', publicOrigin), path = url.pathname;
@@ -197,6 +199,19 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         json(response, 200, updated); return;
       }
       if (path === `${prefix}/plugins` && method === 'GET') { json(response, 200, { imageEnabled: await store.imageAllowed(user.id) }); return; }
+      if (path === `${prefix}/layers/editor` && method === 'GET') {
+        if (!await store.imageAllowed(user.id)) throw new WebError(403, 'LAYER_ACCESS_DENIED');
+        await serveLayerEditor(response); return;
+      }
+      if (path === `${prefix}/layers` && method === 'POST') {
+        if (!await store.imageAllowed(user.id)) throw new WebError(403, 'LAYER_ACCESS_DENIED');
+        throttle(`layers:${user.id}`, 600);
+        const input = await readJson(request);
+        if (input.action === 'create' && config.imageModel?.model !== LAYER_MODEL) throw new WebError(503, 'LAYER_MODEL_UNAVAILABLE');
+        const agent = await agents.get(user.id);
+        const result = await agent.call('web.layers', input).catch(() => { throw new WebError(503, 'LAYER_SERVICE_UNAVAILABLE'); });
+        json(response, 200, result); return;
+      }
       if (path === `${prefix}/admin/plugins` && ['GET','POST'].includes(method)) {
         if (user.role !== 'admin') throw new WebError(403, '需要管理员权限。');
         json(response, 200, method === 'GET' ? await store.plugin() : await store.updatePlugin(user, await readJson(request, 1024))); return;
@@ -398,8 +413,19 @@ async function proxyImage(request: IncomingMessage, response: ServerResponse, ur
   if (!model) throw new WebError(503, 'Image service is not configured.');
   const destination = new URL(model.baseURL);
   if (destination.protocol !== 'https:' || destination.hostname !== 'ark.cn-beijing.volces.com' || destination.pathname.replace(/\/$/, '') !== '/api/v3' || destination.username || destination.password || destination.search || destination.hash) throw new Error('Invalid fixed image endpoint.');
-  const body = z.object({ model: z.string().max(160), prompt: z.string().trim().min(1).max(12000), size: z.string().max(24), watermark: z.boolean(), response_format: z.literal('b64_json'), output_format: z.literal('png'), image: z.array(z.string().max(23_000_000)).max(4).optional() }).strict().parse(await readJson(request, 24*1024*1024));
-  if (!['1K','2K'].includes(body.size)) {
+  const body = z.object({
+    model: z.string().max(160), prompt: z.string().trim().min(1).max(12000), size: z.string().max(24), watermark: z.boolean(),
+    response_format: z.literal('b64_json'), output_format: z.literal('png'), image: z.array(z.string().max(23_000_000)).max(4).optional(),
+    layer_decomposition: z.literal(true).optional(),
+    layer_decomposition_options: z.object({ max_images: z.number().int().min(2).max(100), text_recognition: z.boolean() }).strict().optional(),
+  }).strict().parse(await readJson(request, 24*1024*1024));
+  if (body.layer_decomposition) {
+    if (model.model !== LAYER_MODEL || body.image?.length !== 1 || !body.layer_decomposition_options || !['1K', '1.5K', '2K'].includes(body.size)) {
+      throw new WebError(400, 'Invalid Seedream 5.5 layer request.');
+    }
+  } else if (body.layer_decomposition_options) {
+    throw new WebError(400, 'Layer options require decomposition.');
+  } else if (!['1K','2K'].includes(body.size)) {
     const parts = body.size.match(/^([1-9]\d{0,4})x([1-9]\d{0,4})$/), w = Number(parts?.[1]), h = Number(parts?.[2]);
     if (!parts || w*h < 921600 || w*h > 4624220 || w/h < 1/16 || w/h > 16) throw new WebError(400, 'Invalid image dimensions.');
   }
@@ -414,8 +440,9 @@ async function proxyImage(request: IncomingMessage, response: ServerResponse, ur
   if (!upstream.ok) { await upstream.body?.cancel(); json(response, upstream.status, { error: { code: `provider_http_${upstream.status}` } }); return; }
   response.writeHead(200, { 'Content-Type': 'application/json' });
   let size = 0;
+  const maxBytes = (body.layer_decomposition ? 64 : 32) * 1024 * 1024;
   if (upstream.body) for await (const chunk of upstream.body) {
-    size += chunk.byteLength; if (size > 32*1024*1024) throw new Error('Image response exceeds limit.');
+    size += chunk.byteLength; if (size > maxBytes) throw new Error('Image response exceeds limit.');
     if (!response.write(chunk)) await once(response, 'drain', { signal });
   }
   response.end();

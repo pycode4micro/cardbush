@@ -136,7 +136,7 @@ async function buildViews() {
       'src/features/composer/ComposerPresentationContext.ts', 'src/features/settings/individuation.ts',
       'src/features/assistant/AssistantComposer.tsx',
     ] : []),
-    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning' ? [
+    ...(!process.env.CARDBUSH_APP_VIEWS_CASE || ['model-reasoning', 'conversation-models'].includes(process.env.CARDBUSH_APP_VIEWS_CASE) ? [
       'src/hooks/useCardbushChat.ts', 'src/features/settings/conversationModel.ts',
       'src/features/assistant/useAssistantModel.ts',
     ] : []),
@@ -785,8 +785,12 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning') {
       await require('./helpers/model-reasoning.cjs')({ run, until, pause });
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || ['model-reasoning', 'conversation-models'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
       await require('./helpers/conversation-models.cjs')({ run, until, pause });
-      assert.deepEqual(await run('failures'), [], 'no model reasoning renderer errors'); assert.deepEqual(errors, []); return;
+      if (process.env.CARDBUSH_APP_VIEWS_CASE) {
+        assert.deepEqual(await run('failures'), [], 'no conversation model renderer errors'); assert.deepEqual(errors, []); return;
+      }
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'model-protocols') {
       await require('./helpers/composer-model-protocols.cjs')({ run, until, window, root });

@@ -20,6 +20,8 @@ export function configureHomeWebsite(event: Electron.Event, preferences: WebPref
   Object.assign(preferences, {
     sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
     nodeIntegrationInWorker: false, webviewTag: false, webSecurity: true, allowRunningInsecureContent: false,
+    // A retained Home guest must keep playing while the user visits a conversation.
+    backgroundThrottling: false,
   });
   const site = session.fromPartition(partition);
   if (!siteOrigins.has(site)) {

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { modelRequestSchema } from "@cardbush/bush-protocol";
-import { withToolDisplayTitle } from "@cardbush/bush-runtime";
+import { modelReplayMessageHash, withToolDisplayTitle } from "@cardbush/bush-runtime";
 import { estimateResponsesInputTokens } from "../dist/responsesInputEstimate.js";
 import { imageFixture, png } from "../../bush-runtime/test/helpers/modelImages.mjs";
 
@@ -189,12 +189,19 @@ test("keeps sequence stable and ignores events after a terminal Response", () =>
 });
 
 test("projects Bush messages into stateless Responses input items", () => {
+  const model = "deepseek-v4-flash-vision-exp";
+  const assistant = {
+    role: "assistant",
+    content: "I will inspect it.",
+    reasoningContent: "Use the browser tool.",
+    toolCalls: [{ id: "call_1", name: "open_page", argumentsText: '{"url":"https://example.com"}' }],
+  };
   const request = toResponsesCreateParams({
     protocol: "bush.model_request.v1",
     requestId: "request_projection",
     sessionId: "session_projection",
     turnId: "turn_projection",
-    model: "deepseek-v4-flash-vision-exp",
+    model,
     messages: [
       { role: "developer", name: "runtime_protocol", content: "declare the outcome" },
       {
@@ -203,10 +210,8 @@ test("projects Bush messages into stateless Responses input items", () => {
         images: [{ url: "data:image/png;base64,aGVsbG8=", detail: "high" }],
       },
       {
-        role: "assistant",
-        content: "I will inspect it.",
-        reasoningContent: "Use the browser tool.",
-        toolCalls: [{ id: "call_1", name: "open_page", argumentsText: '{"url":"https://example.com"}' }],
+        ...assistant,
+        providerReplay: { format: "openai.responses.output.v1", model, messageHash: modelReplayMessageHash(assistant), data: { items: [] } },
       },
       { role: "tool", content: "opened", toolCallId: "call_1" },
     ],
@@ -217,7 +222,7 @@ test("projects Bush messages into stateless Responses input items", () => {
     }],
     reasoningEffort: "high",
     metadata: {},
-  });
+  }, { baseURL: "https://compatible.example/v1" });
 
   assert.equal(request.store, false);
   assert.equal("tool_choice" in request, false);

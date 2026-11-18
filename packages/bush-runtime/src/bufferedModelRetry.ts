@@ -23,6 +23,7 @@ export async function executeBufferedModelRound(provider: ModelProvider, request
   onRetry?: (status: BufferedModelRetryStatus) => void;
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   idleTimeoutMs?: number;
+  reservedToolCallIds?: readonly string[];
 }) {
   const maxAttempts = 3;
   const attempts = new ModelRequestAttempts(maxAttempts);
@@ -44,7 +45,9 @@ export async function executeBufferedModelRound(provider: ModelProvider, request
     let result: ModelRoundResult;
     progress();
     try {
-      result = await settleAtAbort(executeModelRound(provider, request, { signal, attempts, onEvent: progress }), signal, 'Model request stopped.');
+      result = await settleAtAbort(executeModelRound(provider, request, {
+        signal, attempts, onEvent: progress, reservedToolCallIds: options.reservedToolCallIds,
+      }), signal, 'Model request stopped.');
       signal.throwIfAborted();
     } catch (error) {
       options.signal.throwIfAborted();

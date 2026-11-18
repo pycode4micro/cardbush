@@ -6,6 +6,7 @@ import { CacheChainTracker, executeModelRound, estimateContextPressure, ToolRegi
 import { normalizeResponseStreamEvent, toResponsesCreateParams, OpenAIResponsesProvider } from '../dist/index.js';
 import { estimateResponsesInputTokens } from '../dist/responsesInputEstimate.js';
 import { responsesInputFingerprint } from '../dist/responsesInputFingerprint.js';
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 
 const base = modelRequestSchema.parse({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't',
   model: 'protocol-fixture', messages: [{ role: 'user', content: 'Inspect the facts.' }], tools: [], maxOutputTokens: 128000,
@@ -28,11 +29,22 @@ test('an incomplete terminal snapshot cannot erase streamed reasoning from a sub
     const assistant = await assistantFrom(snapshot, [{ type: 'response.reasoning_text.delta', output_index: 0,
       item_id: 'rs', content_index: 0, delta: text },
       { type: 'response.output_item.added', output_index: 1, item: { ...toolCall, arguments: '' } }]);
-    const input = toResponsesCreateParams({ ...base, messages: [...base.messages, assistant] }).input;
+    const input = toResponsesCreateParams({ ...base, messages: [...base.messages, assistant] },
+      { baseURL: 'https://compatible.example/v1' }).input;
     assert.equal(input.find(item => item.type === 'reasoning')?.content?.[0]?.text, text);
     assert.equal(input.filter(item => item.type === 'function_call').length, 1);
     assert.equal(assistant.reasoningContent, text);
   }
+  const assistant = await assistantFrom([], [
+    { type: 'response.reasoning_text.delta', item_id: 'rs', output_index: 0, content_index: 0, delta: text },
+    { type: 'response.output_text.delta', item_id: 'answer', output_index: 1, content_index: 0, delta: 'Done.' },
+  ]);
+  const messages = [...base.messages, assistant];
+  const options = { baseURL: 'https://compatible.example/v1' };
+  assert.equal(assistant.providerReplay.model, base.model, 'streamed reasoning keeps its source even without terminal items');
+  assert.equal(toResponsesCreateParams({ ...base, messages }, options).input.find(item => item.type === 'reasoning')?.content?.[0]?.text, text);
+  assert.ok(!toResponsesCreateParams({ ...base, model: 'new-model', messages }, options).input.some(item => item.type === 'reasoning'));
+  assert.ok(!toResponsesCreateParams({ ...base, messages }).input.some(item => item.type === 'reasoning'), 'native API accepts only original replay items');
 });
 
 test('fallback estimation charges real wire reasoning once and excludes replay storage duplication', async () => {
@@ -97,7 +109,7 @@ test('schema replacement is an observable historical wire rewrite, even when Run
 
 test('capability projection and generation-parameter changes report their first boundary without raw facts', () => {
   const tracker = new CacheChainTracker();
-  const req = request(base.messages);
+  const req = { ...request(base.messages), tools: legacySearchCatalog(registry) };
   observe(tracker, req);
   const fallback = observe(tracker, req, 'function');
   assert.equal(fallback.logical.frozenPrefixBreak, false);

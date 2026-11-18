@@ -19,17 +19,17 @@ type ViewProps = {
   resize(block: HomeBlock, dimensions: HomeDimensions): void;
 };
 
-function NearViewport({children}: {children: ReactNode}) {
+function NearViewport({children, active}: {children: ReactNode; active: boolean}) {
   const host = useRef<HTMLDivElement>(null);
   const [entered, setEntered] = useState(false);
   useEffect(() => {
-    if (entered) return;
+    if (entered || !active) return;
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) setEntered(true);
     }, {rootMargin:'300px'});
     observer.observe(host.current!);
     return () => observer.disconnect();
-  }, [entered]);
+  }, [entered, active]);
   return <div className="home-live-surface" ref={host}>{entered && children}</div>;
 }
 
@@ -114,9 +114,9 @@ export function HomeBoardView(p: ViewProps) {
             {block.kind === 'native' ? p.native[block.id].content : <>
               {p.editing && <header className="home-block-title"><h2>{name}</h2></header>}
               {p.editing ? <div className="home-block-preview">{block.kind === 'web' ? <><Globe/>{new URL(block.url).host}</> : <Code2/>}</div>
-                : p.visible && <NearViewport>{block.kind === 'web' ?
+                : <NearViewport active={p.visible}>{block.kind === 'web' ?
                   <HomeWebsiteBlock key={block.url} url={block.url} title={name}/>
-                  : <HtmlComponentSurface component={html!} onHome/>}</NearViewport>}
+                  : <HtmlComponentSurface component={html!} onHome active={p.visible}/>}</NearViewport>}
             </>}
           </div>
           {p.editing && <HomeBlockResizeHandles width={width} column={column} height={height}

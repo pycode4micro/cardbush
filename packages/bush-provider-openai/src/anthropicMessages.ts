@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { ContentBlockParam, MessageCreateParamsStreaming, MessageParam, RawMessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import { modelApiBaseURL, modelApiGateway, modelRequestHeaders, type ModelEvent, type ModelMessage, type ModelRequest } from '@cardbush/bush-protocol';
-import { modelReplayMatches, ModelRequestAttempts, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
+import { modelReplayMatches, ModelRequestAttempts, providerToolCallId, type ModelProvider, type ModelStreamOptions } from '@cardbush/bush-runtime';
 import type { ModelProviderConfig } from './providerConfig.js';
 import { resolveLocalImageInputs, namedMessageContent, portableMessages } from './modelInputs.js';
 import { wellFormedJson } from './wellFormedJson.js';
@@ -58,9 +58,11 @@ function replayContent(message: Extract<ModelMessage, { role: 'assistant' }>, re
   const calls = blocks.filter(b => b.type === 'tool_use');
   if (calls.length !== message.toolCalls.length || calls.some((call, index) => {
     const expected = message.toolCalls[index];
-    return call.id !== expected.id || call.name !== providerToolName(expected.name) || JSON.stringify(call.input) !== JSON.stringify(objectArguments(expected.argumentsText));
+    return call.id !== providerToolCallId(replay, expected.id) || call.name !== providerToolName(expected.name) || JSON.stringify(call.input) !== JSON.stringify(objectArguments(expected.argumentsText));
   })) return;
-  return structuredClone(blocks) as unknown as ContentBlockParam[];
+  const localIds = new Map(message.toolCalls.map(call => [providerToolCallId(replay, call.id), call.id]));
+  return (structuredClone(blocks) as unknown as ContentBlockParam[]).map(block =>
+    block.type === 'tool_use' ? { ...block, id: localIds.get(block.id) ?? block.id } : block);
 }
 
 export function toAnthropicMessagesParams(request: ModelRequest, thinkingMode: 'adaptive' | 'budget' = 'adaptive', cache = true, discardThinking = false): MessageCreateParamsStreaming {

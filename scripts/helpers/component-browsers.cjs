@@ -5,10 +5,13 @@ const path = require('node:path');
 module.exports = async ({library,item,card,win,read,wait,inFrame,project}) => {
   const {session,webContents} = require('electron');
   const site='https://player.example.org', page=site+'/watch', denied='https://other.example.org/watch';
-  const isolated=session.fromPartition('cardbush-home-site:'+site), requests=[];
+  const isolated=session.fromPartition('cardbush-home-site:'+site), requests=[], embeds=[];
   let failOnce=true;
   const markup='<button onclick="this.textContent=42">41</button><a target="_blank" href="/room">Room</a>';
-  win.webContents.session.protocol.handle('https', req => new Response('<main>Official embed</main>', {headers:{'Content-Type':'text/html'}}));
+  win.webContents.session.protocol.handle('https', req => {
+    embeds.push(req.url);
+    return new Response('<main>Official embed</main>', {headers:{'Content-Type':'text/html'}});
+  });
   isolated.protocol.handle('https', req => {
     requests.push({url:req.url,cookie:req.headers.get('cookie')});
     if(req.url.endsWith('/offline') && failOnce) { failOnce=false; return Response.error(); }
@@ -16,6 +19,24 @@ module.exports = async ({library,item,card,win,read,wait,inFrame,project}) => {
   });
   const guest = url => webContents.getAllWebContents().find(w=>w.session===isolated && w.getURL()===url);
   const ready = url => wait(async () => { const view=guest(url); return view && !view.isLoading() && await view.executeJavaScript('!!document.querySelector("button")') && view; },'declared website loaded: '+url);
+  const roundTrip = async (section, hidden = async () => {}) => {
+    const loads=requests.filter(request=>request.url===page).length, embedLoads=embeds.filter(url=>url===page).length;
+    await read(`window.retainedHome={root:document.querySelector('[data-desktop-page=overview]'),frame:document.querySelector('${card} iframe')};
+      document.querySelector('[data-nav-section=${section}]').click();void 0`);
+    await wait(()=>read(`document.querySelector('.desktop-shell')?.dataset.page==='${section}' && retainedHome.root.dataset.pageVisible==='false'`),'Home hidden behind '+section);
+    assert.deepEqual(await read(`({connected:retainedHome.root.isConnected,hidden:getComputedStyle(retainedHome.root).visibility,
+      inert:retainedHome.root.inert,aria:retainedHome.root.getAttribute('aria-hidden'),
+      stageOffset:parseFloat(getComputedStyle(document.querySelector('.main-stage')).marginTop)>0})`),
+      {connected:true,hidden:'hidden',inert:true,aria:'true',stageOffset:true},'retained Home cannot cover or change the conversation layout');
+    await hidden();
+    await read("document.querySelector('[data-nav-section=home]').click();void 0");
+    await wait(()=>read("document.querySelector('[data-desktop-page=overview]')?.dataset.pageVisible==='true'"),'return to Home');
+    assert.deepEqual(await read(`({root:retainedHome.root===document.querySelector('[data-desktop-page=overview]'),
+      frame:retainedHome.frame===document.querySelector('${card} iframe'),inert:retainedHome.root.inert,
+      hidden:getComputedStyle(retainedHome.root).visibility})`),{root:true,frame:true,inert:false,hidden:'visible'},'Home and its authored document survive navigation');
+    assert.equal(requests.filter(request=>request.url===page).length,loads,'navigation does not reload the native website');
+    assert.equal(embeds.filter(url=>url===page).length,embedLoads,'navigation does not reload an embedded website');
+  };
   await read("window.componentBrowserTrace=[];addEventListener('message',event=>{if(event.data?.topic==='home.browserLayout')window.componentBrowserTrace.push(event.data.items)});void 0");
   try {
     await win.webContents.session.cookies.set({url:site,name:'owner',value:'desktop'});
@@ -39,12 +60,34 @@ module.exports = async ({library,item,card,win,read,wait,inFrame,project}) => {
     await wait(()=>inFrame('document.querySelector("#status").textContent==="loaded"'),'browser load reaches component listener');
     assert.deepEqual(await first.executeJavaScript('[window.top===self,typeof cardbushDesktop,typeof require,document.cookie]'),[true,'undefined','undefined','']);
     assert.equal(await first.executeJavaScript('document.querySelector("button").click();document.querySelector("button").textContent'),'42');
+    const video=fs.readFileSync(path.join(project,'scripts/fixtures/inspector-media.webm')).toString('base64');
+    assert.equal(first.getBackgroundThrottling(),false,'Home media is not suspended by background throttling');
+    await first.executeJavaScript(`(async()=>{window.livePlayer=document.createElement('video');livePlayer.loop=true;
+      livePlayer.src='data:video/webm;base64,${video}';document.body.append(livePlayer);await livePlayer.play();})()`,true);
     const geometry=async () => {
       const outer=await read(`(()=>{const f=document.querySelector('${card} iframe').getBoundingClientRect(),b=document.querySelector('${card} [data-component-browser]').getBoundingClientRect();return {x:b.x-f.x,y:b.y-f.y,width:b.width,height:b.height}})()`);
       const inner=await inFrame('(()=>{const b=document.querySelector("cardbush-browser").getBoundingClientRect(),v=document.querySelector(".viewport").getBoundingClientRect();return {x:b.x,y:Math.max(b.y,v.y),width:b.width,height:Math.min(b.bottom,v.bottom)-Math.max(b.y,v.y)}})()');
       return Object.keys(inner).every(key=>Math.abs(outer[key]-inner[key])<2);
     };
     await wait(geometry,'native browser respects the component slot and clipping');
+    assert.equal(await first.executeJavaScript('livePlayer.paused'),false,'fixture is playing before navigation');
+    await inFrame('window.liveDraft="unsaved component state";void 0');
+    for (const section of ['assistant','chat']) {
+      await roundTrip(section,async () => {
+        assert.equal(first.isDestroyed(),false,'live native browser keeps running while Home is hidden');
+        assert.equal(await first.executeJavaScript('document.querySelector("button").textContent'),'42');
+        assert.equal(await first.executeJavaScript('livePlayer.paused'),false,'navigation does not stop media playback');
+        assert.equal(await inFrame('cardbush.state.write({hidden:true}).then(()=>"bad",error=>error.message)'),'INACTIVE_SURFACE');
+        assert.equal(await inFrame('cardbush.invoke("conversation.send",{text:"hidden"}).then(()=>"bad",error=>error.message)'),'INACTIVE_SURFACE');
+        await inFrame('document.querySelector("cardbush-browser").style.width="80%";void 0');
+      });
+      assert.equal((await ready(page)).id,first.id,'return reuses the same native webContents');
+      assert.equal(await first.executeJavaScript('document.querySelector("button").textContent'),'42','in-page state survives both destinations');
+      const position=await first.executeJavaScript('livePlayer.currentTime');
+      await wait(()=>first.executeJavaScript(`!livePlayer.paused && livePlayer.currentTime!==${position}`),'retained video continues playing after return');
+      assert.equal(await inFrame('window.liveDraft'),'unsaved component state','component script state survives navigation');
+      await wait(geometry,'return refreshes browser geometry without reloading');
+    }
     await inFrame('document.querySelector(".viewport").scrollTop=70');
     await wait(geometry,'scrolling keeps the native browser aligned');
     await inFrame('document.querySelector("cardbush-browser").style.width="70%"');
@@ -79,21 +122,35 @@ module.exports = async ({library,item,card,win,read,wait,inFrame,project}) => {
     fs.mkdirSync(path.join(project,'tmp'),{recursive:true});
     fs.writeFileSync(path.join(project,'tmp/component-browser-ui.png'),(await win.webContents.capturePage()).toPNG());
     const before=webContents.getAllWebContents().filter(w=>w.session===isolated);
+    await read("document.querySelector('[data-nav-section=assistant]').click();void 0");
+    await wait(()=>read("document.querySelector('[data-desktop-page=overview]')?.dataset.pageVisible==='false'"),'Home hidden before revoking access');
     library.publish({...item,html,embedDomains:[]},true);
     await wait(()=>read(`!document.querySelector('${card} webview')`),'removing the declaration immediately removes browser access');
-    await wait(()=>before.every(w=>w.isDestroyed()),'declaration changes release all guests');
+    await wait(()=>before.every(w=>w.isDestroyed()),'declaration changes release all guests even while Home is hidden');
+    await read("document.querySelector('[data-nav-section=home]').click();void 0");
+    await wait(()=>read("document.querySelector('[data-desktop-page=overview]')?.dataset.pageVisible==='true'"),'Home visible after revocation');
     library.publish({...item,html:'<iframe src="'+page+'"></iframe>',embedDomains:[site]},true);
     await wait(()=>win.webContents.mainFrame.framesInSubtree.some(f=>f.url===page),'ordinary official iframes also load from a declaration');
+    const embedded=win.webContents.mainFrame.framesInSubtree.find(f=>f.url===page);
+    await embedded.executeJavaScript('window.liveDraft="embedded playback state";void 0');
+    await roundTrip('assistant');
+    assert.equal(await embedded.executeJavaScript('window.liveDraft'),'embedded playback state','ordinary iframe retains its document');
     const state=library.snapshot();
     library.save(state.items.map(entry=>entry.id===item.id ? {...entry,homeWebsiteUrl:page} : entry),state.revision);
-    await ready(page);
+    const direct=await ready(page);
+    await direct.executeJavaScript('document.querySelector("button").click();void 0');
+    for (const section of ['assistant','chat']) {
+      await roundTrip(section,async () => assert.equal(direct.isDestroyed(),false,'direct website stays mounted while hidden'));
+      assert.equal((await ready(page)).id,direct.id,'direct website keeps the same native guest');
+      assert.equal(await direct.executeJavaScript('document.querySelector("button").textContent'),'42');
+    }
     assert.equal(await read(`!!document.querySelector('${card} .component-website-menu[open]')`),false,'legacy webpage controls start in a collapsed menu');
     await read(`document.querySelector('${card} .component-website-menu summary').click()`);
     await read(`document.querySelector('${card} [data-embed-back]').click()`);
     await wait(()=>win.webContents.mainFrame.framesInSubtree.some(f=>f.url===page),'legacy menu returns to the original widget');
     assert.ok(requests.every(request=>!request.cookie),'app session cookies never reach component websites');
     assert.equal(await inFrame('!!cardbush.net'),false,'website declarations do not grant JSON reads');
-    console.log('Component browsers passed: declared automatic loading, native page, component controls, events, clipping, resize, multiple slots and origin boundaries.');
+    console.log('Component browsers passed: Assistant/chat navigation retains native and iframe state without reloads; hidden actions blocked; declarations, controls, geometry, retry and revocation intact.');
   } catch(error) {
     console.error('Component browser diagnostics',JSON.stringify({requests,
       host:await read(`({layouts:window.componentBrowserTrace.slice(-3),html:document.querySelector('${card}')?.outerHTML.slice(-6000)})`),

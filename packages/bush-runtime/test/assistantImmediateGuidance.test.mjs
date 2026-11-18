@@ -84,6 +84,60 @@ for (const stage of ['waiting', 'reasoning', 'text', 'partial-tool']) {
   });
 }
 
+test('Assistant keeps the active binding through guidance, discards late output, and selects the new binding on the next turn', async t => {
+  const stale = Promise.withResolvers();
+  const old = { model: 'same-name', providerBinding: { bindingId: 'selection', revision: 'old' }, reasoningEffort: 'high' };
+  const selected = { model: 'same-name', providerBinding: { bindingId: 'selection', revision: 'new' }, reasoningEffort: 'low' };
+  const f = fixture(t, async function* (request, _, index) {
+    if (!index) {
+      yield event(request, 0, 'response_started');
+      await stale.promise;
+      yield* reply(request, 'Stale old reply');
+    } else yield* reply(request, `Reply from ${request.providerBinding.revision}`);
+  });
+  t.after(stale.resolve);
+  f.send('original', 'Start the work.', {}, old);
+  await until(() => f.requests.length === 1);
+  const guide = f.send('guidance', 'Adjust the work.', {}, selected);
+  assert.equal(guide.delivery, 'insert');
+  await until(() => !f.read().busy);
+  stale.resolve();
+  f.send('next', 'Start the follow-up.', {}, selected);
+  await until(() => !f.read().busy);
+  assert.deepEqual(f.requests.map(request => [request.providerBinding.revision, request.reasoningEffort]),
+    [['old', 'high'], ['old', 'high'], ['new', 'low']]);
+  assert.deepEqual(f.replies().map(reply => [reply.content, reply.responseTo]),
+    [['Reply from old', ['original', 'guidance']], ['Reply from new', ['next']]]);
+  assert.doesNotMatch(JSON.stringify(f.journal.modelHistory(sessionId).read().messages), /Stale old reply/);
+});
+
+test('Assistant queued requests preserve their distinct submitted model bindings', async t => {
+  const release = Promise.withResolvers();
+  const f = fixture(t, async function* (request, _, index) {
+    if (!index) await release.promise;
+    yield* reply(request, `Reply from ${request.providerBinding.revision}`);
+  });
+  t.after(release.resolve);
+  const config = revision => ({ model: 'same-name', providerBinding: { bindingId: 'selection', revision } });
+  f.send('first', 'Start the work.', {}, config('first'));
+  await until(() => f.requests.length === 1);
+  for (const name of ['second', 'third']) {
+    const result = f.assistant.command({ ...f.command(name, `Use ${name}.`, {}, config(name)), delivery: 'queue' });
+    assert.equal(result.delivery, 'queue');
+  }
+  assert.equal(f.signals[0].aborted, false);
+  const restored = new ConversationJournal(f.root);
+  assert.equal(restored.queuedSubmission(sessionId, 'second').parent.providerBinding.revision, 'second');
+  assert.equal(restored.queuedSubmission(sessionId, 'third').parent.providerBinding.revision, 'third');
+  assert.ok(restored.read(sessionId).every(entry => !('submission' in entry)), 'queue configuration stays host-only');
+  release.resolve();
+  await until(() => !f.read().busy);
+  const used = f.requests.map(request => request.providerBinding.revision);
+  const repliedTo = f.replies().map(response => response.responseTo);
+  assert.deepEqual(used, ['first', 'second', 'third']);
+  assert.deepEqual(repliedTo, [['first'], ['second'], ['third']]);
+});
+
 test('Assistant applies input arriving before initial context admission exactly once', async t => {
   const prepared = Promise.withResolvers(), delegated = []; let entered = false;
   const f = fixture(t, async function* (request, options, index) {

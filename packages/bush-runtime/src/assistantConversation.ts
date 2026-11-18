@@ -207,12 +207,15 @@ export class AssistantConversation {
     const active = this.activeTurn;
     const insert = active && !active.webhook && !input.entry.botSourceRef && isAuthoredInput(input.entry)
       && input.delivery !== 'queue' && !this.controller?.signal.aborted;
+    const submission = { parent: input.parent, profile: input.profile };
+    const queued = this.busy && !insert && isAuthoredInput(input.entry);
     const incoming = this.journal.append(input.sessionId, isAuthoredInput(input.entry)
       ? { ...input.entry, originTurnId: insert ? active.turnId : input.parent.turnId,
-        ...(this.busy ? { delivery: insert ? 'insert' as const : 'queue' as const } : {}) } : input.entry);
+        ...(this.busy ? { delivery: insert ? 'insert' as const : 'queue' as const } : {}) } : input.entry,
+      queued ? submission : undefined);
     if (this.requestIds.has(input.entry.id)) return { status: 'accepted' };
     this.requestIds.add(input.entry.id);
-    this.configured = { parent: input.parent, profile: input.profile };
+    this.configured = submission;
     this.paused = false;
     if (insert) {
       active.entries.push(incoming);
@@ -243,19 +246,22 @@ export class AssistantConversation {
   }
   private async pump() {
     if (this.busy || this.paused || this.stopped || !this.configured || !this.pending) return;
+    let configured = this.configured;
     try {
-      const sessionId = this.configured.parent.sessionId, history = this.journal.modelHistory(sessionId).read();
+      const sessionId = configured.parent.sessionId, history = this.journal.modelHistory(sessionId).read();
+      const waiting = this.journal.read(sessionId).filter(entry => !history.entryIds.has(entry.id));
       this.results.restore(sessionId, history.taskResults);
       this.results.restoreWatching(sessionId, this.deps.tasks(sessionId));
-      if (!this.retryRequested && !this.results.ready(sessionId).length &&
-        !this.journal.read(sessionId).some(entry => !history.entryIds.has(entry.id))) {
+      if (!this.retryRequested && !this.results.ready(sessionId).length && !waiting.length) {
         this.pending = false;
         return;
       }
+      const first = waiting.find(isAuthoredInput);
+      if (first?.delivery === 'queue') configured = this.journal.queuedSubmission(sessionId, first.id) ?? configured;
     } catch (error) { this.pending = false; this.error = retainedRuntimeError(error); return; }
     this.maintenance.cancel();
     this.busy = true; this.pending = false; this.error = ''; this.retry = undefined;
-    const configured = this.configured, retryRequested = this.retryRequested;
+    const retryRequested = this.retryRequested;
     this.retryRequested = false;
     const controller = this.controller = new AbortController();
     this.directTools = new LiveToolPresentation();
@@ -403,8 +409,10 @@ export class AssistantConversation {
     const foreground = pending.filter(item => item.source !== 'task');
     const sender = foreground.find(isAuthoredInput);
     const completionAssignment = assignmentKey(pending[0]?.responseTo);
-    const remaining = foreground.length ? foreground.filter(item => !sender || !isAuthoredInput(item) ||
-      (!item.botSourceRef && !sender.botSourceRef) || (item.originTurnId === sender.originTurnId && item.botSourceRef === sender.botSourceRef))
+    const boundQueue = (entry: ConversationEntry) => entry.delivery === 'queue' && this.journal.hasQueuedSubmission(id, entry.id);
+    const remaining = sender && boundQueue(sender) ? [sender]
+      : foreground.length ? foreground.filter(item => !boundQueue(item) && (!sender || !isAuthoredInput(item) ||
+        (!item.botSourceRef && !sender.botSourceRef) || (item.originTurnId === sender.originTurnId && item.botSourceRef === sender.botSourceRef)))
       : completionAssignment ? pending.filter(item => sameAssignment(assignmentKey(item.responseTo), completionAssignment)) : pending.slice(0, 1);
     if (remaining.length < pending.length) this.pending = true;
     // A wait may finish while its completion notice is queued. Consuming that
@@ -647,7 +655,8 @@ export class AssistantConversation {
       let result: Awaited<ReturnType<typeof executeBufferedModelRound>>;
       try {
         result = await this.reasoning.run(live?.turnId ?? executionId, signal, attempt => executeBufferedModelRound(this.deps.provider, request,
-          { signal: attempt, wait: this.deps.wait, onRetry: status => { if (!attempt.aborted) this.retry = status; } }));
+          { signal: attempt, wait: this.deps.wait, reservedToolCallIds: history.toolCallIds(),
+            onRetry: status => { if (!attempt.aborted) this.retry = status; } }));
       } catch (error) {
         if (!(error instanceof ModelRequestInterrupted)) throw error;
         this.retry = undefined; round--; continue;
@@ -662,16 +671,9 @@ export class AssistantConversation {
       }
       if (!result.toolCalls.length && ['length', 'max_tokens'].includes(result.finishReason ?? '')) throw new RuntimeUiError('assistantRuntime.outputLimit');
       if (!result.toolCalls.length && !result.text.trim() && !published) throw new RuntimeUiError('assistantRuntime.emptyReply');
-      const usedIds = new Set(history.read().messages.flatMap(item => item.role === 'assistant' ? item.toolCalls.map(call => call.id) : []));
-      let renamed = false;
-      const toolCalls = result.toolCalls.map(call => {
-        const id = usedIds.has(call.id) ? (renamed = true, `assistant_${randomUUID()}`) : call.id;
-        usedIds.add(id); return { ...call, id };
-      });
-      // Some compatible providers reuse call IDs across turns. Remap only the
-      // new exchange, never an old prefix; opaque replay cannot follow changed IDs.
+      const { toolCalls } = result;
       history.append([{ role: 'assistant', content: result.text, toolCalls,
-        ...(result.reasoning ? { reasoningContent: result.reasoning } : {}), ...(result.providerReplay && !renamed ? { providerReplay: result.providerReplay } : {}) }]);
+        ...(result.reasoning ? { reasoningContent: result.reasoning } : {}), ...(result.providerReplay ? { providerReplay: result.providerReplay } : {}) }]);
       if (!toolCalls.length) {
         const text = result.text.trim() || (spoken && published ? uiText(resolveUiLanguage(parent.metadata.uiLanguage))('assistantRuntime.published') : '');
         this.activeTurn = undefined;

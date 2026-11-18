@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { z } from 'zod';
 import { modelMessageSchema, type ModelMessage } from '@cardbush/bush-protocol';
 import { taskResultReferenceSchema, type TaskResultReference } from './taskResultDelivery.js';
+import { modelToolCallIds } from './modelReplay.js';
 
 const eventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('append'), messages: z.array(modelMessageSchema), entryIds: z.array(z.string()), taskResults: z.array(taskResultReferenceSchema).default([]), replyInputs: z.array(z.string()).optional() }),
@@ -16,6 +17,7 @@ export class AssistantModelHistory {
   private records: ModelMessage[] = [];
   private consumed = new Set<string>();
   private taskResults = new Map<string, TaskResultReference>();
+  private callIds = new Set<string>();
   private activeReplyInputs?: string[];
   private through = 0;
   private summary = '';
@@ -23,7 +25,7 @@ export class AssistantModelHistory {
 
   read() {
     if (!this.loaded) {
-      this.records = []; this.consumed.clear(); this.taskResults.clear(); this.activeReplyInputs = undefined; this.through = 0; this.summary = '';
+      this.records = []; this.consumed.clear(); this.taskResults.clear(); this.callIds.clear(); this.activeReplyInputs = undefined; this.through = 0; this.summary = '';
       if (existsSync(this.path)) {
         const raw = readFileSync(this.path, 'utf8'), lines = raw.split('\n');
         for (let index = 0; index < lines.length; index++) {
@@ -50,6 +52,7 @@ export class AssistantModelHistory {
     this.read();
     return this.activeReplyInputs && [...this.activeReplyInputs];
   }
+  toolCallIds(): string[] { return [...this.callIds]; }
   append(messages: ModelMessage[], entryIds: string[] = [], taskResults: TaskResultReference[] = [], replyInputs?: string[]) {
     if (messages.length || entryIds.length || taskResults.length || replyInputs !== undefined)
       this.write({ type: 'append', messages, entryIds, taskResults, ...(replyInputs !== undefined ? { replyInputs } : {}) });
@@ -71,6 +74,7 @@ export class AssistantModelHistory {
     this.validate(event);
     if (event.type === 'append') {
       this.records.push(...event.messages);
+      for (const id of modelToolCallIds(event.messages)) this.callIds.add(id);
       if (event.replyInputs !== undefined) this.activeReplyInputs = [...event.replyInputs];
       for (const reference of event.taskResults) this.taskResults.set(JSON.stringify([reference.sessionId, reference.taskId]), reference);
     } else {
@@ -82,6 +86,6 @@ export class AssistantModelHistory {
   }
   clear() {
     rmSync(this.path, { force: true });
-    this.records = []; this.consumed.clear(); this.taskResults.clear(); this.activeReplyInputs = undefined; this.through = 0; this.summary = ''; this.loaded = true;
+    this.records = []; this.consumed.clear(); this.taskResults.clear(); this.callIds.clear(); this.activeReplyInputs = undefined; this.through = 0; this.summary = ''; this.loaded = true;
   }
 }

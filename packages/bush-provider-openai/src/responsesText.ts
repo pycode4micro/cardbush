@@ -13,7 +13,10 @@ export class ResponseTextError extends Error {
 export class ResponseText {
   readonly #active = new Map<'text' | 'reasoning', number>();
   readonly #parts = new Map<string, { text: string; done: boolean }>();
+  #hasReasoning = false;
   constructor(readonly outputIndex: ResponseOutputIndex) {}
+
+  get hasReasoning() { return this.#hasReasoning; }
 
   #part(kind: TextKind, index: number, part: number, text: string, done: boolean, append: (event: Delta) => void): void {
     const key = JSON.stringify([kind, index, part]);
@@ -23,7 +26,11 @@ export class ResponseText {
     }
     const delta = done ? text.slice(previous.text.length) : text;
     this.#parts.set(key, { text: done ? text : previous.text + text, done });
-    if (delta) append({ kind: kind === 'text' || kind === 'refusal' ? 'text_delta' : 'reasoning_delta', delta });
+    if (delta) {
+      const reasoning = kind === 'reasoning' || kind === 'summary';
+      if (reasoning) this.#hasReasoning = true;
+      append({ kind: reasoning ? 'reasoning_delta' : 'text_delta', delta });
+    }
   }
 
   event(event: { type: string; output_index?: number; item_id?: string; content_index?: number; summary_index?: number; delta?: string; text?: string; refusal?: string },

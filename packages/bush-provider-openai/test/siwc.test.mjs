@@ -6,6 +6,7 @@ import { modelRequestSchema, runtimeProviderBindingConfigSchema, SIWC } from '@c
 import { executeModelRound, ToolRegistry, registerMcpDiscovery } from '@cardbush/bush-runtime';
 import { OpenAIResponsesProvider, ModelProviderRegistry, toResponsesCreateParams } from '../dist/index.js';
 import { siwcFetch } from '../dist/siwc.js';
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 
 const registry = new ToolRegistry(); registerMcpDiscovery(registry); registerBuiltinToolDisclosure(registry);
 const request = overrides => modelRequestSchema.parse({ protocol: 'bush.model_request.v1', requestId: 'request1', sessionId: 'parent',
@@ -19,30 +20,38 @@ function stream(output, id = 'response1') {
 }
 const text = { type: 'message', id: 'msg1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Done.', annotations: [] }] };
 
-test('SIWC preserves local tool execution and append-only replay/cache projection through multiple rounds', async () => {
+const searchTools = [
+  { name: 'mcp_search', arguments: { query: 'docs' }, tools: legacySearchCatalog(registry) },
+  { name: 'search_plugins', arguments: { mode: 'mcp', query: 'docs' }, tools: registry.definitions() },
+];
+
+for (const search of searchTools) test(`SIWC preserves local tool execution and append-only replay/cache projection through multiple rounds with ${search.name}`, async () => {
   const wires = [], fingerprints = [];
   const reasoning = { type: 'reasoning', id: 'rs1', summary: [], encrypted_content: 'opaque-reasoning-fixture' };
-  const tool = { type: 'function_call', id: 'fc1', call_id: 'search1', name: 'mcp_search', arguments: '{"query":"docs"}', status: 'completed' };
+  const tool = { type: 'function_call', id: 'fc1', call_id: 'search1', name: search.name,
+    arguments: JSON.stringify(search.arguments), status: 'completed' };
   const provider = new OpenAIResponsesProvider({ apiKey: '', chatGpt: { accountId: randomUUID(), access: async () => 'oauth-fixture' }, fetch: async (url, init) => {
     assert.equal(String(url), `${SIWC.resource}/responses`); assert.equal(new Headers(init.headers).get('authorization'), 'Bearer oauth-fixture');
     const body = JSON.parse(init.body); wires.push(body);
     return stream(wires.length === 1 ? [reasoning, tool] : [text], `response${wires.length}`);
   } });
-  const first = request();
+  const first = request({ tools: search.tools });
   assert.equal(await provider.countInputTokens(first), undefined, 'unsupported count endpoint must not be probed');
   assert.ok(await provider.estimateInputTokens(first) > 0); assert.equal(wires.length, 0);
   const round = await executeModelRound(provider, first, { onInputProjection: value => fingerprints.push(value) });
-  assert.equal(round.status, 'completed'); assert.equal(round.toolCalls[0].name, 'mcp_search');
+  assert.equal(round.status, 'completed'); assert.equal(round.toolCalls[0].name, search.name);
   const history = [...first.messages, { role: 'assistant', content: round.text, reasoningContent: round.reasoning, toolCalls: round.toolCalls, providerReplay: round.providerReplay },
     { role: 'tool', toolCallId: 'search1', content: 'No matching tools.' }];
   const originalHistory = structuredClone(history);
-  const second = request({ messages: history, providerState: { strategy: 'response_chain', previousResponseId: 'stale-stored-id', inputMessageOffset: 2 } });
+  const second = request({ tools: search.tools, messages: history,
+    providerState: { strategy: 'response_chain', previousResponseId: 'stale-stored-id', inputMessageOffset: 2 } });
   assert.equal((await executeModelRound(provider, second)).text, 'Done.');
   assert.deepEqual(history, originalHistory);
   for (const wire of wires) {
     assert.equal(wire.store, false); assert.equal(wire.stream, true); assert.equal(wire.reasoning.effort, 'high');
     for (const name of ['previous_response_id', 'max_output_tokens', 'temperature', 'top_p', 'tools']) assert.equal(name in wire, false, name);
-    assert.equal(wire.input[0].type, 'additional_tools'); assert.ok(wire.input[0].tools.some(item => item.name === 'mcp_search'));
+    assert.equal(wire.input[0].type, 'additional_tools'); assert.ok(wire.input[0].tools.some(item => item.name === search.name));
+    assert.deepEqual(wire.input[0].tools.filter(item => searchTools.some(searchTool => searchTool.name === item.name)).map(item => item.name), [search.name]);
     assert.ok(wire.input[0].tools.every(item => item.type === 'function'));
     assert.equal(wire.input[1].role, 'developer');
     assert.equal(JSON.stringify(wire).includes('oauth-fixture'), false);
@@ -54,6 +63,53 @@ test('SIWC preserves local tool execution and append-only replay/cache projectio
   const ordinary = toResponsesCreateParams(first);
   assert.equal(ordinary.max_output_tokens, 20000); assert.equal(ordinary.temperature, .4); assert.equal(ordinary.input[0].role, 'system');
   assert.ok(ordinary.tools.length); assert.equal(fingerprints.length, 1);
+});
+
+test('switching from DeepSeek to native ChatGPT replays the tool exchange without foreign reasoning', async () => {
+  const sourceRequest = request({ model: 'deepseek-v4.1-flash',
+    providerBinding: { bindingId: 'deepseek', revision: '1' } });
+  const tool = { type: 'function_call', id: 'fc_read', call_id: 'call_read', name: 'read_file', arguments: '{}', status: 'completed' };
+  const source = new OpenAIResponsesProvider({ apiKey: 'fixture', fetch: async () => stream([
+    { type: 'reasoning', id: 'rs_deepseek', summary: [{ type: 'summary_text', text: 'Read the file.' }], encrypted_content: 'deepseek-only' },
+    tool,
+  ]) });
+  const previous = await executeModelRound(source, sourceRequest);
+  assert.equal(previous.status, 'completed');
+  assert.equal(previous.reasoning, 'Read the file.');
+  const messages = [...sourceRequest.messages,
+    { role: 'assistant', content: previous.text, reasoningContent: previous.reasoning, toolCalls: previous.toolCalls, providerReplay: previous.providerReplay },
+    { role: 'tool', toolCallId: 'call_read', content: 'File contents.' },
+    { role: 'assistant', content: 'The file was read.', reasoningContent: 'Unbound historical reasoning.', toolCalls: [] },
+    { role: 'user', content: 'Continue with the file.' }];
+  const targetRequest = request({ model: 'gpt-6.1-terra',
+    providerBinding: { bindingId: 'chatgpt', revision: '1' }, messages });
+  const savedHistory = structuredClone(targetRequest.messages);
+  const wires = [];
+  const target = new OpenAIResponsesProvider({ apiKey: '', chatGpt: { accountId: randomUUID(), access: async () => 'oauth-fixture' },
+    fetch: async (url, init) => {
+      assert.equal(String(url), `${SIWC.resource}/responses`);
+      const body = JSON.parse(init.body);
+      wires.push(body);
+      if (body.input.some(item => item.type === 'reasoning' && item.content?.length)) {
+        return Response.json({ error: { code: 'array_above_max_length', message: 'Reasoning input content must be empty.' } }, { status: 400 });
+      }
+      return stream([text]);
+    } });
+  const result = await executeModelRound(target, targetRequest);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.text, 'Done.');
+  assert.equal(result.toolCalls.length, 0, 'historical tools are context, not new work');
+  assert.equal(wires.length, 1);
+  assert.equal(wires[0].model, 'gpt-6.1-terra');
+  assert.equal(wires[0].input[0].type, 'additional_tools');
+  assert.equal(wires[0].input.some(item => item.type === 'reasoning'), false);
+  assert.deepEqual(wires[0].input.slice(-4), [
+    { type: 'function_call', call_id: 'call_read', name: 'read_file', arguments: '{}' },
+    { type: 'function_call_output', call_id: 'call_read', output: 'File contents.' },
+    { type: 'message', role: 'assistant', content: 'The file was read.' },
+    { type: 'message', role: 'user', content: 'Continue with the file.' },
+  ]);
+  assert.deepEqual(targetRequest.messages, savedHistory);
 });
 
 test('401 refresh happens once before output; quota or grant errors never cause protocol fallback', async () => {

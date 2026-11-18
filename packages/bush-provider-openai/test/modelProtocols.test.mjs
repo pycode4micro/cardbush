@@ -363,6 +363,43 @@ test('registry switches wire adapters and retains immutable old revisions', () =
   assert.deepEqual(configs.map(c => createModelProvider(c).constructor.name), ['OpenAIResponsesProvider', 'OpenAIChatCompletionsProvider', 'AnthropicMessagesProvider']);
 });
 
+test('every target protocol preserves the tool exchange across model switches without replaying foreign or unbound thinking', () => {
+  const reply = { role: 'assistant', content: 'Checking the file.', reasoningContent: 'private-source-thinking',
+    toolCalls: [{ id: 'read-1', name: 'read_file', argumentsText: '{"path":"file.txt"}' }] };
+  const source = { ...reply, providerReplay: { format: 'openai.responses.output.v1', model: 'old-model',
+    providerBinding: { bindingId: 'old', revision: '1' }, messageHash: modelReplayMessageHash(reply),
+    data: { compatibilityMode: true, items: [] } } };
+  const tool = { role: 'tool', toolCallId: 'read-1', content: 'Saved file contents.' };
+  const recovery = { role: 'assistant', content: 'File read.', reasoningContent: 'private-unbound-thinking', toolCalls: [] };
+  const next = req({ model: 'new-model', providerBinding: { bindingId: 'new', revision: '2' },
+    messages: [...req().messages, source, tool, recovery, { role: 'user', content: 'Continue.' }],
+    providerState: { strategy: 'response_chain' } });
+  const original = structuredClone(next.messages);
+  for (const options of [{}, { chatGpt: true }, { baseURL: 'https://compatible.example/v1' }]) {
+    const wire = toResponsesCreateParams(next, options);
+    assert.equal(wire.store, !options.chatGpt, 'previous provider compatibility cannot change target transport');
+    assert.equal(wire.previous_response_id, undefined);
+    assert.equal(wire.input.some(item => item.type === 'reasoning'), false);
+    assert.deepEqual(wire.input.filter(item => item.type === 'function_call' || item.type === 'function_call_output'), [
+      { type: 'function_call', call_id: 'read-1', name: 'read_file', arguments: '{"path":"file.txt"}' },
+      { type: 'function_call_output', call_id: 'read-1', output: 'Saved file contents.' },
+    ]);
+  }
+  const chat = toChatCompletionsParams(next);
+  assert.equal(chat.messages[1].tool_calls[0].id, 'read-1');
+  assert.equal(chat.messages[2].tool_call_id, 'read-1');
+  assert.equal(chat.messages[2].content, tool.content);
+  const anthropic = toAnthropicMessagesParams(next);
+  assert.ok(anthropic.messages[1].content.some(item => item.type === 'tool_use' && item.id === 'read-1'));
+  assert.ok(anthropic.messages[2].content.some(item => item.type === 'tool_result' && item.tool_use_id === 'read-1' &&
+    item.content.some(part => part.type === 'text' && part.text === tool.content)));
+  for (const wire of [chat, anthropic]) {
+    assert.doesNotMatch(JSON.stringify(wire), /private-(source|unbound)-thinking/);
+    assert.match(JSON.stringify(wire), /File read\./);
+  }
+  assert.deepEqual(next.messages, original);
+});
+
 test('Anthropic thinking is explicit, with adaptive and legacy budgets kept separate', () => {
   const input = req({ reasoningEffort: 'high', maxOutputTokens: 8192 });
   assert.deepEqual(toAnthropicMessagesParams(input).thinking, { type: 'adaptive' });

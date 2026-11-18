@@ -2,7 +2,7 @@
 
 ## 结论
 
-53 确实发生了蓝屏重启。最新一次为北京时间 2026-11-18 04:14:46.953，系统在 04:15:14.500 重新启动。转储、系统事件和启动时间互相对应。登录后出现终端不能据此认定没有重启；已有记录显示终端及 Agent 启动来自登录后的计划任务。
+53 确实发生了蓝屏重启。上午分析的最近一次为北京时间 2026-11-18 04:14:46.953，系统在 04:15:14.500 重新启动。下午再次发生故障：16:07:05.990 蓝屏，16:07:31.500 重新启动，详见末尾补充。转储、系统事件和启动时间互相对应。登录后出现终端不能据此认定没有重启；已有记录显示终端及 Agent 启动来自登录后的计划任务。
 
 四份转储中，最强证据是最新的 `MEMORY_CORRUPTION_ONE_BIT`，以及 11 月 16 日异常指针中的单比特差异。综合判断应优先排查内存硬件链路的稳定性。现有小转储无法确认具体是哪根内存条、哪个插槽或 CPU 内存控制器，也不能完全排除驱动对内存的破坏。
 
@@ -71,3 +71,29 @@ xor(rsi, rbx) = 0008000000000000
 - `111826-final-analysis.txt`、`111426-17843-final-analysis.txt`、`111626-14703-final-analysis.txt`、`111626-16984-final-analysis.txt`。
 - `crash-readonly.txt`：系统启动、事件、内存、磁盘、计划任务及端口监听读取结果。
 - `ntkrnlmp.pdb`：SHA-256 `522bcca703a7f5036a5c0b01080bd1a65a25f006a84da6cebd20cd59f3526722`。
+
+## 11 月 18 日下午再次断连
+
+用户报告远程助手再次无法连接。NAS 实际请求在 Agent `info` 阶段失败；53 的 SSH 可达，但 4780 没有监听，也没有 Node 进程。Windows 桌面用户为空、没有 Explorer，`CardBush-Agent` 为 Ready，最后运行仍为 11:39:30。该任务使用 `xxx` 的 InteractiveToken 和登录触发器；远程调用 `Start-ScheduledTask` 后没有启动，也没有改变最后运行时间。恢复阻塞点是重启后尚未登录桌面，而不是网页缓存旧错误。随后用户重新登录，恢复验证如下。
+
+新转储 `111826-16343-01.dmp` 的调试会话时间为 **16:07:05.990（UTC+8）**，运行时长 11:51:52.040；系统启动时间为 **16:07:31.500**，系统事件 1001 同时记录新 Bugcheck。事件 6008 的“上一次关闭”字段显示 15:35:30，与转储时间不一致，因此不采用该字段作为精确蓝屏时间。
+
+```text
+BUGCHECK_CODE: 13a
+BUGCHECK_P1: 17
+BUGCHECK_P2: ffffce0b40000340
+BUGCHECK_P3: ffffce0b57d07a70
+BUGCHECK_P4: 0
+PROCESS_NAME: System
+FAILURE_BUCKET_ID: 0x13a_17_nt!RtlpHeapHandleError
+```
+
+匹配的 `nt` PDB 正常加载。调用栈为系统堆维护线程，经 `ExpHpCompactionRoutine`、`RtlpHpLfhOwnerRunMaintenance`、`RtlpHpLfhSubsegmentDelayFreeListProcess` 发现损坏并触发检查。微软将 `0x13A / 0x17` 定义为延迟释放链表中的块损坏，可能由释放后使用或相邻块溢出造成。[微软 Bug Check 0x13A 文档](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-0x13a--kernel-mode-heap-corruption)
+
+这份小转储定位到发现损坏的位置，没有定位到写坏内存的具体驱动或硬件；不能把 `ntkrnlmp.exe` 当成已确认的根因，也不能仅凭本次错误认定内存条故障。结合早前单比特损坏，硬件稳定性仍需实测，同时保留驱动破坏内存的可能性。
+
+本次实际离线验证：NAS 本地主会话的待答读取 **21 ms** 返回，远程读取 **2337 ms** 返回 `unavailable: true`，主会话任务仍为 `running`。未重启 NAS、未重新提交任务、未修改 Agent 启动身份或凭据。
+
+新转储已复制到上述本地证据目录，5,137,819 字节，SHA-256 `9877f9aa5424b469da94e2676bd06074954dceb41dcfd66a9a7acd4a5766f955`；分析文件为 `111826-afternoon-analysis.txt`。
+
+用户重新登录后，原计划任务在 16:13 启动，初始化期间进程已经存在而服务端口尚未就绪。16:15 起 NAS 成功验证 Agent 身份和 delegation 能力，远程待答返回 `unavailable: false`；两次回查分别为 883 ms 和 588 ms，本地读取为 20 ms 和 35 ms。16:06:16 创建的子任务保留为 `interrupted`，同一远程会话在 16:15:20 创建的任务为 `running`；本次排障没有调用任务提交或重试接口。主会话任务保持 `running`。此结果证明服务连接已恢复，不代表本次蓝屏的底层原因已经解决。

@@ -109,7 +109,8 @@ def prepare(request: ImageRequest, options: LocalOptions, default_model: str = D
         body["size"] = convenience_size
     if "size" in body:
         size = body["size"]
-        if size not in ("1K", "2K"):
+        layer_sizes = ("1K", "1.5K", "2K") if body.get("layer_decomposition") is True else ("1K", "2K")
+        if size not in layer_sizes:
             match = re.fullmatch(r"([1-9]\d*)x([1-9]\d*)", size)
             if not match:
                 raise ValueError("Pro size must be 1K, 2K or WIDTHxHEIGHT")

@@ -41,7 +41,7 @@ async function verify() {
   const js = code => win.webContents.executeJavaScript(code).catch(error => { throw new Error(`Renderer failed: ${code}`, {cause:error}); });
   const wait = code => until(() => js(code),code);
   const click = selector => js('document.querySelector('+JSON.stringify(selector)+').click()');
-  const active = name => wait('!!document.querySelector('+JSON.stringify('[data-desktop-page="'+name+'"]')+')');
+  const active = name => wait('!!document.querySelector('+JSON.stringify('[data-desktop-page="'+name+'"]:not([data-page-visible="false"])')+')');
   const eventButton = (selector, title) => `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find(node => node.textContent.includes(${JSON.stringify(title)}))`;
   const openEventMenu = async (button, keyboard = false) => {
     const trigger = keyboard ? "new KeyboardEvent('keydown',{bubbles:true,cancelable:true,shiftKey:true,key:'F10'})"
@@ -67,7 +67,7 @@ async function verify() {
   assert.equal(await js("!!document.querySelector('.main-stage .feature-panel, .desktop-explore')"), false, 'unvisited pages stay unmounted');
   win.setMinimumSize(550,380); win.setSize(1000,500);
   await wait('innerHeight < 600');
-  const scroller = "document.querySelector('.desktop-library')";
+  const scroller = "document.querySelector('.desktop-library:not([data-page-visible=\"false\"])')";
   const scrollTo = async value => {
     const position = await js(`(()=>{const el=${scroller};el.scrollTop=${value};return el.scrollTop})()`);
     assert.ok(position > 0, 'the fixture must really scroll');

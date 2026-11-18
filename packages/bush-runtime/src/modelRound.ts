@@ -10,9 +10,10 @@ import {
   type ToolCall,
 } from "@cardbush/bush-protocol";
 
+import { createHash } from 'node:crypto';
 import type { ModelProvider, ModelStreamOptions } from "./modelProvider.js";
 import { ToolCallAccumulator } from "./toolCallAccumulator.js";
-import { modelReplayMessageHash } from "./modelReplay.js";
+import { modelReplayMessageHash, modelToolCallIds } from "./modelReplay.js";
 import { modelFailureAction } from './modelFailurePolicy.js';
 import { ModelRequestAttempts } from './modelRequestAttempts.js';
 export { isToolCallValidationFailure } from './modelFailurePolicy.js';
@@ -49,6 +50,8 @@ export type ModelRoundResult = CompletedModelRound | FailedModelRound;
 
 export interface ModelRoundOptions extends ModelStreamOptions {
   onEvent?: (event: ModelEvent) => void | Promise<void>;
+  /** Calls in durable history that are outside this request's projected context. */
+  reservedToolCallIds?: Iterable<string>;
 }
 
 function localFailure(
@@ -77,6 +80,22 @@ export async function executeModelRound(
 ): Promise<ModelRoundResult> {
   const request = modelRequestSchema.parse({ ...input, maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS });
   const accumulator = new ToolCallAccumulator();
+  const usedIds = new Set([...(options.reservedToolCallIds ?? []), ...modelToolCallIds(request.messages)]);
+  const localIds = new Map<string, string>();
+  const originalIds = new Map<string, string>();
+  const localToolId = (original: string) => {
+    const existing = localIds.get(original);
+    if (existing) return existing;
+    let id = original;
+    for (let ordinal = 0; usedIds.has(id); ordinal++) {
+      const key = JSON.stringify([request.sessionId, request.turnId, original, ordinal]);
+      id = `call_${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
+    }
+    usedIds.add(id);
+    localIds.set(original, id);
+    if (id !== original) originalIds.set(id, original);
+    return id;
+  };
   let text = "";
   let reasoning = "";
   let finishReason: string | undefined;
@@ -127,6 +146,7 @@ export async function executeModelRound(
       );
       break;
     }
+    if (event.kind === 'tool_call_delta' && event.toolCallId) event.toolCallId = localToolId(event.toolCallId);
     await options.onEvent?.(event);
     switch (event.kind) {
       case "text_delta":
@@ -164,6 +184,7 @@ export async function executeModelRound(
   let toolCalls: ToolCall[] = [];
   try {
     toolCalls = accumulator.completed(finishReason === 'length' ? completedToolCallIndices ?? [] : undefined);
+    if (new Set(toolCalls.map(call => call.id)).size !== toolCalls.length) throw Error('duplicate tool call ID in the same model response');
   } catch (error) {
     failure ??= localFailure(
       request.requestId,
@@ -196,6 +217,8 @@ export async function executeModelRound(
       error: failure,
     };
   }
+  const remappedIds = toolCalls.flatMap(call => originalIds.has(call.id) ? [[call.id, originalIds.get(call.id)!] as const] : []);
+  const replay = providerReplay ?? (remappedIds.length ? { format: 'runtime.tool_call_ids.v1', data: {} } : undefined);
   return {
     status: "completed",
     // The original provider response contains calls we deliberately discarded.
@@ -205,9 +228,9 @@ export async function executeModelRound(
     toolCalls,
     finishReason,
     usage,
-    ...(providerReplay ? {
+    ...(replay ? {
       providerReplay: {
-        ...structuredClone(providerReplay),
+        ...structuredClone(replay),
         model: request.model,
         ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
         messageHash: modelReplayMessageHash({
@@ -215,6 +238,7 @@ export async function executeModelRound(
           reasoningContent: reasoning,
           toolCalls,
         }),
+        ...(remappedIds.length ? { toolCallIds: Object.fromEntries(remappedIds) } : {}),
       },
     } : {}),
   };

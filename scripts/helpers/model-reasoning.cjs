@@ -17,7 +17,8 @@ module.exports = async ({ run, until, pause }) => {
       {id:'c',modelName:'provider-default',provider:'custom',baseUrl:'https://c.test/v1',apiKey:''}
     ]);
     window.reasoningWrites=[];
-    window.reasoningBackend={scope:'reasoning-fixture',fetchGoalRuntimeStatus:async()=>({enabled:false})};
+    window.reasoningBackend={scope:'reasoning-fixture',fetchGoalRuntimeStatus:async()=>({enabled:false}),
+      fetchPendingInteraction:async()=>null,onRuntimeInteractionsChanged:()=>()=>{}};
     window.ReasoningFixture=()=>{
       const [models,setModels]=React.useState(reasoningModels);
       window.reasoningReplaceModels=setModels;

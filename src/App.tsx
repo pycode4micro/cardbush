@@ -2367,7 +2367,7 @@ function CardbushApp() {
                 send: text => dispatchComponentMessage(text, { ready: runtimeStartup.phase === 'ready', model: chat.selectedModel, send: chat.sendMessage,
                   onError: error => { void showUiError(uiText(language)('app.componentMessageFailed'), error instanceof Error ? error.message : String(error)); } }),
                 openBrowser: url => openInspectorTarget({ target: url }) }}>
-            <DesktopCollection section={section} onCreateComponent={openPluginPrompt} projectsRef={setProjectsHost} language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible}
+            <DesktopCollection section={section} onCreateComponent={openPluginPrompt} projectsRef={setProjectsHost} language={language} ready={runtimeStartup.phase === 'ready'} unavailable={runtimeStartup.phase === 'error'} visible={!settingsVisible && !workspacePage}
               page={homePage} onPage={setHomePage} projects={projectItems} conversations={chat.conversations}
               conversationsLoading={runtimeStartup.phase === 'initializing' || chat.loading}
               onProject={project => handleSidebarProjectAction('newChat', project)} onAddProject={handleSidebarAddProject}

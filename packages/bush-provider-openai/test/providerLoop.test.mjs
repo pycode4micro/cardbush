@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { modelEventSchema } from '@cardbush/bush-protocol';
 import { InMemoryRuntimeHost, SessionStore, ToolRegistry } from '@cardbush/bush-runtime';
-import { createModelProvider, modelProviderCapabilityScope, InMemoryProviderCapabilityStore } from '../dist/index.js';
+import { createModelProvider, modelProviderCapabilityScope, InMemoryProviderCapabilityStore, ModelProviderRegistry } from '../dist/index.js';
+import { toResponsesCreateParams } from '../dist/responses.js';
 
 const adapters = ['openai_responses', 'openai_chat_completions', 'anthropic_messages'];
 const definition = { name: 'write_once', description: 'Record one authorized write', inputSchema: { type: 'object' } };
@@ -26,22 +27,26 @@ function errorWire(adapter, step) {
 }
 
 // The scenarios below are identical. Only these wire fixtures differ by protocol.
-function wire(adapter, step) {
+function wire(adapter, step, { id = 'fixture-response', stored = false, reasoning, callId: explicitCallId } = {}) {
   const call = ['tool', 'invalid', 'incomplete', 'truncated'].includes(step);
   const args = step === 'invalid' || step === 'truncated' ? '{"unclosed_fixture_value":' : '{}';
-  const callId = step === 'incomplete' ? '' : step === 'invalid' ? 'call-invalid' : 'call-1';
+  const callId = explicitCallId ?? (step === 'incomplete' ? '' : step === 'invalid' ? 'call-invalid' : 'call-1');
   const text = call ? 'Checking.' : 'Done.';
   let events;
   if (adapter === 'openai_responses') {
-    const response = { id: 'fixture-response', model: 'fixture', created_at: 1, store: false,
+    const response = { id, model: 'fixture', created_at: 1, store: stored,
       status: step === 'truncated' ? 'incomplete' : 'completed',
       ...(step === 'truncated' ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
       output: [
+        ...(reasoning ? [{ type: 'reasoning', id: `rs_${id}`, summary: [], encrypted_content: reasoning }] : []),
         { type: 'message', id: 'message-1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] },
         ...(call ? [{ type: 'function_call', id: 'item-1', call_id: callId, name: 'write_once', arguments: args,
           status: step === 'truncated' ? 'incomplete' : 'completed' }] : []),
       ], usage: { input_tokens: 100, output_tokens: 10, input_tokens_details: { cached_tokens: 0 } } };
-    events = [{ type: step === 'truncated' ? 'response.incomplete' : 'response.completed', response }];
+    events = [
+      ...(stored ? [{ type: 'response.created', response: { ...response, status: 'in_progress', output: [], usage: null } }] : []),
+      { type: step === 'truncated' ? 'response.incomplete' : 'response.completed', response },
+    ];
   } else if (adapter === 'openai_chat_completions') {
     events = [{ id: 'fixture-response', model: 'fixture', choices: [{ index: 0, delta: { content: text,
       ...(call ? { tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: 'write_once', arguments: args } }] } : {}) },
@@ -229,3 +234,92 @@ test('protocol capability observations cannot leak between adapters', () => {
   assert.equal(new Set(scopes).size, 3);
   assert.equal(scopes[0], modelProviderCapabilityScope({ apiKey: 'fixture' }), 'Existing Responses capability identity stays stable');
 });
+
+async function verifyProtocolSwitch(t, repeatCallId) {
+  const expected = [
+    ['compatible', 'reject-store'], ['compatible', 'tool'], ['compatible', 'answer'],
+    ['chat', 'answer'], ['messages', 'answer'], ['native', 'tool'], ['native', 'answer'], ['compatible', 'answer'],
+  ];
+  const sent = [], sessions = new SessionStore();
+  const profiles = { compatible: adapters[0], chat: adapters[1], messages: adapters[2], native: adapters[0] };
+  const provider = new ModelProviderRegistry({ createProvider: config => createModelProvider({ ...config,
+    fetch: async (url, init) => {
+      if (String(url).endsWith('/input_tokens')) return Response.json({ input_tokens: 100 });
+      const profile = new Headers(init.headers).get('x-fixture-route');
+      const [selected, step] = expected[sent.length] ?? [];
+      const body = JSON.parse(init.body);
+      sent.push({ profile, url: String(url), body });
+      assert.equal(profile, selected, 'the selected binding owns the entire model round');
+      if (step === 'reject-store') return Response.json({ error: { code: 'unsupported_parameter', param: 'store',
+        message: 'Unsupported parameter: store' } }, { status: 400 });
+      return wire(config.adapter, step, { id: `response_${sent.length}`, stored: Boolean(body.store),
+        reasoning: step === 'tool' ? `opaque-${profile}` : undefined,
+        callId: repeatCallId ? 'call-shared' : `call-${profile}` });
+    },
+  }) });
+  const bindings = Object.fromEntries(Object.entries(profiles).map(([profile, adapter]) => [profile, provider.upsert({
+    protocol: 'bush.provider_binding_config.v1', bindingId: 'same-selection', adapter, apiKey: 'fixture',
+    baseURL: 'https://provider.invalid/v1', defaultHeaders: { 'x-fixture-route': profile },
+  }).binding]));
+  assert.equal(new Set(Object.values(bindings).map(binding => binding.revision)).size, 4);
+  let executions = 0;
+  const tools = new ToolRegistry().register({ definition,
+    manifest: { effect_kind: 'mutation', operation: 'fixture.write', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: true },
+    decodeInput: value => value, execute: () => ({ writes: ++executions }),
+  });
+  const host = new InMemoryRuntimeHost({ provider, toolRegistry: tools, sessionStore: sessions,
+    registerDefaultWorkspaceTools: false, maxAttempts: 1 });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  for (const [index, profile] of ['compatible', 'chat', 'messages', 'native', 'compatible'].entries()) {
+    const turnId = `switch-${index}`;
+    const turn = { protocol: 'bush.session_turn_request.v1', sessionId: 'protocol-switch',
+      requestId: turnId, turnId, model: 'fixture', providerBinding: bindings[profile], tools: tools.definitions(),
+      permissionMode: 'all_free', maxOutputTokens: 8192, prefixMessages: [{ role: 'system', content: 'Stable rules' }],
+      inputMessages: [{ messageId: `user-${turnId}`, message: { role: 'user', content: `Continue with ${profile}.` } }],
+    };
+    const result = await host.runSessionTurn(turn);
+    assert.equal(result.payload.status, 'completed', JSON.stringify(result.payload));
+  }
+  assert.deepEqual(sent.map(call => new URL(call.url).pathname), [
+    '/v1/responses', '/v1/responses', '/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/responses', '/v1/responses', '/v1/responses',
+  ]);
+  assert.deepEqual(sent.map(call => call.body.store), [true, false, false, undefined, undefined, true, true, false]);
+  assert.deepEqual(sent.map(call => call.body.previous_response_id), sent.map((_, index) => index === 6 ? 'response_6' : undefined));
+  for (const index of [3, 4, 5, 6]) assert.doesNotMatch(JSON.stringify(sent[index].body), /opaque-compatible/);
+  assert.match(JSON.stringify(sent[7].body), /opaque-compatible/);
+  assert.doesNotMatch(JSON.stringify(sent[7].body), /opaque-native/);
+  assert.equal(executions, 2, 'one intentional new tool call per Responses turn, never replay old effects');
+  const saved = sessions.snapshot('protocol-switch');
+  assert.equal(saved.turns.length, 5);
+  assert.equal(saved.turns.flatMap(turn => turn.messages).filter(item => item.message.role === 'tool').length, 2);
+  const messagesResult = sent[4].body.messages.flatMap(message => message.content).find(item => item.type === 'tool_result');
+  assert.match(messagesResult.content[0].text, /"writes":1/);
+  const lastResults = sent[7].body.input.filter(item => item.type === 'function_call_output');
+  assert.equal(lastResults.length, 2);
+  assert.match(lastResults[1].output, /"writes":2/);
+  if (repeatCallId) {
+    const second = saved.turns[3].messages.map(item => item.message);
+    const assistant = second.find(message => message.role === 'assistant' && message.toolCalls.length);
+    const localId = assistant.toolCalls[0].id;
+    assert.notEqual(localId, 'call-shared');
+    assert.deepEqual(assistant.providerReplay.toolCallIds, { [localId]: 'call-shared' });
+    assert.equal(assistant.providerReplay.data.items.find(item => item.type === 'function_call').call_id, 'call-shared');
+    assert.equal(second.find(message => message.role === 'tool').toolCallId, localId);
+    assert.equal(host.events('protocol-switch', 'switch-3').find(event => event.kind === 'tool_running').payload.toolCallId, localId);
+    assert.deepEqual(sent[6].body.input.filter(item => item.type === 'function_call_output').map(item => item.call_id), ['call-shared']);
+    assert.deepEqual(lastResults.map(item => item.call_id), ['call-shared', localId], 'full replay preserves two distinct call/receipt pairs');
+    const fullNative = toResponsesCreateParams({
+      sessionId: 'protocol-switch', model: 'fixture', providerBinding: bindings.native, tools: tools.definitions(),
+      messages: saved.turns.flatMap(turn => turn.messages.map(item => item.message)),
+    }).input;
+    assert.deepEqual(fullNative.filter(item => item.type === 'function_call').map(item => item.call_id), ['call-shared', localId]);
+    assert.deepEqual(fullNative.filter(item => item.type === 'function_call_output').map(item => item.call_id), ['call-shared', localId]);
+    assert.match(JSON.stringify(fullNative), /opaque-native/);
+    assert.doesNotMatch(JSON.stringify(fullNative), /opaque-compatible/);
+  }
+}
+
+test('same-model protocol switches in one session keep tool results, isolate compatibility and start a fresh response chain',
+  t => verifyProtocolSwitch(t, false));
+
+test('two providers may return the same tool call ID in different turns', t => verifyProtocolSwitch(t, true));

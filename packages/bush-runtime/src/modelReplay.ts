@@ -23,3 +23,12 @@ export function modelReplayMatches(
     replay.providerBinding?.revision === request.providerBinding?.revision &&
     replay.messageHash === modelReplayMessageHash(message));
 }
+
+export function modelToolCallIds(messages: readonly ModelMessage[]): string[] {
+  return messages.flatMap(message => message.role === 'assistant' ? message.toolCalls.map(call => call.id) : []);
+}
+
+/** Native reply IDs are transport facts. Canonical history uses Runtime IDs. */
+export function providerToolCallId(replay: Extract<ModelMessage, { role: 'assistant' }>['providerReplay'], id: string): string {
+  return replay?.toolCallIds && Object.hasOwn(replay.toolCallIds, id) ? replay.toolCallIds[id]! : id;
+}

@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { InMemoryRuntimeHost, ToolRegistry, executeModelRound } from '@cardbush/bush-runtime';
 import { InMemoryProviderCapabilityStore, OpenAIResponsesProvider, normalizeResponseStreamEvent } from '../dist/index.js';
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 
 const call = (id, overrides = {}) => ({ type: 'function_call', id: `item_${id}`, call_id: id,
   name: 'write_once', arguments: JSON.stringify({ value: id }), status: 'completed', ...overrides });
@@ -53,7 +54,7 @@ for (const mode of ['native-full', 'native-stored', 'compatible']) {
       provider: new OpenAIResponsesProvider({ apiKey: 'fixture', baseURL: `http://127.0.0.1:${server.address().port}/v1`,
         capabilityStore: capabilities, capabilityScope: mode }) });
     t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-    const result = await host.runModelTurn({ ...request, tools: registry.definitions(), permissionMode: 'all_free',
+    const result = await host.runModelTurn({ ...request, tools: legacySearchCatalog(registry), permissionMode: 'all_free',
       metadata: { mcpToolDiscovery: true }, reasoningEffort: 'high' });
     assert.equal(result.payload.status, 'completed'); assert.deepEqual(writes, ['first', 'second']);
     assert.equal(requests.length, 4);

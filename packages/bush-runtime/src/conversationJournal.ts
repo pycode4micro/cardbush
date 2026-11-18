@@ -1,12 +1,21 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, truncateSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { conversationEntrySchema, isAssistantPageMessage, assistantReactionsSchema, type AssistantReaction, type ConversationEntry } from '@cardbush/bush-protocol';
+import { z } from 'zod';
+import { conversationEntrySchema, isAssistantPageMessage, assistantReactionsSchema, assistantProfileSchema, runtimeSessionTurnRequestSchema,
+  type AssistantReaction, type ConversationEntry } from '@cardbush/bush-protocol';
 import { AssistantModelHistory } from './assistantModelHistory.js';
+
+const submissionSchema = z.object({ parent: runtimeSessionTurnRequestSchema, profile: assistantProfileSchema });
+const journalEntrySchema = conversationEntrySchema.extend({ submission: submissionSchema.optional() });
+type JournalEntry = z.infer<typeof journalEntrySchema>;
+type QueuedSubmission = z.infer<typeof submissionSchema>;
+
+function visibleEntry({ submission: _submission, ...entry }: JournalEntry): ConversationEntry { return entry; }
 
 /** External conversation messages never reserve or alter a foreground Turn sequence. */
 export class ConversationJournal {
-  private cache = new Map<string, ConversationEntry[]>();
+  private cache = new Map<string, JournalEntry[]>();
   private histories = new Map<string, AssistantModelHistory>();
   private reactions = new Map<string, Record<string, AssistantReaction>>();
   private replyPositions = new Map<string, { byId: Map<string, { index: number; at: string }>; latest?: { id: string; at: string } }>();
@@ -17,7 +26,7 @@ export class ConversationJournal {
     if (!history) { history = new AssistantModelHistory(this.file(sessionId).replace(/\.jsonl$/, '.model.jsonl')); this.histories.set(sessionId, history); }
     return history;
   }
-  private entries(sessionId: string): ConversationEntry[] {
+  private entries(sessionId: string): JournalEntry[] {
     let entries = this.cache.get(sessionId);
     if (!entries) {
       entries = [];
@@ -27,7 +36,7 @@ export class ConversationJournal {
         let repaired = false;
         for (let i = 0; i < lines.length; i++) {
           if (!lines[i].trim()) continue;
-          try { entries.push(conversationEntrySchema.parse(JSON.parse(lines[i]))); }
+          try { entries.push(journalEntrySchema.parse(JSON.parse(lines[i]))); }
           catch (error) {
             if (i < lines.length - 1) throw error;
             truncateSync(file, Buffer.byteLength(raw.slice(0, raw.lastIndexOf('\n') + 1)));
@@ -41,7 +50,14 @@ export class ConversationJournal {
     return entries;
   }
   read(sessionId: string): ConversationEntry[] {
-    return this.entries(sessionId).map(item => ({ ...item }));
+    return this.entries(sessionId).map(visibleEntry);
+  }
+  queuedSubmission(sessionId: string, entryId: string): QueuedSubmission | undefined {
+    const submission = this.entries(sessionId).find(item => item.id === entryId)?.submission;
+    return submission && structuredClone(submission);
+  }
+  hasQueuedSubmission(sessionId: string, entryId: string): boolean {
+    return this.entries(sessionId).some(item => item.id === entryId && item.submission !== undefined);
   }
   private indexReply(sessionId: string, entry: ConversationEntry) {
     const positions = this.replyPositions.get(sessionId);
@@ -63,20 +79,21 @@ export class ConversationJournal {
       : !after.at ? byId.size : Array.from(byId.values()).filter(item => item.at > after.at).length;
     return { unread, ...(!after && latest ? { latest: { ...latest } } : {}) };
   }
-  append(sessionId: string, value: ConversationEntry) {
-    const entry = conversationEntrySchema.parse(value), entries = this.read(sessionId);
+  append(sessionId: string, value: ConversationEntry, submission?: QueuedSubmission) {
+    const entry = journalEntrySchema.parse({ ...value, submission }), entries = this.entries(sessionId);
     if (entry.replyTo && (entry.role !== 'user' || !entries.some(item => item.id === entry.replyTo!.messageId && isAssistantPageMessage(item) && item.source !== 'task'))) throw Error('assistant_quote_unavailable');
     const old = entries.find(item => item.id === entry.id);
     if (old) {
       if (old.content !== entry.content || old.role !== entry.role || old.source !== entry.source || old.visibility !== entry.visibility || old.voiceMode !== entry.voiceMode || JSON.stringify(old.attachments) !== JSON.stringify(entry.attachments) || JSON.stringify(old.promptContext) !== JSON.stringify(entry.promptContext) || JSON.stringify(old.replyTo) !== JSON.stringify(entry.replyTo)) throw Error('Conversation message ID reused with different content.');
-      return old;
+      return visibleEntry(old);
     }
     mkdirSync(this.root, { recursive: true });
     appendFileSync(this.file(sessionId), JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600, flush: true });
     this.cache.set(sessionId, [...entries, entry]);
     this.indexReply(sessionId, entry);
-    this.onAppend?.(sessionId, entry);
-    return entry;
+    const visible = visibleEntry(entry);
+    this.onAppend?.(sessionId, visible);
+    return visible;
   }
   readReactions(sessionId: string): Record<string, AssistantReaction> {
     let state = this.reactions.get(sessionId);

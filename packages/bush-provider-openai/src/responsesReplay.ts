@@ -1,15 +1,18 @@
 import type { Response, ResponseInputItem } from "openai/resources/responses/responses";
 import type { ModelMessage, ModelReplayData, ModelRequest } from "@cardbush/bush-protocol";
-import { modelReplayMatches } from "@cardbush/bush-runtime";
+import { modelReplayMatches, providerToolCallId } from "@cardbush/bush-runtime";
 import { providerToolName } from "./toolNames.js";
 
 const REPLAY_FORMAT = "openai.responses.output.v1";
 export type ResponsesToolSearchMode = "native" | "function";
 
 /** Store output items and their projection mode, never transport or credentials. */
-export function responsesReplayData(response: Response, toolSearchMode?: ResponsesToolSearchMode, compatibilityMode = false): ModelReplayData | undefined {
+export function responsesReplayData(response: Response, toolSearchMode?: ResponsesToolSearchMode,
+  compatibilityMode = false, hasStreamedReasoning = false): ModelReplayData | undefined {
   const items = Array.isArray(response.output) && response.output.every(isReplayItem) ? response.output : [];
-  if (!items.length && !toolSearchMode && !compatibilityMode) return undefined;
+  // Retain provenance even when a compatible stream sends reasoning before an
+  // empty or unsupported terminal snapshot. There are no items to replay then.
+  if (!items.length && !toolSearchMode && !compatibilityMode && !hasStreamedReasoning) return undefined;
   return { format: REPLAY_FORMAT, data: { items: structuredClone(items),
     ...(compatibilityMode ? { compatibilityMode: true } : {}),
     ...(toolSearchMode ? { toolSearchMode } : {}) } };
@@ -20,6 +23,14 @@ export function historicalCompatibilityMode(request: ModelRequest): boolean {
   return request.messages.some(message => message.role === "assistant" &&
     message.providerReplay?.format === REPLAY_FORMAT && modelReplayMatches(message, request) &&
     message.providerReplay.data.compatibilityMode === true);
+}
+
+export function canProjectResponsesReasoningText(
+  message: Extract<ModelMessage, { role: "assistant" }>,
+  request: Pick<ModelRequest, "model" | "providerBinding">,
+): boolean {
+  const replay = message.providerReplay;
+  return replay?.format === REPLAY_FORMAT && modelReplayMatches(message, request);
 }
 
 /** Translate the wire view only; keep reasoning and persisted provider output intact. */
@@ -59,9 +70,17 @@ export function replayResponsesOutput(
   if (message.reasoningContent && reasoningText.length !== message.reasoningContent.length &&
     !reasoningItems.some(item => item.encrypted_content)) return undefined;
   if (text !== message.content || JSON.stringify(calls) !== JSON.stringify(
-    message.toolCalls.map((call) => [call.id, providerToolName(call.name), call.argumentsText]),
+    message.toolCalls.map((call) => [providerToolCallId(replay, call.id), providerToolName(call.name), call.argumentsText]),
   )) return undefined;
-  return structuredClone(items) as ResponseInputItem[];
+  const localIds = new Map(message.toolCalls.map(call => [providerToolCallId(replay, call.id), call.id]));
+  return structuredClone(items).map((item): ResponseInputItem => {
+    if (item.type !== 'function_call' && !isClientToolSearchCall(item)) return item;
+    const localId = localIds.get(item.call_id);
+    if (!localId || localId === item.call_id) return item;
+    // A full transcript needs unique call IDs. Keep the original item in the replay sidecar.
+    const { id: _providerItemId, ...call } = item;
+    return { ...call, call_id: localId };
+  });
 }
 
 /** The mode is bound to the same immutable output as the rest of provider replay. */

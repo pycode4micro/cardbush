@@ -152,7 +152,8 @@ export function DesktopHomeView(p: HomeProps) {
     open:() => onPage(projects[0] ? {kind:'project', id:projects[0].id} : {kind:'projects'})};
   const lead = eventCards[0] ?? (waitingForEvents ? undefined : explore);
   const last = eventCards[1] ?? (waitingForEvents ? undefined : eventCards.length ? explore : library);
-  return <section key={pageKey} className="desktop-library" aria-label={heading} data-desktop-page={page.kind} ref={scroll} onScroll={trackHeaderUnderlap}>
+  return <section key={pageKey} className="desktop-library" aria-label={heading} data-desktop-page={page.kind}
+    data-page-visible={p.visible} aria-hidden={!p.visible || undefined} inert={!p.visible} ref={scroll} onScroll={trackHeaderUnderlap}>
     {page.kind !== 'overview' && <nav className="desktop-crumbs" aria-label={t('desktop.breadcrumb')}>
       <button onClick={() => onPage({kind:'overview'})}>{home}</button>
       {page.kind === 'event' && <><ChevronRight/><button onClick={() => onPage({kind:'events'})}>{eventLabel}</button></>}

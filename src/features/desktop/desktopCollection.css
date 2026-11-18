@@ -39,7 +39,7 @@
 }
 html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-window-material-preference="solid"]) > .window-frame::before { background:transparent; }
 /* Keep artwork under the header readable using the existing glass material. */
-html .app[data-desktop-workspace]:has(> .desktop-shell:not([data-settings-visible]) > .main-stage > .desktop-library[data-header-underlap]) > .window-frame::before {
+html .app[data-desktop-workspace]:has(> .desktop-shell:not([data-settings-visible]) > .main-stage > .desktop-library[data-header-underlap]:not([data-page-visible="false"])) > .window-frame::before {
   background:var(--chrome-grain) repeat var(--header-glass); backdrop-filter:var(--chrome-glass-filter);
 }
 html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar::before {
@@ -81,8 +81,11 @@ html[data-window-material="mica"] .app[data-desktop-workspace] > .desktop-shell 
 /* Give the overlay an opaque backdrop across the rail so Chromium blurs the page only once. */
 .app[data-desktop-workspace] > .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) { background-color:var(--surface); }
 html[data-window-material] .app[data-desktop-workspace] > .window-frame { border:0; background:transparent; box-shadow:none; }
-.app[data-desktop-workspace] .desktop-shell > .main-stage:has(> .desktop-library) { margin-top:0; }
+.app[data-desktop-workspace] .desktop-shell > .main-stage:has(> .desktop-library:not([data-page-visible="false"])) { margin-top:0; }
 .app[data-desktop-workspace] .main-stage > .desktop-library { padding-block-start:calc(var(--workspace-bar-height) + var(--library-inset)); scroll-padding-top:var(--workspace-bar-height); }
+/* Preserve the viewport of live frames, as in InspectorTabPages. Hidden Home
+   must neither occupy the current page's layout nor intercept its input. */
+.desktop-library[data-page-visible="false"] { position:absolute; inset:0; visibility:hidden; pointer-events:none; }
 .app[data-desktop-workspace] .desktop-shell > .settings-shell { top:var(--workspace-bar-height); }
 .app[data-desktop-workspace] .nav-row { position:relative; border-radius:5px; min-height:35px; font-weight:var(--ui-font-weight, 400); }
 .app[data-desktop-workspace] .nav-row.active { background:var(--chrome-control-hover); color:var(--text); }

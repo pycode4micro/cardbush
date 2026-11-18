@@ -153,6 +153,7 @@ import {
   type SubagentPermissionPolicy,
 } from "./childTurn.js";
 import { CacheChainTracker } from "./cacheChainTracker.js";
+import { modelToolCallIds } from './modelReplay.js';
 import { calibrateInputTokens, inputTokenBasis, reusableInputTokenFloor, runtimeInputTokenProjection,
   type InputTokenUsage } from "./inputTokenBasis.js";
 import {
@@ -2584,6 +2585,7 @@ export class InMemoryRuntimeHost {
       ? structuredClone(input.sessionCommit.activeContextCheckpoint)
       : undefined;
     const priorSession = input.sessionCommit ? this.#sessions.snapshot(request.sessionId) : undefined;
+    const committedToolCallIds = modelToolCallIds(priorSession?.turns.flatMap(turn => turn.messages.map(fact => fact.message)) ?? []);
     for (const fact of [...priorSession?.turns.flatMap(turn => turn.messages) ?? [], ...generatedMessages]) {
       const references = taskResultReferenceSchema.array().safeParse(fact.metadata?.taskResultReferences);
       if (references.success) this.#subagentTasks.delivery.restore(request.sessionId, references.data);
@@ -3487,6 +3489,7 @@ export class InMemoryRuntimeHost {
                   signal,
                   readImage: this.#modelImageReader(roundRequest.messages),
                   attempts: modelAttempts,
+                  reservedToolCallIds: [...committedToolCallIds, ...modelToolCallIds(generatedMessages.map(fact => fact.message))],
                   onCompatibilityDiagnostic: payload => {
                     if (!current()) return;
                     this.#eventLog.append(identity, { kind: "provider_compatibility", payload });

@@ -7,7 +7,7 @@ RUN npm ci --ignore-scripts && npm run build:agent && npm run build:web:ui
 
 FROM node:24-bookworm-slim AS web
 WORKDIR /opt/cardbush
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini git python3 python3-venv util-linux \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini git python3 python3-venv util-linux fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1100 --shell /bin/bash cardbush \
     && mkdir -p /data && chown cardbush:cardbush /data

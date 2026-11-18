@@ -24,14 +24,14 @@ import type {
   ModelProvider,
   ModelStreamOptions,
 } from "@cardbush/bush-runtime";
-import { isToolCallValidationFailure, ModelRequestAttempts } from "@cardbush/bush-runtime";
+import { isToolCallValidationFailure, modelReplayMatches, ModelRequestAttempts, providerToolCallId } from "@cardbush/bush-runtime";
 import { providerFailureEvent, providerErrorPayload, ProviderToolCallError } from "./providerFailure.js";
 import type { ModelProviderConfig } from './providerConfig.js';
 import { siwcFailure, siwcFetch, siwcResponsesParams } from './siwc.js';
 import { SIWC } from '@cardbush/bush-protocol';
 import { namedMessageContent, resolveLocalImageInputs } from './modelInputs.js';
 import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from "./requestBodyBudget.js";
-import { historicalCompatibilityMode, isClientToolSearchCall, portableResponsesReplay, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
+import { canProjectResponsesReasoningText, historicalCompatibilityMode, isClientToolSearchCall, portableResponsesReplay, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
 import { ResponseToolCalls } from "./responsesToolCalls.js";
 import { ResponseText, ResponseTextError } from "./responsesText.js";
 import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOutputIndex.js";
@@ -66,6 +66,7 @@ interface ResponsesProjection {
 }
 
 const INPUT_TOKEN_COUNT_CAPABILITY = "input_token_count";
+const OPENAI_API_ORIGIN = new URL(modelApiBaseURL("openai_responses")).origin;
 
 export interface ResponseNormalizationState {
   requestId: string;
@@ -152,7 +153,7 @@ export function normalizeResponseStreamEvent(
           // Keep projection mode pinned, but never replay an incomplete item or
           // bind its original batch to the accepted subset of calls.
           providerReplay: responsesReplayData(truncated ? { ...event.response, output: [] } : event.response,
-            state.toolSearchMode, state.compatibilityMode) });
+            state.toolSearchMode, state.compatibilityMode, !truncated && text.hasReasoning) });
         state.terminal = true;
         break;
       }
@@ -241,15 +242,25 @@ export function toResponsesCreateParams(
   }
   const projectDiscovery = discoveryInputProjection(request, toolSearchMode);
   const projectImages = compatibilityMode ? compatibleToolImageProjection() : (items: ResponseInputItem[]) => items;
+  const allowSynthesizedReasoning = !options.chatGpt &&
+    (URL.parse(options.baseURL ?? OPENAI_API_ORIGIN)?.origin ?? OPENAI_API_ORIGIN) !== OPENAI_API_ORIGIN;
   const projected = uniqueToolDeclarations(request.messages.map((message, messageIndex) => ({
     messageIndex,
-    items: projectImages(projectDiscovery(messageIndex, toResponseInputItems(message, messageIndex, request, toolSearchMode))),
+    items: projectImages(projectDiscovery(messageIndex,
+      toResponseInputItems(message, messageIndex, request, toolSearchMode, allowSynthesizedReasoning))),
   })), responseTools(request, toolSearchMode), inputMessageOffset);
+  const anchor = inputMessageOffset && !projected.replayFromStart ? request.messages[inputMessageOffset - 1] : undefined;
+  // For a stored response the provider already owns the original call IDs.
+  // Translate only the receipts for that anchor, never a full local replay.
+  const input = anchor?.role === 'assistant' && anchor.providerReplay?.toolCallIds && modelReplayMatches(anchor, request)
+    ? projected.input.map(item => (item.type === 'function_call_output' || item.type === 'tool_search_output') && item.call_id
+      ? { ...item, call_id: providerToolCallId(anchor.providerReplay, item.call_id) } : item)
+    : projected.input;
   const cacheKey = options.chatGpt ? undefined : sessionPromptCacheKey(request, options.baseURL);
   const params = {
     model: request.model,
     ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
-    input: projected.input,
+    input,
     tools: projected.tools,
     max_output_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     temperature: request.temperature,
@@ -285,6 +296,7 @@ function toResponseInputItems(
   messageIndex: number,
   request: ModelRequest,
   mode: ResponsesToolSearchMode,
+  allowSynthesizedReasoning: boolean,
 ): ResponseInputItem[] {
   if (message.role === "tool") {
     return [{
@@ -304,7 +316,9 @@ function toResponseInputItems(
     const replay = replayResponsesOutput(message, request);
     if (replay) return mode === "function" ? portableResponsesReplay(replay) : replay;
     const items: ResponseInputItem[] = [];
-    if (message.reasoningContent) {
+    // Native OpenAI replays provider items. Compatible endpoints can rebuild
+    // a missing reasoning item only from text bound to this model and connection.
+    if (allowSynthesizedReasoning && message.reasoningContent && canProjectResponsesReasoningText(message, request)) {
       items.push({
         type: "reasoning",
         id: reasoningItemId(message, messageIndex),

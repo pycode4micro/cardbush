@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Seedream</title><style>/*__STYLES__*/</style></head>
+<body>
+  <header><div><span class="eyebrow">Seedream 5.5</span><h1 id="title" data-i18n="title"></h1></div><span id="revision" class="badge"></span></header>
+  <p id="waiting" data-i18n="waiting"></p>
+  <main id="workspace" hidden>
+    <nav class="toolbar" aria-label="" data-i18n-aria="actions">
+      <button id="save" class="primary" data-i18n="save"></button>
+      <button id="discard" data-i18n="discard"></button>
+      <button id="refresh" data-i18n="refresh"></button>
+      <label class="history"><span data-i18n="history"></span><select id="history"></select></label>
+      <button id="restore" data-i18n="restore" hidden></button>
+      <label><span class="sr-only" data-i18n="format"></span><select id="format"><option value="png">PNG</option><option value="jpeg">JPG</option><option value="zip" data-i18n="layerPackage"></option></select></label>
+      <button id="export" data-i18n="export"></button>
+    </nav>
+    <section class="editor">
+      <aside class="layers"><h2 data-i18n="layers"></h2><div id="layer-list" role="list"></div></aside>
+      <section class="preview"><div class="preview-label"><span data-i18n="preview"></span><span id="dimensions"></span></div><div id="stage" tabindex="0" role="group" data-i18n-aria="canvas"></div><p class="hint" data-i18n="dragHint"></p></section>
+      <aside class="inspector"><h2 data-i18n="properties"></h2>
+        <label><span data-i18n="name"></span><input id="name" maxlength="160"></label>
+        <div class="pair"><label><span data-i18n="x"></span><input id="x" type="number" min="-32768" max="32768" step="1"></label><label><span data-i18n="y"></span><input id="y" type="number" min="-32768" max="32768" step="1"></label></div>
+        <div class="pair"><label><span data-i18n="width"></span><input id="width" type="number" min="1" max="8192"></label><label><span data-i18n="height"></span><input id="height" type="number" min="1" max="8192"></label></div>
+        <label><span data-i18n="opacity"></span><input id="opacity" type="range" min="0" max="1" step="0.01"></label>
+        <div class="pair"><button id="raise" data-i18n="raise"></button><button id="lower" data-i18n="lower"></button></div>
+        <label class="check"><input id="visible" type="checkbox"><span data-i18n="visible"></span></label>
+        <details id="text-panel"><summary data-i18n="textEditing"></summary>
+          <p class="hint" data-i18n="textHint"></p><button id="use-ocr" data-i18n="useOcr"></button>
+          <label><span data-i18n="text"></span><textarea id="text" rows="3" maxlength="12000"></textarea></label>
+          <div class="pair"><label><span data-i18n="fontSize"></span><input id="font_size" type="number" min="1" max="1000"></label><label><span data-i18n="color"></span><input id="color" type="color"></label></div>
+          <div class="pair"><label class="check"><input id="bold" type="checkbox"><span data-i18n="bold"></span></label><label class="check"><input id="italic" type="checkbox"><span data-i18n="italic"></span></label></div>
+          <label id="font-choice"><span data-i18n="fontPath"></span><input id="font_path" maxlength="4096"></label>
+          <button id="raster" data-i18n="restoreRaster"></button>
+        </details>
+        <details><summary data-i18n="replaceLayer"></summary><p id="replace-hint" class="hint" data-i18n="replaceHint"></p><label><span id="replace-label" data-i18n="imagePath"></span><input id="replacement_path" maxlength="4096"></label><button id="export-layer" data-i18n="exportLayer"></button></details>
+      </aside>
+    </section>
+    <div id="downloads" role="list"></div>
+  </main>
+  <footer><span id="dirty" class="badge" hidden data-i18n="unsaved"></span><p id="status" role="status" aria-live="polite"></p></footer>
+  <script id="catalogs" type="application/json">/*__CATALOGS__*/</script><script>/*__SCRIPT__*/</script>
+</body></html>

@@ -6,6 +6,7 @@ import { join, resolve, sep } from 'node:path';
 import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, portableToolName } from '@cardbush/bush-runtime';
 import { AnthropicMessagesProvider, OpenAIChatCompletionsProvider, OpenAIResponsesProvider,
   InMemoryProviderCapabilityStore } from '../dist/index.js';
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 
 const mcpName = `mcp__${'long_plugin_'.repeat(6)}__status`, mcpAlias = portableToolName(mcpName);
 const nativeName = `native_${'extension_'.repeat(8)}`, nativeAlias = portableToolName(nativeName);
@@ -65,7 +66,7 @@ function responsesResponse(operation, id, body, terminalOnly) {
     status: 'completed', output: [item], tools: body.tools, usage: null } }]);
 }
 
-for (const mode of ['messages', 'chat', 'responses-stream', 'responses-terminal', 'responses-portable']) {
+for (const mode of ['messages', 'chat', 'responses-stream', 'responses-terminal', 'responses-portable', 'responses-unified']) {
   test(`${mode}: real host resolves tool-reference aliases without rewriting schemas, history or signed thinking`, async t => {
     const root = await mkdtemp(join(tmpdir(), 'cardbush-tool-reference-'));
     const registry = new ToolRegistry(), journal = new ToolExecutionStore(), bodies = [], signatures = new Map();
@@ -79,6 +80,8 @@ for (const mode of ['messages', 'chat', 'responses-stream', 'responses-terminal'
     registry.register({ definition: definition(nativeName), manifest, deferredSchema: true, decodeInput: value => value,
       execute: context => { nativeCalls.push(context.input); return { ok: true }; } });
     const capabilityStore = new InMemoryProviderCapabilityStore();
+    const nativeSearch = mode === 'responses-stream' || mode === 'responses-terminal';
+    const legacyCatalog = nativeSearch || mode === 'responses-portable';
     if (mode === 'responses-portable') capabilityStore.observe({ scope: 'fixture', model: 'fixture', capability: 'client_tool_search' }, { status: 'unsupported' });
     const config = { apiKey: 'fixture', capabilityStore, capabilityScope: 'fixture', fetch: async (url, init) => {
       if (String(url).endsWith('/input_tokens')) return Response.json({ object: 'response.input_tokens', input_tokens: 100 });
@@ -87,9 +90,9 @@ for (const mode of ['messages', 'chat', 'responses-stream', 'responses-terminal'
       assert.ok(toolNames.includes('call_tool'));
       assert.ok(toolNames.includes('get_tool_schema'));
       assert.equal(toolNames.includes('mcp_call'), false, 'new model catalogs advertise one gateway');
-      if (mode.startsWith('responses') && mode !== 'responses-portable') {
-        assert.ok(body.tools.some(tool => tool.type === 'tool_search'), 'native search remains enabled without a visible mcp_call');
-      }
+      assert.equal(body.tools.some(tool => tool.type === 'tool_search'), nativeSearch, 'native search remains enabled without a visible mcp_call');
+      assert.equal(toolNames.includes('search_plugins'), !legacyCatalog);
+      assert.equal(toolNames.includes('mcp_search'), legacyCatalog && !nativeSearch);
       if (previous) {
         assert.deepEqual(body.tools, previous.tools, 'recall never replaces top-level schemas');
         assert.equal(body.system, previous.system);
@@ -121,8 +124,9 @@ for (const mode of ['messages', 'chat', 'responses-stream', 'responses-terminal'
       assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-tool-reference-'));
       await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
+    const tools = legacyCatalog ? legacySearchCatalog(registry) : registry.definitions();
     const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 's', turnId: 't',
-      model: 'fixture', reasoningEffort: 'high', tools: registry.definitions(), permissionMode: 'all_free', metadata: { mcpToolDiscovery: true },
+      model: 'fixture', reasoningEffort: 'high', tools, permissionMode: 'all_free', metadata: { mcpToolDiscovery: true },
       prefixMessages: [{ role: 'system', content: 'Stable rules' }], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Inspect fixture tools' } }] });
     assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
     assert.deepEqual(calls, Array.from({ length: 5 }, () => ({ literal: mcpAlias })), 'data strings stay untouched and each call executes once');

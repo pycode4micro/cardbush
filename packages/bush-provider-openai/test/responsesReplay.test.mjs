@@ -83,6 +83,7 @@ test("does not replay stale provider output after message edits or model/binding
   for (const request of variants) {
     const items = toResponsesCreateParams(request).input;
     assert.equal(items.some((item) => item.id === "rs_original" || item.id === "msg_progress"), false);
+    assert.equal(items.some((item) => item.type === "reasoning"), false, "rejected replay cannot be rebuilt as reasoning input");
   }
   const changed = toResponsesCreateParams(variants[2]).input;
   assert.equal(changed.find((item) => item.role === "assistant").content, "Edited answer.");

@@ -42,6 +42,10 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     await wait(`!document.querySelector('${web}').style.getPropertyValue('--resize-height')`);
   }
   try {
+    // The full Home suite finishes at a narrow breakpoint; resizing columns
+    // requires the same wide layout as this fixture's standalone entry.
+    win.setContentSize(1340,850);
+    await wait('innerWidth===1340');
     win.webContents.debugger.attach();
     await win.webContents.session.cookies.set({url:origin, name:'home_fixture', value:'private', sameSite:'lax'});
     assert.equal(await js("!!document.querySelector('.desktop-library [data-home-action]')"),false,'home opens without editing controls');
@@ -98,6 +102,19 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     assert.equal(await js(`!!document.querySelector('${web} .component-embed-bar')`),false);
     await website.executeJavaScript('document.querySelector("a").click()');
     await poll(() => website.getURL().endsWith('/next'), 'same-site links work in the website card');
+    await poll(()=>website.executeJavaScript('document.readyState==="complete" && !!document.querySelector("button")'),'linked website ready');
+    await website.executeJavaScript('document.querySelector("button").click();void 0');
+    const loaded=requests.length;
+    for (const section of ['assistant','chat']) {
+      await click('[data-nav-section='+section+']');
+      await wait("document.querySelector('[data-desktop-page=overview]')?.dataset.pageVisible==='false'");
+      assert.equal(website.isDestroyed(),false,'standalone website remains live behind '+section);
+      await click('[data-nav-section=home]');
+      await wait("document.querySelector('[data-desktop-page=overview]')?.dataset.pageVisible==='true'");
+      assert.equal(website.getURL(),origin+'/next','return preserves in-page navigation instead of reopening the configured URL');
+      assert.equal(await website.executeJavaScript('document.querySelector("button").textContent'),'7','standalone website keeps its document state');
+      assert.equal(requests.length,loaded,'switching sections does not request the standalone website again');
+    }
     assert.equal(requests[0].referer, undefined);
     assert.ok(requests.every(request => !request.cookie));
     await js(`document.querySelector('${html}').scrollIntoView()`);
@@ -129,7 +146,7 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     await click(done);
     await visible('.home-board[data-editing=false]');
     assert.equal(await js("!!document.querySelector('.desktop-library [data-home-action]')"),false);
-    console.log('Editable Home passed: native visibility, drag/button ordering, sizes, real web navigation, HTML interaction, sandbox and reload.');
+    console.log('Editable Home passed: native visibility, drag/button ordering, sizes, retained website URL/state across Assistant/chat, HTML interaction, sandbox and reload.');
   } finally {
     win.webContents.debugger.detach();
     site.closeAllConnections();

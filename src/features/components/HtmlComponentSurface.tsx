@@ -26,7 +26,7 @@ export function HtmlComponentSurface(props: SurfaceProps) {
 function ComponentDisplay(props: SurfaceProps) {
   const host = useContext(HtmlComponentContext);
   const [showComponent, setShowComponent] = useState(false);
-  const canBrowse = props.onHome && props.active !== false && !props.eventPage && !!window.cardbushDesktop?.homeComponentLibrary;
+  const canBrowse = props.onHome && !props.eventPage && !!window.cardbushDesktop?.homeComponentLibrary;
   const saved = approvedWebsiteUrl(props.component.homeWebsiteUrl, approvedEmbedOrigins(props.component));
   if (canBrowse && host && saved && !showComponent) return <HomeWebsiteView url={saved} back={() => setShowComponent(true)} open={host.openBrowser}/>;
   return <ComponentFrame {...props} browsers={Boolean(canBrowse)}/>;
@@ -37,7 +37,9 @@ function ComponentFrame({ component, active = true, eventPage, onHome = false, o
   const page = useRef(eventPage); page.current = eventPage;
   const visible = useRef(active); visible.current = active;
   const [error, setError] = useState(''), loads = useRef(0), mounted = useRef(true);
-  const liveHome = onHome && active && !eventPage;
+  // Visibility gates bridge requests, not document capabilities or identity.
+  // Otherwise switching away changes the token/srcDoc and destroys live media.
+  const liveHome = onHome && !eventPage;
   const sites = liveHome ? approvedOrigins(component).join(' ') : '';
   const embeds = liveHome ? approvedEmbedOrigins(component).join(' ') : '';
   const resources = componentOrigins(component.resourceDomains).join(' ');

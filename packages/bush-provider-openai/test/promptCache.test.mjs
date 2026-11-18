@@ -6,6 +6,7 @@ import { OpenAIResponsesProvider, OpenAIChatCompletionsProvider, AnthropicMessag
   toResponsesInputTokenCountParams, toChatCompletionsParams, toAnthropicMessagesParams } from '../dist/index.js';
 import { responsesInputFingerprint } from '../dist/responsesInputFingerprint.js';
 import { imageFixture, png } from '../../bush-runtime/test/helpers/modelImages.mjs';
+import { legacySearchCatalog } from './legacySearchCatalog.mjs';
 
 const ARK = 'https://ark.cn-beijing.volces.com/api/v3';
 const request = (extra = {}) => modelRequestSchema.parse({ protocol: 'bush.model_request.v1', requestId: 'request-1',
@@ -88,14 +89,17 @@ for (const [Provider, response] of [[OpenAIResponsesProvider, completed], [OpenA
 test('Responses compatibility fallback keeps the routing key and usage points to the successful dispatch', async t => {
   const wires = [];
   const provider = new OpenAIResponsesProvider({ apiKey: 'fixture', baseURL: ARK, fetch: async (_url, init) => {
-    wires.push(JSON.parse(init.body));
-    return wires.length === 1 ? Response.json({ error: { message: 'Unknown tool type: tool_search', code: 'unsupported_value' } }, { status: 400 }) : completed();
+    const body = JSON.parse(init.body);
+    wires.push(body);
+    return body.tools?.some(tool => tool.type === 'tool_search')
+      ? Response.json({ error: { message: 'Unknown tool type: tool_search', code: 'unsupported_value' } }, { status: 400 })
+      : completed();
   } });
   const registry = new ToolRegistry();
   const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, registerDefaultWorkspaceTools: false });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
-  const terminal = await host.runSessionTurn({ ...turn(), tools: registry.definitions() });
-  assert.equal(terminal.payload.status, 'completed');
+  const terminal = await host.runSessionTurn({ ...turn(), tools: legacySearchCatalog(registry) });
+  assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
   assert.equal(wires.length, 2);
   assert.deepEqual(wires.map(body => body.tools.some(tool => tool.type === 'tool_search')), [true, false]);
   assert.equal(wires[0].prompt_cache_key, wires[1].prompt_cache_key);

@@ -187,6 +187,8 @@ export type QueuedChatMessage = {
   createdAt: string;
   teamId?: string;
   teamName?: string;
+  modelId?: string;
+  reasoningLevel?: ReasoningLevel;
 };
 
 export function useCardbushChat(
@@ -2397,8 +2399,13 @@ export function useCardbushChat(
   const sendMessage = useCallback(
     async (text: UserPromptInput, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string, sourceSnapshot?: boolean, queuedDelivery?: { item: QueuedChatMessage; automatic: boolean }, onAccepted?: () => void) => {
       // Capture the target conversation before attachment preparation can yield.
-      const turnModel = resolveConversationModelId(availableModels, queuedConversation?.id ?? activeConversationId, backend.scope, defaultModelId);
-      const turnReasoningLevel = resolveModelReasoningEffort(modelConfigFor(managedModelConfigs, turnModel) ?? {}) ?? 'default';
+      const queuedModel = queuedDelivery?.item.modelId;
+      if (queuedModel && !availableModels.some(config => config.id === queuedModel)) {
+        setError(uiText(languageRef.current)('useCardbushChat.configureAModelInSettingsFirst'));
+        return;
+      }
+      const turnModel = queuedModel ?? resolveConversationModelId(availableModels, queuedConversation?.id ?? activeConversationId, backend.scope, defaultModelId);
+      const turnReasoningLevel = queuedDelivery?.item.reasoningLevel ?? resolveModelReasoningEffort(modelConfigFor(managedModelConfigs, turnModel) ?? {}) ?? 'default';
       const sourceEnabled = sourceSnapshot ?? resolveConversationSource(queuedConversation?.id ?? activeConversation?.id, backend.keepRunningOnUnmount ? undefined : backend.scope);
       const prompt = readUserPrompt(text);
       const trimmed = prompt.text.trim();
@@ -2406,7 +2413,7 @@ export function useCardbushChat(
         return;
       }
       const targetSessionId = queuedConversation?.id ?? activeConversationId;
-      if (targetSessionId && turnModel) selectConversationModel(turnModel, targetSessionId, backend.scope);
+      if (targetSessionId && turnModel && !queuedModel) selectConversationModel(turnModel, targetSessionId, backend.scope);
       const outbound = { ...splitStreamAttachmentMentions(trimmed), promptContext: prompt.context };
       const optimisticAttachments = await chatAttachmentsFromOutbound(outbound, !backend.scope);
       const attachments = streamAttachmentsForVision(
@@ -2468,6 +2475,8 @@ export function useCardbushChat(
           createdAt: new Date().toISOString(),
           teamId: turnTeamId,
           teamName: turnTeamName,
+          modelId: turnModel,
+          reasoningLevel: turnReasoningLevel,
         });
         onAccepted?.();
         return;
@@ -3937,11 +3946,13 @@ export function useCardbushChat(
           setMessagesByConversation((current) =>
             removeOptimisticGuidance(current, conversationId, clientMessageId),
           );
+          setError(null);
           if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
             guidanceFallbackIdsRef.current.add(clientMessageId);
-            await sendMessageRef.current({ text, context: queued.promptContext }, queued.conversation, queued.teamId, queued.teamName, queued.sourceEnabled);
+            setQueuedMessages(current => current.some(item => item.id === queued.id) ? current : [queued, ...current]);
+            await sendMessageRef.current({ text, context: queued.promptContext }, queued.conversation, queued.teamId,
+              queued.teamName, queued.sourceEnabled, { item: queued, automatic: false });
           }
-          setError(null);
           return;
         }
         setMessagesByConversation((current) =>
@@ -3957,6 +3968,7 @@ export function useCardbushChat(
       applyConnectionRecoveryUpdate,
       isSessionSending,
       removeQueuedMessage,
+      queuedMessagesRef,
       requestContext.interactiveRequestsAvailable,
       managedModelConfigs, selectedModel,
       requestContext.terminalRuntime,

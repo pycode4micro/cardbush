@@ -25,6 +25,11 @@ class GenerationTool(StrictModel):
     type: str = Field(description="Official SDK tool type; availability is model/account dependent.")
 
 
+class LayerDecompositionOptions(StrictModel):
+    max_images: int = Field(ge=2, le=100)
+    text_recognition: bool = False
+
+
 class ImageRequest(StrictModel):
     prompt: str = Field(min_length=1, description="Official prompt. Be explicit about text, composition and reference image roles.")
     model: str | None = Field(None, description="Official model ID or your Ark endpoint ID. Defaults to SEEDREAM_MODEL or Seedream 5.0 Pro.")
@@ -41,6 +46,7 @@ class ImageRequest(StrictModel):
     sequential_image_generation_options: SequentialOptions | None = None
     tools: list[GenerationTool] | None = None
     layer_decomposition: bool | None = Field(None, description="Official SDK layer decomposition flag; retain every returned layer and its metadata.")
+    layer_decomposition_options: LayerDecompositionOptions | None = None
     stream: bool | None = Field(None, description="Pro does not support stream=true; this adapter handles JSON responses only.")
     extra_body: dict[str, Any] = Field(default_factory=dict, description="Explicit forward-compatible official JSON fields; cannot overwrite declared fields. Provider validates new fields.")
 

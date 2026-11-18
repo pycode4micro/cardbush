@@ -99,6 +99,41 @@ test('explicit generation feature rejections fall back once with original diagno
   });
 });
 
+test('a late compatibility rejection from the old revision does not downgrade the new revision of the same model', async t => {
+  const oldStarted = Promise.withResolvers(), releaseOld = Promise.withResolvers();
+  const f = await fixture(t, async (_body, route, count) => {
+    if (count !== 1) return {};
+    assert.equal(route, '/v1/responses');
+    oldStarted.resolve();
+    await releaseOld.promise;
+    return { status: 400, error: { code: 'unsupported_parameter', param: 'store', message: 'Unsupported parameter: store' } };
+  });
+  t.after(releaseOld.resolve);
+  const providers = new ModelProviderRegistry({ capabilityStore: f.store });
+  const oldConfig = { protocol: 'bush.provider_binding_config.v1', bindingId: 'model-selection', adapter: 'openai_responses',
+    apiKey: f.config.apiKey, baseURL: f.config.baseURL };
+  const oldBinding = providers.upsert(oldConfig).binding;
+  const run = (providerBinding, suffix) => executeModelRound(providers, request({ providerBinding,
+    sessionId: suffix, requestId: suffix, providerState: { strategy: 'response_chain' } }));
+  const old = run(oldBinding, 'old');
+  await Promise.race([oldStarted.promise, old.then(() => assert.fail('the old request never reached the test endpoint'))]);
+  const nextBinding = providers.upsert({ ...oldConfig, baseURL: oldConfig.baseURL.replace('/v1', '/v2') }).binding;
+  try {
+    const next = await run(nextBinding, 'next');
+    assert.equal(next.status, 'completed');
+    assert.equal(next.providerReplay.data.compatibilityMode, undefined);
+  } finally { releaseOld.resolve(); }
+  const recovered = await old;
+  assert.equal(recovered.status, 'completed');
+  assert.equal(recovered.providerReplay.data.compatibilityMode, true);
+  assert.equal((await run(nextBinding, 'next-again')).status, 'completed');
+  assert.equal((await run(oldBinding, 'old-again')).status, 'completed');
+  assert.deepEqual(f.calls.map(call => [call.path, call.body.store, native(call.body)]), [
+    ['/v1/responses', true, true], ['/v2/responses', true, true], ['/v1/responses', false, false],
+    ['/v2/responses', true, true], ['/v1/responses', false, false],
+  ]);
+});
+
 test('a failed compatible retry preserves both errors, never loops, and stays provisional', async t => {
   let now = 0;
   const store = new InMemoryProviderCapabilityStore({ now: () => now, ttlMs: 1000 });
