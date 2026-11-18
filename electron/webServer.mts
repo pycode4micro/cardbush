@@ -255,6 +255,9 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       const conversation = await store.conversation(user.id, sessionId);
       const readKey = `${user.id}:${sessionId}:`;
       if (method !== 'GET') reads.invalidate(readKey);
+      if (action === 'solutions' && method === 'GET' && url.searchParams.get('scope') === 'remote') {
+        json(response, 200, await remoteQuestions?.read(user.id, sessionId) ?? { items: [], unavailable: false }); return;
+      }
       // Account authorization and ownership are settled before runtime startup.
       const agent = await agents.get(user.id);
       abort.signal.throwIfAborted();
@@ -322,7 +325,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       if (action === 'solutions' && method === 'GET') {
         const [local, remote] = await Promise.all([
           agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } }),
-          remoteQuestions?.list(user.id, sessionId) ?? [],
+          url.searchParams.get('scope') === 'local' ? [] : remoteQuestions?.read(user.id, sessionId).then(result => result.items).catch(() => []) ?? [],
         ]);
         json(response, 200, [...local as unknown[], ...remote]); return;
       }

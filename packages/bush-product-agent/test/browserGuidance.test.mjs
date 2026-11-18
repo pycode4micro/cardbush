@@ -8,13 +8,13 @@ test('root and inherited child prompts use local first-use consent and reserve c
     permissionMode: 'task_free', planEnabled: false });
   for (const messages of [request.prefixMessages, request.metadata.subagentChildPrefixMessages]) {
     const prompt = messages.map(message => message.content).join('\n');
-    assert.match(prompt, /Local Chrome\/Edge first connects through user consent in the system dialog and extension, without pairing codes/);
-    assert.match(prompt, /App\/CLI share persistent connections and reconnect automatically/);
-    assert.match(prompt, /Chrome\/Edge does not require the desktop App/);
-    assert.match(prompt, /\/browser pair chrome or \/browser pair edge only for manual or remote Agent pairing/);
+    assert.match(prompt, /Local Chrome\/Edge first connects via user consent in the system dialog and extension, no pairing codes/);
+    assert.match(prompt, /App\/CLI share persistent connections and auto-reconnect/);
+    assert.match(prompt, /auto-reconnect without the desktop App/);
+    assert.match(prompt, /\/browser pair chrome or \/browser pair edge is for manual\/remote pairing only/);
     assert.match(prompt, /remote Agents connect separately/);
-    assert.match(prompt, /Never approve consent for the user or ask for pairing codes, including after temporary disconnects/);
-    assert.match(prompt, /Integrated CardBush tabs need a running desktop bridge, but no extension or pairing/);
-    assert.match(prompt, /Respect session boundaries and the user's browser\/profile choice; unavailable targets need re-selection/);
+    assert.match(prompt, /Never approve consent or ask for codes, even after disconnects/);
+    assert.match(prompt, /CardBush tabs need a desktop bridge, no extension\/pairing/);
+    assert.match(prompt, /Respect session\/browser\/profile choice; unavailable targets need re-selection/);
   }
 });

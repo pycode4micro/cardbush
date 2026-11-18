@@ -28,7 +28,27 @@ app.whenReady().then(async () => {
     await until("document.querySelector('#unavailable').textContent==='true'");
     await read("window.fail=false;window.switchSession('one');undefined");
     await until("document.body.textContent.includes('Another question') && document.querySelector('#unavailable').textContent==='false'");
-    assert.ok(await read("window.calls.every(c=>c.url.endsWith('/solutions'))"));
+    await read("window.remoteOffline=true;window.dispatchEvent(new Event('focus'));undefined");
+    await until("document.querySelector('#remote-unavailable').textContent==='true'");
+    assert.equal(await read("document.querySelector('#unavailable').textContent"), 'false');
+    assert.equal(await read("document.querySelectorAll('[role=alert]').length"), 0);
+    assert.ok(await read("document.querySelector('[role=status]').textContent.includes('Local chat remains available')"));
+    await read("window.setLanguage('zh');undefined");
+    await until("document.querySelector('[role=status]').textContent.includes('本地对话可继续')");
+    await read("window.setLanguage('en');undefined");
+    await until("document.querySelector('[role=status]').textContent.includes('Local chat remains available')");
+    await read("window.remoteStall=true;window.dispatchEvent(new Event('focus'));undefined");
+    await until('window.releaseRemote');
+    await read("window.localQuestions=[{selectionId:'local-question',sessionId:'one',turnId:'parent-turn',toolCallId:'ask-local',createdAt:new Date().toISOString(),prompt:'Local question while worker is stalled',options:[]}];window.dispatchEvent(new Event('focus'));undefined");
+    await until("document.body.textContent.includes('Local question while worker is stalled')");
+    await read(`(()=>{const n=document.querySelector('.solution-selection-card textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(n,'Continue locally');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await until("!document.querySelector('.solution-selection-card button[type=submit]').disabled");
+    await read("document.querySelector('.solution-selection-card form').requestSubmit();undefined");
+    await until("!document.querySelector('.solution-selection-card') && window.answer.selectionId==='local-question'");
+    assert.equal(await read('window.calls.filter(c=>c.body).length'), 2);
+    await read("window.remoteStall=false;window.remoteOffline=false;window.releaseRemote();undefined");
+    await until("document.querySelector('#remote-unavailable').textContent==='false' && document.body.textContent.includes('Another question')");
+    assert.ok(await read("window.calls.every(c=>c.url.includes('/solutions'))"));
     console.log('Questions UI passed: idle-stream arrival, free-text answer once, session isolation and reconnect.');
   } finally { clearTimeout(deadline); win.destroy(); }
   app.exit(0);

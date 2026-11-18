@@ -4,14 +4,14 @@
     "slots": [
       "conversationStyleInstructions"
     ],
-    "sha256": "32bf0c57c23d78efa969b99df97181d2985bd455107353c486035a40e8f0667c"
+    "sha256": "159fb9a7c82cc7ab143876af1513d9b1afe45e1a7676864beaed521e7cf282b9"
   },
   {
     "name": "local-deliverable-instructions",
     "slots": [
       "reportDeliveryInstructions"
     ],
-    "sha256": "d79db3d0eacd7f2a97e95e053d5b85ebdcc15b77803e724c5617ddd5ce67fa02"
+    "sha256": "462822c8acbd7a721b453399aff931982cf07111aac17caf690187de61b27647"
   },
   {
     "name": "root-agent-system-prompt",
@@ -21,7 +21,7 @@
       "finalResponseSignalInstructions",
       "localDeliverableInstructions"
     ],
-    "sha256": "4063a6e7027c903cd49dd26ef203c6459f09d79762c24ffcaa44a18582bd99d4"
+    "sha256": "337e41239c0118dcd528ca17ee990e795f5dd5d888b0347732585a43070d3ccc"
   },
   {
     "name": "goal-continuation-prompt",
@@ -36,7 +36,7 @@
   {
     "name": "report-conversation-policy",
     "slots": [],
-    "sha256": "8e6060c791fd094493200ccdba8157731f64bb4bd2c4144edd2c02cd513fdd9c"
+    "sha256": "a025a9863d1592c2a89ecd34940d184dee7e367b8d8913e7347f69640504a126"
   },
   {
     "name": "report-delivery-instructions",
@@ -58,7 +58,7 @@
   {
     "name": "checkpoint-continuation-instructions",
     "slots": [],
-    "sha256": "63d5933e5fe842f9b076c08379f54c2cf1e0d284669abb55419d07b854695ead"
+    "sha256": "45c993d5d9d39499188c211e449675b7e97bb6cdc0c89829ed84af8e4692fc9d"
   },
   {
     "name": "final-response-signal-instructions",
@@ -83,7 +83,7 @@
       "host",
       "eventPolicy"
     ],
-    "sha256": "d62f9048d89efb708be71eac6ea0717d4381163c4cb3224d30943577aaa18c5f"
+    "sha256": "042f20e281919dcc4f806cec4fcbcedd4d41a404412c81d1615bd318e9998b7a"
   },
   {
     "name": "assistant-events-enabled",
@@ -103,7 +103,7 @@
   {
     "name": "assistant-report",
     "slots": [],
-    "sha256": "bc21ea51d65ea87af6895cfa322d2e2aad6c05ba14e467dfce80b3929807e15a"
+    "sha256": "04cd4620f8ea7b68ea6526083bffdec6748802445b17ff1f72145018d8f85626"
   },
   {
     "name": "assistant-execution",
@@ -113,7 +113,7 @@
   {
     "name": "assistant-management",
     "slots": [],
-    "sha256": "556638d687cee32fd182e16d6b017d3f413248d5c48dcc2e23c407f3847437a0"
+    "sha256": "62a0bbbf802fa7f65624ee17c58555187243eae1c7354ba7927c99087e0aa1dc"
   },
   {
     "name": "tone-natural",
@@ -195,7 +195,7 @@
     "slots": [
       "reportConversationPolicy"
     ],
-    "sha256": "9cc474e5834955ba5a9b58f7b8b41c235bce7ef86705e88f7e785f6e34e488d1"
+    "sha256": "cc349ec26a3fde4f5c34aaa184fd1252b6469575788c3b1fc971e6696eab1377"
   },
   {
     "name": "subagent-name-description",
@@ -205,14 +205,14 @@
   {
     "name": "friends-bridge-delivery",
     "slots": [],
-    "sha256": "e542429d8f0b4870d04956d1ba0810dbad2d484519714966522e7770f6de5df4"
+    "sha256": "7996d1c5e91129dfb32a70c193bad33a7dd118e8a99860ab54bbea00b675e143"
   },
   {
     "name": "friends-system",
     "slots": [
       "reportConversationPolicy"
     ],
-    "sha256": "c20dfff8055d99d8b205394f3e4364fee0ed1467ad1240ac8bfdd795e28094ef"
+    "sha256": "525b757a951aebf33d7e1e6967c59e91362c71b5f75f2af9b7cefcf399844869"
   },
   {
     "name": "friends-startup",
@@ -222,12 +222,12 @@
   {
     "name": "tool-display-instructions",
     "slots": [],
-    "sha256": "9b021374b6f58fe730bf23a050b595d90243b44d03aae66ad7f67458542e8745"
+    "sha256": "46a52c735b5f67fe837c6280ad83a2bf2fba536b73929ceb358edaaa28df4879"
   },
   {
     "name": "coordination-tool-boundaries",
     "slots": [],
-    "sha256": "037938fc4f312244da892feac8a7cf126b8082d6a6e6a67d97236688055137d5"
+    "sha256": "3e63c9be22cc7d1d4abbb4af777a64d146a6fca9cdaceffaab55032e1f888a0c"
   },
   {
     "name": "runtime-environment-observation",

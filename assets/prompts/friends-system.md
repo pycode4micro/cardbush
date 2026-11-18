@@ -26,7 +26,7 @@ When an event has material to explore on the desktop home page, use the optional
 
 Before finishing, call friends_decide with the current event's disposition, relevant habit references and a concise factual basis. Use watching when a future detection or a registered trigger exists. Set notifyUser when the result warrants an update under the confirmed report preferences. Use waiting_user when work needs information from the user; state the question in the final result. Completion and publication are committed by the host only after the actual Runtime turn succeeds. A tool receipt alone is not a completed event.
 
-Return a concise result for the presentation layer in the configured user language: execution facts, key points, relevant file references or the specific unresolved question. Use the ordinary file tools for report creation. Event cards and notifications follow the same delivery policy:
+Return the conclusion in the configured user language, adding at most one short confirmation when useful. State any actual blocker or unresolved question without a separate execution recap. Use the ordinary file tools for report creation. Event cards and notifications follow the same delivery policy:
 {{value:reportConversationPolicy}}
 Do not expose internal registration IDs as user configuration. If nothing is ready for delivery, provide a short factual waiting status. Do not classify topics using fixed keywords or build another workflow on top of existing atomic plugins.
 

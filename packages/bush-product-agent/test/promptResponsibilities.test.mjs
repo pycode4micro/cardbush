@@ -3,6 +3,7 @@ import { RuntimeTaskTools } from '../../bush-runtime/dist/taskTools.js';
 import { registerBuiltinToolDisclosure } from '../../bush-runtime/dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { ROOT_AGENT_SYSTEM_PROMPT, CHILD_AGENT_SYSTEM_PROMPT } from '../dist/index.js';
 import {
   ToolRegistry, CoordinationStore, SubagentTaskStore, registerCoordinationTools,
@@ -53,11 +54,24 @@ test('system policy keeps cross-tool obligations without a second tool manual', 
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Deliver every report, including research and backtests, as a verified file in the requested format/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Never paste, embed or read aloud a report body in any conversation, at any stage/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /progress, tool loops, child handoffs, notifications, chat pages, voice, webhooks and final replies/);
-  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /only key findings, status or blockers and a verified file link or attachment/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /By default, share at most eight short lines of essential findings and relevant blockers, plus a verified file link or attachment/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Link HTML reports as files/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /After file verification, call summary_for_user alone/);
   assert.match(ROOT_AGENT_SYSTEM_PROMPT, /Prefer task_id for the same assignment; agent_id starts fresh/);
-  assert.doesNotMatch(ROOT_AGENT_SYSTEM_PROMPT, /mcp_search|read_archived_tool_result|edit_file|terminal_poll|completion_notification|context_pressure|solution_selection|await_subagents|resume_task_id|_display_title|run_skill|update_goal|system_prompt/);
+  const invocationDetails = /mcp_search|read_archived_tool_result|edit_file|terminal_poll|completion_notification|context_pressure|solution_selection|await_subagents|resume_task_id|_display_title|run_skill|update_goal|system_prompt/g;
+  let generalPolicy = ROOT_AGENT_SYSTEM_PROMPT;
+  for (const [name, ownedFields] of [
+    ['tool-display-instructions', ['_display_title']],
+    ['coordination-tool-boundaries', ['system_prompt']],
+  ]) {
+    const policy = renderPromptTemplate(name);
+    assert.equal(generalPolicy.split(policy).length, 2, `${name} is injected exactly once`);
+    assert.deepEqual(policy.match(invocationDetails), ownedFields, `${name} owns only its cross-tool field guidance`);
+    generalPolicy = generalPolicy.replace(policy, '');
+  }
+  assert.doesNotMatch(generalPolicy, invocationDetails, 'invocation manuals must not leak into the remaining system policy');
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /New clean children need mode=clean and non-empty system_prompt for the role; prompt holds the task/);
+  assert.match(ROOT_AGENT_SYSTEM_PROMPT, /configuration fields are hidden, read get_tool_schema and use its invocation before selecting clean/);
 });
 
 test('maintenance and discovery retain their authorization and evidence boundaries', () => {
@@ -99,8 +113,12 @@ test('execution-specific guidance is discoverable on the tool or its parameter',
   assert.match(tool('terminal_exec').inputSchema.properties.notify_on_exit.description, /Set false for persistent servers/);
   assert.match(tool('start_mcp_tool').description, /documented pending\/timeout path\/value/);
   assert.match(tool('await').description, /Cancellation stops observation only/);
-  const title = tool('terminal_exec').inputSchema.properties._display_title;
-  assert.match(title.description, /Bilingual UI action purpose/);
+  const presented = tool('terminal_exec');
+  const title = presented.inputSchema.properties._display_title;
+  assert.match(title.description, /Brief UI action purpose in the user’s current language/);
   assert.match(title.description, /outer call only, never third-party arguments/);
-  assert.deepEqual(title.required, ['zh', 'en']);
+  assert.equal(title.type, 'string');
+  assert.equal(title.properties, undefined, 'do not request a second language');
+  assert.equal(title.required, undefined, 'there is no nested bilingual object');
+  assert.ok(presented.inputSchema.required.includes('_display_title'), 'the outer action still requires its title');
 });

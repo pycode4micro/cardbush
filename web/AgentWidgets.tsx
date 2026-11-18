@@ -71,7 +71,7 @@ export function UploadButton({ upload }: { upload: ReturnType<typeof useAttachme
   return <><input ref={input} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.txt,.md,.csv,.tsv,.json,.log,.pdf,.docx,.xlsx,.pptx,.mp4,.m4v,.mov,.webm,.mp3,.wav,.ogg,.m4a" onChange={event => { void upload.add(Array.from(event.target.files ?? [])); event.target.value = ''; }}/><button className="icon-button" type="button" aria-label={uiText(language)("web.uploadImagesOrFiles")} title={uiText(language)("web.largeImagesAreOptimizedAutomaticallyDocumentsMustBeUnder16MbVideo")} disabled={upload.busy} onClick={() => input.current?.click()}><Paperclip size={18}/></button></>;
 }
 export type Solution = RuntimeSolutionSelection;
-export function Solutions({ items, refresh }: { items: Solution[]; refresh: () => Promise<void> }) {
+export function Solutions({ items, refresh }: { items: Solution[]; refresh: (selectionId?: string) => Promise<void> }) {
   const language = useUiLanguage();
 
   return <>{items.map(item => {
@@ -80,9 +80,9 @@ export function Solutions({ items, refresh }: { items: Solution[]; refresh: () =
     return <SolutionSelectionCard key={JSON.stringify([item.sessionId, item.selectionId])} language={language} interaction={interaction}
       onReply={async answers => {
         const { sessionId: _, ...answer } = solutionInteractionAnswer(interaction, answers);
-        await api(`/sessions/${item.sessionId}/solutions`, 'POST', answer); await refresh();
+        await api(`/sessions/${item.sessionId}/solutions`, 'POST', answer); await refresh(item.selectionId);
       }} onCancel={async () => {
-        await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh();
+        await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh(item.selectionId);
       }}/>;
   })}</>;
 }

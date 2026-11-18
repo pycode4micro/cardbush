@@ -4495,6 +4495,7 @@
     "web.transferMessageLimit": "Each message supports up to 4 images and 2 GB of attachments.",
     "web.mediaFileTooLarge": "Media exceeds 2 GB. Split the file before uploading.",
     "web.remoteQuestionsUnavailable": "Pending questions are temporarily unavailable. Reconnecting; existing tasks are preserved. Do not submit the task again.",
+    "web.remoteQuestionsOffline": "A remote assistant is temporarily unavailable. Local chat remains available; remote questions will sync when the connection recovers.",
     "web.remoteQuestionNotPending": "This question has already been answered or closed. Refresh the conversation for its current state.",
     "web.remoteQuestionAnswerInProgress": "An answer to this question is being submitted. Please wait.",
     "web.remoteQuestionIdentityChanged": "The remote Agent identity has changed. Ask an administrator to check the connection.",

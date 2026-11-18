@@ -6,6 +6,7 @@ import { AttachmentDrafts, Solutions, UploadButton, useAttachments, type Attachm
 import { NativeTranscript } from './NativeTranscript';
 import { isSessionServiceFailure, recoverSessionSubmission, sessionServiceError } from './sessionService';
 import { SessionConnectionStatus } from './templates/SessionConnectionStatus.template';
+import { SolutionConnectionStatus } from './templates/SolutionConnectionStatus.template';
 import { applyTranscriptEvent, writeLiveSegment, type LiveTranscript } from './transcript';
 import { observeConversationReflow } from '../src/features/chat/conversationReflow';
 import { ScrollBottomButton } from '../src/features/chat/ScrollBottomButton';
@@ -334,7 +335,7 @@ function Workspace({ identity, logout, externalError }: { identity: Identity; lo
         <div className="message-column">{state?.history?.nextCursor && <button className="load-older-messages" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? uiText(language)("common.loading") : uiText(language)("web.loadEarlierMessages")}</button>}<NativeTranscript state={state} live={live} selected={selected} submitting={submitting} connectionUnavailable={reconnecting || Boolean(connectionError)} modelName={identity.models.find(item => item.id === model)?.name ?? model} onError={setError} onRetry={text => { setDraft(text); editor.current?.focus(); }}>
           {compacting && <div className="status-line"><span className="loading-dot"/>{uiText(language)("web.compactingContextTheConversationWillContinue")}</div>}
           <Solutions items={solutions.items ?? state?.solutions ?? []} refresh={solutions.refresh}/>
-          {solutions.unavailable && <p className="form-error" role="alert">{uiText(language)('web.remoteQuestionsUnavailable')}</p>}
+          <SolutionConnectionStatus localUnavailable={solutions.unavailable} remoteUnavailable={solutions.remoteUnavailable}/>
         </NativeTranscript></div>
       </div><ScrollBottomButton language={language} visible={scrollBottomVisible} onClick={jumpToBottom}/></div><div className="composer-area">{error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label={uiText(language)("chatStatusViews.dismissNotification")} onClick={() => setError('')}><X size={15}/></button></div>}{(loading || reconnecting || connectionError) && <SessionConnectionStatus
           phase={connectionError ? 'failed' : loading ? 'starting' : 'reconnecting'}

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RuntimeSolutionSelection } from '@cardbush/bush-protocol';
 import { api } from './api';
 
-/** Questions can arrive while the parent's SSE is idle in await_subagents.
- * Poll only this small resource; never reload the transcript or replay a task. */
-export function useConversationSolutions(sessionId: string | null) {
-  const [state, setState] = useState<{ sessionId: string; items: RuntimeSolutionSelection[]; unavailable: boolean }>();
+type Read = { items: RuntimeSolutionSelection[]; unavailable: boolean };
+
+/** Independent requests and timers keep an offline worker from delaying local questions. */
+function useQuestionRead(sessionId: string | null, scope: 'local' | 'remote') {
+  const [state, setState] = useState<Read & { sessionId: string }>();
   const trigger = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     if (!sessionId) { trigger.current = async () => {}; return; }
@@ -13,11 +14,12 @@ export function useConversationSolutions(sessionId: string | null) {
     let pending: Promise<void> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
     const read = () => {
       if (pending) return pending;
-      pending = api<RuntimeSolutionSelection[]>(`/sessions/${sessionId}/solutions`, 'GET', undefined,
+      pending = api<RuntimeSolutionSelection[] | Read>(`/sessions/${sessionId}/solutions?scope=${scope}`, 'GET', undefined,
         AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
-        .then(items => {
-          if (!controller.signal.aborted) setState(prior => prior?.sessionId === sessionId && !prior.unavailable && JSON.stringify(prior.items) === JSON.stringify(items)
-            ? prior : { sessionId, items, unavailable: false });
+        .then(result => {
+          const next = Array.isArray(result) ? { items: result, unavailable: false } : result;
+          if (!controller.signal.aborted) setState(prior => prior?.sessionId === sessionId && prior.unavailable === next.unavailable && JSON.stringify(prior.items) === JSON.stringify(next.items)
+            ? prior : { sessionId, ...next });
         }).catch(() => {
           if (!controller.signal.aborted) setState(prior => ({ sessionId, items: prior?.sessionId === sessionId ? prior.items : [], unavailable: true }));
         }).finally(() => { pending = undefined; });
@@ -38,8 +40,22 @@ export function useConversationSolutions(sessionId: string | null) {
     window.addEventListener('focus', focus);
     void poll();
     return () => { controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); };
-  }, [sessionId]);
+  }, [sessionId, scope]);
   return { items: state?.sessionId === sessionId ? state.items : undefined,
     unavailable: state?.sessionId === sessionId && state.unavailable,
     refresh: useCallback(() => trigger.current(), []) };
+}
+
+export function useConversationSolutions(sessionId: string | null) {
+  const local = useQuestionRead(sessionId, 'local');
+  const remote = useQuestionRead(sessionId, 'remote');
+  return {
+    items: local.items || remote.items ? [...local.items ?? [], ...remote.items ?? []] : undefined,
+    unavailable: local.unavailable,
+    remoteUnavailable: remote.unavailable,
+    refresh: useCallback(async (selectionId?: string) => {
+      if (selectionId) await (selectionId.startsWith('remote_solution_') ? remote.refresh() : local.refresh());
+      else await Promise.all([local.refresh(), remote.refresh()]);
+    }, [local.refresh, remote.refresh]),
+  };
 }

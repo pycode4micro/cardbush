@@ -1,0 +1,392 @@
+--- a/electron/webRemoteQuestions.mts
++++ b/electron/webRemoteQuestions.mts
+@@ -1,6 +1,6 @@
+ import { runtimeSolutionSelectionSchema, type RuntimeSolutionAnswer, type RuntimeSolutionSelection } from './webSolutionSelection.mjs';
+ import type { AgentJob } from './agentTypes.js';
+-import { remoteIdentity, type WebRemoteAgents } from './webRemoteAgents.mjs';
++import { remoteIdentity, type RemoteClient, type WebRemoteAgents } from './webRemoteAgents.mjs';
+ import { WebError } from './webCommon.mjs';
+ import { WebReadCache } from './webSessionReads.mjs';
+ import { uiText } from '@cardbush/platform/i18n';
+@@ -12,39 +12,80 @@
+  * authority: no duplicated wait, model request, task submission or stored answer. */
+ export class WebRemoteQuestions {
+   readonly #reads = new WebReadCache();
++  readonly #availableReads = new WebReadCache();
+   readonly #answers = new Map<string, { value: string; result: Promise<RuntimeSolutionAnswer> }>();
+-  constructor(readonly registry: WebRemoteAgents) {}
++  constructor(readonly registry: WebRemoteAgents, readonly timeoutMs = 4_000) {}
+   owns(selectionId: string) { return selectionId.startsWith(prefix); }
+   #key(user: string, session: string) { return JSON.stringify([user, session]); }
+   #owner(user: string, session: string) { return 'webparent_' + remoteIdentity(this.registry.secret, user, session); }
+ 
+-  async #pending(user: string, session: string): Promise<Pending[]> {
++  async #source(user: string, session: string, connectionId: string, signal: AbortSignal): Promise<Pending[]> {
+     const owner = this.#owner(user, session), pending: Pending[] = [];
+-    // Bound SSH fan-out and never query connections the account cannot use.
+-    for (const entry of await this.registry.list(user)) {
+-      const connection = await this.registry.authorized(user, entry.id);
+-      const client = await this.registry.clientFactory(connection);
++    let client: RemoteClient | undefined;
++    const load = async () => {
++      signal.throwIfAborted();
++      const connection = await this.registry.authorized(user, connectionId);
++      signal.throwIfAborted();
++      client = await this.registry.clientFactory(connection);
+       try {
+-        const info = await client.info();
++        // A factory may finish after the deadline; never leak its SSH client.
++        signal.throwIfAborted();
++        const info = await client.info(signal);
+         if (info.id !== connection.agentId || !info.capabilities.delegation) throw new WebError(409, uiText()('web.remoteQuestionIdentityChanged'));
+-        const jobs = await client.call('chat.jobs', {}) as AgentJob[];
++        const jobs = await client.call('chat.jobs', {}, signal) as AgentJob[];
+         const owned = jobs.filter(job => ['running', 'queued'].includes(job.status) && job.delegation?.parentSessionId === owner);
+         for (const job of owned) {
+           // Job ownership is assigned by delegation.submit, never by the browser.
+           // Avoid downloading a potentially large private transcript just to poll.
+-          const questions = await client.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId: job.sessionId } }) as unknown[];
++          const questions = await client.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId: job.sessionId } }, signal) as unknown[];
+           for (const raw of questions) {
+             const remote = runtimeSolutionSelectionSchema.parse(raw);
+             if (remote.sessionId !== job.sessionId || remote.turnId !== job.turnId) continue;
+-            const identity = remoteIdentity(this.registry.secret, user, session, entry.id, job.id, remote.selectionId);
+-            pending.push({ connectionId: entry.id, job, remote, question: { ...remote,
++            const identity = remoteIdentity(this.registry.secret, user, session, connectionId, job.id, remote.selectionId);
++            pending.push({ connectionId, job, remote, question: { ...remote,
+               selectionId: prefix + identity, sessionId: session, turnId: 'remote_turn_' + identity, toolCallId: 'remote_question_' + identity } });
+           }
+         }
+-        await this.registry.authorized(user, entry.id);
++        await this.registry.authorized(user, connectionId);
++        signal.throwIfAborted();
++        return pending;
+       } finally { client.close(); }
++    };
++    let abort = () => {};
++    const deadline = new Promise<never>((_, reject) => {
++      abort = () => { client?.close(); reject(signal.reason); };
++      if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
++    });
++    try { return await Promise.race([load(), deadline]); }
++    finally { signal.removeEventListener('abort', abort); }
++  }
++
++  async #pending(user: string, session: string, selectionId?: string): Promise<Pending[]> {
++    const pending: Pending[] = [];
++    let unavailable = false;
++    for (const entry of await this.registry.list(user)) {
++      try { pending.push(...await this.#source(user, session, entry.id, AbortSignal.timeout(this.timeoutMs))); }
++      catch (error) { if (!selectionId) throw error; unavailable = true; }
++      if (selectionId && pending.some(item => item.question.selectionId === selectionId)) return pending;
+     }
++    if (selectionId && unavailable) throw new WebError(503, uiText()('web.remoteQuestionsOffline'));
+     return pending;
++  }
++
++  /** Remote reads have their own bounded queue/deadline. A failing source cannot
++   * fail local questions or other sources, and failed polls are briefly cached. */
++  async read(user: string, session: string) {
++    const signal = AbortSignal.timeout(this.timeoutMs);
++    const connections = await this.registry.list(user);
++    const sources = await Promise.all(connections.map(entry => this.#availableReads.get(
++      this.#key(user, session) + ':' + entry.id, 5_000, async () => {
++        try { return { items: (await this.#source(user, session, entry.id, signal)).map(item => item.question), unavailable: false }; }
++        catch { return { items: [], unavailable: true }; }
++      }).catch(() => ({ items: [], unavailable: true }))));
++    // Revocation also wins over cached results and failures.
++    const allowed = new Set((await this.registry.list(user)).map(entry => entry.id));
++    const current = sources.filter((_, index) => allowed.has(connections[index].id));
++    return { items: current.flatMap(source => source.items), unavailable: current.some(source => source.unavailable) };
+   }
+ 
+   async list(user: string, session: string) {
+@@ -63,7 +104,7 @@
+     }
+     const result = (async () => {
+       // Never trust a client-supplied child ID or a cached ownership decision.
+-      const entry = (await this.#pending(user, answer.sessionId)).find(item => item.question.selectionId === answer.selectionId);
++      const entry = (await this.#pending(user, answer.sessionId, answer.selectionId)).find(item => item.question.selectionId === answer.selectionId);
+       if (!entry || entry.question.turnId !== answer.turnId) throw new WebError(409, uiText()('web.remoteQuestionNotPending'));
+       const connection = await this.registry.authorized(user, entry.connectionId);
+       const client = await this.registry.clientFactory(connection);
+@@ -76,6 +117,6 @@
+     })();
+     this.#answers.set(identity, { value, result });
+     try { return await result; }
+-    finally { this.#answers.delete(identity); this.#reads.invalidate(key); }
++    finally { this.#answers.delete(identity); this.#reads.invalidate(key); this.#availableReads.invalidate(key); }
+   }
+ }
+--- a/web/useConversationSolutions.ts
++++ b/web/useConversationSolutions.ts
+@@ -2,10 +2,11 @@
+ import type { RuntimeSolutionSelection } from '../electron/webSolutionSelection.mjs';
+ import { api } from './api';
+ 
+-/** Questions can arrive while the parent's SSE is idle in await_subagents.
+- * Poll only this small resource; never reload the transcript or replay a task. */
+-export function useConversationSolutions(sessionId: string | null) {
+-  const [state, setState] = useState<{ sessionId: string; items: RuntimeSolutionSelection[]; unavailable: boolean }>();
++type Read = { items: RuntimeSolutionSelection[]; unavailable: boolean };
++
++/** Independent requests and timers keep an offline worker from delaying local questions. */
++function useQuestionRead(sessionId: string | null, scope: 'local' | 'remote') {
++  const [state, setState] = useState<Read & { sessionId: string }>();
+   const trigger = useRef<() => Promise<void>>(async () => {});
+   useEffect(() => {
+     if (!sessionId) { trigger.current = async () => {}; return; }
+@@ -13,11 +14,12 @@
+     let pending: Promise<void> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+     const read = () => {
+       if (pending) return pending;
+-      pending = api<RuntimeSolutionSelection[]>(`/sessions/${sessionId}/solutions`, 'GET', undefined,
++      pending = api<RuntimeSolutionSelection[] | Read>(`/sessions/${sessionId}/solutions?scope=${scope}`, 'GET', undefined,
+         AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]))
+-        .then(items => {
+-          if (!controller.signal.aborted) setState(prior => prior?.sessionId === sessionId && !prior.unavailable && JSON.stringify(prior.items) === JSON.stringify(items)
+-            ? prior : { sessionId, items, unavailable: false });
++        .then(result => {
++          const next = Array.isArray(result) ? { items: result, unavailable: false } : result;
++          if (!controller.signal.aborted) setState(prior => prior?.sessionId === sessionId && prior.unavailable === next.unavailable && JSON.stringify(prior.items) === JSON.stringify(next.items)
++            ? prior : { sessionId, ...next });
+         }).catch(() => {
+           if (!controller.signal.aborted) setState(prior => ({ sessionId, items: prior?.sessionId === sessionId ? prior.items : [], unavailable: true }));
+         }).finally(() => { pending = undefined; });
+@@ -38,8 +40,22 @@
+     window.addEventListener('focus', focus);
+     void poll();
+     return () => { controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); };
+-  }, [sessionId]);
++  }, [sessionId, scope]);
+   return { items: state?.sessionId === sessionId ? state.items : undefined,
+     unavailable: state?.sessionId === sessionId && state.unavailable,
+     refresh: useCallback(() => trigger.current(), []) };
+ }
++
++export function useConversationSolutions(sessionId: string | null) {
++  const local = useQuestionRead(sessionId, 'local');
++  const remote = useQuestionRead(sessionId, 'remote');
++  return {
++    items: local.items || remote.items ? [...local.items ?? [], ...remote.items ?? []] : undefined,
++    unavailable: local.unavailable,
++    remoteUnavailable: remote.unavailable,
++    refresh: useCallback(async (selectionId?: string) => {
++      if (selectionId) await (selectionId.startsWith('remote_solution_') ? remote.refresh() : local.refresh());
++      else await Promise.all([local.refresh(), remote.refresh()]);
++    }, [local.refresh, remote.refresh]),
++  };
++}
+--- a/web/templates/SolutionConnectionStatus.template.tsx
++++ b/web/templates/SolutionConnectionStatus.template.tsx
+@@ -0,0 +1,10 @@
++import { uiText } from '../../src/i18n';
++import { useUiLanguage } from '../../src/i18n/react';
++
++export function SolutionConnectionStatus({ localUnavailable, remoteUnavailable }: { localUnavailable?: boolean; remoteUnavailable?: boolean }) {
++  const t = uiText(useUiLanguage());
++  return <>
++    {localUnavailable && <p className="form-error" role="alert">{t('web.remoteQuestionsUnavailable')}</p>}
++    {remoteUnavailable && <p className="muted" role="status">{t('web.remoteQuestionsOffline')}</p>}
++  </>;
++}
+--- a/src/i18n/react.tsx
++++ b/src/i18n/react.tsx
+@@ -0,0 +1,13 @@
++import { createContext, useContext, type ReactNode } from 'react';
++import { resolveUiLanguage } from './index';
++
++const UiLanguageContext = createContext<string | undefined>(undefined);
++
++/** Components without a language prop still update in the same render as the App. */
++export function UiLanguageProvider({ language, children }: { language: string; children: ReactNode }) {
++  return <UiLanguageContext.Provider value={language}>{children}</UiLanguageContext.Provider>;
++}
++
++export function useUiLanguage() {
++  return useContext(UiLanguageContext) ?? resolveUiLanguage(typeof document === 'undefined' ? 'en' : document.documentElement.lang);
++}
+--- a/scripts/test-web-remote-questions.mjs
++++ b/scripts/test-web-remote-questions.mjs
+@@ -1,9 +1,15 @@
+-import test from 'node:test';
++import test, { after } from 'node:test';
+ import assert from 'node:assert/strict';
+ import { WebRemoteQuestions } from '../dist-electron/webRemoteQuestions.mjs';
+ import { remoteIdentity } from '../dist-electron/webRemoteAgents.mjs';
+ import { serveWeb } from '../dist-electron/webServer.mjs';
+ import { csrfToken, WebError } from '../dist-electron/webCommon.mjs';
++import { setTimeout as delay } from 'node:timers/promises';
++import { Agent } from 'undici';
++
++const dispatcher = new Agent();
++const fetch = (url, options) => globalThis.fetch(url, { ...options, dispatcher });
++after(() => dispatcher.close());
+ 
+ const session = 'web-' + 'a'.repeat(40), otherSession = 'web-' + 'b'.repeat(40), secret = 'questions-fixture-'.repeat(4);
+ function fixture() {
+@@ -112,3 +118,82 @@
+   assert.deepEqual(await (await fetch(endpoint, { headers })).json(), [local]);
+   assert.ok(localCalls.every(c => c.input.kind === 'runtime.list_solution_selections'));
+ });
++
++test('offline sources do not hide healthy remote questions or prevent their answers', async () => {
++  const f = fixture(), factory = f.registry.clientFactory;
++  f.registry.list = async () => [{ id: 'offline' }, { id: 'connection' }];
++  f.registry.authorized = async (_user, id) => ({ agentId: 'worker', id });
++  f.registry.clientFactory = async connection => {
++    if (connection.id === 'offline') throw Error('Disconnected');
++    return factory();
++  };
++  const result = await f.relay.read('alice', session);
++  assert.equal(result.unavailable, true);
++  assert.equal(result.items.length, 1);
++  const q = result.items[0];
++  await f.relay.answer('alice', { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, kind: 'text', text: 'Keep blocked' });
++  assert.equal(f.state.calls.filter(c => c.input.kind === 'runtime.answer_solution_selection').length, 1);
++});
++
++test('a hung factory is bounded and its late SSH client is closed without being used', async () => {
++  const f = fixture(); let closed = 0, used = 0;
++  f.registry.clientFactory = async () => {
++    await delay(80);
++    return { info: async () => { used++; }, close() { closed++; } };
++  };
++  const relay = new WebRemoteQuestions(f.registry, 20), start = Date.now();
++  assert.deepEqual(await relay.read('alice', session), { items: [], unavailable: true });
++  assert.ok(Date.now() - start < 500);
++  await delay(100);
++  assert.equal(closed, 1); assert.equal(used, 0);
++});
++
++test('an offline answer target reports unavailability and never consumes or retries the answer', async () => {
++  const f = fixture(), [q] = await f.relay.list('alice', session);
++  f.registry.clientFactory = async () => { throw Error('Offline'); };
++  await assert.rejects(f.relay.answer('alice', { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, kind: 'cancel' }), e => e.status === 503);
++  assert.equal(f.state.questions.length, 1);
++  assert.ok(!f.state.calls.some(c => c.input.kind === 'runtime.answer_solution_selection'));
++});
++
++test('cached failure recovers on the next read window; revocation removes cached questions', async t => {
++  t.mock.timers.enable({ apis: ['Date'] });
++  const f = fixture(), factory = f.registry.clientFactory; let offline = true, opens = 0;
++  f.registry.clientFactory = async () => { opens++; if (offline) throw Error('Offline'); return factory(); };
++  assert.equal((await f.relay.read('alice', session)).unavailable, true);
++  offline = false;
++  assert.equal((await f.relay.read('alice', session)).unavailable, true);
++  assert.equal(opens, 1);
++  t.mock.timers.tick(5_001);
++  assert.equal((await f.relay.read('alice', session)).items.length, 1);
++  f.state.enabled = false;
++  assert.deepEqual(await f.relay.read('alice', session), { items: [], unavailable: false });
++});
++
++test('local routes and answers remain available during a remote outage, including older clients', async t => {
++  const f = fixture(), token = 'alice'.padEnd(54, '_'); let remoteOpens = 0, localOpens = 0, answers = 0;
++  f.registry.clientFactory = async () => { remoteOpens++; throw Error('Worker offline'); };
++  const local = { selectionId: 'local-question', sessionId: session, turnId: 'parent-turn', toolCallId: 'ask-local', createdAt: new Date().toISOString(), prompt: 'Local?', options: [] };
++  const store = { authenticate: async value => value === token ? { id: 'alice', is_active: true } : null,
++    conversation: async (user, id) => { if (user !== 'alice' || id !== session) throw new WebError(404, 'Not owned'); return { id }; } };
++  const agent = { async call(_op, input) {
++    if (input.kind === 'runtime.list_solution_selections') return [local];
++    assert.equal(input.kind, 'runtime.answer_solution_selection'); answers++; return input.payload;
++  } };
++  const server = await serveWeb({ modelSecret: secret, defaultModelId: 'm', models: [{ id: 'm' }], origin: 'http://fixture.test', host: '127.0.0.1', port: 0, staticRoot: 'dist-web' }, store,
++    { get: async () => { localOpens++; return agent; }, close() {} }, undefined, f.registry);
++  t.after(() => server.close());
++  const url = `http://127.0.0.1:${server.port}/api/web/v1/sessions/${session}/solutions`;
++  const headers = { Cookie: 'cardbush_web=' + token, Origin: 'http://fixture.test', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(token) };
++  assert.equal((await fetch(url + '?scope=remote')).status, 401);
++  assert.deepEqual(await (await fetch(url + '?scope=local', { headers })).json(), [local]);
++  assert.equal(remoteOpens, 0);
++  const before = localOpens;
++  assert.deepEqual(await (await fetch(url + '?scope=remote', { headers })).json(), { items: [], unavailable: true });
++  assert.equal(localOpens, before);
++  const legacy = await fetch(url, { headers });
++  assert.equal(legacy.status, 200); assert.deepEqual(await legacy.json(), [local]);
++  const answer = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ selectionId: local.selectionId, turnId: local.turnId, kind: 'text', text: 'Continue locally' }) });
++  assert.equal(answer.status, 200); assert.equal(answers, 1);
++  assert.equal(remoteOpens, 1);
++});
+--- a/electron/webServer.mts
++++ b/electron/webServer.mts
+@@ -256,6 +256,9 @@
+       const conversation = await store.conversation(user.id, sessionId);
+       const readKey = `${user.id}:${sessionId}:`;
+       if (method !== 'GET') reads.invalidate(readKey);
++      if (action === 'solutions' && method === 'GET' && url.searchParams.get('scope') === 'remote') {
++        json(response, 200, await remoteQuestions?.read(user.id, sessionId) ?? { items: [], unavailable: false }); return;
++      }
+       // Account authorization and ownership are settled before runtime startup.
+       const agent = await agents.get(user.id);
+       abort.signal.throwIfAborted();
+@@ -323,7 +326,7 @@
+       if (action === 'solutions' && method === 'GET') {
+         const [local, remote] = await Promise.all([
+           agent.call('runtime.command', { kind: 'runtime.list_solution_selections', payload: { sessionId } }),
+-          remoteQuestions?.list(user.id, sessionId) ?? [],
++          url.searchParams.get('scope') === 'local' ? [] : remoteQuestions?.read(user.id, sessionId).then(result => result.items).catch(() => []) ?? [],
+         ]);
+         json(response, 200, [...local as unknown[], ...remote]); return;
+       }
+--- a/web/main.tsx
++++ b/web/main.tsx
+@@ -12,6 +12,7 @@
+ import { BrowserCacheContext, useAccountCache } from './BrowserCacheProvider';
+ import { OrganizationAdmin as Admin } from './OrganizationAdmin';
+ import { useConversationSolutions } from './useConversationSolutions';
++import { SolutionConnectionStatus } from './templates/SolutionConnectionStatus.template';
+ import { useConversationList } from './useConversationList';
+ import { mergeConversationPage } from './conversationPages';
+ import React, { useCallback, useEffect, useRef, useState } from 'react';
+@@ -319,7 +320,7 @@
+         <div className="message-column">{state?.history?.nextCursor && <button className="load-older-messages" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? '正在加载…' : '加载更早的消息'}</button>}<NativeTranscript state={state} live={live} selected={selected} submitting={submitting} connectionUnavailable={reconnecting || Boolean(connectionError)} modelName={identity.models.find(item => item.id === model)?.name ?? model} onError={setError} onRetry={text => { setDraft(text); editor.current?.focus(); }}>
+           {compacting && <div className="status-line"><span className="loading-dot"/>正在整理上下文，对话会继续…</div>}
+           <Solutions items={solutions.items ?? state?.solutions ?? []} refresh={solutions.refresh}/>
+-          {solutions.unavailable && <p className="form-error" role="alert">{uiText()('web.remoteQuestionsUnavailable')}</p>}
++          <SolutionConnectionStatus localUnavailable={solutions.unavailable} remoteUnavailable={solutions.remoteUnavailable}/>
+         </NativeTranscript></div>
+       </div><ScrollBottomButton language="zh" visible={scrollBottomVisible} onClick={jumpToBottom}/></div><div className="composer-area">{error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setError('')}><X size={15}/></button></div>}{(loading || reconnecting || connectionError) && <SessionConnectionStatus phase={connectionError ? 'failed' : loading ? 'starting' : 'reconnecting'} message={connectionError || uiText()(loading ? 'web.sessionPreparing' : 'web.sessionReconnecting')}/> }
+         <form className="composer" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void upload.add(Array.from(event.dataTransfer.files)); }} onSubmit={event => void send(event)}><AttachmentDrafts upload={upload}/><textarea ref={editor} onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); void upload.add(Array.from(event.clipboardData.files)); } }} aria-label="输入消息" placeholder="输入你的想法…" rows={3} value={draft} maxLength={100000} disabled={busy} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }}/><div className="composer-bottom"><div><UploadButton upload={upload}/><select aria-label="选择模型" value={model} onChange={event => setModel(event.target.value)}>{identity.models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><div>{working.length > 0 && <button className="stop-button" type="button" onClick={() => void stop()}><Square size={12} fill="currentColor"/>停止</button>}<button className="send-button" aria-label="发送消息" disabled={(!draft.trim() && !upload.items.length) || busy || upload.busy}>{busy ? <span className="loading-dot"/> : <ArrowUp size={20}/>}</button></div></div></form><div className="composer-note"><span>Enter 发送 · Shift + Enter 换行</span><span>Powered by CardBush</span></div>
+--- a/web/AgentWidgets.tsx
++++ b/web/AgentWidgets.tsx
+@@ -64,7 +64,7 @@
+   return <><input ref={input} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.txt,.md,.csv,.tsv,.json,.log,.pdf,.docx,.xlsx,.pptx,.mp4,.m4v,.mov,.webm,.mp3,.wav,.ogg,.m4a" onChange={event => { void upload.add(Array.from(event.target.files ?? [])); event.target.value = ''; }}/><button className="icon-button" type="button" aria-label={uiText(language)("web.uploadImagesOrFiles")} title={uiText(language)("web.largeImagesAreOptimizedAutomaticallyDocumentsMustBeUnder16MbVideo")} disabled={upload.busy} onClick={() => input.current?.click()}><Paperclip size={18}/></button></>;
+ }
+ export type Solution = RuntimeSolutionSelection;
+-export function Solutions({ items, refresh }: { items: Solution[]; refresh: () => Promise<void> }) {
++export function Solutions({ items, refresh }: { items: Solution[]; refresh: (selectionId?: string) => Promise<void> }) {
+   const language = resolveUiLanguage(document.documentElement.lang);
+   return <>{items.map(item => <SolutionSelectionCard key={item.selectionId} language={language}
+     interaction={{ id: item.selectionId, sessionId: item.sessionId, turnId: item.turnId, raw: item,
+@@ -73,8 +73,8 @@
+       const value = item.questions ? { kind: 'answers', answers: answers.map(a => ({ questionId: a.questionId,
+         ...(a.selectedOptionId !== undefined ? { kind: 'option', optionIndex: Number(a.selectedOptionId) } : { kind: 'text', text: a.text }) })) }
+         : answers[0].selectedOptionId !== undefined ? { kind: 'option', optionIndex: Number(answers[0].selectedOptionId) } : { kind: 'text', text: answers[0].text };
+-      await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, ...value }); await refresh();
+-    }} onCancel={async () => { await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh(); }}/>)}</>;
++      await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, ...value }); await refresh(item.selectionId);
++    }} onCancel={async () => { await api(`/sessions/${item.sessionId}/solutions`, 'POST', { selectionId: item.selectionId, turnId: item.turnId, kind: 'cancel' }); await refresh(item.selectionId); }}/>)}</>;
+ }
+ 
+ type Plugin = { installed: boolean; enabled: boolean; grants: string[] };
+--- a/src/i18n/locales/en.json
++++ b/src/i18n/locales/en.json
+@@ -4479,6 +4479,7 @@
+     "web.mediaFileTooLarge": "Media exceeds 2 GB. Split the file before uploading.",
+     "web.transferUploadError": "Upload is incomplete or unsupported. Images and documents: 16 MB; video and audio: 2 GB.",
+     "web.remoteQuestionsUnavailable": "Pending questions are temporarily unavailable. Reconnecting; existing tasks are preserved. Do not submit the task again.",
++    "web.remoteQuestionsOffline": "A remote assistant is temporarily unavailable. Local chat remains available; remote questions will sync when the connection recovers.",
+     "web.remoteQuestionNotPending": "This question has already been answered or closed. Refresh the conversation for its current state.",
+     "web.remoteQuestionAnswerInProgress": "An answer to this question is being submitted. Please wait.",
+     "web.remoteQuestionIdentityChanged": "The remote Agent identity has changed. Ask an administrator to check the connection."
+--- a/src/i18n/locales/zh.json
++++ b/src/i18n/locales/zh.json
+@@ -4436,6 +4436,7 @@
+     "web.mediaFileTooLarge": "媒体文件超过 2 GB，请分段上传。",
+     "web.transferUploadError": "上传未完成或格式不受支持。图片和文档限 16 MB，视频和音频限 2 GB。",
+     "web.remoteQuestionsUnavailable": "暂时无法获取待答问题，正在重连。已有任务会保留，请勿重复提交。",
++    "web.remoteQuestionsOffline": "远程助手暂时无法连接，本地对话可继续。远程待答问题将在连接恢复后同步。",
+     "web.remoteQuestionNotPending": "这个问题已被回答或已结束，请刷新会话查看最新状态。",
+     "web.remoteQuestionAnswerInProgress": "正在提交这个问题的回答，请稍候。",
+     "web.remoteQuestionIdentityChanged": "远程 Agent 身份已改变，请联系管理员核对连接。"

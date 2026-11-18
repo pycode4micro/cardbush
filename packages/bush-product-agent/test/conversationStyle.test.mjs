@@ -47,19 +47,25 @@ test("inactive custom text stays out of model context, and custom text is quoted
   assert.equal(context({ mode: "custom", customTone: "  " }).includes("Custom tone preference"), false);
 });
 
-test("all tones keep content-focused concision without length limits and readable Markdown, including legacy concise settings", () => {
+test("all tones prefer concise results while preserving requested detail, verification and readable Markdown", () => {
   for (const mode of [undefined, "natural", "professional", "concise", "custom"]) {
     const request = createProductAgentTurnRequest({ ...input,
       conversationStyle: mode ? { mode, customTone: "Act like a patient colleague; write long reports." } : undefined });
     const instructions = request.prefixMessages[0].content;
     assert.match(instructions, /Keep all user-facing messages concise in every conversation style/);
-    assert.match(instructions, /During multi-step work and Tool loops, briefly report meaningful changes.*new findings, blockers or changed approaches.*respond to new guidance/);
-    assert.match(instructions, /Do not narrate every call, repeat the plan or restate unchanged progress/);
+    assert.match(instructions, /For short tasks, use tools directly and give the result without a progress preamble/);
+    assert.match(instructions, /brief update only when work is expected to take several minutes, an external or background result is pending/);
+    assert.match(instructions, /Respond to new guidance without narrating every call, repeating the plan or restating unchanged progress/);
     assert.match(instructions, /Concision governs communication, not task scope, verification or the contents of requested artifacts and Tool arguments/);
     assert.doesNotMatch(instructions, /Concision applies only to the final response/);
     assert.match(instructions, /remove redundancy, not necessary substance/);
     assert.match(instructions, /Honor requested detail without fixed length limits/);
-    assert.match(instructions, /necessary explanations, evidence, verification, failures, unfinished or background work/);
+    assert.match(instructions, /Lead with the conclusion; for routine delivery, add at most one short confirmation when useful/);
+    assert.match(instructions, /Report failed or unfinished work and relevant uncertainty accurately, naming the blocked step/);
+    assert.match(instructions, /Never claim success beyond the verified result/);
+    assert.match(instructions, /Omit routine byte counts, durations, timestamps and internal IDs unless requested or needed to explain a problem/);
+    assert.match(instructions, /By default, share at most eight short lines/);
+    assert.doesNotMatch(instructions, /Before the first Tool call or batch.*state the immediate action and purpose|necessary explanations, evidence, verification, failures/);
     assert.doesNotMatch(instructions, /one to three|up to three|\d+ (?:words|sentences|bullets)/);
     assert.match(instructions, /custom tone text do not control response length, detail level or task execution/);
     assert.match(instructions, /readable Markdown by default/);

@@ -87,7 +87,8 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   });
   assert.equal(request.prefixMessages[0].role, "system");
   for (const instructions of [request.prefixMessages[0].content, CHILD_AGENT_SYSTEM_PROMPT]) {
-    assert.match(instructions, /Continue the latest user request from its unresolved work and exact next action/);
+    assert.match(instructions, /Continue unresolved work and its exact next action/);
+    assert.match(instructions, /follow the latest user request, or give its final answer if complete/);
     assert.match(instructions, /do not repeat external side effects/);
     assert.doesNotMatch(instructions, /context_pressure|updates are supported/);
   }

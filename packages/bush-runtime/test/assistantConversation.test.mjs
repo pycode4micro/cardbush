@@ -893,6 +893,14 @@ test('assistant defaults are English model instructions and custom personas rema
       const system = requests[0].messages.find(message => message.role === 'system').content;
       if (persona) assert.ok(system.includes(persona));
       else { assert.doesNotMatch(system, /\p{Script=Han}/u); assert.match(system, /Respect the user's pauses and thinking time/); }
+      assert.match(system, /For short tasks, give the result directly/);
+      assert.match(system, /brief status only when work is expected to take several minutes, an external or background result is pending/);
+      assert.match(system, /for routine delivery, add at most one short confirmation when useful/);
+      assert.match(system, /Do not claim completion from a running receipt/);
+      assert.match(system, /Report failed or unfinished work accurately, naming the blocked step/);
+      assert.match(system, /By default, share at most eight short lines/);
+      assert.match(system, /After file verification, call summary_for_user alone when available/);
+      assert.doesNotMatch(system, /Explain intent briefly, dispatch|the execution status and only the essential finding/);
       assert.ok(requests[0].messages.some(message => message.role === 'user' && message.content.includes('请帮我检查文件')));
     } finally { assistant.close(); }
   }

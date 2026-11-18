@@ -120,7 +120,7 @@ test('continuations are internal; explicit language and artifact requests remain
   }
 });
 
-test('new built-in model declarations use English descriptions while display titles remain bilingual', async t => {
+test('built-in declarations use English while new titles use one user language and recorded bilingual titles remain readable', async t => {
   const { InMemoryRuntimeHost } = await import('../packages/bush-runtime/dist/index.js');
   const { withToolDisplayTitle, toolCallDisplay } = await import('../packages/bush-runtime/dist/toolDisplay.js');
   const registry = new ToolRegistry();
@@ -134,7 +134,16 @@ test('new built-in model declarations use English descriptions while display tit
   }
   const native = { name: 'read_fixture', description: 'Read fixture', inputSchema: { type: 'object' } };
   const presented = withToolDisplayTitle(native);
-  assert.deepEqual(presented.inputSchema.properties._display_title.required, ['zh', 'en']);
+  assert.equal(presented.inputSchema.properties._display_title.type, 'string');
+  assert.equal(presented.inputSchema.properties._display_title.properties, undefined);
+  assert.equal(presented.inputSchema.properties._display_title.required, undefined);
+  assert.deepEqual(presented.inputSchema.required, ['_display_title']);
+  for (const title of ['检查文件', 'Check files', 'Lire le fichier']) {
+    const display = toolCallDisplay({ name: native.name, argumentsText: JSON.stringify({ _display_title: title }) }, native);
+    assert.equal(display.title, title, 'a title in the user language needs no second translation');
+    assert.equal(display.titles, undefined);
+  }
+  assert.deepEqual(native.inputSchema, { type: 'object' }, 'presentation metadata does not change the native tool');
   const title = { zh: '检查文件', en: 'Check files' };
   const display = toolCallDisplay({ name: native.name, argumentsText: JSON.stringify({ _display_title: title }) }, native);
   assert.equal(display.title, 'Check files');

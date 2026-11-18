@@ -1,9 +1,15 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { WebRemoteQuestions } from '../dist-electron/webRemoteQuestions.mjs';
 import { remoteIdentity } from '../dist-electron/webRemoteAgents.mjs';
 import { serveWeb } from '../dist-electron/webServer.mjs';
 import { csrfToken, WebError } from '../dist-electron/webCommon.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { Agent } from 'undici';
+
+const dispatcher = new Agent();
+const fetch = (url, options) => globalThis.fetch(url, { ...options, dispatcher });
+after(() => dispatcher.close());
 
 const session = 'web-' + 'a'.repeat(40), otherSession = 'web-' + 'b'.repeat(40), secret = 'questions-fixture-'.repeat(4);
 function fixture() {
@@ -111,4 +117,83 @@ test('authenticated web routes merge local questions and route remote answers wi
   assert.equal((await fetch(endpoint, { method: 'POST', headers, body })).status, 200);
   assert.deepEqual(await (await fetch(endpoint, { headers })).json(), [local]);
   assert.ok(localCalls.every(c => c.input.kind === 'runtime.list_solution_selections'));
+});
+
+test('offline sources do not hide healthy remote questions or prevent their answers', async () => {
+  const f = fixture(), factory = f.registry.clientFactory;
+  f.registry.list = async () => [{ id: 'offline' }, { id: 'connection' }];
+  f.registry.authorized = async (_user, id) => ({ agentId: 'worker', id });
+  f.registry.clientFactory = async connection => {
+    if (connection.id === 'offline') throw Error('Disconnected');
+    return factory();
+  };
+  const result = await f.relay.read('alice', session);
+  assert.equal(result.unavailable, true);
+  assert.equal(result.items.length, 1);
+  const q = result.items[0];
+  await f.relay.answer('alice', { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, kind: 'text', text: 'Keep blocked' });
+  assert.equal(f.state.calls.filter(c => c.input.kind === 'runtime.answer_solution_selection').length, 1);
+});
+
+test('a hung factory is bounded and its late SSH client is closed without being used', async () => {
+  const f = fixture(); let closed = 0, used = 0;
+  f.registry.clientFactory = async () => {
+    await delay(80);
+    return { info: async () => { used++; }, close() { closed++; } };
+  };
+  const relay = new WebRemoteQuestions(f.registry, 20), start = Date.now();
+  assert.deepEqual(await relay.read('alice', session), { items: [], unavailable: true });
+  assert.ok(Date.now() - start < 500);
+  await delay(100);
+  assert.equal(closed, 1); assert.equal(used, 0);
+});
+
+test('an offline answer target reports unavailability and never consumes or retries the answer', async () => {
+  const f = fixture(), [q] = await f.relay.list('alice', session);
+  f.registry.clientFactory = async () => { throw Error('Offline'); };
+  await assert.rejects(f.relay.answer('alice', { sessionId: session, turnId: q.turnId, selectionId: q.selectionId, kind: 'cancel' }), e => e.status === 503);
+  assert.equal(f.state.questions.length, 1);
+  assert.ok(!f.state.calls.some(c => c.input.kind === 'runtime.answer_solution_selection'));
+});
+
+test('cached failure recovers on the next read window; revocation removes cached questions', async t => {
+  t.mock.timers.enable({ apis: ['Date'] });
+  const f = fixture(), factory = f.registry.clientFactory; let offline = true, opens = 0;
+  f.registry.clientFactory = async () => { opens++; if (offline) throw Error('Offline'); return factory(); };
+  assert.equal((await f.relay.read('alice', session)).unavailable, true);
+  offline = false;
+  assert.equal((await f.relay.read('alice', session)).unavailable, true);
+  assert.equal(opens, 1);
+  t.mock.timers.tick(5_001);
+  assert.equal((await f.relay.read('alice', session)).items.length, 1);
+  f.state.enabled = false;
+  assert.deepEqual(await f.relay.read('alice', session), { items: [], unavailable: false });
+});
+
+test('local routes and answers remain available during a remote outage, including older clients', async t => {
+  const f = fixture(), token = 'alice'.padEnd(54, '_'); let remoteOpens = 0, localOpens = 0, answers = 0;
+  f.registry.clientFactory = async () => { remoteOpens++; throw Error('Worker offline'); };
+  const local = { selectionId: 'local-question', sessionId: session, turnId: 'parent-turn', toolCallId: 'ask-local', createdAt: new Date().toISOString(), prompt: 'Local?', options: [] };
+  const store = { authenticate: async value => value === token ? { id: 'alice', is_active: true } : null,
+    conversation: async (user, id) => { if (user !== 'alice' || id !== session) throw new WebError(404, 'Not owned'); return { id }; } };
+  const agent = { async call(_op, input) {
+    if (input.kind === 'runtime.list_solution_selections') return [local];
+    assert.equal(input.kind, 'runtime.answer_solution_selection'); answers++; return input.payload;
+  } };
+  const server = await serveWeb({ modelSecret: secret, defaultModelId: 'm', models: [{ id: 'm' }], origin: 'http://fixture.test', host: '127.0.0.1', port: 0, staticRoot: 'dist-web' }, store,
+    { get: async () => { localOpens++; return agent; }, close() {} }, undefined, f.registry);
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.port}/api/web/v1/sessions/${session}/solutions`;
+  const headers = { Cookie: 'cardbush_web=' + token, Origin: 'http://fixture.test', 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(token) };
+  assert.equal((await fetch(url + '?scope=remote')).status, 401);
+  assert.deepEqual(await (await fetch(url + '?scope=local', { headers })).json(), [local]);
+  assert.equal(remoteOpens, 0);
+  const before = localOpens;
+  assert.deepEqual(await (await fetch(url + '?scope=remote', { headers })).json(), { items: [], unavailable: true });
+  assert.equal(localOpens, before);
+  const legacy = await fetch(url, { headers });
+  assert.equal(legacy.status, 200); assert.deepEqual(await legacy.json(), [local]);
+  const answer = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ selectionId: local.selectionId, turnId: local.turnId, kind: 'text', text: 'Continue locally' }) });
+  assert.equal(answer.status, 200); assert.equal(answers, 1);
+  assert.equal(remoteOpens, 1);
 });

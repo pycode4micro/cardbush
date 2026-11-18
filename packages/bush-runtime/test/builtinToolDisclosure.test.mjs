@@ -64,16 +64,20 @@ test('schema loading preserves the frozen presentation and execution admission',
   assert.equal((await f.run('call_tool', { name: 'native_fixture', arguments: {} })).error.code, 'builtin_schema_required');
 });
 
-test('Team definition editing stays discoverable without per-Team observation actions', async () => {
+test('Team editing and node recovery stay discoverable while task observation stays on tasks', async () => {
   const f = fixture(['tasks', 'team', 'subagent']);
   const initial = structuredClone(f.definitions());
-  assert.deepEqual(initial.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
+  const compact = initial.find(tool => tool.name === 'team').inputSchema;
+  assert.deepEqual(compact.properties.action.enum, ['list', 'get', 'run', 'resume', 'rerun', 'diagnostics']);
+  assert.ok(compact.properties.run_id);
+  assert.equal(compact.properties.node_ids.minItems, 1, 'exposed node recovery can carry its required target');
   const receipt = await f.load('team'), full = receipt.matches[0].inputSchema;
   for (const action of ['status', 'wait', 'stop']) assert.ok(!full.properties.action.enum.includes(action));
+  for (const action of ['rerun', 'diagnostics']) assert.ok(full.properties.action.enum.includes(action));
   assert.ok(full.properties.definition); assert.ok(full.properties.expected_revision);
   assert.equal(receipt.invocation.tool, 'call_tool'); assert.deepEqual(f.definitions(), initial);
   const scoped = { ...f.request, turnId: 'restricted', metadata: {}, tools: f.request.tools.filter(tool => tool.name !== 'tasks') };
-  assert.deepEqual(modelToolDefinitions(f.registry, scoped).find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
+  assert.deepEqual(modelToolDefinitions(f.registry, scoped).find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume', 'rerun', 'diagnostics']);
 });
 
 test('compact delegation does not offer clean mode without its required system prompt', async () => {

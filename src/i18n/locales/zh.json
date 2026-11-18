@@ -4452,6 +4452,7 @@
     "web.transferMessageLimit": "每条消息最多 4 张图片，附件总计不超过 2 GB。",
     "web.mediaFileTooLarge": "媒体文件超过 2 GB，请分段上传。",
     "web.remoteQuestionsUnavailable": "暂时无法获取待答问题，正在重连。已有任务会保留，请勿重复提交。",
+    "web.remoteQuestionsOffline": "远程助手暂时无法连接，本地对话可继续。远程待答问题将在连接恢复后同步。",
     "web.remoteQuestionNotPending": "这个问题已被回答或已结束，请刷新会话查看最新状态。",
     "web.remoteQuestionAnswerInProgress": "正在提交这个问题的回答，请稍候。",
     "web.remoteQuestionIdentityChanged": "远程 Agent 身份已改变，请联系管理员核对连接。",

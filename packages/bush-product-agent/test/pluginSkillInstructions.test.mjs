@@ -44,13 +44,14 @@ test('plugin Skill rules stay in a stable system prefix while real hook feedback
     const request = createProductAgentTurnRequest({ requestId: id, sessionId: 'plugin-rules', turnId: id, messageId: `user_${id}`,
       createdAt: '2026-09-18T08:00:00Z',
       userText: 'Continue.', model: 'fixture',
-      tools: registry.definitions().filter(tool => ['run_skill', 'search_skills'].includes(tool.name)),
+      tools: registry.definitions().filter(tool => ['run_skill', 'search_plugins'].includes(tool.name)),
       permissionMode: 'task_free', planEnabled: false });
     assert.equal((await host.runSessionTurn(request)).payload.status, 'completed');
     const current = observed.at(-1);
     assert.ok(current.tools.some(tool => tool.name === 'run_skill'));
     assert.equal(current.messages[0].content, ROOT_AGENT_SYSTEM_PROMPT);
-    assert.match(current.tools.find(tool => tool.name === 'run_skill').description, /exact plugin:name id from search_skills/);
+    assert.ok(current.tools.some(tool => tool.name === 'search_plugins'), 'the documented discovery entry is available');
+    assert.match(current.tools.find(tool => tool.name === 'run_skill').description, /exact plugin:name id from search_plugins in skill mode/);
     assert.doesNotMatch(current.messages[0].content, /run_skill/, 'invocation mechanics live in the tool schema');
     const hooks = current.messages.filter(message => message.name === 'plugin_hook_feedback');
     assert.deepEqual(hooks.map(message => message.content), feedback);
