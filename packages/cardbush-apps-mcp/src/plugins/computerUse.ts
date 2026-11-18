@@ -239,6 +239,7 @@ export function registerComputerUsePlugin(
     inputSchema,
     _meta: {
       'cardbush/plugin_id': 'computer_use',
+      'cardbush/control_lifecycle': 'turn',
     },
   }, async (input, context) => {
     try {
@@ -247,6 +248,7 @@ export function registerComputerUsePlugin(
         config,
         context.mcpReq.signal,
         safetyScope(context.mcpReq._meta),
+        typeof context.mcpReq._meta?.cardbush_ui_language === 'string' ? context.mcpReq._meta.cardbush_ui_language : undefined,
       );
       return computerUseMcpResult(result, input.action);
     } catch (error) {

@@ -95,6 +95,14 @@ test('script timeouts and cancellation still terminate the owned PowerShell proc
 
 test('spawn failures settle the pending script input instead of hanging', windowsOnly, async () => {
   await assert.rejects(execute('# padding\n'.repeat(100000), { cwd: join(tmpdir(), 'cardbush-missing-' + randomUUID()) }), { code: 'ENOENT' });
+  let granted = false;
+  await assert.rejects(execute("throw 'must not execute'", { cwd: join(tmpdir(), 'cardbush-missing-' + randomUUID()),
+    beforeExecute: async () => { granted = true; return {}; } }), { code: 'ENOENT' });
+  assert.equal(granted, false, 'a failed worker never receives a foreground grant');
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(execute("throw 'must not execute'", { signal: controller.signal,
+    beforeExecute: async () => { granted = true; return {}; } }), { name: 'AbortError' });
+  assert.equal(granted, false);
 });
 
 test('foreground coordination targets the actual child before any native script can execute', windowsOnly, async () => {

@@ -90,17 +90,18 @@ test('recovering MCP calls report no dispatch directly and through delegation wi
   assert.equal(JSON.stringify(turn.request.tools), topLevelSchemas);
 });
 
-test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
+for (const [pluginId, serverId] of [['chrome', 'browser_use'], ['computer_use', 'apps']]) test(`scoped ${pluginId} MCP calls carry host identity and UI language`, async () => {
   const registry = new ToolRegistry();
-  const fake = fakeClient(successfulToolResult, { pluginId: "chrome" });
+  const fake = fakeClient(successfulToolResult, { pluginId, controlLifecycle: pluginId === 'computer_use' });
   const manager = new McpClientManager({
     registry,
+    turnControlServers: [serverId],
     createClient: () => fake,
     createTransport: () => ({ async send() {} }),
   });
 
-  const runtimeName = "mcp__browser_use__echo_tool";
-  const applied = await manager.apply(snapshot({ permission: "allow" }, "browser_use"));
+  const runtimeName = `mcp__${serverId}__echo_tool`;
+  const applied = await manager.apply(snapshot({ permission: "allow" }, serverId));
   assert.equal(applied.servers[0].negotiatedProtocolVersion, "2026-07-28");
   assert.deepEqual(applied.servers[0].tools, [{
     remoteName: "echo.tool",
@@ -137,6 +138,7 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
         messages: [],
         tools: [registry.resolve(runtimeName).definition],
         metadata: {
+          uiLanguage: 'zh',
           mcpContext: {
             filesystemRoots: ["C:\\workspace"],
             transportChannel: "external",
@@ -156,10 +158,56 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
   assert.equal(fake.calls[0]._meta.cardbush_session_id, "session");
   assert.equal(fake.calls[0]._meta.cardbush_turn_id, "turn");
   assert.equal(fake.calls[0]._meta.cardbush_request_id, "request");
+  assert.equal(fake.calls[0]._meta.cardbush_ui_language, 'zh');
   assert.equal(fake.calls[0]._meta.cardbush_session_title, "Browser isolation test");
   assert.equal(fake.calls[0]._meta.runtime_tool_result_protocol, undefined);
   assert.equal(fake.calls[0]._meta.receipt_id, undefined);
   assert.equal(fake.calls[0]._meta.action_manifest, undefined);
+  await registry.releaseTurnResources('session', 'another-turn');
+  assert.equal(fake.calls.length, 1, 'another turn cannot release this control lease');
+  await registry.releaseTurnResources('session', 'turn');
+  await registry.releaseTurnResources('session', 'turn');
+  if (pluginId === 'computer_use') {
+    assert.equal(fake.calls.length, 2, 'one scoped release, with no action replay');
+    assert.deepEqual(fake.calls[1].arguments, { action: 'finish' });
+    assert.deepEqual(fake.calls[1]._meta, fake.calls[0]._meta);
+  } else assert.equal(fake.calls.length, 1, 'ordinary tools have no desktop lifecycle');
+  await manager.close();
+});
+
+test('untrusted MCP metadata cannot opt into privileged end-of-turn calls',async t=>{
+  const registry=new ToolRegistry(),fake=fakeClient(successfulToolResult,{pluginId:'computer_use',controlLifecycle:true});
+  const manager=new McpClientManager({registry,turnControlServers:['cardbush_apps'],createClient:()=>fake,createTransport:()=>({async send(){}})});
+  t.after(()=>manager.close());await manager.apply(snapshot({permission:'allow'}));
+  const coordinator=new ToolExecutionCoordinator({registry});
+  assert.equal((await executeEcho(coordinator,'untrusted')).kind,'returned');
+  await registry.releaseTurnResources('session','turn');assert.equal(fake.calls.length,1);
+});
+
+test('reconnected desktop service never receives an old connection lease release',async t=>{
+  const registry=new ToolRegistry(),old=fakeClient(successfulToolResult,{pluginId:'computer_use',controlLifecycle:true});
+  const next=fakeClient(successfulToolResult,{pluginId:'computer_use',controlLifecycle:true}),clients=[old,next],gate=Promise.withResolvers();
+  const manager=new McpClientManager({registry,turnControlServers:['server'],createClient:()=>clients.shift(),
+    createTransport:()=>({async send(){}}),wait:()=>gate.promise});
+  t.after(async()=>{gate.resolve();await manager.close();});await manager.apply(snapshot({permission:'allow'}));
+  const coordinator=new ToolExecutionCoordinator({registry});assert.equal((await executeEcho(coordinator,'before-reconnect')).kind,'returned');
+  old.onclose();gate.resolve();await waitFor(()=>manager.snapshot().servers[0].health==='ready');
+  await registry.releaseTurnResources('session','turn');
+  assert.equal(old.calls.length,1);assert.equal(next.calls.length,0);
+});
+
+test('a desktop adapter ignoring cancellation cannot block turn cleanup',async t=>{
+  const registry=new ToolRegistry(),diagnostics=[],gate=Promise.withResolvers();
+  const fake=fakeClient(input=>input.arguments.action==='finish'?gate.promise:successfulToolResult(input),{pluginId:'computer_use',controlLifecycle:true});
+  const manager=new McpClientManager({registry,turnControlServers:['server'],createClient:()=>fake,
+    createTransport:()=>({async send(){}}),onServerStderr:event=>diagnostics.push(event.message)});
+  const keepAlive=setTimeout(()=>{},5000);
+  t.after(async()=>{clearTimeout(keepAlive);gate.resolve();await manager.close();});
+  await manager.apply(snapshot({permission:'allow'}));
+  await executeEcho(new ToolExecutionCoordinator({registry}),'before-timeout');
+  const started=Date.now();await registry.releaseTurnResources('session','turn');
+  assert.ok(Date.now()-started<4000);assert.ok(diagnostics.some(message=>message.includes('release timed out')));
+  await registry.releaseTurnResources('session','turn');assert.equal(fake.calls.length,2);
 });
 
 test("binds default MCP permission to one exact server Tool resource", async () => {
@@ -933,6 +981,7 @@ function fakeClient(result, options = {}) {
                 owner: "fixture_mcp",
               },
               ...(options.pluginId ? { "cardbush/plugin_id": options.pluginId } : {}),
+              ...(options.controlLifecycle ? { 'cardbush/control_lifecycle': 'turn' } : {}),
               ...(options.ui ? { ui: options.ui } : {}),
             },
           }),

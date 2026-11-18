@@ -30,8 +30,13 @@ import { TaskResultDelivery, resultDelivery, taskReceiptDelivery, type TaskResul
 import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
+import { AssistantContextMaintenance } from './assistantContextMaintenance.js';
 
 const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source);
+// Correlation is host-owned identity, never inferred from the text of a result.
+const assignmentKey = (ids: string[] | undefined) => ids?.length ? JSON.stringify([...new Set(ids)].sort()) : undefined;
+const sameAssignment = (left: string | undefined, right: string | undefined) => Boolean(left && right &&
+  (JSON.parse(left) as string[]).some(id => (JSON.parse(right) as string[]).includes(id)));
 
 function quotedMessageContext(entry: ConversationEntry, entries: ConversationEntry[]) {
   if (!entry.replyTo) return '';
@@ -82,7 +87,9 @@ export class AssistantConversation {
   private configured?: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile };
   private retryRequested = false;
   private readonly results: TaskResultDelivery;
-  private notification?: TaskResultLease;
+  private notifications = new Map<string, TaskResultLease>();
+  private completionTurn?: { key: string; assignment: string; dirty: boolean };
+  private readonly maintenance = new AssistantContextMaintenance();
   private requestIds = new Set<string>();
   private generation = 0;
   constructor(readonly journal: ConversationJournal, private deps: {
@@ -108,6 +115,8 @@ export class AssistantConversation {
     snapshotImage?: (source: string, signal: AbortSignal) => Promise<string>;
     botContext?: (sourceRef: string | undefined, signal: AbortSignal) => Promise<BotContext>;
     wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+    releaseTurnResources?: (sessionId: string, turnId: string) => Promise<void>;
+    onMaintenanceError?: (error: Error) => void;
   }) { this.results = deps.resultDelivery ?? new TaskResultDelivery(); }
   private runningTasks(sessionId: string) {
     return this.deps.runningTaskCount?.(sessionId) ?? this.deps.tasks(sessionId).filter(task => task.status === 'running').length;
@@ -149,6 +158,7 @@ export class AssistantConversation {
       const workingTasks = this.runningTasks(input.sessionId);
       const eventNeedsResponse = input.sessionId === PERSONAL_ASSISTANT_SESSION && this.deps.eventNeedsResponse?.() === true;
       return { entries: entries.slice(input.after), cursor: entries.length, generation: this.generation, pendingInputs,
+        contextMaintenance: this.maintenance.snapshot(),
         reactions: this.journal.readReactions(input.sessionId),
         eventNeedsResponse,
         ...(input.sessionId === PERSONAL_ASSISTANT_SESSION ? this.activitySnapshot(workingTasks, eventNeedsResponse) : {}),
@@ -173,11 +183,13 @@ export class AssistantConversation {
       this.journal.append(input.sessionId, { id: eventId, role: 'user', source: 'task', visibility: 'internal',
         responseTo: [original.id], botSourceRef: input.sourceRef, botRecipientKey: original.botRecipientKey,
         createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'bridge_delivery_result', ...input.result }) });
+      this.invalidateCompletion([original.id]);
       this.pending = true;
       void this.pump();
       return { status: 'accepted' };
     }
     if (input.action === 'stop') {
+      this.maintenance.cancel();
       this.replyExpression = undefined;
       this.directTools.clear();
       this.paused = true; this.pending = false; this.retry = undefined; this.controller?.abort();
@@ -222,6 +234,7 @@ export class AssistantConversation {
     const deliveryPending = this.journal.read(PERSONAL_ASSISTANT_SESSION).some(entry =>
       entry.source === 'task' && entry.id.startsWith('bridge-delivery-') && !consumed.has(entry.id));
     if (this.pending || deliveryPending || this.results.ready(PERSONAL_ASSISTANT_SESSION).length) { this.pending = true; void this.pump(); }
+    else this.scheduleMaintenance();
   }
   private restoreResults() {
     const id = PERSONAL_ASSISTANT_SESSION;
@@ -240,6 +253,7 @@ export class AssistantConversation {
         return;
       }
     } catch (error) { this.pending = false; this.error = retainedRuntimeError(error); return; }
+    this.maintenance.cancel();
     this.busy = true; this.pending = false; this.error = ''; this.retry = undefined;
     const configured = this.configured, retryRequested = this.retryRequested;
     this.retryRequested = false;
@@ -256,18 +270,71 @@ export class AssistantConversation {
     try { await settleAtAbort(this.respond(configured, controller.signal, execution.turnId, retryRequested), controller.signal, 'Assistant reply stopped.'); }
     catch (error) { failed = true; if (!this.stopped && !controller.signal.aborted) this.error = retainedRuntimeError(error); }
     finally {
+      await this.deps.releaseTurnResources?.(configured.parent.sessionId, configured.parent.turnId);
       const status = controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed';
       this.deps.agents?.update(execution.sessionId, execution.turnId, status);
       const sources = configured.parent.metadata.botSourceRefs;
       if (!configured.parent.metadata.botSourceRef && !(Array.isArray(sources) && sources.length))
         this.deps.observeOutcome?.({ nowMs: Date.now(), kind: 'turn_terminal', status }, execution.turnId);
       if (this.controller === controller) {
-      this.activeTurn = undefined; this.busy = false; this.retry = undefined; this.controller = undefined;
-      this.notification?.release(); this.notification = undefined;
+      this.activeTurn = undefined; this.completionTurn = undefined; this.busy = false; this.retry = undefined; this.controller = undefined;
+      for (const lease of this.notifications.values()) lease.release();
+      this.notifications.clear();
       try { if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent); }
       catch (error) { this.error ||= retainedRuntimeError(error); }
       if (this.pending && !this.stopped) void this.pump();
+      if (!this.busy && !this.pending && !failed && !controller.signal.aborted) this.scheduleMaintenance();
     } }
+  }
+  private scheduleMaintenance() {
+    if (this.stopped || this.paused || this.busy || !this.configured) return;
+    const configured = this.configured;
+    this.maintenance.schedule(async signal => {
+      const parent = await this.deps.prepareParent?.(configured.parent, signal) ?? configured.parent;
+      signal.throwIfAborted();
+      const history = this.journal.modelHistory(PERSONAL_ASSISTANT_SESSION);
+      await this.maintenance.compact(history, parent, this.deps.provider, this.deps.checkpoint(), signal,
+        this.deps.tasks(PERSONAL_ASSISTANT_SESSION).map(task => ({ taskId: task.taskId, status: task.status })), (before, after) => {
+          const references = this.deps.memory?.checkpointReferences(before, after);
+          if (references) history.append([references]);
+        });
+    }, 1000, this.deps.onMaintenanceError);
+  }
+  private taskOrigins(task: SubagentTask, entries: ConversationEntry[]) {
+    return task.originMessageIds ?? entries.filter(entry => isAuthoredInput(entry) && entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256);
+  }
+  private invalidateCompletion(origins: string[] | undefined) {
+    const turn = this.completionTurn;
+    if (!turn || !sameAssignment(turn.assignment, assignmentKey(origins))) return;
+    turn.dirty = true;
+    // Only an unpublished model draft/backoff is interrupted. Dispatched tools
+    // finish normally and their receipts are committed before fresh facts enter.
+    this.reasoning.interrupt(turn.key);
+  }
+  private reserveCompletions(entries: ConversationEntry[], assignment?: string) {
+    const id = PERSONAL_ASSISTANT_SESSION;
+    for (const task of this.deps.tasks(id)) this.results.observe(id, task);
+    for (const task of this.results.ready(id)) {
+      const origins = this.taskOrigins(task, entries);
+      if (assignment && !sameAssignment(assignmentKey(origins), assignment)) continue;
+      const lease = this.results.reserve(id, task);
+      if (!lease) continue;
+      const entry: ConversationEntry = { id: `task-${task.taskId}-${randomUUID()}`, role: 'user', source: 'task', visibility: 'internal',
+        responseTo: origins, createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId,
+          status: task.status, result: task.finalResponse, error: task.errorMessage }) };
+      entries.push(entry); this.notifications.set(entry.id, lease);
+      // Uncorrelated results retain independent ownership.
+      assignment ??= assignmentKey(origins);
+      if (!assignment) break;
+    }
+  }
+  private commitCompletions(entries: ConversationEntry[]) {
+    for (const entry of entries) {
+      const lease = this.notifications.get(entry.id);
+      if (!lease) continue;
+      lease.commit(); this.notifications.delete(entry.id);
+      this.journal.append(PERSONAL_ASSISTANT_SESSION, entry);
+    }
   }
   private userMessagePrediction(sessionId: string, entries: ConversationEntry[]) {
     const latest = entries.filter(entry => entry.visibility !== 'internal').at(-1);
@@ -307,20 +374,9 @@ export class AssistantConversation {
     // Foreground work owns its reply. Completion delivery is selected only once
     // that work has committed its results, never queued as a second user input.
     const readIds = history.read().entryIds;
-    if (!entries.some(entry => !readIds.has(entry.id)) && !retryRequested) {
-      for (const task of this.deps.tasks(id)) this.results.observe(id, task);
-      const task = this.results.ready(id)[0];
-      if (task) {
-        const lease = this.results.reserve(id, task);
-        if (lease) {
-          this.notification = lease;
-          const entry: ConversationEntry = { id: `task-${task.taskId}-${randomUUID()}`, role: 'user', source: 'task', visibility: 'internal',
-            responseTo: task.originMessageIds ?? entries.filter(entry => entry.role === 'user' && entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256),
-            createdAt: new Date().toISOString(), content: JSON.stringify({ type: 'background_task_result', taskId: task.taskId,
-              status: task.status, result: task.finalResponse, error: task.errorMessage }) };
-          entries.push(entry);
-        }
-      }
+    if (!entries.some(entry => !readIds.has(entry.id) && entry.source !== 'task') && !retryRequested) {
+      const notice = entries.find(entry => !readIds.has(entry.id));
+      if (!notice || assignmentKey(notice.responseTo)) this.reserveCompletions(entries, assignmentKey(notice?.responseTo));
     }
     // Never redispatch a persisted call after a crash. Its side effect may have
     // happened even if the receipt was not committed. Keep the protocol complete.
@@ -346,8 +402,10 @@ export class AssistantConversation {
     // completion belongs to one assignment, even when several finish together.
     const foreground = pending.filter(item => item.source !== 'task');
     const sender = foreground.find(isAuthoredInput);
+    const completionAssignment = assignmentKey(pending[0]?.responseTo);
     const remaining = foreground.length ? foreground.filter(item => !sender || !isAuthoredInput(item) ||
-      (!item.botSourceRef && !sender.botSourceRef) || (item.originTurnId === sender.originTurnId && item.botSourceRef === sender.botSourceRef)) : pending.slice(0, 1);
+      (!item.botSourceRef && !sender.botSourceRef) || (item.originTurnId === sender.originTurnId && item.botSourceRef === sender.botSourceRef))
+      : completionAssignment ? pending.filter(item => sameAssignment(assignmentKey(item.responseTo), completionAssignment)) : pending.slice(0, 1);
     if (remaining.length < pending.length) this.pending = true;
     // A wait may finish while its completion notice is queued. Consuming that
     // notice must not start another model reply or discard concurrent user input.
@@ -374,10 +432,10 @@ export class AssistantConversation {
     const activeSources = new Set(handledInputs
       .flatMap(sourceRefs).filter((ref): ref is string => typeof ref === 'string'));
     parent = { ...parent, metadata: { ...parent.metadata, environmentExecutionId: executionId } };
-    const evidence = handledInputs.flatMap(originalInputs).filter(isAuthoredInput);
+    const evidence = [...new Map(handledInputs.flatMap(originalInputs).filter(isAuthoredInput).map(item => [item.id, item])).values()];
     parent.metadata.assistantEventEvidence = evidence.map(item => ({ id: item.id, sourceRef: item.botSourceRef }));
     parent.metadata.assistantUserRequest = Boolean(authored);
-    const completion = handledInputs.length === 1 && handledInputs[0].source === 'task' ? handledInputs[0] : undefined;
+    const completion = handledInputs.every(item => item.source === 'task') ? handledInputs[0] : undefined;
     const brief = completion ? delegatedRequestContext(evidence, entries) : undefined;
     // A verification task can return to the same assignment. Reuse the latest
     // retained brief unless the originating input or later corrections changed.
@@ -385,7 +443,7 @@ export class AssistantConversation {
     if (completion && brief) {
       // Downstream delegation must not inherit the latest unrelated draft.
       parent.inputMessages = [{ messageId: evidence[0]?.id ?? `origin-${completion.id}`, message: brief },
-        { messageId: completion.id, message: { role: 'user', name: 'background_task_result', visibility: 'internal', content: completion.content } }];
+        ...handledInputs.map(item => ({ messageId: item.id, message: { role: 'user' as const, name: 'background_task_result', visibility: 'internal' as const, content: item.content } }))];
     }
     delete parent.metadata.botSourceRef;
     parent.metadata.botSourceRefs = [...activeSources];
@@ -430,11 +488,9 @@ export class AssistantConversation {
     signal.throwIfAborted();
     // Commit the reference and consumed input together. Retries/restart keep the
     // same delivered prefix; reset cannot resurrect an in-flight recall.
-    const notificationEntry = this.notification ? remaining.find(item => item.source === 'task') : undefined;
-    history.append(incoming, remaining.map(item => item.id), this.notification ? [this.notification.reference] : [], handledInputs.map(item => item.id));
-    this.notification?.commit(); this.notification = undefined;
+    history.append(incoming, remaining.map(item => item.id), remaining.flatMap(item => this.notifications.get(item.id)?.reference ?? []), handledInputs.map(item => item.id));
     // The visible journal is a projection; the durable context owns delivery.
-    if (notificationEntry) this.journal.append(id, notificationEntry);
+    this.commitCompletions(remaining);
     if (this.results.ready(id).length) this.pending = true;
     const preferences = this.deps.eventPreferences?.() ?? profile.proactive;
     const system: ModelMessage = { role: 'system', content: renderPromptTemplate('assistant-system', {
@@ -520,6 +576,29 @@ export class AssistantConversation {
       this.activeTurn = undefined;
     }
     const live = this.activeTurn;
+    const completionState = completion && assignmentKey(completion.responseTo)
+      ? this.completionTurn = { key: live?.turnId ?? executionId, assignment: assignmentKey(handledInputs.flatMap(item => item.responseTo ?? []))!, dirty: false } : undefined;
+    const consumeCompletions = async () => {
+      if (!completionState) return;
+      completionState.dirty = false;
+      const latest = this.journal.read(id), consumed = history.read().entryIds;
+      this.reserveCompletions(latest, completionState.assignment);
+      const candidates = latest.filter(item => item.source === 'task' && !consumed.has(item.id) && sameAssignment(assignmentKey(item.responseTo), completionState.assignment));
+      // An inspect receipt may settle while its terminal event is pending. The
+      // receipt owns that exact result version, including in an active reply.
+      const observed = history.read().messages;
+      const delivered = candidates.filter(item => teamCompletionAlreadyRead(item.content, observed));
+      if (delivered.length) history.append([], delivered.map(item => item.id));
+      const additions = candidates.filter(item => !delivered.includes(item));
+      if (!additions.length) return;
+      const messages = additions.flatMap(modelInput);
+      await prepareImages(messages);
+      signal.throwIfAborted();
+      history.append(messages, additions.map(item => item.id), additions.flatMap(item => this.notifications.get(item.id)?.reference ?? []), [...handledInputs, ...additions].map(item => item.id));
+      this.commitCompletions(additions);
+      entries.push(...additions); remaining.push(...additions); handledInputs.push(...additions);
+      parent.inputMessages.push(...additions.map(item => ({ messageId: item.id, message: { role: 'user' as const, name: 'background_task_result', visibility: 'internal' as const, content: item.content } })));
+    };
     let expression: AssistantExpression | undefined;
     const consumeGuidance = async () => {
       if (!live?.entries.length) return;
@@ -560,20 +639,21 @@ export class AssistantConversation {
     for (let round = 0; round < 10; round++) {
       signal.throwIfAborted();
       await consumeGuidance();
+      await consumeCompletions();
       const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1',
         requestId: randomUUID(), messages: await context(), tools, requestCapabilities: { vision: parent.requestCapabilities?.vision === true, interactiveRequests: false },
         metadata: { ...parent.metadata, personalAssistant: true } };
-      if (live?.entries.length) { round--; continue; }
+      if (live?.entries.length || completionState?.dirty) { round--; continue; }
       let result: Awaited<ReturnType<typeof executeBufferedModelRound>>;
       try {
-        result = await this.reasoning.run(live?.turnId ?? parent.turnId, signal, attempt => executeBufferedModelRound(this.deps.provider, request,
+        result = await this.reasoning.run(live?.turnId ?? executionId, signal, attempt => executeBufferedModelRound(this.deps.provider, request,
           { signal: attempt, wait: this.deps.wait, onRetry: status => { if (!attempt.aborted) this.retry = status; } }));
       } catch (error) {
         if (!(error instanceof ModelRequestInterrupted)) throw error;
         this.retry = undefined; round--; continue;
       }
       signal.throwIfAborted();
-      if (live?.entries.length) { round--; continue; }
+      if (live?.entries.length || completionState?.dirty) { round--; continue; }
       const retried = Boolean(this.retry);
       this.retry = undefined;
       if (result.status !== 'completed') {
@@ -595,6 +675,7 @@ export class AssistantConversation {
       if (!toolCalls.length) {
         const text = result.text.trim() || (spoken && published ? uiText(resolveUiLanguage(parent.metadata.uiLanguage))('assistantRuntime.published') : '');
         this.activeTurn = undefined;
+        this.completionTurn = undefined;
         if (text) {
           const replyId = `text-${randomUUID()}`;
           publish({ id: replyId, role: 'assistant', content: text, createdAt: new Date().toISOString(), source: spoken ? 'voice' : 'text', visibility: 'conversation', ...(spoken ? { voiceMode: 'chained' as const } : {}) });
@@ -745,7 +826,12 @@ export class AssistantConversation {
       await this.deps.refreshTasks?.(PERSONAL_ASSISTANT_SESSION, recovery.signal);
       if (this.stopped || recovery.signal.aborted) return;
       for (const task of this.deps.tasks(PERSONAL_ASSISTANT_SESSION)) this.results.observe(PERSONAL_ASSISTANT_SESSION, task);
-      if (this.results.ready(PERSONAL_ASSISTANT_SESSION).length) this.pending = true;
+      const ready = this.results.ready(PERSONAL_ASSISTANT_SESSION);
+      if (ready.length) {
+        this.pending = true;
+        const entries = this.journal.read(PERSONAL_ASSISTANT_SESSION);
+        for (const task of ready) this.invalidateCompletion(this.taskOrigins(task, entries));
+      }
       void this.pump();
       } catch (error) { if (!recovery.signal.aborted) this.error = retainedRuntimeError(error); }
       finally {
@@ -764,15 +850,17 @@ export class AssistantConversation {
     this.journal.append(PERSONAL_ASSISTANT_SESSION, { id: `team-${run.id}-${randomUUID()}`, role: 'user', source: 'task', visibility: 'internal',
       responseTo: run.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.role === 'user' && entry.originTurnId === run.parentTurnId).map(entry => entry.id).slice(-256),
       createdAt: new Date().toISOString(), content });
+    this.invalidateCompletion(run.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => isAuthoredInput(entry) && entry.originTurnId === run.parentTurnId).map(entry => entry.id).slice(-256));
     this.pending = true; void this.pump();
   }
   forget(sessionId: string) {
+    if (sessionId === PERSONAL_ASSISTANT_SESSION) this.maintenance.cancel();
     if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.recovery.abort(); this.recovery = new AbortController(); }
     this.deps.agents?.forget(sessionId);
     if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.replyExpression = undefined; this.directTools.clear(); }
-    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.activeTurn = undefined; this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; this.notification?.release(); this.notification = undefined; this.results.forget(sessionId); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
+    if (sessionId === PERSONAL_ASSISTANT_SESSION) { this.activeTurn = undefined; this.completionTurn = undefined; this.generation++; this.controller?.abort(); this.controller = undefined; this.busy = false; this.error = ''; this.retry = undefined; this.pending = false; this.paused = false; this.configured = undefined; for (const lease of this.notifications.values()) lease.release(); this.notifications.clear(); this.results.forget(sessionId); this.requestIds.clear(); clearTimeout(this.timer); this.timer = undefined; }
     if (sessionId === PERSONAL_ASSISTANT_SESSION) this.deps.management?.reset();
     this.journal.forget(sessionId);
   }
-  close() { this.stopped = true; this.recovery.abort(); this.controller?.abort(); clearTimeout(this.timer); }
+  close() { this.stopped = true; this.maintenance.cancel(); this.recovery.abort(); this.controller?.abort(); clearTimeout(this.timer); }
 }

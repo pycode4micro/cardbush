@@ -142,6 +142,23 @@ export type ToolResource = {
 export class ToolRegistry {
   readonly #registrations = new Map<string, AnyToolRegistration>();
   readonly #hiddenOwners = new Set<string>();
+  readonly #turnResources = new Map<string, Map<object, () => Promise<void>>>();
+
+  /** Host-owned leases, captured against the exact connection that dispatched work. */
+  retainTurnResource(sessionId: string, turnId: string, owner: object, release: () => Promise<void>): void {
+    const key = JSON.stringify([sessionId, turnId]);
+    const resources = this.#turnResources.get(key) ?? new Map<object, () => Promise<void>>();
+    if (!resources.has(owner)) resources.set(owner, release);
+    this.#turnResources.set(key, resources);
+  }
+
+  async releaseTurnResources(sessionId: string, turnId: string): Promise<void> {
+    const key = JSON.stringify([sessionId, turnId]), resources = this.#turnResources.get(key);
+    this.#turnResources.delete(key);
+    // Each adapter owns its bounded release and diagnostics. One broken adapter
+    // must not prevent another lease from being released or mask a turn result.
+    await Promise.allSettled([...resources?.values() ?? []].map(release => Promise.resolve().then(release)));
+  }
 
   /** Hide a disabled extension from new requests without deleting handlers frozen into active Turns. */
   setOwnerEnabled(owner: string, enabled: boolean): void {

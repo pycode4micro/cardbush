@@ -44,19 +44,19 @@ test('packaged native libraries never fall back to compiling an unsigned DLL on 
   for (const file of ['computerUseNativeCode.js', 'computerUseTimings.js']) {
     await copyFile(new URL('../dist/plugins/' + file, import.meta.url), join(plugins, file));
   }
-  const { prepareComputerUseNativeCode } = await import(pathToFileURL(join(plugins, 'computerUseNativeCode.js')));
+  const { prepareComputerUseNativeCode, prepareComputerUseNativeExecutable } = await import(pathToFileURL(join(plugins, 'computerUseNativeCode.js')));
   await assert.rejects(prepareComputerUseNativeCode("Add-Type -TypeDefinition @'\npublic class Missing {}\n'@"), /signed releases must not compile unsigned replacement/);
+  await assert.rejects(prepareComputerUseNativeExecutable('public class Missing { public static void Main(){} }', []), /packaged Computer Use desktop host is missing/);
 });
 
-test('the presentation worker is compiled before release and loads a fixed DLL', { skip: process.platform !== 'win32' }, async t => {
+test('the presentation broker is a precompiled native GUI executable reused across launches', { skip: process.platform !== 'win32' }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-presentation-build-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const script = await prepareComputerUsePresentation(root);
-  assert.doesNotMatch(script, /Add-Type[^\n]*-TypeDefinition/);
-  assert.match(script, /\[CardBushPresentation\]::Run\(\)/);
-  const literalPath = script.match(/Add-Type -Path '((?:''|[^'])+)'/)?.[1];
-  assert.ok(literalPath, 'worker must load a precompiled assembly');
-  const bytes = await readFile(literalPath.replaceAll("''", "'"));
+  const executable = await prepareComputerUsePresentation(root);
+  assert.match(executable, /CardBush-Desktop-[a-f0-9]+\.exe$/);
+  const bytes = await readFile(executable);
   assert.equal(bytes.subarray(0, 2).toString(), 'MZ');
-  assert.equal(await prepareComputerUsePresentation(root), script, 'the worker reuses its immutable release library');
+  const pe = bytes.readUInt32LE(0x3c), subsystem = bytes.readUInt16LE(pe + 24 + 68);
+  assert.equal(subsystem, 2, 'GUI subsystem, not a console or PowerShell host');
+  assert.equal(await prepareComputerUsePresentation(root), executable, 'the broker reuses its immutable release binary');
 });

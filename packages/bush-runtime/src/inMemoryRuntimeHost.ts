@@ -540,6 +540,8 @@ export class InMemoryRuntimeHost {
     }), {
       provider: this.#provider, checkpoint: () => this.#toolRegistry.definitions().find(tool => tool.name === 'checkpoint_context')!,
       wait: (milliseconds, signal) => this.#wait(milliseconds, signal),
+      releaseTurnResources: (sessionId, turnId) => this.#toolRegistry.releaseTurnResources(sessionId, turnId),
+      onMaintenanceError: options.onRecoveryError,
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
       resultDelivery: this.#subagentTasks.delivery,
       refreshTasks: async (id, signal) => { await this.#refreshChildResults?.(id, signal); },
@@ -4333,6 +4335,7 @@ export class InMemoryRuntimeHost {
       });
     } finally {
       this.#backgroundTools.endTurn(request.sessionId, request.turnId);
+      await this.#toolRegistry.releaseTurnResources(request.sessionId, request.turnId);
       this.#asyncJobs.endTurn(request.sessionId, request.turnId);
       this.#terminalNotifications.endTurn(request.sessionId, request.turnId);
       clearMcpDiscovery(this.#toolRegistry, request);

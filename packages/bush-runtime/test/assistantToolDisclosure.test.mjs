@@ -37,6 +37,9 @@ async function fixture(t, { child, remoteAgents, root: existingRoot, hooks } = {
       if (request.metadata.agentRole === 'child') {
         children.push(structuredClone(request));
         if (child) await child(request);
+        if (request.metadata.teamRunId && !request.messages.some(message => message.role === 'tool' && message.content.includes('bush.team_submission.v1'))) {
+          yield* response(request, [call('submit', 'team_submit', { status: 'submitted', summary: 'Inventory verified.' })]); return;
+        }
         yield* response(request, [], 'Inventory verified.'); return;
       }
       assert.equal(request.metadata.personalAssistant, true, 'no extra internal model work');
@@ -93,7 +96,7 @@ test('Assistant projects the ordinary native definitions without changing memory
   assert.match(tools.find(tool => tool.name === 'subagent').description, /default to immediate guidance/);
   assert.match(seen[0].messages.find(message => message.role === 'system').content, /explicitly tell the user which mode you chose/);
   assert.equal(tools.find(tool => tool.name === 'team').inputSchema.properties.definition, undefined);
-  assert.deepEqual(tools.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume']);
+  assert.deepEqual(tools.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume', 'rerun', 'diagnostics']);
   for (const name of ['get_tool_schema', 'call_tool']) assert.ok(tools.some(tool => tool.name === name));
   const memory = new AssistantMemory({}, f.registry).definitions();
   for (const definition of memory) assert.deepEqual(tools.find(tool => tool.name === definition.name), definition);
@@ -239,7 +242,8 @@ test('recalled workflow configuration keeps direct run/resume and normal asynchr
   assert.ok(runId);
   assert.equal((await f.run([[call('resume', 'team', { action: 'resume', run_id: runId })]])).length, 2);
   assert.equal(f.results.get('resume').status, 'completed');
-  assert.equal(f.children.length, 1, 'resuming a completed workflow does not rerun nodes');
+  assert.equal(f.children.length, 2, 'the child submits its delivery, then ends its turn');
+  assert.equal(new Set(f.children.map(request => request.turnId)).size, 1, 'resuming a completed workflow does not rerun nodes');
   assert.equal(f.executed.filter(call => call.name === 'team').length, 3);
 });
 
@@ -264,7 +268,8 @@ test('a wrapped foreground tasks receipt consumes Team completion without anothe
   assert.equal(f.results.get('read').tasks[0].result.nodes[0].output, 'Inventory verified.');
   assert.equal((await f.run([])).length, 1);
   assert.ok(f.requests.every(request => !request.messages.some(message => message.name === 'background_task_result')));
-  assert.equal(f.children.length, 1);
+  assert.equal(f.children.length, 2, 'the child explicitly submitted before completion');
+  assert.equal(new Set(f.children.map(request => request.turnId)).size, 1);
 });
 
 test('summary_for_user keeps its direct contract and runs after recalled business calls in the same batch', async t => {

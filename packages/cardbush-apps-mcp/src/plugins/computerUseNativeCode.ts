@@ -50,7 +50,24 @@ export async function prepareComputerUseNativeCode(script: string, outputDirecto
     "$cardbushAssemblyLoad = [Diagnostics.Stopwatch]::StartNew()\n$1\nif ($null -ne $script:CardBushTimings) { $script:CardBushTimings.initialization_ms += $cardbushAssemblyLoad.ElapsedMilliseconds }");
 }
 
-async function compileNative(source: string, references: string[], output: string): Promise<string> {
+/** The persistent desktop broker is a GUI process, not a PowerShell terminal.
+ * Signed releases load the bundled executable and never compile replacements. */
+export async function prepareComputerUseNativeExecutable(source: string, references: string[], outputDirectory?: string): Promise<string> {
+  const hash = createHash('sha256').update('computer-use-gui-v1\n').update(source).update(JSON.stringify(references)).digest('hex');
+  const filename = `CardBush-Desktop-${hash}.exe`, bundled = join(outputDirectory ?? bundledDirectory, filename);
+  if (await exists(bundled)) return bundled;
+  if (packaged && !outputDirectory) throw new Error('The packaged Computer Use desktop host is missing: ' + filename + '. Repair or reinstall CardBush.');
+  const output = join(outputDirectory ?? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'CardBush', 'computer-use-native'), filename);
+  if (await exists(output)) return output;
+  let compiling = pending.get(output);
+  if (!compiling) {
+    compiling = compileNative(source, references, output, 'winexe').finally(() => pending.delete(output));
+    pending.set(output, compiling);
+  }
+  return compiling;
+}
+
+async function compileNative(source: string, references: string[], output: string, target = 'library'): Promise<string> {
   const started = performance.now();
   const windows = process.env.SystemRoot || 'C:\\Windows';
   const candidates = ['Framework64', 'Framework'].map(name => join(windows, 'Microsoft.NET', name, 'v4.0.30319', 'csc.exe'));
@@ -65,7 +82,7 @@ async function compileNative(source: string, references: string[], output: strin
     // Different helpers must remain distinct when loaded into the same process.
     const compiled = join(temporary, basename(output));
     await writeFile(sourcePath, '\ufeff' + source);
-    await execute(compiler, ['/nologo', '/target:library', '/optimize+', '/utf8output', `/out:${compiled}`,
+    await execute(compiler, ['/nologo', `/target:${target}`, '/optimize+', '/utf8output', `/out:${compiled}`,
       ...references.map(value => `/reference:${value.endsWith('.dll') ? value : value + '.dll'}`), sourcePath],
     { windowsHide: true, encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 });
     try { await rename(compiled, output); }

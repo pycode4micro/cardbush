@@ -2,15 +2,15 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { computerUsePresentationNative } from './computerUsePresentationNative.js';
 import { ComputerUseFailure, computerUseFailure } from './computerUseErrors.js';
-import { prepareComputerUseNativeCode } from './computerUseNativeCode.js';
+import { prepareComputerUseNativeExecutable } from './computerUseNativeCode.js';
 import { computerUseUserIdleMs } from './computerUseTakeover.js';
+import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
 
 export function prepareComputerUsePresentation(directory?: string): Promise<string> {
-  return prepareComputerUseNativeCode("$ErrorActionPreference='Stop'\nAdd-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing,System.Web.Extensions -TypeDefinition @'\n"
-    + computerUsePresentationNative + "\n'@\n[CardBushPresentation]::Run()", directory);
+  return prepareComputerUseNativeExecutable(computerUsePresentationNative, ['System.Windows.Forms', 'System.Drawing', 'System.Web.Extensions'], directory);
 }
 
-export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number; retry_after_ms?: number; user_idle_ms?: number; foreground_granted?: boolean; grant_error?: number };
+export type ComputerUseNotice = { kind: string; scope?: string; reason?: string; id?: number; error?: string; paused?: boolean; target_hwnd?: number; foreground_hwnd?: number; retry_after_ms?: number; user_idle_ms?: number; foreground_granted?: boolean; grant_error?: number; activation?: Record<string, unknown> };
 type Notice = ComputerUseNotice;
 
 export function computerUseNoticeFailure(notice: Notice): ComputerUseFailure {
@@ -60,6 +60,18 @@ export class ComputerUsePresentation {
   }
 
   isPaused(scope: string): boolean { return this.#paused.has(scope) && !this.#stopped.has(scope); }
+  async requestActivation(scope: string, target: { hwnd: number; processId?: number; title: string }, language?: string) {
+    this.assertAvailable(scope);
+    const t = uiText(resolveUiLanguage(language));
+    const result = await this.#send({ op: 'activation_handoff', scope, hwnd: target.hwnd, process_id: target.processId,
+      title: t('computerUse.activation.title'), body: t('computerUse.activation.body', { name: target.title }),
+      activate: t('computerUse.activation.activate'), cancel: t('computerUse.activation.cancel') });
+    return result.activation;
+  }
+  async activationStatus(scope: string) {
+    if (this.#owner !== scope || !this.#child) return;
+    return (await this.#send({ op: 'activation_status', scope })).activation;
+  }
   async grantForeground(processId: number): Promise<Record<string, string>> {
     if (!Number.isSafeInteger(processId) || processId <= 0 || processId >= 0xffffffff) throw new Error('Invalid native worker process.');
     this.assertAvailable(this.#owner);
@@ -139,9 +151,11 @@ export class ComputerUsePresentation {
   }
 
   async #startWorker(): Promise<void> {
-    const script = await prepareComputerUsePresentation();
-    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      windowsHide: true,
+    const executable = await prepareComputerUsePresentation();
+    const child = spawn(executable, [], {
+      // GUI subsystem: no console exists to hide. SW_HIDE startup flags would
+      // also hide the first deliberate recovery window.
+      windowsHide: false,
       stdio: 'pipe',
       env: process.env,
     });
@@ -157,6 +171,7 @@ export class ComputerUsePresentation {
         try {
           const notice = JSON.parse(line) as Notice;
           if (notice.kind === 'ready') { clearTimeout(timeout); resolve(); return; }
+          if (notice.kind === 'fatal') { stderr = String(notice.error ?? 'Native presentation protocol failed.').slice(-3000); child.kill(); return; }
           this.#notice(notice);
         } catch { /* Only the private, structured protocol is consumed. */ }
       });

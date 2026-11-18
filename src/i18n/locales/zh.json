@@ -2,6 +2,10 @@
   "locale": "zh",
   "name": "中文",
   "messages": {
+    "computerUse.activation.title": "CardBush 窗口控制",
+    "computerUse.activation.body": "Windows 保留了其他窗口的前台状态。你可以在这里将“{name}”带到前台。此操作只激活窗口，不会重放键盘输入或点击。",
+    "computerUse.activation.activate": "将窗口带到前台",
+    "computerUse.activation.cancel": "取消",
     "workerConnection.error.identity_changed": "Worker 身份已改变，请核实服务后再更新登记。",
     "workerConnection.error.authentication_failed": "Worker 认证失败，请检查保存的凭据。",
     "workerConnection.error.network_unavailable": "无法访问 Worker，请检查服务、网络或隧道。",

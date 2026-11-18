@@ -405,13 +405,14 @@ export async function executeComputerUse(
   config: ComputerUsePluginConfig,
   signal?: AbortSignal,
   scopeId = 'unscoped',
+  language?: string,
 ): Promise<ComputerUseResult> {
-  const { value, timings } = await collectComputerUseTimings(() => executeComputerUseRequest(input, config, signal, scopeId));
+  const { value, timings } = await collectComputerUseTimings(() => executeComputerUseRequest(input, config, signal, scopeId, language));
   return { ...value, timings };
 }
 
 async function executeComputerUseRequest(
-  input: Record<string, unknown>, config: ComputerUsePluginConfig, signal: AbortSignal | undefined, scopeId: string,
+  input: Record<string, unknown>, config: ComputerUsePluginConfig, signal: AbortSignal | undefined, scopeId: string, language?: string,
 ): Promise<ComputerUseResult> {
   throwIfAborted(signal);
   ensureWindows();
@@ -464,7 +465,10 @@ async function executeComputerUseRequest(
               input,
             );
         // Keep the desktop lease and cleanup until the capture actually settles.
-        return await observeWindow(input, config, scopeId, target, signal);
+        const observation = await observeWindow(input, config, scopeId, target, signal);
+        const activation = await computerUsePresentation.activationStatus(scopeId);
+        if (activation?.state && activation.state !== 'idle') observation.output = { ...recordOrEmpty(observation.output), activation_handoff: activation };
+        return observation;
       }
       const desktop = await readDesktopState(signal);
       const windows = desktop.windows as Array<Record<string, unknown>>;
@@ -575,14 +579,31 @@ async function executeComputerUseRequest(
       else computerUseSafety.recordPreflightFailure(scopeId, input);
     }
     await releaseAction();
+    const attachActivation = async () => {
+      if (failure.info.code !== 'activation_failed' || !actionObservation) return;
+      try {
+        const handoff = await computerUsePresentation.requestActivation(scopeId, actionObservation, language);
+        failure.info.details = { ...failure.info.details, activation_handoff: handoff };
+      } catch (error) {
+        requestSignal?.throwIfAborted();
+        failure.info.details = { ...failure.info.details, activation_handoff_error: error instanceof Error ? error.message : String(error) };
+      }
+    };
     if (input.observe_after !== false && actionObservation && actionMayHaveDispatched &&
         (failure.info.code === 'window_changed' || failure.info.code === 'window_unavailable' || failure.info.code === 'activation_failed')) {
       // A click may have opened a dialog before its ACK arrived. Return evidence,
       // never replay the click. This consumes no human-takeover budget.
-      const recovery = await observeAfterAction(input, config, scopeId, actionObservation,
-        { action, execution: failure.info.execution }, requestSignal, nativeAction);
-      return { ...recovery, error: failure.info };
+      try {
+        const recovery = await observeAfterAction(input, config, scopeId, actionObservation,
+          { action, execution: failure.info.execution }, requestSignal, nativeAction);
+        await attachActivation();
+        return { ...recovery, error: failure.info };
+      } catch (error) {
+        requestSignal?.throwIfAborted();
+        failure.info.details = { ...failure.info.details, observation_error: error instanceof Error ? error.message : String(error) };
+      }
     }
+    await attachActivation();
     if (failure.info.code === 'user_takeover') {
       await computerUsePresentation.pause(scopeId).catch(() => undefined);
     } else if (['user_stopped', 'control_unavailable', 'application_control_blocked'].includes(failure.info.code)) {

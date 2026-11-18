@@ -1059,6 +1059,7 @@ mcp = new McpClientManager({
     onAuthenticationRequired: async (input, signal) => (await mcpHost.request<{ action: string }>('authentication', input, signal)).action === 'accept',
   } : {}),
   registry: toolRegistry,
+  turnControlServers: ['cardbush_apps'],
   onServiceStateChange: (state) => {
     process.stderr.write(`${JSON.stringify({
       code: 'runtime_mcp_service_state',

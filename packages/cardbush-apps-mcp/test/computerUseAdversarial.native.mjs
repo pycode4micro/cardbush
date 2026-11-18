@@ -29,6 +29,15 @@ async function appState(predicate,label){let actual;for(let attempt=0;attempt<40
 async function check(name,body){const scope=`adversarial-${++sequence}`;if(process.env.CARDBUSH_TEST_FILTER&&!name.includes(process.env.CARDBUSH_TEST_FILTER))return;try{await body(scope);checks.push({name,passed:true});console.log('PASS',name);}finally{await act(scope,{action:'finish'}).catch(()=>undefined);}}
 try{
   const ready=await fixture.ready;hwnd=ready.hwnd;
+  if(process.env.CARDBUSH_TEST_WAIT_FOR_FOREGROUND==='1') {
+    await computerUsePresentation.observe('test-setup',hwnd);
+    await computerUsePresentation.requestActivation('test-setup',{hwnd,processId:fixture.child.pid,title:'CardBush isolated adversarial fixture'},'en');
+    console.log(JSON.stringify({fixtureReady:true,hwnd,awaitingForeground:true}));
+    let foreground=false;
+    for(let i=0;i<600;i++){if((await fixture.command('inspect')).foreground===hwnd){foreground=true;break;}await new Promise(r=>setTimeout(r,100));}
+    await computerUsePresentation.finish('test-setup');
+    assert.ok(foreground,'Test setup requires foreground ownership of its disposable window; no input guard is bypassed.');
+  }
   await check('failed target capture never returns pixels from an overlapping window',async()=>{
     await fixture.command('overlap');
     const script=windowStateCaptureScript;

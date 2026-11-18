@@ -10,6 +10,7 @@ const bootstrap = [
   '[Console]::InputEncoding = $cardbushUtf8',
   '[Console]::OutputEncoding = $cardbushUtf8',
   '$OutputEncoding = $cardbushUtf8',
+  "if ($env:CARDBUSH_PREPARE_FOREGROUND -eq '1') { Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::DoEvents() }",
   "[Console]::Error.WriteLine('CARDBUSH_NATIVE_READY')",
   '& ([ScriptBlock]::Create($cardbushUtf8.GetString([Convert]::FromBase64String([Console]::In.ReadLine()))))',
 ].join('\n');
@@ -51,8 +52,16 @@ export async function runComputerUsePowerShell(script: string, options: {
     maxBuffer: 8 * 1024 * 1024,
     encoding: 'utf8',
     cwd: options.cwd,
-    env: options.env,
+    env: { ...options.env, ...(options.beforeExecute ? { CARDBUSH_PREPARE_FOREGROUND: '1' } : {}) },
   });
+  // A PID is published before Windows has initialized the new process. Granting
+  // foreground eligibility then can fail with ERROR_INVALID_PARAMETER. Wait for
+  // this worker's private readiness acknowledgement and initialized input queue.
+  let resolveReady: () => void = () => undefined, rejectReady: (error: Error) => void = () => undefined;
+  const ready = options.beforeExecute ? new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; }) : undefined;
+  const startupFailed = () => rejectReady(new Error('Native worker closed before readiness.'));
+  execution.child.once('error', startupFailed);
+  execution.child.once('exit', startupFailed);
   let acknowledged = false;
   let callbackError: unknown;
   const outputLines = createInterface({ input: execution.child.stdout! });
@@ -69,7 +78,7 @@ export async function runComputerUsePowerShell(script: string, options: {
   });
   const diagnostics = createInterface({ input: execution.child.stderr! });
   diagnostics.on('line', line => {
-    if (line === 'CARDBUSH_NATIVE_READY') addComputerUseTimings({ process_start_ms: performance.now() - started });
+    if (line === 'CARDBUSH_NATIVE_READY') { addComputerUseTimings({ process_start_ms: performance.now() - started }); resolveReady(); }
     if (line.startsWith(timingPrefix)) {
       try { addComputerUseTimings(JSON.parse(line.slice(timingPrefix.length))); } catch { /* Ignore malformed diagnostics. */ }
     }
@@ -96,7 +105,11 @@ ${script}
       if (options.afterAction) stdin.write(data, 'utf8', sent);
       else stdin.end(data, 'utf8', sent);
     };
-    if (options.beforeExecute && execution.child.pid) void options.beforeExecute(execution.child.pid).then(send).catch(error => { execution.child.kill(); reject(error); });
+    if (options.beforeExecute) void ready!.then(() => {
+      options.signal?.throwIfAborted();
+      if (execution.child.killed || !execution.child.pid) throw new Error('Native worker terminated before foreground grant.');
+      return options.beforeExecute!(execution.child.pid!);
+    }).then(send).catch(error => { execution.child.kill(); reject(error); });
     else { try { send(); } catch (error) { execution.child.kill(); reject(error); } }
   });
   try {
@@ -109,5 +122,5 @@ ${script}
       error.stderr = error.stderr.split(/\r?\n/).filter(line => line !== 'CARDBUSH_NATIVE_READY' && !line.startsWith(timingPrefix)).join('\n');
     }
     throw error;
-  } finally { outputLines.close(); diagnostics.close(); }
+  } finally { outputLines.close(); diagnostics.close(); execution.child.removeListener('error', startupFailed); execution.child.removeListener('exit', startupFailed); }
 }

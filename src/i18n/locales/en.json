@@ -2,6 +2,10 @@
   "locale": "en",
   "name": "English",
   "messages": {
+    "computerUse.activation.title": "CardBush window control",
+    "computerUse.activation.body": "Windows kept another window in front. You can bring “{name}” forward here. This only activates the window; it does not replay typing or clicks.",
+    "computerUse.activation.activate": "Bring window forward",
+    "computerUse.activation.cancel": "Cancel",
     "workerConnection.error.identity_changed": "The worker identity changed. Verify the service before updating its registration.",
     "workerConnection.error.authentication_failed": "Worker authentication failed. Check the saved credentials.",
     "workerConnection.error.network_unavailable": "The worker could not be reached. Check the service and its network or tunnel.",

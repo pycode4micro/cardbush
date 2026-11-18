@@ -3,6 +3,8 @@
 import { controlLayerCapture, controlLayerEnabled, controlLayerMarker } from './computerUseCaptureLayers.js';
 import { computerUseAppearance as appearance } from '@cardbush/bush-protocol';
 import { computerUseUserIdleMs } from './computerUseTakeover.js';
+import { computerUseForegroundHandoffNative } from './computerUseForegroundHandoffNative.js';
+import { computerUseForegroundHandoffView } from './computerUseForegroundHandoffView.js';
 
 export const computerUsePresentationNative = String.raw`
 using System;
@@ -15,6 +17,14 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 public static class CardBushPresentation {
+  [STAThread] public static void Main() {
+    // A GUI subsystem has redirected pipes but no console code page.
+    Console.SetIn(new System.IO.StreamReader(Console.OpenStandardInput(),new System.Text.UTF8Encoding(false),false));
+    Console.SetOut(new System.IO.StreamWriter(Console.OpenStandardOutput(),new System.Text.UTF8Encoding(false)){AutoFlush=true});
+    try { Run(); } catch(Exception ex) { Emit(new {kind="fatal",error=ex.Message}); Environment.ExitCode=1; }
+  }
+${computerUseForegroundHandoffNative}
+${computerUseForegroundHandoffView}
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
   [StructLayout(LayoutKind.Sequential)] struct MOUSE { public POINT pt; public uint data, flags, time; public UIntPtr extra; }
@@ -94,6 +104,7 @@ public static class CardBushPresentation {
   static long Number(Dictionary<string,object> v, string key) { return v.ContainsKey(key) && v[key] != null ? Convert.ToInt64(v[key]) : 0; }
   static void Stop(string reason) {
     if (!active) return;
+    SettleActivation("cancelled");
     Emit(new { kind="stopped", scope=scope, reason=reason });
     active = false; acting = false; pointer = false; closing = true; fadeStarted = DateTime.UtcNow;
     EnableLayers(false);
@@ -170,6 +181,7 @@ public static class CardBushPresentation {
   }
   static void Bind(IntPtr hwnd) {
     if(target==hwnd && frame!=null) return;
+    SettleActivation("superseded");
     if(frame!=null) frame.Dispose(); if(badge!=null) badge.Dispose();
     target=hwnd; entered=DateTime.UtcNow;
     frame=MakeLayer(false); badge=MakeLayer(true);
@@ -181,6 +193,7 @@ public static class CardBushPresentation {
       if(op=="suspend") { suspended=true; HideLayers(); }
       else if(op=="restore") { suspended=false; RestoreCaptureLayers(); SyncWindow(); }
       else if(op=="finish") {
+        if(scope==requestScope) SettleActivation("cancelled");
         if(scope==requestScope) { ReleaseInput(); active=false; acting=false; pointer=false; EnableLayers(false); closing=true; fadeStarted=DateTime.UtcNow; timer.Interval=30; }
       } else if(op=="observe") {
         if (active && scope!=requestScope) throw new Exception("Another session owns the Computer Use window. Finish that control session first.");
@@ -192,6 +205,11 @@ public static class CardBushPresentation {
         EnableLayers(true);
         if (paused && RemainingUserIdleMs()==0) paused=false;
         touched=DateTime.UtcNow; timer.Interval=250; SyncWindow();
+      } else if(op=="activation_handoff") {
+        Emit(new {kind="ack",id=id,activation=RequestActivation(v)});return;
+      } else if(op=="activation_status") {
+        if(scope!=requestScope)throw new Exception("Activation scope mismatch.");
+        AdvanceActivation();Emit(new {kind="ack",id=id,activation=ActivationSnapshot()});return;
       } else if(op=="foreground_grant") {
         if(!active || !acting || !windowAction || paused || contextChanged || scope!=requestScope)
           throw new Exception("No active window operation owns this foreground grant.");
@@ -281,6 +299,7 @@ public static class CardBushPresentation {
     if(mouseHook==IntPtr.Zero || keyHook==IntPtr.Zero) throw new Exception("Unable to register Computer Use take-over hooks.");
     timer=new System.Windows.Forms.Timer(); timer.Interval=250;
     timer.Tick+=(s,e)=> {
+      AdvanceActivation();
       if(closing) {
         if((DateTime.UtcNow-fadeStarted).TotalMilliseconds>=180) { closing=false; HideLayers(); timer.Interval=250; }
         else Redraw();
@@ -295,12 +314,13 @@ public static class CardBushPresentation {
           var value=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(line);
           dispatcher.BeginInvoke(new Action(()=>Command(value)));
         }
-      } catch {}
+      } catch(Exception ex) { Emit(new {kind="fatal",error=ex.Message}); }
       try { dispatcher.BeginInvoke(new Action(()=>Application.ExitThread())); } catch {}
     });
     reader.IsBackground=true; reader.Start(); Emit(new {kind="ready"});
     try { Application.Run(); }
     finally {
+      SettleActivation("cancelled");
       ReleaseInput();
       timer.Dispose(); UnhookWindowsHookEx(mouseHook); UnhookWindowsHookEx(keyHook);
       foreach(IntPtr hook in eventHooks) UnhookWinEvent(hook);

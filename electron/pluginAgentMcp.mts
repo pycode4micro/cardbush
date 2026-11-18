@@ -34,6 +34,10 @@ export async function openPluginAgentMcp(manager: McpClientManager, agent: Plugi
       const prefix = `mcp__${registration.mcpHook!.server.replace(/[^A-Za-z0-9_-]/g, '_')}__`;
       return { ...registration, definition: { ...registration.definition, name: tool.name.replace(prefix, `${prefix.slice(0, -2)}__scope_${suffix}__`) } };
     });
-    return { registrations, close: async () => { signal?.removeEventListener('abort', abort); await scoped.close(); } };
+    return { registrations, close: async () => {
+      signal?.removeEventListener('abort', abort);
+      await registry.releaseTurnResources(request.sessionId, request.turnId);
+      await scoped.close();
+    } };
   } catch (error) { signal?.removeEventListener('abort', abort); await scoped.close(); throw error; }
 }

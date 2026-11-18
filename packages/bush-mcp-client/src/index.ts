@@ -91,6 +91,8 @@ export interface McpClientManagerOptions {
   onElicitation?: McpElicitationHandler;
   onAuthenticationRequired?: (request: { serverId: string; sessionId: string; turnId: string; toolCallId: string }, signal: AbortSignal) => Promise<boolean>;
   registry: ToolRegistry;
+  /** Host-owned servers allowed to declare desktop-control lease cleanup. Never inferred from remote metadata alone. */
+  turnControlServers?: readonly string[];
   /** Optional embedding-host publication barrier; desktop updates use per-connection call lifetimes. */
   canApply?: () => boolean;
   createClient?: (server: McpServerSnapshot, options?: Pick<ClientOptions, 'listChanged'>) => Client;
@@ -528,7 +530,7 @@ export class McpClientManager {
 
   fork(registry: ToolRegistry): McpClientManager {
     if (this.#closed) throw new Error('MCP manager is closed.');
-    const fork = new McpClientManager({ ...this.#options, registry, canApply: () => true, closeOAuthOnClose: false });
+    const fork = new McpClientManager({ ...this.#options, registry, turnControlServers: [], canApply: () => true, closeOAuthOnClose: false });
     fork.#parent = this;
     this.#forks.add(fork);
     return fork;
@@ -688,6 +690,23 @@ export class McpClientManager {
       return this.#useConnection(connection, operation);
     };
     const meta = tool.remote._meta ?? {};
+    const retainControl = (context: Parameters<typeof mcpRequestMetadata>[0]) => {
+      if (!this.#options.turnControlServers?.includes(connection.config.id) ||
+          meta['cardbush/plugin_id'] !== 'computer_use' || meta['cardbush/control_lifecycle'] !== 'turn') return;
+      const client = connection.client;
+      const requestMetadata = mcpRequestMetadata(context, connection.config.id, tool.remote);
+      this.#registry.retainTurnResource(context.sessionId, context.turnId, client, async () => {
+        // Never send an old lease's release to a reconnected service or another turn.
+        if (connection.retired || connection.client !== client || connection.health !== 'ready') return;
+        try {
+          const released = await settleWithin(client.callTool({ name: tool.remote.name, arguments: { action: 'finish' }, _meta: requestMetadata },
+            { signal: AbortSignal.timeout(2_000), timeout: 2_000, toolDefinition: tool.remote }).catch(error => {
+              this.#onServerStderr?.({ serverId: connection.config.id, message: `Desktop control release failed: ${errorMessage(error)}` });
+            }), 2_000);
+          if (!released) this.#onServerStderr?.({ serverId: connection.config.id, message: 'Desktop control release timed out.' });
+        } catch (error) { this.#onServerStderr?.({ serverId: connection.config.id, message: `Desktop control release failed: ${errorMessage(error)}` }); }
+      });
+    };
     const ui = meta.ui as { resourceUri?: string; visibility?: string[] } | undefined;
     const resourceUri = ui?.resourceUri ?? meta['openai/outputTemplate'];
     return {
@@ -702,6 +721,7 @@ export class McpClientManager {
           const validated = decodeInput(input);
           if (connection.retired || connection.health !== 'ready') throw preflightMcpError('mcp_service_unavailable',
             `MCP service ${connection.config.id} is not connected.`, { serverId: connection.config.id });
+          retainControl({ requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } });
           try { return await this.#interactive.run(connection.client, { serverId: connection.config.id, sessionId: options.request.sessionId, turnId: options.request.turnId, signal: options.signal },
             Math.min(options.timeoutMs, connection.config.toolTimeoutMs ?? 60_000), signal => connection.client.callTool({ name: tool.remote.name, arguments: validated,
             _meta: mcpRequestMetadata({ requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } }, connection.config.id, tool.remote) },
@@ -769,6 +789,7 @@ export class McpClientManager {
           );
         }
         const activeClient = connection.client;
+        retainControl(context);
         let candidate;
         const invoke = () => this.#interactive.run(activeClient, { serverId: connection.config.id, sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id, signal: context.signal },
             connection.config.toolTimeoutMs ?? 60_000, signal => activeClient.callTool(
@@ -1114,13 +1135,15 @@ function mcpRequestMetadata(
     : "";
   const browserScoped = serverId === "browser_use" &&
     tool._meta?.["cardbush/plugin_id"] === "chrome";
+  const desktopScoped = tool._meta?.["cardbush/plugin_id"] === "computer_use";
   return {
     filesystem_roots: filesystemRoots,
     ...(transportChannel ? { transport_channel: transportChannel } : {}),
-    ...(browserScoped ? {
+    ...(browserScoped || desktopScoped ? {
       cardbush_session_id: context.sessionId,
       cardbush_turn_id: context.turnId,
       cardbush_request_id: context.requestId,
+      ...(typeof context.turn?.request.metadata.uiLanguage === 'string' ? { cardbush_ui_language: context.turn.request.metadata.uiLanguage } : {}),
       ...(sessionTitle ? { cardbush_session_title: sessionTitle } : {}),
     } : {}),
   };
