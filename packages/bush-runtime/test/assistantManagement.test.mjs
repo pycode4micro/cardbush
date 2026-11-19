@@ -305,8 +305,8 @@ test('full-control management uses ordinary admission semantics without creating
 test('trusted pre-tool policy still blocks assistant management even with full control', async t => {
   const f = await fixture(t), script = join(f.root, 'block.cjs'); await f.configureEvents();
   await writeFile(script, `console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'Blocked by fixture policy'}}));`);
-  const command = `"${process.execPath}" "${script}"`;
-  f.hooks.push({ id: 'block-event', pluginId: 'fixture', root: f.root, event: 'PreToolUse', matcher: 'assistant_event', dialect: 'claude', type: 'command', trusted: true, command, commandWindows: command, timeout: 10 });
+  f.hooks.push({ id: 'block-event', pluginId: 'fixture', root: f.root, event: 'PreToolUse', matcher: 'assistant_event', dialect: 'claude', type: 'command',
+    trusted: true, command: process.execPath, args: [script], timeout: 10 });
   const result = await f.invoke('assistant_event', reminder, { permissionMode: 'all_free' });
   assert.equal(result.status, 'failed'); assert.match(result.error, /Blocked by fixture policy/);
   assert.equal((await f.readEvents()).events.length, 0);

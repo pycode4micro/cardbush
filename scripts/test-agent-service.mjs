@@ -22,6 +22,34 @@ import { createProductAgentTurnRequest, createTurnTimeContext } from '../package
 
 // Native Windows sandbox helpers need room for nested attachment paths even in deep worktrees.
 const tempRoot = join(tmpdir(), 'cb-agent-tests');
+const fixtureDisposers = new WeakMap();
+
+function fixtureCleanup(t, dispose) {
+  let resources = fixtureDisposers.get(t);
+  if (!resources) {
+    // A single hook disposes in reverse order and continues after a cleanup error.
+    resources = new AsyncDisposableStack();
+    fixtureDisposers.set(t, resources);
+    t.after(() => resources.disposeAsync());
+  }
+  resources.defer(dispose);
+}
+
+function closeFixtureServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close(error => error && error.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve());
+    server.closeAllConnections();
+  });
+}
+
+function openFixtureAgent(t, options) {
+  const opening = AgentService.open(options);
+  fixtureCleanup(t, async () => {
+    const service = await opening.catch(() => undefined);
+    await service?.close();
+  });
+  return opening;
+}
 
 test('expired approval errors retain their code through Worker and HTTP without dispatching work', async t => {
   const f = await openService(t, 'stale-approval');
@@ -50,7 +78,7 @@ async function until(read, predicate, timeout = 12000) {
 }
 async function directory(t) {
   await mkdir(tempRoot, { recursive: true }); const root = await mkdtemp(join(tempRoot, 'agent-'));
-  t.after(async () => { assert.ok(resolve(root).startsWith(tempRoot + '\\') || resolve(root).startsWith(tempRoot + '/')); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 }); });
+  fixtureCleanup(t, async () => { assert.ok(resolve(root).startsWith(tempRoot + '\\') || resolve(root).startsWith(tempRoot + '/')); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 }); });
   return root;
 }
 async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
@@ -89,18 +117,36 @@ async function modelFixture(t, delay = 80, toolPath, compatibility = false) {
     emit({ type: 'response.output_item.done', output_index: 0, item });
     emit({ type: 'response.completed', response: { ...response, status: 'completed', output: [item], usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105 } } }); res.end();
   });
+  fixtureCleanup(t, () => closeFixtureServer(server));
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   return { calls, titleCalls, url: `http://127.0.0.1:${server.address().port}/v1` };
 }
 async function openService(t, name = 'fixture', delay = 80, tool, compatibility = false, bundledRoot) {
   const root = await directory(t); const model = await modelFixture(t, delay, tool, compatibility);
-  const service = await AgentService.open({ dataRoot: root, name, bundledRoot, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
-  // Cleanup hooks execute in registration order; close before removing the root.
-  t.after(() => service.close());
+  const service = await openFixtureAgent(t, { dataRoot: root, name, bundledRoot, env: { CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS: '1' } });
   await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture-secret', baseURL: model.url }] } });
   return { root, model, service };
 }
+
+test('a failing fixture disposer still closes the model listener and removes the test directory', async t => {
+  const hooks = [];
+  const fixture = { after: dispose => hooks.push(dispose) };
+  t.after(async () => { await Promise.allSettled(hooks.map(dispose => dispose())); });
+  const root = await directory(fixture);
+  const model = await modelFixture(fixture);
+  fixtureCleanup(fixture, () => { throw new Error('fixture cleanup failed'); });
+  assert.equal(hooks.length, 1);
+  await assert.rejects(hooks[0](), /fixture cleanup failed/);
+  await assert.rejects(readFile(root), { code: 'ENOENT' });
+  await assert.rejects(new Promise((resolve, reject) => {
+    const request = httpRequest(model.url + '/responses/input_tokens', { method: 'POST', agent: false }, response => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    request.once('error', reject);
+    request.end('{}');
+  }), { code: 'ECONNREFUSED' });
+});
 const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
 
 const workerInput = (taskId, extra = {}) => ({ taskId, sessionId: `delegated-${taskId}`, turnId: `turn-${taskId}`, parentSessionId: 'parent',
@@ -263,17 +309,18 @@ test('remote submission negotiates routing and never silently downgrades model a
   assert.equal(request.permissionRouting, undefined, 'negotiation does not mutate the caller request');
 });
 
-test('a parent model approves a remote child through the real HTTP bridge and the child resumes exactly once', { timeout: 30000 }, async t => {
+test('a parent model approves a remote child through the real HTTP bridge and the child resumes exactly once', async t => {
   const root = await directory(t), outside = join(root, 'protected.txt'); await writeFile(outside, 'parent-approved fixture');
   const f = await openService(t, 'parent-model-approval', 20, outside);
   const token = 'parent-approval-offline-fixture-token';
   const server = await serveAgentHttp(f.service, { port: 0, token });
+  fixtureCleanup(t, () => server.close());
   const manager = new AgentConnectionManager(join(f.root, 'connections.json'), { encrypt: value => value, decrypt: value => value });
-  let host;
-  try {
+  fixtureCleanup(t, () => manager.close());
+  await t.test('the approval round trip completes within its own budget', { timeout: 30000 }, async t => {
     const [connection] = await manager.save({ name: 'Worker', transport: 'http', url: `http://127.0.0.1:${server.port}`, token });
     const registry = new ToolRegistry(), tasks = new SubagentTaskStore(); let round = 0, approvals = 0;
-    host = new InMemoryRuntimeHost({ toolRegistry: registry, subagentTaskStore: tasks, remoteAgents: {
+    const host = new InMemoryRuntimeHost({ toolRegistry: registry, subagentTaskStore: tasks, remoteAgents: {
       list: async () => [{ id: connection.id, name: 'Worker', agentId: f.service.info().id }],
       run: (input, signal, onAccepted) => runRemoteSubagent(manager, input, signal, { onAccepted }),
       control: (input, signal) => callRemoteWorker(manager, 'agents.control', input, signal),
@@ -292,10 +339,11 @@ test('a parent model approves a remote child through the real HTTP bridge and th
         : { ...base, sequence: 0, kind: 'text_delta', delta: 'Child completed.' };
       yield { ...base, sequence: 1, kind: 'response_completed', finishReason: call ? 'tool_calls' : 'stop' };
     } } });
+    fixtureCleanup(t, () => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
     const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn',
       model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Read the remote fixture' } }],
       tools: registry.definitions(), permissionMode: 'task_free', metadata: { subagentPermissionRouting: 'parent', individuation: { habits: false, predictions: false } },
-    }, { signal: AbortSignal.timeout(20000) });
+    }, { signal: AbortSignal.any([t.signal, AbortSignal.timeout(20000)]) });
     assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
     assert.equal(approvals, 1); assert.equal(tasks.list('parent').length, 1);
     assert.equal(tasks.list('parent')[0].status, 'completed');
@@ -304,7 +352,7 @@ test('a parent model approves a remote child through the real HTTP bridge and th
     const events = await f.service.call('runtime.command', { kind: 'runtime.list_turn_events', payload: { sessionId: task.childSessionId, turnId: task.childTurnId } });
     assert.equal(events.filter(event => event.kind === 'permission_answered').length, 1);
     assert.equal(events.find(event => event.kind === 'permission_requested').payload.permissionRouting, 'parent');
-  } finally { await host?.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await manager.close(); await server.close(); await f.service.close(); }
+  });
 });
 
 test('worker queue and insert retain order, exact run identity and role revision', async t => {
@@ -407,7 +455,7 @@ for (const [admin, routing, delegateApproval] of [
 ]) test(`worker permissions respect the remote ceiling and task routing (admin=${admin || 'unset'}, route=${routing ?? 'legacy'})`, async t => {
   const root = await directory(t), outside = join(root, 'protected.txt'); await writeFile(outside, 'protected contents');
   const model = await modelFixture(t, 20, outside);
-  const service = await AgentService.open({ dataRoot: join(root, 'worker'), env: { CARDBUSH_REMOTE_PARENT_APPROVAL: admin, CARDBUSH_REMOTE_PERMISSION_MODE: 'task_free' } });
+  const service = await openFixtureAgent(t, { dataRoot: join(root, 'worker'), env: { CARDBUSH_REMOTE_PARENT_APPROVAL: admin, CARDBUSH_REMOTE_PERMISSION_MODE: 'task_free' } });
   const request = workerInput('permission', { permissionMode: 'all_free', ...(routing ? { permissionRouting: routing } : {}) });
   try {
     await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture', baseURL: model.url }] } });
@@ -441,6 +489,11 @@ for (const [admin, routing, delegateApproval] of [
       } });
       else await workerControl(service, request, { ...response, response: { ...response.response, decision: 'deny' } });
     }
+    let terminal;
+    for await (const event of service.eventStream({ sessionId: request.sessionId, turnId: request.turnId }, t.signal)) {
+      if (event.kind === 'turn_terminal') terminal = event;
+    }
+    assert.equal(terminal?.payload.status, 'completed', JSON.stringify(terminal));
     await until(() => service.call('chat.jobs'), jobs => jobs[0]?.status === 'completed');
     if (delegateApproval || escalated) assert.match(JSON.stringify(model.calls[1]), /protected contents/);
     else assert.doesNotMatch(JSON.stringify(model.calls[1]), /protected contents/);
@@ -1655,8 +1708,8 @@ test('unified configuration is applied before chat submission; acknowledged retr
     const upstream=httpRequest(req.url,{method:req.method,headers:{...req.headers,host:new URL(req.url).host}},response=>{res.writeHead(response.statusCode,response.headers);response.pipe(res);});
     upstream.on('error',()=>res.writeHead(502).end());req.pipe(upstream);
   });
+  fixtureCleanup(t, () => closeFixtureServer(proxy));
   proxy.listen(0,'127.0.0.1');await once(proxy,'listening');
-  t.after(()=>{proxy.closeAllConnections();return new Promise(resolve=>proxy.close(resolve));});
   const snapshot = { roots: [], models: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'unified-secret', baseURL: f.model.url }] },
     apps: { serviceEnabled: true, plugins: [] }, mcp: { servers: [] }, subagents: {}, network:{mode:'manual',httpProxy:'http://127.0.0.1:'+proxy.address().port,httpsProxy:'',noProxy:''}, instructions: 'Shared developer preference: use a patient voice.' };
   const server = await serveAgentHttp(f.service, {token:'u'.repeat(48),port:0});

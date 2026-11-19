@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, TerminalSessionManager } from '../dist/index.js';
@@ -68,13 +69,27 @@ test('real terminal exit is delivered once, with no model polling and a stable m
 });
 
 test('observer cancellation does not stop the process, drain logs or leak results into another turn', { timeout: 15000 }, async t => {
-  const root = temporary(t), terminals = new TerminalSessionManager(), store = new ToolExecutionStore(), controller = new AbortController(), deliveries = [];
+  const terminals = new TerminalSessionManager(), store = new ToolExecutionStore(), controller = new AbortController(), deliveries = [];
+  t.after(() => terminals.close());
+  const root = temporary(t);
   const watcher = new TerminalCompletionNotifications(terminals, store, undefined, (s, turn, id, promise) => deliveries.push({ s, turn, id, promise }));
-  const initial = await terminals.start({ ownerSessionId: 's', cwd: root, shell, command: command('setTimeout(()=>console.log("still-ran"),500)'), yieldTimeMs: 1 });
+  const fixture = 'observe.cjs';
+  await writeFile(join(root, fixture), `
+const fs = require('node:fs');
+const release = setInterval(() => {
+  if (!fs.existsSync('release-observer')) return;
+  clearInterval(release);
+  console.log('still-ran');
+}, 20);
+`);
+  const directCommand = process.platform === 'win32' ? `"${process.execPath}" ${fixture}` : command(`require('./${fixture}')`);
+  const initial = await terminals.start({ ownerSessionId: 's', cwd: root, shell: process.platform === 'win32' ? 'cmd' : shell, command: directCommand, yieldTimeMs: 1 });
+  assert.equal(initial.state, 'running');
   watcher.watch(context(controller), initial);
   assert.equal(watcher.list('other', 't').length, 0); assert.equal(watcher.list('s', 'different').length, 0);
   controller.abort();
   assert.match((await deliveries[0].promise).content, /cancelled/);
+  await writeFile(join(root, 'release-observer'), '');
   const exit = await terminals.waitForCompletion('s', initial.terminalSessionId);
   assert.equal(exit.state, 'exited'); assert.match(exit.stdout, /still-ran/);
   const polled = await terminals.poll('s', { sessionId: initial.terminalSessionId, yieldTimeMs: 1 });
