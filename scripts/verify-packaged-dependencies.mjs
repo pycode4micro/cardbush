@@ -1,6 +1,6 @@
 import { extractFile, listPackage, uncache } from '@electron/asar';
 import { isBuiltin } from 'node:module';
-import { normalize } from 'node:path';
+import { normalize, posix } from 'node:path';
 import ts from 'typescript';
 
 function runtimeImports(code, file) {
@@ -16,8 +16,7 @@ function runtimeImports(code, file) {
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return [...imports].filter(name => !name.startsWith('.') && !name.startsWith('/') &&
-    !isBuiltin(name) && !['electron', 'original-fs'].includes(name));
+  return [...imports].filter(name => !name.startsWith('/') && !isBuiltin(name) && !['electron', 'original-fs'].includes(name));
 }
 
 // A structurally valid MSIX can still contain an unusable ASAR when a builder
@@ -33,13 +32,20 @@ export function verifyPackagedDependencies(archive) {
   if (!files.has('node_modules/quickjs-emscripten/package.json') || ![...files].some(file => file.includes('@jitl/quickjs-wasmfile-release-sync/') && file.endsWith('.wasm'))) missing.push('quickjs-emscripten (including WASM runtime)');
   if (missing.length) throw Error('Packaged application is missing production dependencies: ' + missing.join(', '));
   const undeclared = new Set();
+  const missingLocal = new Set();
   for (const file of files) {
     if (!file.startsWith('dist-electron/') || !/\.[cm]?js$/.test(file)) continue;
     for (const specifier of runtimeImports(extractFile(archive, normalize(file)).toString('utf8'), file)) {
+      if (specifier.startsWith('.')) {
+        const target = posix.normalize(posix.join(posix.dirname(file), specifier));
+        if (target.startsWith('assets/') && !files.has(target)) missingLocal.add(`${target} (${file})`);
+        continue;
+      }
       const name = specifier.split('/').slice(0, specifier.startsWith('@') ? 2 : 1).join('/');
       if (!Object.hasOwn(manifest.dependencies ?? {}, name)) undeclared.add(`${name} (${file})`);
     }
   }
+  if (missingLocal.size) throw Error('Packaged host imports missing application assets: ' + [...missingLocal].join(', '));
   if (undeclared.size) throw Error('Packaged host imports undeclared production dependencies: ' + [...undeclared].join(', '));
   return { verified: Object.keys(manifest.dependencies ?? {}).length };
 }

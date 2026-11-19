@@ -36,6 +36,9 @@ files:
   - '!assets/brand/**/*'
   - '!assets/plugins/browser/extension/**/*'
   - '!assets/skills/**/*'
+  # Desktop Home tools and preview import these shared modules from the app archive.
+  - assets/skills/cardbush-docs/scripts/component-limits.mjs
+  - assets/skills/cardbush-docs/scripts/component-origins.mjs
   - '!assets/runtime-tools/**/*'
   - package.json
   - LICENSE

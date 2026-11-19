@@ -66,6 +66,14 @@ test('a valid ASAR without production dependencies cannot pass the packaging gat
   await writeFile(join(wasmDirectory, 'emscripten-module.wasm'), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
   await createPackage(source, archive);
   assert.equal(verifyPackagedDependencies(archive).verified, 1);
+  await mkdir(join(source, 'dist-electron'), { recursive: true });
+  await writeFile(join(source, 'dist-electron/main.cjs'), "const limit = require('../assets/skills/example/limit.mjs');");
+  await createPackage(source, archive);
+  assert.throws(() => verifyPackagedDependencies(archive), /missing application assets: assets\/skills\/example\/limit\.mjs/);
+  await mkdir(join(source, 'assets/skills/example'), { recursive: true });
+  await writeFile(join(source, 'assets/skills/example/limit.mjs'), 'export const limit = 1;');
+  await createPackage(source, archive);
+  assert.equal(verifyPackagedDependencies(archive).verified, 1);
 });
 
 test('host runtime imports must be declared and shipped even when development workspaces resolve them', async t => {

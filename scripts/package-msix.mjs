@@ -51,6 +51,10 @@ export function msixVersionConfiguration(identity) {
   };
 }
 
+export function msixRendererFiles(rendererDirectory) {
+  return ['!dist{,/**/*}', { from: rendererDirectory, to: 'dist', filter: ['**/*', '!**/*.map'] }];
+}
+
 function xml(value) {
   return value.replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
@@ -179,6 +183,7 @@ async function main() {
   await mkdir(outputRoot, { recursive: true });
   const output = await mkdtemp(path.join(outputRoot, `${identity.version}-`));
   const resources = path.join(output, 'build-resources');
+  const rendererDirectory = path.join(output, 'renderer');
   await mkdir(resources, { recursive: true });
   const manifestPath = path.join(resources, 'AppxManifest.xml');
   await writeFile(manifestPath, manifest);
@@ -186,7 +191,10 @@ async function main() {
   if (!npmCli) throw new Error('Run this script through npm run package:msix.');
   run(process.execPath, [npmCli, 'run', 'runtime-tools:verify']);
   run(process.execPath, ['scripts/build-process-resource-host.mjs']);
-  run(process.execPath, [npmCli, 'run', 'build'], { ...process.env, ...versionConfiguration.buildEnvironment });
+  // Local development builds retain old chunks for open windows. Stage only
+  // the files produced for this package and leave the live dist directory in place.
+  run(process.execPath, [npmCli, 'run', 'build', '--', '--outDir', rendererDirectory],
+    { ...process.env, ...versionConfiguration.buildEnvironment });
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'tsconfig.json']);
   const { default: electron } = await import('electron');
   const childEnv = { ...process.env };
@@ -205,6 +213,7 @@ async function main() {
     config: {
       extends: path.join(root, 'electron-builder.yml'),
       ...versionConfiguration.builder,
+      files: msixRendererFiles(rendererDirectory),
       // Reuse only the original archive verified with Electron's checksums.
       // The development runtime directory can contain extra branded executables.
       electronDist: await cachedElectronArchive(),

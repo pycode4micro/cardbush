@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createManifest, msixVersionConfiguration, validateIdentity } from './package-msix.mjs';
+import { getConfig } from 'app-builder-lib/out/util/config/config.js';
+import { createManifest, msixRendererFiles, msixVersionConfiguration, validateIdentity } from './package-msix.mjs';
 import { verifySdkArchive } from './msix-sdk.mjs';
 import { browserConnectorLaunchPath } from '../dist-electron/browserConnectorRegistration.js';
 import { minimumWindowsVersion } from '@cardbush/platform';
@@ -40,6 +41,17 @@ test('Store identity drives both the displayed version and packaged Electron met
     assert.equal(configuration.builder.extraMetadata.version + '.0', version);
   }
   assert.throws(() => msixVersionConfiguration({ ...identity, version: '1.0.0-beta.4' }));
+});
+
+test('MSIX replaces retained local renderer chunks with an isolated build after builder config merge', async () => {
+  const rendererDirectory = path.resolve('release-msix/fixture/renderer');
+  const config = await getConfig(process.cwd(), 'electron-builder.yml', { files: msixRendererFiles(rendererDirectory) });
+  const root = config.files.find(entry => !entry.from).filter;
+  assert.ok(root.includes('dist/**/*'));
+  assert.ok(root.indexOf('!dist{,/**/*}') > root.indexOf('dist/**/*'));
+  assert.equal(config.files.find(entry => entry.to === 'dist').from, rendererDirectory);
+  assert.ok(root.includes('assets/skills/cardbush-docs/scripts/component-limits.mjs'));
+  assert.ok(root.includes('assets/skills/cardbush-docs/scripts/component-origins.mjs'));
 });
 
 test('Store names cannot inject XML or builder macros; numeric identity prefix is retained', () => {
