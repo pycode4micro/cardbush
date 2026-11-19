@@ -21,9 +21,9 @@ AI features require a supported model service that you configure. Your provider 
 - Register reminders and subscriptions, then open events to read the results.
 - Find plugins, skills, components and workspace apps from Explore.
 
-## What's new in 1.0.16
+## What's new in 1.0.17
 
-Home supports built-in sections, embedded websites and custom HTML components. Return to a page at your previous reading position. Toggle the floating Assistant from the app or system tray and pick up a draft when you reopen it. Install Python or Node.js on demand for plugins that need them.
+See how much space conversations, attachments, registered subagents and local models use in Settings under Data & maintenance. Cleanup preserves saved definitions and attachments referenced by history. Assistant retains context more reliably in long conversations and improves task completion updates. If Windows declines to activate a window, a prompt lets you bring it forward. Playback can continue when you return to Home.
 
 ## Desktop screenshots
 

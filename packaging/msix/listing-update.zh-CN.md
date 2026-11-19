@@ -1,4 +1,4 @@
-# 1.0.16 商店介绍
+# 1.0.17 商店介绍
 
 完整的产品介绍、功能亮点、更新说明和五张 1920 × 1080 展示图分别见[简体中文](listing/zh-CN/listing.md)和[English](listing/en-US/listing.md)。配图使用独立的演示资料。
 
