@@ -1,5 +1,7 @@
 import {
   BUSH_SESSION_TURN_REQUEST_PROTOCOL,
+  OUTCOME_VERIFICATION_INSTRUCTIONS,
+  OUTCOME_VERIFICATION_MESSAGE,
   REPORT_DELIVERY_INSTRUCTIONS,
   SOURCE_BINDING_INSTRUCTIONS,
   individuationPreferenceText,
@@ -18,6 +20,7 @@ import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { assertParentAgent, CHILD_AGENT_ASSIGNMENT_PREFIX } from './childAgentPolicy.js';
 import { decodeCleanAgentSettings, type CleanAgentSettings, type SubagentModelSelection } from './cleanAgentSettings.js';
 import { childSubmission, childExecutionFacts } from './teamSubmission.js';
+import { hasDeliveryPolicy } from './deliveryGuidance.js';
 
 export interface ChildTurnResult {
   terminal: RuntimeEvent;
@@ -151,6 +154,19 @@ export function buildChildTurnRequest(input: {
   const inheritedSkills = Array.isArray(parentRequest.metadata.allowedSkills) ? parentRequest.metadata.allowedSkills : undefined;
   const maxTurns = settings.max_turns === undefined ? undefined : Math.min(settings.max_turns,
     typeof input.metadata.pluginAgentMaxTurns === 'number' ? input.metadata.pluginAgentMaxTurns : Infinity);
+  const prefixMessages: ModelMessage[] = [
+    ...(input.cleanSystemPrompt !== undefined
+      ? [{ role: 'system' as const, content: input.cleanSystemPrompt }]
+      : input.inherited.length ? structuredClone(input.inherited) : childPrefixMessages(parentRequest.metadata)),
+    ...(input.additionalPrefixMessages ?? []),
+  ];
+  if (!hasDeliveryPolicy(prefixMessages, OUTCOME_VERIFICATION_INSTRUCTIONS)) {
+    prefixMessages.push({ ...OUTCOME_VERIFICATION_MESSAGE });
+  }
+  const guidance = [
+    ...(hasDeliveryPolicy(prefixMessages, REPORT_DELIVERY_INSTRUCTIONS) ? [] : [REPORT_DELIVERY_INSTRUCTIONS]),
+    SOURCE_BINDING_INSTRUCTIONS,
+  ];
   return {
     protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
     requestId: input.ids.requestId,
@@ -158,16 +174,11 @@ export function buildChildTurnRequest(input: {
     turnId: input.ids.turnId,
     model: modelPolicy?.model ?? parentRequest.model,
     providerBinding: modelPolicy?.providerBinding ?? parentRequest.providerBinding,
-    prefixMessages: [
-      ...(input.cleanSystemPrompt !== undefined
-        ? [{ role: 'system' as const, content: input.cleanSystemPrompt }]
-        : input.inherited.length ? structuredClone(input.inherited) : childPrefixMessages(parentRequest.metadata)),
-      ...(input.additionalPrefixMessages ?? []),
-    ],
+    prefixMessages,
     inputMessages: [{
       messageId: `${input.ids.messageId}:delivery-guidance`,
       message: { role: 'user', name: 'delivery_guidance', visibility: 'internal',
-        content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
+        content: guidance.join('\n\n') },
     }, {
       messageId: `${input.ids.messageId}:individuation-preference`,
       message: { role: 'user', name: 'individuation_preference', visibility: 'internal',

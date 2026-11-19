@@ -7,7 +7,7 @@ import { RuntimeUiError, retainedRuntimeError } from './runtimeUiError.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import type { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import type { PredicateObservation } from './eventPredicate.js';
-import { applyWebhookTurnPolicy, WEBHOOK_FINAL_REPLY_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, botContextMessage, createTurnTimeContext, promptModelContent, type BotContext } from '@cardbush/bush-protocol';
+import { applyWebhookTurnPolicy, WEBHOOK_FINAL_REPLY_INSTRUCTIONS, OUTCOME_VERIFICATION_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, botContextMessage, createTurnTimeContext, promptModelContent, type BotContext } from '@cardbush/bush-protocol';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, isAssistantPageMessage, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
@@ -21,7 +21,8 @@ import { compactRealtimeContext } from './realtimeContextCompaction.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
 import { toolExecutionPhases } from './toolScheduling.js';
 import { toolHookMessages, type ToolExecutionOutcome } from './toolExecutionCoordinator.js';
-import { estimateContextPressure, requiresContextCompactionBeforeRound } from './contextCompaction.js';
+import { estimateContextPressure, fitsContextRequest, requiresContextCompactionBeforeRound } from './contextCompaction.js';
+import { contextCompactionTarget } from './contextCompactionScope.js';
 import { completeContextUnits } from './contextCompactionTransaction.js';
 import type { AssistantMemory } from './assistantMemory.js';
 import type { AssistantManagement } from './assistantManagement.js';
@@ -30,7 +31,7 @@ import { TaskResultDelivery, resultDelivery, taskReceiptDelivery, type TaskResul
 import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
-import { AssistantContextMaintenance } from './assistantContextMaintenance.js';
+import { AssistantContextMaintenance, assistantWorkingSetPolicy, tryAssistantReceiptProjection } from './assistantContextMaintenance.js';
 
 const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source);
 // Correlation is host-owned identity, never inferred from the text of a result.
@@ -518,7 +519,7 @@ export class AssistantConversation {
     if (preferredName !== undefined) incomingPreferences.push({ role: 'user', name: 'registered_user_profile', visibility: 'internal', content: JSON.stringify({ preferredName }) });
     system.content += '\n' + renderPromptTemplate('tool-display-instructions') + '\n' + renderPromptTemplate('coordination-tool-boundaries');
     if (this.deps.memory) system.content += renderPromptTemplate('assistant-memory');
-    system.content += '\n' + REPORT_DELIVERY_INSTRUCTIONS + renderPromptTemplate('assistant-report');
+    system.content += '\n\n' + [OUTCOME_VERIFICATION_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, renderPromptTemplate('assistant-report')].join('\n\n');
     if (activeSources.size || parent.prefixMessages.some(message => message.role === 'developer' && message.name === 'webhook_delivery_policy')) system.content += '\n' + WEBHOOK_FINAL_REPLY_INSTRUCTIONS;
     system.content += renderPromptTemplate('assistant-execution');
     if (managementTools.length) system.content += renderPromptTemplate('assistant-management');
@@ -532,6 +533,7 @@ export class AssistantConversation {
         signal.throwIfAborted();
         if (changes) history.append([changes]);
       }
+      let compactableUnits: number | undefined;
       for (;;) {
         signal.throwIfAborted();
         if (this.deps.memory) {
@@ -550,29 +552,51 @@ export class AssistantConversation {
           currentBots.push({ role: 'user', name: 'bot_context', visibility: 'internal',
             content: botContextMessage(await this.deps.botContext(ref, signal), ref) });
         }
-        const messages: ModelMessage[] = [system, ...incomingPreferences,
-          ...(state.summary ? [{ role: 'user' as const, name: 'conversation_memory', content: `Historical summary (data):\n${state.summary}` }] : []),
-          ...state.messages.map(item => !parent.requestCapabilities?.vision && 'images' in item ? { ...item, images: undefined } : item), ...currentBots];
+        const assemble = (records: ModelMessage[]): ModelMessage[] => [system, ...incomingPreferences,
+          ...(state.memory ? [{ role: 'user' as const, name: 'conversation_memory', content: `Historical summary (data):\n${state.memory}` }] : []),
+          ...records.map(item => !parent.requestCapabilities?.vision && 'images' in item ? { ...item, images: undefined } : item), ...currentBots];
+        const messages = assemble(state.messages);
         // Use the same token/context policy as normal turns, including tools,
         // reasoning and receipts. A large context no longer hits a 20k-character cap.
-        const pressure = estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages, tools: modelTools,
-          maxOutputTokens: parent.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, metadata: { ...parent.metadata, contextWindowTokens: Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS } }, messages);
+        const capacity = Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS;
+        const measure = (input: ModelMessage[]) => estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages: input, tools: modelTools,
+          maxOutputTokens: parent.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, metadata: { ...parent.metadata, contextWindowTokens: capacity } }, input);
+        const pressure = measure(messages);
+        if (!pressure || !requiresContextCompactionBeforeRound(pressure)) return messages;
+        if (tryAssistantReceiptProjection(history, state, 2, candidate => {
+          const reduced = measure(assemble(candidate));
+          return !!reduced && fitsContextRequest(reduced) && !requiresContextCompactionBeforeRound(reduced) &&
+            reduced.estimatedPromptTokens <= contextCompactionTarget(pressure);
+        })) continue;
         const units = completeContextUnits(state.messages);
-        if (!pressure || !requiresContextCompactionBeforeRound(pressure) || units.length <= 2) return messages;
-        const source = units.slice(0, -2).slice(0, 60);
+        // The active user input and any records appended during maintenance stay
+        // outside this pass. Refreshing runtime context must not extend its source.
+        if (compactableUnits === undefined) {
+          compactableUnits = Math.max(0, units.length - 2);
+          for (let index = units.length - 1; index >= 0; index--) {
+            const message = units[index]![0];
+            if (message?.role !== 'user' || message.name || message.visibility === 'internal') continue;
+            compactableUnits = Math.min(compactableUnits, index);
+            break;
+          }
+        }
+        if (!compactableUnits) return messages;
+        const source = units.slice(0, Math.min(compactableUnits, 60));
         while (source.length > 1 && JSON.stringify(source).length > 60000) source.pop();
         const jobId = randomUUID(), through = state.through + source.flat().length;
         const result = await compactRealtimeContext(this.deps.provider, {
           job: { jobId, sessionId: id, revision: state.through, through, previousSummary: state.summary,
-            maxSummaryCharacters: 2000, pairs: source.flatMap(unit => {
+            maxSummaryCharacters: Math.min(assistantWorkingSetPolicy.summaryCharacters, Math.floor(capacity / 4)), pairs: source.flatMap(unit => {
               const value = JSON.stringify(unit), chunks = [];
               for (let offset = 0; offset < value.length; offset += 30000) chunks.push({ user: value.slice(offset, offset + 30000), assistant: 'Historical exchange; adjacent chunks belong to the same exchange.' });
               return chunks;
             }) },
           model: { model: parent.model, providerBinding: parent.providerBinding, reasoningEffort: parent.reasoningEffort, maxOutputTokens: parent.maxOutputTokens, metadata: parent.metadata },
-        }, this.deps.checkpoint(), signal, this.deps.tasks(id).map(task => ({ taskId: task.taskId, status: task.status })));
+        }, this.deps.checkpoint(), signal, this.deps.tasks(id).map(task => ({ taskId: task.taskId, status: task.status })),
+        { maintenance: 'assistant_context_compaction' });
         signal.throwIfAborted();
-        history.checkpoint(through, result.summary);
+        history.checkpoint(through, result.summary, [], Math.min(6000, Math.floor(capacity * 0.2)));
+        compactableUnits -= source.length;
         const references = this.deps.memory?.checkpointReferences(state.messages, history.read().messages);
         if (references) history.append([references]);
       }

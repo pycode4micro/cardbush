@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { AssistantConversation } from '../dist/assistantConversation.js';
 import { ConversationJournal } from '../dist/conversationJournal.js';
 import { teamCompletionNotice } from '../dist/teamResults.js';
-import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION as id } from '@cardbush/bush-protocol';
+import { assistantProfileSchema, OUTCOME_VERIFICATION_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, PERSONAL_ASSISTANT_SESSION as id } from '@cardbush/bush-protocol';
 
 const until = async fn => { for (let i=0;i<600;i++) { if(fn()) return; await new Promise(r=>setTimeout(r,10)); } assert.fail('timed out'); };
 async function* answer(request, text) {
@@ -70,6 +70,26 @@ test('restored related facts and terminal tasks enter one durable context commit
   f.update();f.start();await until(()=>f.replies().length===1&&!f.read().busy);
   assert.equal(f.requests.length,1);assert.equal(f.journal.modelHistory(id).read().taskResults.length,1);
   assert.equal(f.requests[0].messages.filter(m=>m.name==='background_task_result').length,2);
+});
+
+test('Assistant receives one report policy and the verified child result in the same completion request', async t => {
+  const receipt = 'The chat for the intended recipient shows the sent message.';
+  const f = fixture(t, async function*(request) {
+    const prompt = request.messages.map(message => message.content).join('\n\n');
+    assert.equal(prompt.split(REPORT_DELIVERY_INSTRUCTIONS).length - 1, 1);
+    assert.equal(prompt.split(OUTCOME_VERIFICATION_INSTRUCTIONS).length - 1, 1);
+    assert.match(prompt, /check the intended target and content.*user's request/);
+    assert.match(prompt, /reuse the action's receipt or returned observation/);
+    const result = request.messages.filter(message => message.name === 'background_task_result');
+    assert.equal(result.length, 1);
+    assert.equal(JSON.parse(result[0].content).result, receipt);
+    yield* answer(request, '已发送。');
+  }, true);
+  f.task.finalResponse = receipt;
+  f.start();
+  await until(() => f.replies().length === 1 && !f.read().busy);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.replies()[0].content, '已发送。');
 });
 
 test('completion during an in-flight tool preserves that execution and joins the facts in the next model round', async t=>{

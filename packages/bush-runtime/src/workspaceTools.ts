@@ -14,11 +14,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { projectFileSourceResult } from './fileSourceReceipt.js';
 import { dirname } from "node:path";
 
-import type {
-  ToolAdmissionContext,
-  ToolHandlerContext,
-  ToolRegistration,
-  ToolRegistry,
+import {
+  localCommandExecutionChannel,
+  type ToolAdmissionContext,
+  type ToolHandlerContext,
+  type ToolRegistration,
+  type ToolRegistry,
 } from "./toolRegistry.js";
 import { protectedTerminalDeletion } from "./terminalCommandSafety.js";
 import { routeWorkspaceTool, workspaceFileResources } from './workspaceToolRouting.js';
@@ -549,10 +550,12 @@ export function registerWorkspaceTools(
       }, ["command", "cwd", "yield_time_ms", "shell"]),
     },
     manifest: manifest("terminal.execute", "process_execution", true),
+    executionChannel: localCommandExecutionChannel,
     decodeInput: input => decodeTerminal(input, Boolean(options.remote)),
     renderModelResult: renderTerminalResult,
     projectModelResult: projectTerminalResult,
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
+      registry.assertLocalCommandAllowed(context);
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
       const lexicalProjectRoots = protectedProjectRoots(context);
       const canonicalProjectRoots = await Promise.all(lexicalProjectRoots.map((root) =>
@@ -586,6 +589,7 @@ export function registerWorkspaceTools(
       if (plan.policy && (!admitted?.policy || JSON.stringify(admitted.policy) !== JSON.stringify(plan.policy))) {
         throw Object.assign(Error('An authorized command directory or file changed before execution. No command was started.'), { code: 'sandbox_approval_changed' });
       }
+      registry.assertLocalCommandAllowed(context);
       return terminals.start({
         ownerSessionId: context.sessionId,
         command: context.input.command,
@@ -638,16 +642,20 @@ export function registerWorkspaceTools(
       }, ["session_id", "chars", "yield_time_ms"]),
     },
     manifest: manifest("terminal.write", "process_execution", true),
+    executionChannel: localCommandExecutionChannel,
     decodeInput: decodeTerminalWrite,
     renderModelResult: renderTerminalResult,
     projectModelResult: projectTerminalResult,
     authorize: (context: ToolAdmissionContext<TerminalWriteInput>) => {
+      registry.assertLocalCommandAllowed(context);
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return terminal.sandbox ? { kind: 'allow' as const }
         : terminalInputPermission({ ...context.input, environment: 'local' });
     },
-    execute: (context: ToolHandlerContext<TerminalWriteInput>) =>
-      terminals.write(context.sessionId, context.input, context.signal),
+    execute: (context: ToolHandlerContext<TerminalWriteInput>) => {
+      registry.assertLocalCommandAllowed(context);
+      return terminals.write(context.sessionId, context.input, context.signal);
+    },
   });
 
   registerIfMissing(registry, {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CacheChainTracker, InMemoryRuntimeHost, SessionStore, ToolRegistry } from '@cardbush/bush-runtime';
 import { createProductAgentTurnRequest, ROOT_AGENT_SYSTEM_PROMPT } from '../dist/index.js';
+import { OUTCOME_VERIFICATION_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, FINAL_RESPONSE_SIGNAL_INSTRUCTIONS } from '@cardbush/bush-protocol';
 
 const now = '2026-10-16T08:00:00Z';
 test('execution boundaries cover scope, method, actor, environment and stopping point, including failure recovery', () => {
@@ -20,6 +21,7 @@ test('execution boundaries cover scope, method, actor, environment and stopping 
 });
 const event = (request, sequence, kind, payload = {}) => ({ protocol: 'bush.model_event.v1',
   requestId: request.requestId, sequence, createdAt: now, kind, ...payload });
+const policyCount = (request, policy) => request.messages.reduce((count, message) => count + message.content.split(policy).length - 1, 0);
 
 function fixture(t) {
   const facts = [], observed = [], plannedCalls = new Map(), rounds = new Map();
@@ -137,14 +139,50 @@ test('delivery and continuation guidance reaches an old session without rewritin
   const dispatched = f.observed.at(-1);
   assert.equal(dispatched.messages[0].content, old.prefixMessages[0].content);
   assert.deepEqual(store.snapshot('policy').turns[0], originalTurn);
-  const guidance = dispatched.messages.find(message => message.name === 'delivery_guidance');
-  assert.match(guidance.content, /Deliver every report, including research and backtests, as a verified file/);
-  assert.match(guidance.content, /By default, share at most eight short lines of essential findings and relevant blockers, plus a verified file link or attachment/);
+  const report = dispatched.messages.find(message => message.name === 'delivery_guidance' && message.content === REPORT_DELIVERY_INSTRUCTIONS);
+  assert.equal(report.visibility, 'internal');
+  assert.match(report.content, /Deliver every report, including research and backtests, as a verified file/);
+  assert.match(report.content, /By default, share at most eight short lines of essential findings and relevant blockers, plus a verified file link or attachment/);
+  const guidance = dispatched.messages.find(message => message.name === 'delivery_guidance' && message !== report);
   assert.match(guidance.content, /same assignment.*existing subagent task_id/);
   assert.match(guidance.content, /historical backtests must not inherit later evidence/);
   assert.match(guidance.content, /node_ids=.*nextCursor/);
   assert.match(guidance.content, /read_source_memos must bind/);
   assert.equal(guidance.visibility, 'internal');
+  assert.equal(policyCount(dispatched, REPORT_DELIVERY_INSTRUCTIONS), 1);
+  await host.runSessionTurn(request('continued_again'));
+  assert.equal(policyCount(f.observed.at(-1), REPORT_DELIVERY_INSTRUCTIONS), 1, 'old guidance does not accumulate');
+  assert.equal(policyCount(f.observed.at(-1), OUTCOME_VERIFICATION_INSTRUCTIONS), 1);
+});
+
+test('ordinary conversation projects one report policy even when older turns persisted duplicate guidance', async t => {
+  const f = fixture(t);
+  let { host, store, request } = f.open();
+  await host.runSessionTurn(request('before_upgrade'));
+  assert.equal(policyCount(f.observed.at(-1), REPORT_DELIVERY_INSTRUCTIONS), 1);
+  const persisted = f.facts.find(fact => fact.kind === 'turn_committed').payload;
+  const oldGuidance = persisted.messages.find(item => item.message.name === 'delivery_guidance').message;
+  oldGuidance.content = [REPORT_DELIVERY_INSTRUCTIONS, oldGuidance.content].join('\n\n');
+  const original = structuredClone(persisted);
+  await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+  ({ host, store, request } = f.open());
+  const continued = request('after_upgrade');
+  continued.prefixMessages.push(structuredClone(oldGuidance));
+  const current = continued.inputMessages.find(item => item.message.name === 'delivery_guidance').message;
+  current.content = [REPORT_DELIVERY_INSTRUCTIONS, current.content].join('\n\n');
+  await host.runSessionTurn(continued);
+  const dispatched = f.observed.at(-1);
+  assert.equal(policyCount(dispatched, REPORT_DELIVERY_INSTRUCTIONS), 1);
+  assert.equal(policyCount(dispatched, OUTCOME_VERIFICATION_INSTRUCTIONS), 1);
+  assert.ok(dispatched.messages[0].content.includes(FINAL_RESPONSE_SIGNAL_INSTRUCTIONS));
+  assert.deepEqual(store.snapshot('policy').turns[0], original);
+  assert.equal(store.modelContract('policy').system.content, ROOT_AGENT_SYSTEM_PROMPT);
+  const evidence = dispatched.messages.find(message => message.name === 'outcome_verification').content;
+  assert.match(evidence, /Reuse a tool receipt or child result that already verifies the requested outcome/);
+  assert.match(evidence, /Before sending a message.*check the intended target and content/);
+  assert.match(evidence, /reuse the action's receipt or returned observation.*Otherwise make one targeted check/);
+  assert.match(evidence, /sent, delivered or read/);
+  assert.match(evidence, /If execution is uncertain, inspect the current state before retrying/);
 });
 
 test('a fork destination with an existing contract cannot be overwritten', async t => {

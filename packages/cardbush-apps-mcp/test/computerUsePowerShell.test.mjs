@@ -6,12 +6,19 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { runComputerUsePowerShell } from '../dist/plugins/computerUsePowerShell.js';
-import { formatComputerUseError } from '../dist/plugins/computerUseErrors.js';
+import { computerUseFailure, formatComputerUseError, nativeInputPreflightPrefix } from '../dist/plugins/computerUseErrors.js';
 
 const windowsOnly = { skip: process.platform !== 'win32' };
 const execute = (script, options = {}) => runComputerUsePowerShell(script, {
   cwd: process.cwd(), env: { ...process.env }, timeoutMs: 15000, ...options,
 });
+
+async function productionInputScript() {
+  const source = await readFile(new URL('../src/plugins/computerUseRuntime.ts', import.meta.url), 'utf8');
+  const script = source.match(/const computerInputScript = String.raw`([\s\S]*?)`;/)?.[1];
+  assert.ok(script);
+  return script.replace('${nativeInputPreflightPrefix}', nativeInputPreflightPrefix);
+}
 
 test('large native scripts execute intact over stdin, with Unicode, here-strings and environment data', windowsOnly, async t => {
   const cwd = await mkdtemp(join(tmpdir(), 'cardbush-powershell 中文 '));
@@ -41,9 +48,7 @@ ${literal}
 });
 
 test('the complete production input script reaches target validation for every coordinate action', windowsOnly, async t => {
-  const source = await readFile(new URL('../src/plugins/computerUseRuntime.ts', import.meta.url), 'utf8');
-  const script = source.match(/const computerInputScript = String.raw`([\s\S]*?)`;/)?.[1];
-  assert.ok(script);
+  const script = await productionInputScript();
   for (const action of ['click', 'type', 'key', 'scroll', 'drag', 'clipboard']) await t.test(action, async () => {
     // An impossible positive HWND fails GetWindowRect before any focus change,
     // pointer movement or keyboard event; the real C# and guards still execute.
@@ -55,9 +60,35 @@ test('the complete production input script reaches target validation for every c
       CARDBUSH_YIELD_TO_USER: '0', CARDBUSH_RESTORE_POINTER: '1', CARDBUSH_EXPECTED_INPUT_TICK: '0',
     } }), error => {
       assert.notEqual(error.code, 'ENAMETOOLONG');
-      assert.match(formatComputerUseError(error), /Target window hwnd=.*no longer available/);
+      const failure = computerUseFailure(computerUseFailure(error), 'unknown');
+      assert.match(failure.message, /Target window hwnd=.*no longer available/);
+      assert.equal(failure.info.code, 'window_unavailable');
+      assert.equal(failure.info.execution, 'not_dispatched');
       return true;
     });
+  });
+});
+
+test('a foreground owner cannot dispatch a click whose point hits its search popup', windowsOnly, async () => {
+  // Run the production PowerShell preflight with deterministic native query
+  // results. Fail before physical input even if the tested guard regresses.
+  const script = (await productionInputScript())
+    .replace('[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();', 'public static IntPtr GetForegroundWindow(){return new IntPtr(100);}')
+    .replace('[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);',
+      'public static bool GetWindowRect(IntPtr hwnd,out RECT rect){rect=new RECT{Left=80,Top=100,Right=860,Bottom=760};return hwnd.ToInt64()==100;}')
+    .replace(/public static long RootWindowAt\(int x,int y\)\{[^\n]+/, 'public static long RootWindowAt(int x,int y){return x==370 && y==320 ? 200 : 100;}')
+    .replace('  switch ($p.action) {', "  throw 'Fixture reached input dispatch'\n  switch ($p.action) {");
+  assert.ok(script.includes("throw 'Fixture reached input dispatch'"));
+  const payload = { action: 'click', hwnd: 100, x: 290, y: 220, observed_bounds: { x: 80, y: 100, width: 780, height: 660 } };
+  await assert.rejects(execute(script, { parameters: {
+    CARDBUSH_INPUT_BASE64: Buffer.from(JSON.stringify(payload)).toString('base64'),
+    CARDBUSH_YIELD_TO_USER: '0', CARDBUSH_RESTORE_POINTER: '0', CARDBUSH_EXPECTED_INPUT_TICK: '0',
+  } }), error => {
+    const failure = computerUseFailure(computerUseFailure(error), 'unknown');
+    assert.equal(failure.info.code, 'window_changed');
+    assert.equal(failure.info.execution, 'not_dispatched');
+    assert.match(failure.message, /expected hwnd=100, actual hwnd=200/);
+    return true;
   });
 });
 

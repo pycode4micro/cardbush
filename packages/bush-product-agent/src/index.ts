@@ -1,7 +1,7 @@
 import { compactConversationTitle } from '@cardbush/bush-protocol';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { CHECKPOINT_CONTINUATION_INSTRUCTIONS, DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, collectTurnAttachments, formatTurnAttachmentContext } from "@cardbush/bush-protocol";
-import { REPORT_DELIVERY_INSTRUCTIONS, TASK_CONTINUATION_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
+import { OUTCOME_VERIFICATION_MESSAGE, REPORT_DELIVERY_INSTRUCTIONS, TASK_CONTINUATION_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import { FINAL_RESPONSE_SIGNAL_INSTRUCTIONS, individuationPreferenceText, normalizeIndividuation, type IndividuationSettings } from '@cardbush/bush-protocol';
 import { createTurnTimeContext } from "@cardbush/bush-protocol";
 export { createTurnTimeContext } from "@cardbush/bush-protocol";
@@ -197,6 +197,7 @@ function createBaseProductAgentTurnRequest(
           name: "communication_context",
           content: languageFallback(input),
         }] : []),
+        OUTCOME_VERIFICATION_MESSAGE,
       ],
     },
   });
@@ -231,6 +232,7 @@ export function createProductAgentTurnRequest(
         name: "runtime_context",
         content: stableContext,
       }] : []),
+      OUTCOME_VERIFICATION_MESSAGE,
     ],
     inputMessages: [
       ...(preferences ? [{
@@ -264,7 +266,7 @@ export function createProductAgentTurnRequest(
       // retain their frozen system/tool contract and need no history migration.
       { messageId: `${input.messageId}:delivery-guidance`, createdAt: input.createdAt,
         message: { role: 'user' as const, name: 'delivery_guidance', visibility: 'internal' as const,
-          content: [REPORT_DELIVERY_INSTRUCTIONS, TASK_CONTINUATION_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') } },
+          content: [TASK_CONTINUATION_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') } },
       ...request.inputMessages,
     ],
   });

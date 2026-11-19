@@ -35,6 +35,12 @@ test('errors retain dispatch uncertainty and bounded native diagnostics', () => 
   const before = computerUseFailure(new Error('The desktop state_id expired before it was used.'));
   assert.equal(before.info.code, 'stale_state');
   assert.equal(before.info.execution, 'not_dispatched');
+  const hitMismatch = computerUseFailure(new Error(
+    'CARDBUSH_INPUT_PREFLIGHT: Target window changed (expected hwnd=100, actual hwnd=200). Observe again before sending input.'));
+  assert.deepEqual(computerUseFailure(hitMismatch, 'unknown').info, {
+    code: 'window_changed', execution: 'not_dispatched',
+    message: 'Target window changed (expected hwnd=100, actual hwnd=200). Observe again before sending input.',
+  });
   const dispatched = new ComputerUseFailure('observation_failed', 'Capture unavailable', 'dispatched');
   assert.equal(computerUseFailure(dispatched).info.execution, 'dispatched');
   assert.deepEqual(dispatched.info, { code: 'observation_failed', message: 'Capture unavailable', execution: 'dispatched' });

@@ -1,6 +1,7 @@
 import { cardbushTargetBlocked } from './computerUseTargetPolicy.js';
 
 const maxErrorCharacters = 1600;
+export const nativeInputPreflightPrefix = 'CARDBUSH_INPUT_PREFLIGHT: ';
 
 export type ComputerUseExecution = 'not_dispatched' | 'dispatched' | 'unknown';
 export type ComputerUseErrorCode =
@@ -24,13 +25,17 @@ export class ComputerUseFailure extends Error {
   }
 }
 
+class ComputerUsePreflightFailure extends ComputerUseFailure {}
+
 /** Normalize native diagnostics while retaining dispatch uncertainty and the source of an interruption. */
 export function computerUseFailure(error: unknown, execution?: ComputerUseExecution): ComputerUseFailure {
   if (error instanceof ComputerUseFailure) {
-    if (error.info.code === 'cardbush_target_blocked') return error;
+    if (error instanceof ComputerUsePreflightFailure || error.info.code === 'cardbush_target_blocked') return error;
     return execution === undefined ? error : new ComputerUseFailure(error.info.code, error.message, execution, error.info.details);
   }
-  const message = formatComputerUseError(error);
+  const diagnostic = formatComputerUseError(error);
+  const rejectedBeforeInput = diagnostic.startsWith(nativeInputPreflightPrefix);
+  const message = rejectedBeforeInput ? diagnostic.slice(nativeInputPreflightPrefix.length) : diagnostic;
   if (message.includes('CARDBUSH_PROTECTED_TARGET')) return new ComputerUseFailure('cardbush_target_blocked', cardbushTargetBlocked);
   let code: ComputerUseErrorCode = 'computer_use_failed';
   if (/0x8007(?:11c7|04ec|0241)\b|application\s+control\s+policy\s+has\s+blocked|blocked by group policy|应用程序控制策略.*阻止/i.test(message.replace(/\r?\n/g, ' '))) code = 'application_control_blocked';
@@ -39,12 +44,13 @@ export function computerUseFailure(error: unknown, execution?: ComputerUseExecut
   else if (/timed out/i.test(message)) code = 'timeout';
   else if (/display layout or DPI changed|DPI changed during input|display is no longer available/i.test(message)) code = 'display_changed';
   else if (/no longer (?:available|exists)|empty bounds/i.test(message)) code = 'window_unavailable';
-  else if (/foreground|bounds changed|identity changed|covered by another window|desktop changed/i.test(message)) code = 'window_changed';
+  else if (/foreground|target window changed|bounds changed|identity changed|covered by another window|desktop changed/i.test(message)) code = 'window_changed';
   else if (/state_id|state targets|fresh target-specific observe/i.test(message)) code = 'stale_state';
   else if (/capture failed|observation was issued/i.test(message)) code = 'observation_failed';
   else if (/disabled|stopped.*loop|without visible progress|repeated preflight/i.test(message)) code = 'policy_blocked';
   else if (/already using|another.*(?:session|window)|presentation|native worker/i.test(message)) code = 'control_unavailable';
   else if (/unsupported|does not support|requires|outside/i.test(message)) code = 'invalid_action';
+  if (rejectedBeforeInput) return new ComputerUsePreflightFailure(code, message);
   return new ComputerUseFailure(code, message, execution ?? 'not_dispatched');
 }
 

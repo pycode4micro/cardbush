@@ -8,6 +8,7 @@ import { InMemoryRuntimeHost, SessionStore, ToolRegistry, ToolExecutionStore, Au
   CoordinationStore, FileCoordinationPersistence, registerSkillTools } from '../dist/index.js';
 import { PERSONAL_ASSISTANT_SESSION as id, ASSISTANT_MANAGEMENT_TOOLS, assistantProfileSchema } from '@cardbush/bush-protocol';
 import { BridgePluginTools } from '../dist/botMessaging.js';
+import { ConversationJournal } from '../dist/conversationJournal.js';
 
 const until = async check => { for (let i = 0; i < 500; i++) { if (await check()) return; await new Promise(r => setTimeout(r, 10)); } assert.fail('condition timed out'); };
 const manifest = { effect_kind: 'observation', operation: 'test', risk: 'low', owner: 'fixture', dispatch_scope: 'session', mutating: false };
@@ -62,6 +63,19 @@ async function fixture(t, now) {
 }
 const schedule = { action: 'create', name: 'Report', prompt: 'Read the fixture project and save report.html; return its path.', time_zone: 'Asia/Shanghai', trigger: { kind: 'once', at: '2099-10-30T10:00:00+08:00' } };
 const reminder = { action: 'create', text: 'Remind me to review the report.', at: schedule.trigger.at };
+test('Assistant reads pre-checkpoint evidence through its real management tool', async t => {
+  const f = await fixture(t);
+  const history = new ConversationJournal(join(f.root, 'conversation-journal')).modelHistory(id);
+  history.append([{ role: 'user', content: 'Use X-29 instead.' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'inspect', name: 'tasks', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'inspect', content: '{"status":"interrupted","job":"Q819"}' }]);
+  history.checkpoint(3, 'Previous job was interrupted.', [], 2000);
+  const locator = history.read().memory.match(/conversation-history:\/\/[^\n]+/)[0];
+  const result = await f.invoke('read_conversation_history', { locator });
+  assert.equal(result.session_id, id, JSON.stringify(result));
+  assert.match(result.text, /Use X-29 instead/);
+  assert.match(result.text, /Q819/);
+});
 test('Assistant loads and invokes an owned bridge directly with normal file/source admission', async t => {
   const f = await fixture(t), calls = [], connectionId = '11111111-1111-4111-8111-111111111111';
   const file = join(f.root, 'screenshot.png'); await writeFile(file, 'fixture bytes');

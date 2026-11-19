@@ -60,12 +60,12 @@ export function registerCoordinationTools(
             expected_revision: { type: 'integer', minimum: 0 },
             updates: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['id'], properties: {
               id: { type: 'string', minLength: 1, pattern: '\\S' }, step: { type: 'string', minLength: 1, pattern: '\\S' },
-              status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: ['string', 'null'], minLength: 1, pattern: '\\S' },
-              waitingKind: { enum: [...taskPlanWaitingKindSchema.options, null] },
+              status: { type: 'string', enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: ['string', 'null'], minLength: 1, pattern: '\\S' },
+              waitingKind: { type: ['string', 'null'], enum: [...taskPlanWaitingKindSchema.options, null] },
             } } },
             append_nodes: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false, required: ['step', 'status'], properties: {
-              step: { type: 'string', minLength: 1, pattern: '\\S' }, status: { enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: 'string', minLength: 1, pattern: '\\S' },
-              waitingKind: { enum: taskPlanWaitingKindSchema.options },
+              step: { type: 'string', minLength: 1, pattern: '\\S' }, status: { type: 'string', enum: ['pending', 'in_progress', 'waiting', 'completed'] }, waitingFor: { type: 'string', minLength: 1, pattern: '\\S' },
+              waitingKind: { type: 'string', enum: taskPlanWaitingKindSchema.options },
             } } },
             remove_ids: { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1, pattern: '\\S' } },
             nodes: {
@@ -79,9 +79,9 @@ export function registerCoordinationTools(
                 properties: {
                   id: { type: "string" },
                   step: { type: "string", minLength: 1, pattern: '\\S' },
-                  status: { enum: ["pending", "in_progress", "waiting", "completed"] },
+                  status: { type: "string", enum: ["pending", "in_progress", "waiting", "completed"] },
                   waitingFor: { type: "string", minLength: 1, pattern: '\\S', description: "Required for waiting: the concrete external dependency or user action needed to continue." },
-                  waitingKind: { enum: taskPlanWaitingKindSchema.options, description: "For waiting: user confirmation/input, an already-started background task, or a prerequisite step." },
+                  waitingKind: { type: "string", enum: taskPlanWaitingKindSchema.options, description: "For waiting: user confirmation/input, an already-started background task, or a prerequisite step." },
                 },
               },
             },

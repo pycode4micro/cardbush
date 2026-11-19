@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CoordinationStore, ToolRegistry, ToolExecutionCoordinator, registerCoordinationTools } from '@cardbush/bush-runtime';
 import { providerToolInputSchema } from '../dist/toolSchemas.js';
+import { responseFunctionTool } from '../dist/responsesToolSearch.js';
+import { registerExtendedBuiltins } from '../../bush-runtime/dist/extendedBuiltins.js';
 
 function fixture() {
   const registry = new ToolRegistry(), store = new CoordinationStore();
@@ -19,6 +21,32 @@ test('new plan schemas are portable at their source and preserve nested value co
   assert.deepEqual(projected.properties.updates.items.properties.waitingFor.type, ['string', 'null']);
   assert.equal(projected.properties.updates.items.properties.waitingFor.minLength, 1);
   assert.deepEqual(tool.definition, before);
+});
+
+test('Responses gives the two saved built-in schemas explicit enum types while preserving their contracts', () => {
+  const { registry, tool } = fixture();
+  registerExtendedBuiltins(registry, {});
+  const image = registry.resolve('inject_image_input').definition;
+  assert.equal(image.inputSchema.properties.detail.type, 'string');
+
+  const savedImage = structuredClone(image);
+  delete savedImage.inputSchema.properties.detail.type;
+  const savedPlan = structuredClone(tool.definition);
+  for (const key of ['updates', 'append_nodes', 'nodes']) {
+    const current = tool.definition.inputSchema.properties[key].items.properties;
+    assert.equal(current.status.type, 'string');
+    assert.deepEqual(current.waitingKind.type, key === 'updates' ? ['string', 'null'] : 'string');
+    const saved = savedPlan.inputSchema.properties[key].items.properties;
+    delete saved.status.type;
+    delete saved.waitingKind.type;
+  }
+  for (const [saved, current] of [[savedImage, image], [savedPlan, tool.definition]]) {
+    const before = structuredClone(saved);
+    assert.deepEqual(responseFunctionTool(saved), responseFunctionTool(current));
+    assert.deepEqual(saved, before);
+    const anotherTool = { ...saved, name: 'mcp__test__original' };
+    assert.deepEqual(responseFunctionTool(anotherTool).parameters, providerToolInputSchema(anotherTool));
+  }
 });
 
 test('known legacy wire projections preserve saved capabilities without modifying frozen definitions', () => {

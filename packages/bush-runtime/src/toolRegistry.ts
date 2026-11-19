@@ -16,6 +16,9 @@ import {
 import type { ToolNameScope } from './toolReferenceNames.js';
 import type { ToolDefinitionProjector } from './toolPresentation.js';
 import type { ToolResourceScheduler } from './toolResourceScheduler.js';
+import { withToolFailureFacts } from './toolFailureFacts.js';
+
+export const localCommandExecutionChannel = 'runtime:local-command';
 
 /** Host-owned queue admission, never supplied through model arguments. */
 export interface ToolSchedulingAdmission {
@@ -138,11 +141,44 @@ export type ToolResource = {
   /** Optional maximum concurrent readers; writers remain exclusive. */
   capacity?: number;
 };
+type DesktopControlContext = Pick<ToolAdmissionContext, 'sessionId' | 'turnId' | 'turn'>;
 
 export class ToolRegistry {
   readonly #registrations = new Map<string, AnyToolRegistration>();
   readonly #hiddenOwners = new Set<string>();
   readonly #turnResources = new Map<string, Map<object, () => Promise<void>>>();
+  readonly #desktopControlTurns = new Set<string>();
+  readonly #desktopControlStops = new Map<string, Set<string>>();
+
+  beginDesktopControl({ sessionId, turnId }: DesktopControlContext): void {
+    this.#desktopControlTurns.add(JSON.stringify([sessionId, turnId]));
+  }
+
+  finishDesktopControl(context: DesktopControlContext, stopped: boolean): void {
+    const { sessionId, turnId } = context;
+    if (stopped) {
+      const stops = this.#desktopControlStops.get(sessionId) ?? new Set<string>();
+      stops.add(desktopControlScope(context));
+      this.#desktopControlStops.set(sessionId, stops);
+    }
+    this.#desktopControlTurns.delete(JSON.stringify([sessionId, turnId]));
+  }
+
+  assertLocalCommandAllowed(context: DesktopControlContext): void {
+    const stopped = this.#desktopControlStops.get(context.sessionId)?.has(desktopControlScope(context));
+    if (!stopped && !this.#desktopControlTurns.has(JSON.stringify([context.sessionId, context.turnId]))) return;
+    // Arbitrary code can reach the interactive desktop, including through an
+    // existing shell. Command text is not a reliable way to distinguish it.
+    throw withToolFailureFacts(Object.assign(new Error(stopped
+      ? 'Desktop control stopped for this task. Do not continue through a local terminal. Report the blocker to the user.'
+      : 'This turn holds desktop control. Use Computer Use for desktop input and release control before running a local command.'),
+    { code: stopped ? 'desktop_control_stopped' : 'desktop_control_active' }),
+    { dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'do_not_retry' });
+  }
+
+  forgetDesktopControlSession(sessionId: string): void {
+    this.#desktopControlStops.delete(sessionId);
+  }
 
   /** Host-owned leases, captured against the exact connection that dispatched work. */
   retainTurnResource(sessionId: string, turnId: string, owner: object, release: () => Promise<void>): void {
@@ -158,6 +194,10 @@ export class ToolRegistry {
     // Each adapter owns its bounded release and diagnostics. One broken adapter
     // must not prevent another lease from being released or mask a turn result.
     await Promise.allSettled([...resources?.values() ?? []].map(release => Promise.resolve().then(release)));
+    this.#desktopControlTurns.delete(key);
+    const stops = this.#desktopControlStops.get(sessionId);
+    stops?.delete(`turn:${turnId}`);
+    if (!stops?.size) this.#desktopControlStops.delete(sessionId);
   }
 
   /** Hide a disabled extension from new requests without deleting handlers frozen into active Turns. */
@@ -289,6 +329,11 @@ export class ToolRegistry {
   executionChannel(name: string): string {
     return this.#registrations.get(name)?.executionChannel ?? "runtime:default";
   }
+}
+
+function desktopControlScope({ turnId, turn }: DesktopControlContext): string {
+  const taskId = turn?.request.metadata?.subagentTaskId;
+  return typeof taskId === 'string' && taskId ? `task:${taskId}` : `turn:${turnId}`;
 }
 
 function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): AnyToolRegistration {

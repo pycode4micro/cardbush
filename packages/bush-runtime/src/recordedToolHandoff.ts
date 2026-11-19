@@ -54,7 +54,7 @@ function compactValue(value: unknown, field = '', depth = 0, preserveText = fals
 
 /** Preserve structured terminal/file metadata and all diagnostic sections.
  * Unstructured text is not safe to classify as successful or to silently cut. */
-function compactReceipt(content: string): unknown {
+export function compactReceipt(content: string): unknown {
   const value = json(content);
   if (value !== undefined) return compactValue(value);
   const boundary = content.indexOf('\n\n');
@@ -78,10 +78,13 @@ function sourceDigest(turn: CommittedTurn) {
   return createHash('sha256').update(JSON.stringify({ status: turn.status, checkpoint: turn.contextCheckpoint,
     messages: turn.messages.map(item => [item.messageId, visible(item.message)]) })).digest('hex');
 }
-function instructionRead(call: { name: string; argumentsText: string }): boolean {
+export function recordedToolInvocation(call: { name: string; argumentsText: string }) {
   const args = record(json(call.argumentsText));
   const name = call.name === 'call_tool' ? args?.name : call.name;
   const input = call.name === 'call_tool' ? record(args?.arguments) : args;
+  return { name: typeof name === 'string' ? name : call.name, input };
+}
+export function instructionRead({ name, input }: ReturnType<typeof recordedToolInvocation>): boolean {
   return name === 'run_skill' || name === 'read_file' && typeof input?.path === 'string' &&
     /(?:^|[\\/])(?:AGENTS|SKILL|usage)\.md$/i.test(input.path);
 }
@@ -150,7 +153,7 @@ export function recordedToolHandoffMessages(turn: CommittedTurn, handoff: Record
     const receipts = messages.slice(index + 1, index + 1 + message.toolCalls.length);
     // Keep source instructions and checkpoint exchanges intact. This avoids
     // guessing which Skill conditions are still applicable or fabricating them.
-    if (message.toolCalls.some(call => call.name === 'checkpoint_context' || skills.has(call.id) || instructionRead(call)) ||
+    if (message.toolCalls.some(call => call.name === 'checkpoint_context' || skills.has(call.id) || instructionRead(recordedToolInvocation(call))) ||
       receipts.some(receipt => receipt.role === 'tool' && receipt.images?.length)) {
       // Native exchanges keep their canonical identity and provider replay.
       // Cloning only the call loses its coverage ID while the receipt retains

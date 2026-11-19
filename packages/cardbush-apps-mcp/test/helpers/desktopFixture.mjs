@@ -44,7 +44,8 @@ public static class DesktopFixture {
   static void State(string kind,string op) {
     POINT cursor; GetCursorPos(out cursor);
     Emit(new { kind=kind, op=op, hwnd=new WindowInteropHelper(main).Handle.ToInt64(),
-      cover=new WindowInteropHelper(cover).Handle.ToInt64(), popup=popup==null?0:new WindowInteropHelper(popup).Handle.ToInt64(), foreground=GetForegroundWindow().ToInt64(),
+      cover=new WindowInteropHelper(cover).Handle.ToInt64(), popup=popup==null?0:new WindowInteropHelper(popup).Handle.ToInt64(),
+      popupVisible=popup!=null && popup.IsVisible, foreground=GetForegroundWindow().ToInt64(),
       text=input.Text, fileName=fileName==null?"":fileName.Text, coverText=coverInput.Text, readOnly=readOnly.Text, passwordLength=password.Password.Length,
       count=count, windowState=main.WindowState.ToString(), toggled=toggle.IsChecked, slider=slider.Value, dragMoves=dragMoves,
       scroll=scroll.VerticalOffset, wheels=wheels, x=cursor.x, y=cursor.y, pastedFiles=pastedFiles, clipboardRestore=clipboardRestore });
@@ -63,6 +64,9 @@ public static class DesktopFixture {
   [STAThread] public static void Run() {
     Application app=new Application(); app.ShutdownMode=ShutdownMode.OnMainWindowClose;
     main=new Window {Title="CardBush isolated adversarial fixture",Left=80,Top=100,Width=780,Height=660};
+    main.PreviewKeyDown+=(s,e)=>{
+      if(e.Key==Key.Escape && popup!=null && popup.IsVisible && !popup.ShowActivated){popup.Close();e.Handled=true;}
+    };
     main.Closing+=(s,e)=>{try{RestoreClipboard();}catch(Exception ex){Emit(new {kind="cleanup_error",error=ex.Message});}};
     cover=new Window {Title="CardBush isolated cover fixture",Left=950,Top=100,Width=320,Height=240};
     coverInput=new TextBox {Text="COVER MUST NOT RECEIVE INPUT",AcceptsReturn=true}; cover.Content=coverInput;
@@ -137,6 +141,12 @@ public static class DesktopFixture {
             if(op=="renameButton") button.Content="Changed identity";
             if(op=="resetButton") button.Content="Increment "+count;
             if(op=="popupOnClick") popupOnClick=true;
+            if(op=="showNonActivatingPopup") {
+              popup=new Window {Title="Search results",Owner=main,ShowActivated=false,ShowInTaskbar=false,
+                Left=main.Left+120,Top=main.Top+140,Width=340,Height=160};
+              Button choose=new Button {Content="Choose search result"};
+              choose.Click+=(ps,pe)=>popup.Close(); popup.Content=choose; popup.Show();
+            }
             if(op=="fileDialog") {
               popup=new Window {Title="CardBush isolated file dialog",Owner=main,Left=100,Top=100,Width=900,Height=610};
               StackPanel contents=new StackPanel {Margin=new Thickness(24)};

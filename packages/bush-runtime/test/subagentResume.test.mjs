@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { OUTCOME_VERIFICATION_MESSAGE } from '@cardbush/bush-protocol';
 import { InMemoryRuntimeHost, SessionStore, SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
 
 test('one subagent entry guides the current child and rejects stale names and foreign IDs', async () => {
@@ -184,11 +185,13 @@ test('resume preserves clean configuration while intersecting current permission
   assert.deepEqual(child.metadata.allowedSkills, ['b']);
   assert.ok(child.metadata.disabledTools.includes('write_file')); assert.ok(child.metadata.disabledTools.includes('delete_file'));
   assert.deepEqual(child.metadata.disabledSkills, ['old-disabled', 'new-disabled']);
-  assert.deepEqual(child.prefixMessages, [{ role: 'system', content: 'private instructions' }]);
+  assert.deepEqual(child.prefixMessages, [{ role: 'system', content: 'private instructions' }, OUTCOME_VERIFICATION_MESSAGE]);
+  assert.deepEqual(child.prefixMessages, requests[0].prefixMessages);
   assert.equal((await run({ prompt: 'continue again', task_id: 'task2' }, { contextWindowTokens: 32768 }, registry.definitions(), 'task_free', 'third-model')).kind, 'returned');
   assert.equal(requests[2].model, 'fixture');
   assert.equal(requests[2].maxOutputTokens, 512);
   assert.equal(requests[2].metadata.subagentMode, 'clean', 'repeated continuations retain the original explicit mode');
+  assert.deepEqual(requests[2].prefixMessages, requests[0].prefixMessages);
   assert.equal((await run({ prompt: 'Use human approval', task_id: 'task3' }, { subagentPermissionRouting: 'user' })).kind, 'returned');
   assert.equal(requests[3].metadata.permissionRouting, 'user');
   assert.equal(requests[3].metadata.permissionScopeSessionId, 'parent');

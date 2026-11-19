@@ -55,7 +55,9 @@ export class AssistantManagement {
   definitions(parent: RuntimeSessionTurnRequest) {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' || parent.metadata.toolExecutionPolicy === 'none') return [];
     const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [] };
+    const ownerHistory = !parent.metadata.botSourceRef && !(Array.isArray(parent.metadata.botSourceRefs) && parent.metadata.botSourceRefs.length);
     const catalog = this.options.registry.definitions().filter(tool => allowed.has(tool.name) ||
+      (ownerHistory && tool.name === 'read_conversation_history') ||
       parent.metadata.toolExecutionPolicy !== 'web_restricted' && (this.isBridgeTool(tool.name) ||
         this.isProductPluginTool(tool.name, parent)));
     return catalog.filter(tool => parent.tools.some(item => item.name === tool.name) &&

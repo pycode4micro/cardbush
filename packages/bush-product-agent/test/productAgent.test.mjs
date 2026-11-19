@@ -100,7 +100,8 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   );
   assert.doesNotMatch(request.prefixMessages[0].content, /consult_logic|learn_logic|\bLEM\b/);
   assert.doesNotMatch(request.metadata.subagentChildPrefixMessages[0].content, /consult_logic|learn_logic|\bLEM\b/);
-  assert.equal(request.prefixMessages.length, 2);
+  assert.equal(request.prefixMessages.length, 3);
+  assert.equal(request.prefixMessages.at(-1).name, 'outcome_verification');
   assert.equal(request.prefixMessages[1].name, "runtime_context");
   assert.doesNotMatch(request.prefixMessages[1].content, /Local date/);
   assert.match(request.prefixMessages[1].content, /Desktop: C:\\Users\\fixture\\Desktop/);

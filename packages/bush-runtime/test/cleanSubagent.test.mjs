@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { individuationPreferenceText, REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
+import { individuationPreferenceText, OUTCOME_VERIFICATION_MESSAGE, REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -59,7 +59,7 @@ test('ordinary dispatch defaults to fork and retains the exact parent prefix and
   const outcome = await invoke(f.registry, f.request, 'subagent', { prompt: '我继续实现，你先核实接口。' });
   assert.equal(outcome.kind, 'returned');
   assert.equal(outcome.result.mode, 'fork');
-  assert.deepEqual(f.requests[0].prefixMessages, f.request.messages);
+  assert.deepEqual(f.requests[0].prefixMessages, [...f.request.messages, OUTCOME_VERIFICATION_MESSAGE]);
   assert.deepEqual(f.requests[0].tools, f.request.tools);
   assert.deepEqual(f.requests[0].inputMessages[0].message, { role: 'user', name: 'delivery_guidance', visibility: 'internal',
     content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') });
@@ -75,7 +75,7 @@ test('explicit clean supplies the actual system and user messages without inheri
   assert.equal(outcome.result.mode, 'clean');
   assert.equal(outcome.result.inheritedMessageCount, 0);
   const child = f.requests[0];
-  assert.deepEqual(child.prefixMessages, [{ role: 'system', content: clean.system_prompt }]);
+  assert.deepEqual(child.prefixMessages, [{ role: 'system', content: clean.system_prompt }, OUTCOME_VERIFICATION_MESSAGE]);
   assert.deepEqual(child.inputMessages.map(item => item.message), [
     { role: 'user', name: 'delivery_guidance', visibility: 'internal', content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
     { role: 'user', name: 'individuation_preference', visibility: 'internal',

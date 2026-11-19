@@ -4,6 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { launchDesktopFixture } from './helpers/desktopFixture.mjs';
 import { executeComputerUse } from '../dist/plugins/computerUseRuntime.js';
 import { computerUsePresentation } from '../dist/plugins/computerUsePresentation.js';
@@ -25,9 +26,12 @@ const checks = [];
 const pass = name => { checks.push(name); console.log('PASS', name); };
 try {
   const { hwnd } = await fixture.ready;
+  await delay(1100);
+  await fixture.command('activate');
   let state = (await call({ action: 'observe', hwnd })).output;
   assert.equal(state.accessibility, undefined);
-  assert.ok(state.state_id); assert.equal(state.actionable, true);
+  assert.ok(state.state_id);
+  assert.equal(state.actionable, true, JSON.stringify({ hwnd, foreground: state.foreground_hwnd, capture: state.capture_method }));
   pass('default observation supplies screenshot evidence and state without the UIA tree');
 
   state = (await call({ action: 'observe', hwnd, include_text: true })).output;
@@ -69,6 +73,30 @@ try {
   }
   assert.equal((await fixture.command('inspect')).count, 5);
   pass('three untitled owned-popup cycles recover without consuming the human-takeover budget');
+
+  const popup = await fixture.command('showNonActivatingPopup');
+  assert.equal(popup.foreground, hwnd);
+  assert.notEqual(popup.popup, hwnd);
+  const popupState = (await call({ action: 'observe', hwnd: popup.popup })).output;
+  assert.equal(popupState.window.owner_hwnd, hwnd);
+  assert.equal(popupState.is_foreground, false);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    state = (await call({ action: 'observe', hwnd })).output;
+    const x = popupState.bounds.x - state.bounds.x + Math.floor(popupState.bounds.width / 2);
+    const y = popupState.bounds.y - state.bounds.y + Math.floor(popupState.bounds.height / 2);
+    await assert.rejects(call(bind(state, { action: 'click', x, y, observe_after: attempt === 0 })), error => {
+      assert.equal(error.info?.code, 'window_changed');
+      assert.equal(error.info.execution, 'not_dispatched');
+      assert.match(error.info.message, new RegExp(`expected hwnd=${hwnd}, actual hwnd=${popup.popup}`));
+      return true;
+    });
+    assert.equal((await fixture.command('inspect')).popupVisible, true);
+  }
+  state = (await call({ action: 'observe', hwnd })).output;
+  const dismissed = await call(bind(state, { action: 'key', keys: ['Escape'] }));
+  assert.equal(dismissed.output.execution, 'dispatched');
+  assert.equal((await fixture.command('inspect')).popupVisible, false);
+  pass('non-activating owned search popup rejects clicks before dispatch and permits a different corrective key');
 
   await fixture.command('switchDuringTyping', { after: 2 });
   state = (await call({ action: 'observe', hwnd, include_text: true })).output;
@@ -112,7 +140,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 200));
   await assert.rejects(call(bind(state, { action: 'invoke', element_index: element(state, 'fixture-button').index })),
     error => error.info?.code === 'user_stopped');
-  await call({ action: 'finish' });
+  assert.equal((await call({ action: 'finish' })).output.control_stopped, true);
   await assert.rejects(call({ action: 'observe', hwnd }), error => error.info?.code === 'user_stopped');
   assert.equal((await fixture.command('inspect')).count, before + 1);
   pass('explicit stop remains latched after finish and blocks further observation/control in the turn');

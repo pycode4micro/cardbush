@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AssistantContextMaintenance, assistantCheckpointPlan } from '../dist/assistantContextMaintenance.js';
@@ -81,4 +81,79 @@ test('oversized indivisible sources retain original history and expose bounded f
   assert.equal(f.maintenance.snapshot().errorCode,'context_checkpoint_source_too_large');
   assert.equal(diagnostics.length,1);assert.doesNotMatch(diagnostics[0].message,/indivisible source/);
   assert.equal(f.history.read().through,0);
+});
+
+test('idle pressure keeps corrections and native task receipts, with paged original evidence after restart', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'assistant-recorded-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, 'history.jsonl'), history = new AssistantModelHistory(path);
+  const initial = 'Use account 14.', correction = 'Correction: use 39. Cancel publication.';
+  const originalLog = 'heartbeat '.repeat(1000) + 'signed-middle-evidence' + 'heartbeat '.repeat(1000);
+  const source = Array.from({ length: 15 }, (_, i) => [
+    { role: 'user', content: [initial, correction][i] ?? 'Continue.' },
+    { role: 'assistant', content: '', reasoningContent: 'private-reasoning', toolCalls: [{ id: 'c' + i, name: 'tasks', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'c' + i, content: JSON.stringify({ tasks: [{ id: 'Q' + i, status: 'running' }], log: originalLog }) },
+    { role: 'assistant', content: 'Observed.', toolCalls: [] },
+  ]).flat();
+  history.append(source);
+  await new AssistantContextMaintenance().compact(history, { ...parent, metadata: { contextWindowTokens: 50000 } },
+    { stream: () => assert.fail('Recorded history should fit without a model call') }, {}, new AbortController().signal, []);
+  const restored = new AssistantModelHistory(path), state = restored.read();
+  assert.deepEqual(state, history.read());
+  assert.deepEqual(state.messages.filter(m => m.role === 'user'), source.filter(m => m.role === 'user'));
+  validateConversation(state.messages);
+  assert.deepEqual(state.messages.slice(-8), source.slice(-8));
+  const receipt = JSON.parse(state.messages[2].content);
+  assert.deepEqual(receipt.tasks, [{ id: 'Q0', status: 'running' }]);
+  assert.ok(!state.messages[2].content.includes('signed-middle-evidence'));
+  const input = { locator: receipt._assistant_history.locator, offset: 0, maxChars: 4999 };
+  let text = '', page;
+  do {
+    page = await restored.readOriginal('assistant', input);
+    text += page.text;
+    input.offset = page.next_offset; input.revision = page.revision;
+  } while (input.offset !== null);
+  assert.ok(text.includes('signed-middle-evidence'));
+  assert.ok(!text.includes('private-reasoning'));
+  restored.clear(); restored.append(source);
+  await assert.rejects(restored.readOriginal('assistant', { ...input, offset: 0 }), /unavailable/);
+});
+
+test('successive semantic checkpoints keep indexed user corrections and nested tool evidence even if the model omits them', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'assistant-anchors-')), path = join(root, 'history.jsonl');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const history = new AssistantModelHistory(path);
+  const correction = '用 LIME-39，撤回发布授权。';
+  const fact = { tasks: [{ taskId: 'A-326', status: 'failed', code: 'E-17' }], log: 'history '.repeat(700) };
+  history.append([{ role: 'user', content: correction },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'wrapped', name: 'call_tool', argumentsText: '{"name":"tasks","arguments":{}}' }] },
+    { role: 'tool', toolCallId: 'wrapped', content: JSON.stringify(fact) }]);
+  history.checkpoint(3, 'Batch inspected.', [], 2000);
+  history.append([{ role: 'user', content: '保留字幕 SUB-72。' }, { role: 'assistant', content: '收到。', toolCalls: [] }]);
+  history.checkpoint(5, 'Summary with no identifiers.', [], 2000);
+  const restored = new AssistantModelHistory(path), memory = restored.read().memory;
+  assert.match(memory, /LIME-39.*A-326.*E-17.*SUB-72/s);
+  const evidence = JSON.parse(memory.slice(memory.indexOf('[{')));
+  assert.deepEqual(evidence.map(item => item.index), [0, 2, 3]);
+  assert.equal(evidence[0].text, correction);
+  const tool = JSON.parse(evidence[1].text);
+  assert.equal(tool.tool, 'tasks'); assert.deepEqual(tool.fields.tasks, fact.tasks);
+  const range = memory.match(/conversation-history:\/\/[^\n]+/)[0];
+  const single = range.replace(/\.0\//, '.2/').replace(/\.4$/, '.2');
+  const page = await restored.readOriginal('assistant', { locator: single, offset: 0, maxChars: 12000 });
+  assert.deepEqual(JSON.parse(JSON.parse(page.text).message.content), fact);
+});
+
+test('an existing summary acquires a durable original range on first open', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'assistant-legacy-')), path = join(root, 'history.jsonl');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const events = [{ type: 'append', messages: [{ role: 'user', content: 'Cancel J-5.' }], entryIds: ['old'] },
+    { type: 'checkpoint', through: 1, summary: 'Old summary.' }];
+  writeFileSync(path, events.map(event => JSON.stringify(event)).join('\n') + '\n');
+  const first = new AssistantModelHistory(path).read(), migrated = readFileSync(path, 'utf8');
+  assert.equal(first.summary, 'Old summary.');
+  const locator = first.memory.match(/conversation-history:\/\/[^\n]+/)[0];
+  const second = new AssistantModelHistory(path);
+  assert.deepEqual(second.read(), first); assert.equal(readFileSync(path, 'utf8'), migrated);
+  assert.match((await second.readOriginal('assistant', { locator, offset: 0, maxChars: 500 })).text, /Cancel J-5/);
 });

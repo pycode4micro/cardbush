@@ -8,7 +8,7 @@ import type { ComputerUsePluginConfig } from '../config.js';
 import { computerUsePresentation } from './computerUsePresentation.js';
 import { computerUseCaptureLayersScript } from './computerUseCaptureLayers.js';
 import { computerUseAccessibilityScript } from './computerUseAccessibility.js';
-import { ComputerUseFailure, computerUseFailure, type ComputerUseFailureInfo } from './computerUseErrors.js';
+import { ComputerUseFailure, computerUseFailure, nativeInputPreflightPrefix, type ComputerUseFailureInfo } from './computerUseErrors.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { computerUsePowerShellParameters, runComputerUsePowerShell } from './computerUsePowerShell.js';
 import { computerUseVisualProgressScript, hasVisualProgress, type ProgressEvidence, type ProgressBounds } from './computerUseProgress.js';
@@ -341,6 +341,10 @@ export class ComputerUseSafetyGuard {
     this.#desktopGeneration += 1;
   }
 
+  isStopped(scopeId: string): boolean {
+    return this.#states.get(scopeId)?.terminal !== undefined;
+  }
+
   expectedInputTick(scopeId: string): number | undefined {
     return scopeId ? this.#state(scopeId).expectedInputTick : undefined;
   }
@@ -421,7 +425,8 @@ async function executeComputerUseRequest(
   if (action === 'finish') {
     await computerUsePresentation.finish(scopeId);
     computerUseSafety.releaseObservation(scopeId);
-    return plain({ action, released: true });
+    const stopped = computerUseSafety.isStopped(scopeId) || computerUsePresentation.interruption(scopeId)?.info.code === 'user_stopped';
+    return plain({ action, released: true, ...(stopped ? { control_stopped: true } : {}) });
   }
   computerUsePresentation.assertAvailable(scopeId);
   let release: () => void;
@@ -581,7 +586,7 @@ async function executeComputerUseRequest(
     } else if (!isObservationAction(action) && !actionRecorded && failure.info.code !== 'cardbush_target_blocked') {
       // Once dispatched, failed input may have partially reached the desktop.
       // Presentation/state validation failures occur before target input starts.
-      if (actionMayHaveDispatched) computerUseSafety.recordAction(scopeId, input, false, actionObservation);
+      if (failure.info.execution !== 'not_dispatched') computerUseSafety.recordAction(scopeId, input, false, actionObservation);
       else computerUseSafety.recordPreflightFailure(scopeId, input);
     }
     await releaseAction();
@@ -595,7 +600,7 @@ async function executeComputerUseRequest(
         failure.info.details = { ...failure.info.details, activation_handoff_error: error instanceof Error ? error.message : String(error) };
       }
     };
-    if (input.observe_after !== false && actionObservation && actionMayHaveDispatched &&
+    if (input.observe_after !== false && actionObservation && failure.info.execution !== 'not_dispatched' &&
         (failure.info.code === 'window_changed' || failure.info.code === 'window_unavailable' || failure.info.code === 'activation_failed')) {
       // A click may have opened a dialog before its ACK arrived. Return evidence,
       // never replay the click. This consumes no human-takeover budget.
@@ -1686,9 +1691,13 @@ async function runNativeAction(
 ): Promise<Record<string, unknown>> {
   parameters = { ...parameters, CARDBUSH_DISPLAY_SIGNATURE: context?.previous.displaySignature ?? '',
     CARDBUSH_DISPLAY_HWND: String(context?.previous.hwnd ?? 0), CARDBUSH_WINDOW_DPI: String(context?.previous.windowDpi ?? 0) };
-  script = `${computerUseTargetPolicyScript}
+  script = `try {
+${computerUseTargetPolicyScript}
 [CardBushComputerUseTargets]::AssertWindow([IntPtr]([Int64]$script:CARDBUSH_DISPLAY_HWND))
-${computerUseDisplaysScript}\n${computerUseDisplayGuardScript}\n${script}`;
+${computerUseDisplaysScript}
+${computerUseDisplayGuardScript}
+} catch { throw "${nativeInputPreflightPrefix}$($_.Exception.Message)" }
+${script}`;
   if (!context || context.input.observe_after === false) return record(json(await powershell(script, parameters, signal, timeoutMs)));
   const { input, previous, config } = context;
   const request = prepareWindowCapture(config.screenshotDirectory, previous.hwnd,
@@ -2000,49 +2009,56 @@ if (-not $ready) {
   exit 0
 }
 
-$pointer = New-Object CardBushInput+POINT
-[void][CardBushInput]::GetCursorPos([ref]$pointer)
-$expectedHwnd = if ($null -ne $p.hwnd) { [Int64]$p.hwnd } else { 0 }
-[CardBushInput]::ExpectedWindow = [IntPtr]$expectedHwnd
-[CardBushInput]::ExpectedProcessId = if ($null -ne $p.observed_process_id) { [uint32]$p.observed_process_id } else { 0 }
-if ($expectedHwnd -gt 0) {
-  $observedBounds = $p.observed_bounds
-  $currentBounds = New-Object CardBushInput+RECT
-  if (-not [CardBushInput]::GetWindowRect([IntPtr]$expectedHwnd, [ref]$currentBounds)) {
-    throw "Target window hwnd=$expectedHwnd is no longer available. Observe again."
+try {
+  $pointer = New-Object CardBushInput+POINT
+  [void][CardBushInput]::GetCursorPos([ref]$pointer)
+  $expectedHwnd = if ($null -ne $p.hwnd) { [Int64]$p.hwnd } else { 0 }
+  [CardBushInput]::ExpectedWindow = [IntPtr]$expectedHwnd
+  [CardBushInput]::ExpectedProcessId = if ($null -ne $p.observed_process_id) { [uint32]$p.observed_process_id } else { 0 }
+  if ($expectedHwnd -gt 0) {
+    $observedBounds = $p.observed_bounds
+    $currentBounds = New-Object CardBushInput+RECT
+    if (-not [CardBushInput]::GetWindowRect([IntPtr]$expectedHwnd, [ref]$currentBounds)) {
+      throw "Target window hwnd=$expectedHwnd is no longer available. Observe again."
+    }
+    if (
+      $null -eq $observedBounds -or
+      [Math]::Abs($currentBounds.Left - [int]$observedBounds.x) -gt 2 -or
+      [Math]::Abs($currentBounds.Top - [int]$observedBounds.y) -gt 2 -or
+      [Math]::Abs(($currentBounds.Right - $currentBounds.Left) - [int]$observedBounds.width) -gt 2 -or
+      [Math]::Abs(($currentBounds.Bottom - $currentBounds.Top) - [int]$observedBounds.height) -gt 2
+    ) {
+      throw "Target window bounds changed after observation. Observe hwnd=$expectedHwnd again."
+    }
+    function Window-X([int]$value) {
+      if ($value -lt 0 -or $value -ge [int]$observedBounds.width) { throw "Window-relative x=$value is outside the observed window." }
+      return $currentBounds.Left + $value
+    }
+    function Window-Y([int]$value) {
+      if ($value -lt 0 -or $value -ge [int]$observedBounds.height) { throw "Window-relative y=$value is outside the observed window." }
+      return $currentBounds.Top + $value
+    }
+    $screenX = if ($null -ne $p.x) { Window-X ([int]$p.x) } else { 0 }
+    $screenY = if ($null -ne $p.y) { Window-Y ([int]$p.y) } else { 0 }
+    $screenToX = if ($null -ne $p.to_x) { Window-X ([int]$p.to_x) } else { 0 }
+    $screenToY = if ($null -ne $p.to_y) { Window-Y ([int]$p.to_y) } else { 0 }
+    $actualHwnd = if ($p.action -in @('click', 'drag', 'scroll')) {
+      [CardBushInput]::RootWindowAt($screenX, $screenY)
+    } else {
+      [CardBushInput]::ForegroundWindow()
+    }
+    if ($actualHwnd -ne $expectedHwnd) {
+      throw "Target window changed (expected hwnd=$expectedHwnd, actual hwnd=$actualHwnd). Observe again before sending input."
+    }
   }
-  if (
-    $null -eq $observedBounds -or
-    [Math]::Abs($currentBounds.Left - [int]$observedBounds.x) -gt 2 -or
-    [Math]::Abs($currentBounds.Top - [int]$observedBounds.y) -gt 2 -or
-    [Math]::Abs(($currentBounds.Right - $currentBounds.Left) - [int]$observedBounds.width) -gt 2 -or
-    [Math]::Abs(($currentBounds.Bottom - $currentBounds.Top) - [int]$observedBounds.height) -gt 2
-  ) {
-    throw "Target window bounds changed after observation. Observe hwnd=$expectedHwnd again."
-  }
-  function Window-X([int]$value) {
-    if ($value -lt 0 -or $value -ge [int]$observedBounds.width) { throw "Window-relative x=$value is outside the observed window." }
-    return $currentBounds.Left + $value
-  }
-  function Window-Y([int]$value) {
-    if ($value -lt 0 -or $value -ge [int]$observedBounds.height) { throw "Window-relative y=$value is outside the observed window." }
-    return $currentBounds.Top + $value
-  }
-  $screenX = if ($null -ne $p.x) { Window-X ([int]$p.x) } else { 0 }
-  $screenY = if ($null -ne $p.y) { Window-Y ([int]$p.y) } else { 0 }
-  $screenToX = if ($null -ne $p.to_x) { Window-X ([int]$p.to_x) } else { 0 }
-  $screenToY = if ($null -ne $p.to_y) { Window-Y ([int]$p.to_y) } else { 0 }
-  if ($p.action -eq 'click' -or $p.action -eq 'drag') {
-    $actualHwnd = [CardBushInput]::RootWindowAt($screenX, $screenY)
-  } elseif ($p.action -eq 'scroll') {
-    $actualHwnd = [CardBushInput]::RootWindowAt($screenX, $screenY)
-  } else {
-    $actualHwnd = [CardBushInput]::ForegroundWindow()
-  }
-  if ($actualHwnd -ne $expectedHwnd) {
-    throw "Target window changed (expected hwnd=$expectedHwnd, actual hwnd=$actualHwnd). Observe again before sending input."
-  }
-}
+  ${computerUseDisplayGuardScript}
+  [CardBushInput]::ExpectedBounds=$currentBounds
+  [CardBushInput]::ExpectedDpi=[uint32]$script:CARDBUSH_WINDOW_DPI
+  [CardBushInput]::ShellForeground=[CardBushInput]::GetForegroundWindow()
+  [CardBushInput]::ShellX=$screenX; [CardBushInput]::ShellY=$screenY
+  [CardBushInput]::ShellClick=($p.action -eq 'click' -and $p.button -ne 'right' -and $p.button -ne 'middle' -and ($null -eq $p.clicks -or [int]$p.clicks -eq 1) -and [CardBushInput]::ShellPoint([IntPtr]$expectedHwnd,$screenX,$screenY))
+  [CardBushInput]::CheckTarget()
+} catch { throw "${nativeInputPreflightPrefix}$($_.Exception.Message)" }
 
 $pointerRestored = $false
 $pointerRestoreSkippedForUser = $false
@@ -2051,13 +2067,6 @@ $expectedPointerX = $pointer.x
 $expectedPointerY = $pointer.y
 $inputTimer = [Diagnostics.Stopwatch]::StartNew()
 try {
-  ${computerUseDisplayGuardScript}
-  [CardBushInput]::ExpectedBounds=$currentBounds
-  [CardBushInput]::ExpectedDpi=[uint32]$script:CARDBUSH_WINDOW_DPI
-  [CardBushInput]::ShellForeground=[CardBushInput]::GetForegroundWindow()
-  [CardBushInput]::ShellX=$screenX; [CardBushInput]::ShellY=$screenY
-  [CardBushInput]::ShellClick=($p.action -eq 'click' -and $p.button -ne 'right' -and $p.button -ne 'middle' -and ($null -eq $p.clicks -or [int]$p.clicks -eq 1) -and [CardBushInput]::ShellPoint([IntPtr]$expectedHwnd,$screenX,$screenY))
-  [CardBushInput]::CheckTarget()
   switch ($p.action) {
     'click' { $expectedPointerX=$screenX;$expectedPointerY=$screenY;$b=if($p.button -eq 'right'){@(8,16)}elseif($p.button -eq 'middle'){@(32,64)}else{@(2,4)};$clicks=if($null -ne $p.clicks){[int]$p.clicks}else{1};[CardBushInput]::MovePointer($screenX,$screenY);1..$clicks|%{[CardBushInput]::mouse_event($b[0],0,0,0,[CardBushInput]::InputTag);[CardBushInput]::mouse_event($b[1],0,0,0,[CardBushInput]::InputTag)} }
     'scroll' { $expectedPointerX=$screenX;$expectedPointerY=$screenY;[CardBushInput]::MovePointer($screenX,$screenY);[CardBushInput]::mouse_event(2048,0,0,([int]$p.delta)*120,[CardBushInput]::InputTag) }

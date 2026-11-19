@@ -4,7 +4,7 @@ import { acquireAgentDataLock } from './agentDataLock.mjs';
 import { uiText, isDefaultConversationTitle } from '@cardbush/platform/i18n';
 import { AgentWebhooks } from './agentWebhooks.mjs';
 import { prepareWebhookParentModels } from './contextWebhookRuntime.mjs';
-import { applyWebhookTurnPolicy, assistantProfileSchema, PERSONAL_ASSISTANT_SESSION, runtimeSessionTurnRequestSchema, type ChildAgentConfiguration } from '@cardbush/bush-protocol';
+import { applyWebhookTurnPolicy, assistantProfileSchema, PERSONAL_ASSISTANT_SESSION, runtimeSessionTurnRequestSchema, withoutReportDeliveryPreface, type ChildAgentConfiguration } from '@cardbush/bush-protocol';
 import type { WebhookBinding } from './contextWebhookTypes.js';
 import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
 import { remoteControlSchema, validateRemoteResponse, SUBAGENT_INTERACTION_OPERATIONS, type RemoteControl } from '@cardbush/bush-protocol';
@@ -966,7 +966,8 @@ export class AgentService {
       }
       let request = createProductAgentTurnRequest({
         requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, messageId: `message-${job.id}`, createdAt: job.createdAt,
-        userText: job.input.text, userMessageName: job.goalContinuation ? 'goal_continuation' : job.input.goalObjective ? 'goal_request' : undefined,
+        userText: job.delegation ? withoutReportDeliveryPreface(job.input.text) : job.input.text,
+        userMessageName: job.goalContinuation ? 'goal_continuation' : job.input.goalObjective ? 'goal_request' : undefined,
         sourceEnabled: job.input.sourceEnabled ?? (job.input.userMessageMetadata?.sourceEnabled !== false), individuation: job.input.individuation, conversationStyle: job.input.conversationStyle, files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
         maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens,
         tools: catalog.filter(tool => tool.name !== 'update_goal' || activeGoal?.status === 'active'), projectDir, workspaceDir,

@@ -114,6 +114,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
             command.sourceSnapshot.startLine, prompt.length, text => substitute(text, plan), command.prompt));
           prompt += substitute(piece.text ?? '', plan); continue;
         }
+        registry.assertLocalCommandAllowed(context);
         const result = await executePluginProcess({ command: piece.script, shell: command.shell, timeout: 30 }, '', plan.cwd, { ...process.env }, context.signal);
         contextResults.push({ command: piece.script, ...result });
         if (result.exitCode !== 0) throw Object.assign(new Error(`Command /${command.id} context failed (${result.exitCode}): ${result.stderr || result.stdout}`), { code: 'plugin_command_context_failed', details: { contextResults } });

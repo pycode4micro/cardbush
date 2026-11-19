@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { individuationPreferenceText, REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
+import { individuationPreferenceText, OUTCOME_VERIFICATION_MESSAGE, REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import {
   buildChildTurnRequest, CacheChainTracker, inheritedChildMessages, InMemoryRuntimeHost,
   SubagentTaskStore, ToolExecutionCoordinator, ToolRegistry, registerSubagentTool,
@@ -35,9 +35,10 @@ test('inherited child input extends the exact cached prefix with frozen definiti
     tools: registry.definitions().reverse().map(tool => ({ ...tool, description: `frozen: ${tool.name}` })),
     maxOutputTokens: 4096, reasoningEffort: 'high',
     messages: [
-      { role: 'system', content: 'Shared system instructions.' },
+      { role: 'system', content: `Shared system instructions.\n\n${REPORT_DELIVERY_INSTRUCTIONS}` },
       { role: 'user', name: 'global_instructions', content: 'User AGENTS.md preferences.' },
       { role: 'developer', name: 'runtime_context', content: 'Workspace: C:/fixture' },
+      OUTCOME_VERIFICATION_MESSAGE,
       { role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: 'ui_language_fallback: zh-CN\nMode: concise' },
       { role: 'user', content: '修复并验证这个问题。' },
       { role: 'assistant', content: '已经读取实现。', toolCalls: [{ id: 'read', name: 'read_file', argumentsText: '{}' }] },
@@ -53,7 +54,7 @@ test('inherited child input extends the exact cached prefix with frozen definiti
   assert.deepEqual(child.tools, parent.tools);
   assert.deepEqual(child.inputMessages.map(item => item.message), [
     { role: 'user', name: 'delivery_guidance', visibility: 'internal',
-      content: [REPORT_DELIVERY_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS].join('\n\n') },
+      content: SOURCE_BINDING_INSTRUCTIONS },
     { role: 'user', name: 'individuation_preference', visibility: 'internal', content: individuationPreferenceText() },
     { role: 'user', content: 'You are currently a child Agent.\n\n请验证修改；我将处理界面，接口结果稍后提供。' },
   ]);
@@ -161,10 +162,12 @@ test('runtime child receives a restriction result and finishes without starting 
   assert.deepEqual(child.tools, parent.tools);
   assert.deepEqual(child.messages.slice(0, parent.messages.length), parent.messages);
   const appended = child.messages.slice(parent.messages.length);
-  assert.equal(appended[0].name, 'delivery_guidance');
-  assert.ok(appended[0].content.includes(REPORT_DELIVERY_INSTRUCTIONS));
-  assert.match(appended[0].content, /read_source_memos must bind it to this turn/);
-  assert.equal(appended[1].name, 'individuation_preference');
-  assert.equal(appended[1].content, individuationPreferenceText());
-  assert.ok(appended[2].content.startsWith('You are currently a child Agent.\n'));
+  assert.deepEqual(appended[0], OUTCOME_VERIFICATION_MESSAGE);
+  assert.equal(appended[1].name, 'delivery_guidance');
+  assert.equal(appended[1].content, REPORT_DELIVERY_INSTRUCTIONS);
+  assert.equal(appended[2].name, 'delivery_guidance');
+  assert.match(appended[2].content, /read_source_memos must bind it to this turn/);
+  assert.equal(appended[3].name, 'individuation_preference');
+  assert.equal(appended[3].content, individuationPreferenceText());
+  assert.ok(appended[4].content.startsWith('You are currently a child Agent.\n'));
 });

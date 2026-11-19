@@ -28,11 +28,11 @@ async function* reply(request, { calls = [], text = '', reasoning = '', replay }
   yield event(request, sequence, 'response_completed', { finishReason: calls.length ? 'tool_calls' : 'stop', ...(replay ? { providerReplay: replay } : {}) });
 }
 const until = async predicate => { for (let i = 0; i < 400; i++) { if (predicate()) return; await new Promise(r => setTimeout(r, 5)); } assert.fail('timed out'); };
-function fixture(t, provider, delegate = async () => ({ status: 'accepted' }), checkpoint = () => ({})) {
+function fixture(t, provider, delegate = async () => ({ status: 'accepted' }), checkpoint = () => ({}), environment) {
   const root = mkdtempSync(join(tmpdir(), 'assistant-cache-')), instances = [];
   const create = () => {
     const journal = new ConversationJournal(root);
-    const assistant = new AssistantConversation(journal, { provider, delegate, exists: () => true, tasks: () => [], checkpoint });
+    const assistant = new AssistantConversation(journal, { provider, delegate, exists: () => true, tasks: () => [], checkpoint, environment });
     instances.push(assistant);
     return { assistant, journal, send: (key, outputMode = 'text') => assistant.command({ action: 'turn', sessionId: id,
       entry: { ...entry(key), source: outputMode }, parent: { ...parent, metadata: { ...parent.metadata, assistantOutputMode: outputMode } }, profile: assistantProfileSchema.parse({}) }),
@@ -220,4 +220,54 @@ test('pressure checkpoints complete tool exchanges, retains source, and restores
   app.assistant.close(); const restarted = f.create(); restarted.send('follow-up'); await until(() => !restarted.read().busy);
   assert.equal(restarted.read().error, '');
   assert.deepEqual(requests.at(-1).messages.slice(0, before.messages.length), before.messages);
+});
+
+test('foreground pressure retains exact correction and compact receipts without waiting for a summary', async t => {
+  const requests = [];
+  const f = fixture(t, { async *stream(request) {
+    requests.push(request);
+    yield* reply(request, { text: 'Acknowledged.' });
+  } });
+  const app = f.create(), history = app.journal.modelHistory(id);
+  const correction = 'Correction: cancel AC-19. Do not publish AC-91.';
+  history.append([{ role: 'user', content: 'Publish AC-19.' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'task-check', name: 'tasks', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'task-check', content: JSON.stringify({ job: 'AC-19', status: 'running', log: 'progress '.repeat(7000) }) },
+    { role: 'user', content: correction }, { role: 'assistant', content: 'Confirmed.', toolCalls: [] }]);
+  app.assistant.command({ action: 'turn', sessionId: id, entry: entry('new'), parent: { ...parent,
+    maxOutputTokens: 1500, metadata: { contextWindowTokens: 12000 } }, profile: assistantProfileSchema.parse({}) });
+  await until(() => !app.read().busy);
+  assert.equal(app.read().error, '');
+  assert.equal(requests.length, 1);
+  const messages = requests[0].messages;
+  validateConversation(messages);
+  assert.ok(messages.some(m => m.role === 'user' && m.content === correction));
+  const receipt = JSON.parse(messages.find(m => m.toolCallId === 'task-check').content);
+  assert.equal(receipt.job, 'AC-19'); assert.equal(receipt.status, 'running');
+  assert.match(receipt._assistant_history.locator, /^conversation-history:/);
+});
+
+test('foreground compaction preserves the active user input when runtime metadata keeps the request under pressure', async t => {
+  const requests = [], registry = new ToolRegistry();
+  registerContextCompactionTool(registry, () => assert.fail('only the maintenance transaction accepts a checkpoint'));
+  const checkpoint = () => registry.definitions().find(tool => tool.name === 'checkpoint_context');
+  const correction = 'Use the new account. Cancel the previous action.';
+  let snapshots = 0;
+  const f = fixture(t, { async *stream(request) {
+    requests.push(request);
+    assert.ok(requests.length <= 3, 'Maintenance must finish even when an oversized runtime message is refreshed.');
+    const summary = { updates: [{ source: 0, summary: 'Old account discussed.' }] };
+    yield* reply(request, request.metadata.runtimeMaintenance === 'assistant_context_compaction'
+      ? { calls: [{ id: 'checkpoint-' + requests.length, name: 'checkpoint_context', args: summary }] } : { text: 'Ready.' });
+  } }, undefined, checkpoint, { message: () => ({ role: 'user', name: 'runtime_environment', visibility: 'internal',
+    content: 'runtime snapshot ' + (++snapshots) + ' ' + 'resource '.repeat(4000) }) });
+  const app = f.create();
+  app.journal.modelHistory(id).append([{ role: 'user', content: 'Use the old account.' },
+    { role: 'assistant', content: 'Old history is still around. '.repeat(600), toolCalls: [] }]);
+  app.assistant.command({ action: 'turn', sessionId: id, entry: entry('current', correction), parent: { ...parent,
+    maxOutputTokens: 1024, metadata: { contextWindowTokens: 8000 } }, profile: assistantProfileSchema.parse({}) });
+  await until(() => !app.read().busy);
+  assert.equal(app.read().error, '');
+  assert.ok(requests.some(request => request.metadata.runtimeMaintenance === 'assistant_context_compaction'));
+  assert.ok(requests.at(-1).messages.some(message => message.role === 'user' && !message.name && message.content === correction));
 });

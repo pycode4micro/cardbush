@@ -1,5 +1,5 @@
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
-import { conversationTitleLimit } from '@cardbush/bush-protocol';
+import { conversationTitleLimit, REPORT_DELIVERY_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile, symlink } from 'node:fs/promises';
@@ -858,14 +858,18 @@ test('remote subagent HTTP bridge deduplicates uncertain acknowledgement, return
     const [connection] = await manager.save({ name: 'Server', transport: 'http', url: `http://127.0.0.1:${http.port}`, token });
     const realCall = manager.call.bind(manager); let loseAck = true;
     manager.call = async (...args) => { const value = await realCall(...args); if (args[1] === 'delegation.submit' && loseAck) { loseAck = false; throw new AgentNetworkError('lost acknowledgement'); } return value; };
-    const request = { connectionId: connection.id, agentId: f.service.info().id, taskId: 'test-remote-1', sessionId: 'delegated-test-remote-1', turnId: 'turn-test-remote-1', parentSessionId: 'parent', parentTurnId: 'parent-turn', prompt: 'Review this server', permissionMode: 'task_free', language: 'en' };
+    const taskText = 'Review this server';
+    const request = { connectionId: connection.id, agentId: f.service.info().id, taskId: 'test-remote-1', sessionId: 'delegated-test-remote-1', turnId: 'turn-test-remote-1', parentSessionId: 'parent', parentTurnId: 'parent-turn', prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${taskText}`, permissionMode: 'task_free', language: 'en' };
     const result = await runRemoteSubagent(manager, request);
     assert.equal(result.status, 'completed'); assert.match(result.finalResponse, /answer-2/);
     assert.equal(f.model.calls.length, 2, 'uncertain acknowledgement cannot execute twice');
+    const dispatched = [f.model.calls[0].instructions, JSON.stringify(f.model.calls[0].input)].join('\n');
+    assert.equal(dispatched.split('Deliver every report, including research and backtests, as a verified file').length - 1, 1);
     assert.match(JSON.stringify(f.model.calls[1].input), /child_agent_tool_disabled|child.*(?:cannot|disabled)|子.*(?:禁止|不能)/i, 'child delegation is denied at execution');
     const session = await realCall(connection.id, 'sessions.get', { sessionId: request.sessionId });
     assert.ok(session.metadata.runtimeWorkspace.workspaceDir.startsWith(f.root));
     assert.equal(session.metadata.delegationOwner, 'parent');
+    assert.ok(session.turns[0].messages.some(entry => entry.message.role === 'user' && entry.message.content === taskText));
     await assert.rejects(realCall(connection.id, 'delegation.submit', { ...Object.fromEntries(Object.entries(request).filter(([key]) => !['connectionId', 'agentId'].includes(key))), prompt: 'different' }), /different content/);
     const resumed = await runRemoteSubagent(manager, { ...request, taskId: 'test-remote-2', turnId: 'turn-test-remote-2', prompt: 'Continue review' });
     assert.equal(resumed.status, 'completed'); assert.equal(f.model.calls.length, 3);

@@ -88,7 +88,7 @@
   {
     "name": "assistant-events-enabled",
     "slots": [],
-    "sha256": "e02f46fff8f8a816b7bdf5b247cb447ef9ec695f27465432923ce02eb57a8768"
+    "sha256": "dbd02a753f5ff7d806921f5ebf03d9e6381183b788e7aa0c73d0337ab3d1b73d"
   },
   {
     "name": "assistant-events-requested-only",
@@ -103,7 +103,12 @@
   {
     "name": "assistant-report",
     "slots": [],
-    "sha256": "04cd4620f8ea7b68ea6526083bffdec6748802445b17ff1f72145018d8f85626"
+    "sha256": "592a5978129197e7f168a5eb558f0c7a8734429c3a37f9ffa3a9866d61e404f7"
+  },
+  {
+    "name": "outcome-verification",
+    "slots": [],
+    "sha256": "ad49c5a01c810a9ddae06eb5ac62249f1a14104878773837508de670a9348718"
   },
   {
     "name": "assistant-execution",
@@ -237,7 +242,7 @@
   {
     "name": "assistant-tool-disclosure",
     "slots": [],
-    "sha256": "befbbee7360e62d870653ecd9a38ce52b307af756b1f7d488de8558f146844b4"
+    "sha256": "b3939c43462d9c3276a5f16fe5aa3167500ef4939fa7d9390923b56010212d92"
   },
   {
     "name": "assistant-plugin-management",

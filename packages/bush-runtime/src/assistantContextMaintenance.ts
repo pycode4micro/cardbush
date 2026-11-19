@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_MAX_CONTEXT_TOKENS, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AssistantModelHistory } from './assistantModelHistory.js';
+import { projectAssistantReceipts } from './assistantHistoryProjection.js';
+import { compactionHeadroom } from './contextCompactionScope.js';
 import { completeContextUnits } from './contextCompactionTransaction.js';
 import { estimateContextPressure } from './contextCompaction.js';
 import { compactRealtimeContext, serializeRealtimeContextSource } from './realtimeContextCompaction.js';
@@ -8,8 +10,30 @@ import type { ModelProvider } from './modelProvider.js';
 
 // A working-set policy, independent of the model's hard capacity. Hysteresis
 // avoids rewriting the cache prefix after every exchange. Source records stay
-// on disk; only the model-authored checkpoint replaces the active prefix.
+// on disk. Both local receipt projections and semantic checkpoints are journaled.
 export const assistantWorkingSetPolicy = Object.freeze({ highTokens: 64_000, lowTokens: 32_000, sourceTokens: 32_000, recentUnits: 8, summaryCharacters: 6_000 });
+export function tryAssistantReceiptProjection(history: AssistantModelHistory, state: ReturnType<AssistantModelHistory['read']>,
+  keepUnits: number, fits: (candidate: ModelMessage[]) => boolean) {
+  const updates = projectAssistantReceipts(state.messages, state.through, history.archiveGeneration(), keepUnits);
+  if (!updates.length) return false;
+  const candidate = state.messages.slice();
+  for (const update of updates) {
+    const index = update.index - state.through;
+    candidate[index] = { ...candidate[index]!, content: update.content };
+  }
+  if (!fits(candidate)) return false;
+  history.project(updates);
+  return true;
+}
+
+function workingSet(parent: RuntimeSessionTurnRequest, memory: string) {
+  const capacity = Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS;
+  const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [], tools: [],
+    metadata: { ...parent.metadata, contextWindowTokens: capacity } };
+  const tokens = (messages: ModelMessage[]) => estimateContextPressure(request, messages)!.estimatedPromptTokens;
+  const high = Math.min(assistantWorkingSetPolicy.highTokens, Math.floor(capacity * 0.6));
+  return { capacity, tokens, high, total: (messages: ModelMessage[]) => tokens(messages) + Math.ceil(memory.length / 4) };
+}
 function checkpointPairs(messages: ModelMessage[]) {
   return messages.flatMap(message => {
     const text = JSON.stringify(message), chunks = [];
@@ -18,12 +42,8 @@ function checkpointPairs(messages: ModelMessage[]) {
   });
 }
 export function assistantCheckpointPlan(history: ReturnType<AssistantModelHistory['read']>, parent: RuntimeSessionTurnRequest, tasks: unknown[] = []) {
-  const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: history.messages, tools: [],
-    metadata: { ...parent.metadata, contextWindowTokens: Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS } };
-  const tokens = (messages: ModelMessage[]) => estimateContextPressure(request, messages)!.estimatedPromptTokens;
-  const before = tokens(history.messages) + Math.ceil(history.summary.length / 4);
-  const capacity = Number(request.metadata.contextWindowTokens);
-  const high = Math.min(assistantWorkingSetPolicy.highTokens, Math.floor(capacity * 0.6));
+  const { tokens, capacity, high, total } = workingSet(parent, history.memory);
+  const before = total(history.messages);
   if (before < high) return;
   const units = completeContextUnits(history.messages);
   if (units.length <= assistantWorkingSetPolicy.recentUnits) return;
@@ -94,9 +114,26 @@ export class AssistantContextMaintenance {
     for (;;) {
       signal.throwIfAborted();
       if (history.replyInputs()?.length) return;
-      const source = history.read(), plan = assistantCheckpointPlan(source, parent, tasks);
-      if (!plan) return;
+      const source = history.read();
+      const { high, capacity, total } = workingSet(parent, source.memory);
+      const before = total(source.messages);
+      if (before < high) return;
       const started = performance.now();
+      let afterTokens = before;
+      if (tryAssistantReceiptProjection(history, source, assistantWorkingSetPolicy.recentUnits, candidate => {
+        afterTokens = total(candidate);
+        // Accept a useful local reduction with the ordinary minimum headroom.
+        // Requiring the ideal target here would charge a model call just to gain
+        // a small amount of extra space, despite an already usable projection.
+        const reserve = compactionHeadroom(high);
+        return afterTokens <= high - Math.ceil(reserve / 2) && before - afterTokens >= reserve;
+      })) {
+        this.state = { phase: 'completed', beforeTokens: before, afterTokens, durationMs: Math.round(performance.now() - started),
+          checkpoints: this.state.checkpoints + 1 };
+        return;
+      }
+      const plan = assistantCheckpointPlan(source, parent, tasks);
+      if (!plan) return;
       this.state = { phase: 'running', beforeTokens: plan.before, checkpoints: this.state.checkpoints };
       const summary = await compactRealtimeContext(provider, {
         job: { jobId: randomUUID(), sessionId: parent.sessionId, revision: source.through, through: plan.through,
@@ -108,13 +145,13 @@ export class AssistantContextMaintenance {
       const latest = history.read();
       if (latest.through !== source.through || history.replyInputs()?.length ||
         JSON.stringify(latest.messages.slice(0, plan.messages.length)) !== JSON.stringify(plan.messages)) return;
-      history.checkpoint(plan.through, summary.summary);
+      history.checkpoint(plan.through, summary.summary, [], Math.min(6000, Math.floor(capacity * 0.2)));
       const after = history.read();
       afterCheckpoint?.(source.messages, after.messages);
       const remaining = estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages: after.messages, tools: [],
         metadata: { ...parent.metadata, contextWindowTokens: Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS } }, after.messages)!;
       this.state = { phase: 'completed', checkpoints: this.state.checkpoints + 1, beforeTokens: plan.before,
-        afterTokens: remaining.estimatedPromptTokens + Math.ceil(after.summary.length / 4), durationMs: Math.round(performance.now() - started) };
+        afterTokens: remaining.estimatedPromptTokens + Math.ceil(after.memory.length / 4), durationMs: Math.round(performance.now() - started) };
     }
   }
 }

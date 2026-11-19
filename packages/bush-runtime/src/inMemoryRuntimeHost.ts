@@ -4,7 +4,7 @@ import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
 import { remoteAgentFacts, registerSandboxEnvironment } from './environmentResources.js';
 import { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import { ASSISTANT_CONVERSATION_COMMAND, assistantConversationRequestSchema } from '@cardbush/bush-protocol';
-import { readUserPrompt, promptContextMetadata } from '@cardbush/bush-protocol';
+import { readUserPrompt, promptContextMetadata, OUTCOME_VERIFICATION_INSTRUCTIONS, OUTCOME_VERIFICATION_MESSAGE, REPORT_DELIVERY_INSTRUCTIONS } from '@cardbush/bush-protocol';
 import { AGENT_REGISTRY_COMMAND, TEAM_WORKFLOW_COMMAND, registeredAgentSchema, type RegisteredAgent, type DefinitionReceipt } from '@cardbush/bush-protocol';
 import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks } from './registeredAgents.js';
 import { TeamWorkflowManager } from './teamWorkflow.js';
@@ -18,6 +18,7 @@ import { FRIENDS_COMMAND, FRIENDS_SESSION, type FriendsSnapshot } from '@cardbus
 import { AssistantManagement } from './assistantManagement.js';
 import { ConversationJournal } from './conversationJournal.js';
 import { restoreSessionModelPolicy, systemPolicyIdentity } from './sessionModelPolicy.js';
+import { hasDeliveryPolicy, isDeliveryGuidance, projectReportDeliveryPrefix, withoutReportDeliveryPolicy } from './deliveryGuidance.js';
 import { executionWorkspace, isSshExecution, sshExecutionTools, sshTerminalTools } from './workspaceExecutionMode.js';
 import { uiText } from '@cardbush/platform/i18n';
 import { withToolDisplayTitle } from './toolDisplay.js';
@@ -716,7 +717,9 @@ export class InMemoryRuntimeHost {
       now: this.#sessionNow,
     });
     registerExecutionHistoryTool(this.#toolRegistry, this.#toolExecutions, signal => this.#sessions.listMetadata(signal));
-    registerConversationHistoryTool(this.#toolRegistry, sessionId => this.#sessions.snapshot(sessionId));
+    registerConversationHistoryTool(this.#toolRegistry, sessionId => this.#sessions.snapshot(sessionId),
+      (sessionId, input, signal) => sessionId === PERSONAL_ASSISTANT_SESSION && input.locator.startsWith('conversation-history://turns/assistant-')
+        ? this.#assistant.journal.modelHistory(sessionId).readOriginal(sessionId, input, signal) : undefined);
     registerContextCompactionTool(this.#toolRegistry, (input) =>
       this.#applyContextCheckpoint(input),
     );
@@ -2156,6 +2159,20 @@ export class InMemoryRuntimeHost {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
     const savedPolicy = this.#sessions.modelContract(candidate.sessionId);
     restoreSessionModelPolicy(candidate, savedPolicy);
+    const delivery = candidate.inputMessages.find(({ message }) => isDeliveryGuidance(message));
+    if (delivery) {
+      candidate.prefixMessages = projectReportDeliveryPrefix(candidate.prefixMessages);
+      const child = candidate.metadata.agentRole === 'child';
+      if (child && !hasDeliveryPolicy(candidate.prefixMessages, OUTCOME_VERIFICATION_INSTRUCTIONS)) {
+        candidate.prefixMessages.push({ ...OUTCOME_VERIFICATION_MESSAGE });
+      }
+      if (!hasDeliveryPolicy(candidate.prefixMessages, REPORT_DELIVERY_INSTRUCTIONS) &&
+        (child || savedPolicy?.policyId === 'cardbush.product' || hasDeliveryPolicy([delivery.message], REPORT_DELIVERY_INSTRUCTIONS))) {
+        // A clean or previously bound system keeps its original role and text.
+        candidate.prefixMessages.push({ role: 'user', name: 'delivery_guidance', visibility: 'internal', content: REPORT_DELIVERY_INSTRUCTIONS });
+      }
+      delivery.message = withoutReportDeliveryPolicy(delivery.message);
+    }
     if (candidate.metadata.agentRole !== 'child') {
       const children = new Map(this.#subagentTasks.list(candidate.sessionId).map(task => [task.childSessionId, task]));
       const updates = [...children.values()].flatMap(task => {
@@ -5004,6 +5021,7 @@ export class InMemoryRuntimeHost {
     this.#assistant.forget(sessionId);
     this.#subagentTasks.delivery.forget(sessionId);
     this.#conversations.forget(sessionId);
+    this.#toolRegistry.forgetDesktopControlSession(sessionId);
     await this.#subagentResume.remove(sessionId);
     for (const task of this.#subagentTasks.list(sessionId)) await this.#subagentResume.remove(task.childSessionId);
     await this.#pluginHooks.closeSession(sessionId);

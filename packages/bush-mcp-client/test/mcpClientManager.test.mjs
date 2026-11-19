@@ -9,6 +9,7 @@ import {
   ToolExecutionCoordinator,
   ToolRegistry,
   InMemoryRuntimeCapabilityStore,
+  registerWorkspaceTools,
 } from "@cardbush/bush-runtime";
 
 import { McpClientManager, McpAuthenticationRequired } from "../dist/index.js";
@@ -182,6 +183,69 @@ test('untrusted MCP metadata cannot opt into privileged end-of-turn calls',async
   const coordinator=new ToolExecutionCoordinator({registry});
   assert.equal((await executeEcho(coordinator,'untrusted')).kind,'returned');
   await registry.releaseTurnResources('session','turn');assert.equal(fake.calls.length,1);
+});
+
+test('desktop stop prevents terminal fallback for the same task, including after finish and a follow-up turn', async t => {
+  const registry = new ToolRegistry(), started = [], written = [];
+  registerWorkspaceTools(registry, undefined, { terminals: {
+    list: () => [{ terminalSessionId: 'open-shell' }],
+    describe: () => ({ sandbox: true }),
+    start: async input => { started.push(input.command); return { state: 'exited', stdout: 'ordinary output' }; },
+    write: async (_sessionId, input) => { written.push(input.chars); return { state: 'running' }; },
+  } });
+  const fake = fakeClient(({ arguments: input }) => {
+    if (input.action === 'click') return { isError: true, content: [], structuredContent: {
+      error: { code: 'policy_blocked', execution: 'not_dispatched', details: { terminal: true } },
+    } };
+    if (input.action === 'finish') return { content: [], structuredContent: { output: {
+      released: true, ...(input.scope === 'user-stop' ? { control_stopped: true } : {}),
+    } } };
+    return { content: [], structuredContent: { output: {} } };
+  }, { pluginId: 'computer_use', controlLifecycle: true });
+  const manager = new McpClientManager({ registry, turnControlServers: ['apps'], createClient: () => fake,
+    createTransport: () => ({ async send() {} }) });
+  t.after(() => manager.close());
+  await manager.apply(snapshot({ permission: 'allow' }, 'apps'));
+  const coordinator = new ToolExecutionCoordinator({ registry });
+  const desktop = 'mcp__apps__echo_tool';
+  const execArgs = { command: 'echo ordinary output', cwd: process.cwd(), shell: process.platform === 'win32' ? 'powershell' : 'posix', yield_time_ms: 100 };
+  const writeArgs = { session_id: 'open-shell', chars: 'fixture input', yield_time_ms: 100 };
+  let serial = 0;
+  const call = (name, args, taskId = 'wechat', turnId = 'turn') => {
+    const identity = { requestId: `request-${++serial}`, sessionId: 'child', turnId };
+    const turn = { request: { ...identity, protocol: 'bush.model_request.v1', model: 'fixture', permissionMode: 'all_free',
+      messages: [], tools: registry.definitions(), metadata: { subagentTaskId: taskId, workspaceDir: process.cwd() } }, contextMessages: [] };
+    return coordinator.execute({ protocol: 'bush.tool_call.v1', id: identity.requestId, name, argumentsText: JSON.stringify(args) },
+      { ...identity, round: 1, ordinal: 0 }, undefined, turn);
+  };
+  const assertStopped = async (name, args, taskId, turnId) => {
+    const outcome = await call(name, args, taskId, turnId);
+    assert.equal(outcome.error?.code, 'desktop_control_stopped');
+    assert.equal(outcome.execution?.dispatch, 'not_started');
+  };
+  assert.equal(registry.executionChannel(desktop), registry.executionChannel('terminal_exec'));
+  assert.equal(registry.executionChannel(desktop), registry.executionChannel('terminal_write'));
+  await call(desktop, { action: 'observe' });
+  assert.equal((await call('terminal_exec', execArgs)).error?.code, 'desktop_control_active');
+  const stopped = await call(desktop, { action: 'click' });
+  assert.equal(stopped.result.structuredContent.error.code, 'policy_blocked');
+  await assertStopped('terminal_exec', execArgs);
+  await call(desktop, { action: 'finish' });
+  await assertStopped('terminal_write', writeArgs);
+  await registry.releaseTurnResources('child', 'turn');
+  await assertStopped('terminal_exec', execArgs, 'wechat', 'follow-up');
+  assert.deepEqual(started, []);
+  assert.deepEqual(written, []);
+
+  assert.equal((await call('terminal_exec', execArgs, 'ordinary', 'new-task')).result.stdout, 'ordinary output');
+  assert.equal((await call('terminal_write', writeArgs, 'ordinary', 'new-task')).result.state, 'running');
+  await call(desktop, { action: 'observe' }, 'normal-release', 'release-turn');
+  await call(desktop, { action: 'finish' }, 'normal-release', 'release-turn');
+  assert.equal((await call('terminal_exec', execArgs, 'normal-release', 'release-turn')).kind, 'returned');
+
+  await call(desktop, { action: 'observe' }, 'user-stop', 'user-stop-turn');
+  await call(desktop, { action: 'finish', scope: 'user-stop' }, 'user-stop', 'user-stop-turn');
+  await assertStopped('terminal_exec', execArgs, 'user-stop', 'user-stop-turn');
 });
 
 test('reconnected desktop service never receives an old connection lease release',async t=>{

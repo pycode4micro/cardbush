@@ -2,6 +2,7 @@ import {
   BUSH_CONTEXT_SNAPSHOT_PROTOCOL,
   contextSnapshotSchema,
   modelMessageSchema,
+  REPORT_DELIVERY_INSTRUCTIONS,
   type ContextSnapshot,
   type ModelMessage,
   type SessionSnapshot,
@@ -13,6 +14,7 @@ import { isContextMaintenanceNotice } from './contextMaintenanceMessages.js';
 import { preparedToolHandoffText, preparedToolHandoffEvidence } from './preparedToolHandoff.js';
 import { isRecordedToolHandoff, recordedToolHandoffMessages } from './recordedToolHandoff.js';
 import { conversationHistoryLocator, type ContextHistoryReference } from './conversationHistory.js';
+import { hasDeliveryPolicy, withoutReportDeliveryPolicy } from './deliveryGuidance.js';
 
 export interface AssembleContextInput {
   session: SessionSnapshot;
@@ -135,6 +137,7 @@ export function assembleContextProjection(input: AssembleContextInput): {
 } {
   const prefix = (input.prefix ?? []).map((message) => modelMessageSchema.parse(message));
   const current = (input.current ?? []).map((message) => modelMessageSchema.parse(message));
+  const reportPolicyInContext = hasDeliveryPolicy([...prefix, ...current], REPORT_DELIVERY_INSTRUCTIONS);
   const lastSequence = input.session.turns.at(-1)?.turnSequence ?? 0;
   const through = input.throughTurnSequence ?? lastSequence;
   if (!Number.isInteger(through) || through < 0 || through > lastSequence) {
@@ -248,7 +251,9 @@ export function assembleContextProjection(input: AssembleContextInput): {
       source,
       // Retired automatic LEM prompts stay in the journal for audit, but must not
       // keep directing new Turns. Match only the old Runtime message identity.
-      messages: visibleMessages,
+      // Keep the journal and bound system intact. Older internal guidance
+      // carried a report block in addition to the effective prompt.
+      messages: reportPolicyInContext ? visibleMessages.map(withoutReportDeliveryPolicy) : visibleMessages,
       messageIds: visibleMessages.map(message => ids.get(message)),
       ...(kind ? { summaryOnly: !visibleMessages.some(message => message.role === 'assistant' &&
         message.toolCalls.some(call => !['checkpoint_context', 'summary_for_user'].includes(call.name))),

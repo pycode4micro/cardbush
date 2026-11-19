@@ -40,6 +40,7 @@ import {
   type ActionManifestTemplate,
 } from "@cardbush/bush-protocol";
 import {
+  localCommandExecutionChannel,
   type ToolHandlerContext,
   type ToolRegistration,
   ToolRegistry,
@@ -690,20 +691,44 @@ export class McpClientManager {
       return this.#useConnection(connection, operation);
     };
     const meta = tool.remote._meta ?? {};
+    const desktopControl = this.#options.turnControlServers?.includes(connection.config.id) &&
+      meta['cardbush/plugin_id'] === 'computer_use' && meta['cardbush/control_lifecycle'] === 'turn';
+    const startControl = (context: Parameters<typeof mcpRequestMetadata>[0], input: Record<string, unknown>) => {
+      if (desktopControl && typeof input.action === 'string' && input.action !== 'finish') this.#registry.beginDesktopControl(context);
+    };
+    const recordControl = (context: Parameters<typeof mcpRequestMetadata>[0], input: Record<string, unknown>, result: {
+      isError?: boolean; structuredContent?: unknown;
+    }) => {
+      if (!desktopControl) return;
+      const receipt = result.structuredContent as {
+        error?: { code?: unknown; details?: { terminal?: unknown } };
+        output?: { released?: unknown; control_stopped?: unknown };
+      } | undefined;
+      const error = receipt?.error, output = receipt?.output;
+      if (result.isError && (error?.code === 'user_stopped' ||
+          (error?.code === 'policy_blocked' || error?.code === 'application_control_blocked') && error.details?.terminal === true)) {
+        this.#registry.finishDesktopControl(context, true);
+      } else if (input.action === 'finish' && !result.isError && output?.released === true) {
+        this.#registry.finishDesktopControl(context, output.control_stopped === true);
+      }
+    };
     const retainControl = (context: Parameters<typeof mcpRequestMetadata>[0]) => {
-      if (!this.#options.turnControlServers?.includes(connection.config.id) ||
-          meta['cardbush/plugin_id'] !== 'computer_use' || meta['cardbush/control_lifecycle'] !== 'turn') return;
+      if (!desktopControl) return;
       const client = connection.client;
       const requestMetadata = mcpRequestMetadata(context, connection.config.id, tool.remote);
       this.#registry.retainTurnResource(context.sessionId, context.turnId, client, async () => {
         // Never send an old lease's release to a reconnected service or another turn.
         if (connection.retired || connection.client !== client || connection.health !== 'ready') return;
         try {
-          const released = await settleWithin(client.callTool({ name: tool.remote.name, arguments: { action: 'finish' }, _meta: requestMetadata },
+          const input = { action: 'finish' };
+          const result = client.callTool({ name: tool.remote.name, arguments: input, _meta: requestMetadata },
             { signal: AbortSignal.timeout(2_000), timeout: 2_000, toolDefinition: tool.remote }).catch(error => {
               this.#onServerStderr?.({ serverId: connection.config.id, message: `Desktop control release failed: ${errorMessage(error)}` });
-            }), 2_000);
-          if (!released) this.#onServerStderr?.({ serverId: connection.config.id, message: 'Desktop control release timed out.' });
+            });
+          if (await settleWithin(result, 2_000)) {
+            const receipt = await result;
+            if (receipt) recordControl(context, input, receipt);
+          } else this.#onServerStderr?.({ serverId: connection.config.id, message: 'Desktop control release timed out.' });
         } catch (error) { this.#onServerStderr?.({ serverId: connection.config.id, message: `Desktop control release failed: ${errorMessage(error)}` }); }
       });
     };
@@ -721,12 +746,17 @@ export class McpClientManager {
           const validated = decodeInput(input);
           if (connection.retired || connection.health !== 'ready') throw preflightMcpError('mcp_service_unavailable',
             `MCP service ${connection.config.id} is not connected.`, { serverId: connection.config.id });
-          retainControl({ requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } });
-          try { return await this.#interactive.run(connection.client, { serverId: connection.config.id, sessionId: options.request.sessionId, turnId: options.request.turnId, signal: options.signal },
-            Math.min(options.timeoutMs, connection.config.toolTimeoutMs ?? 60_000), signal => connection.client.callTool({ name: tool.remote.name, arguments: validated,
-            _meta: mcpRequestMetadata({ requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } }, connection.config.id, tool.remote) },
-          { signal, timeout: 2_147_483_647, toolDefinition: tool.remote })); }
-          catch (error) { this.#recordAuthenticationFailure(connection, error); throw error; }
+          const context = { requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } };
+          retainControl(context);
+          startControl(context, validated);
+          try {
+            const result = await this.#interactive.run(connection.client, { serverId: connection.config.id, sessionId: options.request.sessionId, turnId: options.request.turnId, signal: options.signal },
+              Math.min(options.timeoutMs, connection.config.toolTimeoutMs ?? 60_000), signal => connection.client.callTool({ name: tool.remote.name, arguments: validated,
+                _meta: mcpRequestMetadata(context, connection.config.id, tool.remote) },
+              { signal, timeout: 2_147_483_647, toolDefinition: tool.remote }));
+            recordControl(context, validated, result);
+            return result;
+          } catch (error) { this.#recordAuthenticationFailure(connection, error); throw error; }
         }),
       },
       definition: {
@@ -747,8 +777,8 @@ export class McpClientManager {
       // UI-only metadata remains in native execution records, never in model context.
       renderModelResult: projectMcpResult,
       manifest: tool.manifest,
-      parallelSafe: tool.policy.parallelSafe,
-      executionChannel: `mcp:${connection.config.id}`,
+      parallelSafe: !desktopControl && tool.policy.parallelSafe,
+      executionChannel: desktopControl ? localCommandExecutionChannel : `mcp:${connection.config.id}`,
       visibleToChild: tool.policy.visibleToChild,
       decodeInput,
       authorize: () => {
@@ -791,7 +821,9 @@ export class McpClientManager {
         const activeClient = connection.client;
         retainControl(context);
         let candidate;
-        const invoke = () => this.#interactive.run(activeClient, { serverId: connection.config.id, sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id, signal: context.signal },
+        const invoke = () => {
+          startControl(context, context.input);
+          return this.#interactive.run(activeClient, { serverId: connection.config.id, sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id, signal: context.signal },
             connection.config.toolTimeoutMs ?? 60_000, signal => activeClient.callTool(
             {
               name: tool.remote.name,
@@ -803,7 +835,8 @@ export class McpClientManager {
               timeout: 2_147_483_647,
               toolDefinition: tool.remote,
             },
-          ));
+           ));
+        };
         try {
           let authorized = false;
           if (connection.health === 'auth_required') { await this.#authenticate(connection, context); authorized = true; }
@@ -848,6 +881,7 @@ export class McpClientManager {
             },
           );
         }
+        recordControl(context, context.input, candidate);
         return candidate;
       }),
     };

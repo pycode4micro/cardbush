@@ -1,0 +1,225 @@
+{
+  "contextWindowTokens": 32000,
+  "maxOutputTokens": 2048,
+  "results": [
+    {
+      "scenario": "receipts",
+      "runtime": "updated",
+      "run": "A",
+      "model": "deepseek-v4.1-flash",
+      "calls": [
+        {
+          "phase": "followup",
+          "ms": 5489,
+          "inputTokens": 17591,
+          "outputTokens": 250
+        }
+      ],
+      "facts": {
+        "account": true,
+        "release_permission": true,
+        "cancelled_job": true,
+        "running_job": true,
+        "audio_error": true,
+        "subtitle_revision": true
+      },
+      "idleMs": 8,
+      "followupMs": 5522,
+      "answer": "```json\n{\n  \"account\": \"LIME-39\",\n  \"release_permission\": \"REVOKED\",\n  \"cancelled_job\": \"job-Q981\",\n  \"running_job\": \"job-A326\",\n  \"audio_error\": \"AUDIO_E17\",\n  \"subtitle_revision\": \"SUB-72\"\n}\n```"
+    },
+    {
+      "scenario": "receipts",
+      "runtime": "09f51cfb",
+      "run": "A",
+      "model": "deepseek-v4.1-flash",
+      "calls": [
+        {
+          "phase": "idle",
+          "ms": 8178,
+          "inputTokens": 13828,
+          "outputTokens": 581
+        },
+        {
+          "phase": "idle",
+          "ms": 16796,
+          "inputTokens": 13844,
+          "outputTokens": 1170
+        },
+        {
+          "phase": "idle",
+          "ms": 13584,
+          "inputTokens": 13894,
+          "outputTokens": 1164
+        },
+        {
+          "phase": "followup",
+          "ms": 6097,
+          "inputTokens": 16721,
+          "outputTokens": 178
+        }
+      ],
+      "facts": {
+        "account": true,
+        "release_permission": true,
+        "cancelled_job": false,
+        "running_job": false,
+        "audio_error": false,
+        "subtitle_revision": false
+      },
+      "idleMs": 38609,
+      "followupMs": 6128,
+      "answer": "```json\n{\n  \"account\": \"LIME-39\",\n  \"release_permission\": \"REVOKED\",\n  \"cancelled_job\": \"UNKNOWN\",\n  \"running_job\": \"UNKNOWN\",\n  \"audio_error\": \"UNKNOWN\",\n  \"subtitle_revision\": \"UNKNOWN\"\n}\n```"
+    },
+    {
+      "scenario": "receipts",
+      "runtime": "09f51cfb",
+      "run": "B",
+      "model": "deepseek-v4.1-flash",
+      "calls": [
+        {
+          "phase": "idle",
+          "ms": 16686,
+          "inputTokens": 13832,
+          "outputTokens": 1310
+        },
+        {
+          "phase": "idle",
+          "ms": 12267,
+          "inputTokens": 13937,
+          "outputTokens": 966
+        },
+        {
+          "phase": "followup",
+          "ms": 4543,
+          "inputTokens": 16980,
+          "outputTokens": 167
+        }
+      ],
+      "facts": {
+        "account": true,
+        "release_permission": true,
+        "cancelled_job": true,
+        "running_job": true,
+        "audio_error": true,
+        "subtitle_revision": true
+      },
+      "idleMs": 29006,
+      "followupMs": 4578,
+      "answer": "```json\n{\n  \"account\": \"LIME-39\",\n  \"release_permission\": \"REVOKED\",\n  \"cancelled_job\": \"job-Q981\",\n  \"running_job\": \"job-A326\",\n  \"audio_error\": \"AUDIO_E17\",\n  \"subtitle_revision\": \"SUB-72\"\n}\n```"
+    },
+    {
+      "scenario": "receipts",
+      "runtime": "updated",
+      "run": "B",
+      "model": "deepseek-v4.1-flash",
+      "calls": [
+        {
+          "phase": "followup",
+          "ms": 5327,
+          "inputTokens": 17537,
+          "outputTokens": 199
+        }
+      ],
+      "facts": {
+        "account": true,
+        "release_permission": true,
+        "cancelled_job": true,
+        "running_job": true,
+        "audio_error": true,
+        "subtitle_revision": true
+      },
+      "idleMs": 7,
+      "followupMs": 5349,
+      "answer": "{\"account\":\"LIME-39\",\"release_permission\":\"REVOKED\",\"cancelled_job\":\"job-Q981\",\"running_job\":\"job-A326\",\"audio_error\":\"AUDIO_E17\",\"subtitle_revision\":\"SUB-72\"}"
+    },
+    {
+      "scenario": "narrative",
+      "runtime": "09f51cfb",
+      "run": "A",
+      "model": "deepseek-v4.1-flash",
+      "calls": [
+        {
+          "phase": "idle",
+          "ms": 17388,
+          "inputTokens": 13902,
+          "outputTokens": 1331
+        },
+        {
+          "phase": "idle",
+          "ms": 14359,
+          "inputTokens": 13900,
+          "outputTokens": 662
+        },
+        {
+          "phase": "followup",
+          "ms": 4995,
+          "inputTokens": 16612,
+          "outputTokens": 140
+        }
+      ],
+      "facts": {
+        "account": true,
+        "release_permission": true,
+        "cancelled_job": true,
+        "running_job": true,
+        "audio_error": true,
+        "subtitle_revision": true
+      },
+      "idleMs": 31790,
+      "followupMs": 5053,
+      "answer": "{\"account\": \"LIME-39\", \"release_permission\": \"REVOKED\", \"cancelled_job\": \"job-Q981\", \"running_job\": \"job-A326\", \"audio_error\": \"AUDIO_E17\", \"subtitle_revision\": \"SUB-72\"}"
+    },
+    {
+      "scenario": "narrative",
+      "runtime": "updated",
+      "run": "A",
+      "failure": {
+        "phase": "idle",
+        "code": "provider_tool_call_changed"
+      }
+    },
+    {
+      "scenario": "narrative",
+      "runtime": "updated",
+      "run": "retry",
+      "model": "deepseek-v4.1-flash",
+      "calls": [
+        {
+          "phase": "idle",
+          "ms": 13265,
+          "inputTokens": 13905,
+          "outputTokens": 1120
+        },
+        {
+          "phase": "idle",
+          "ms": 14916,
+          "inputTokens": 13920,
+          "outputTokens": 1022
+        },
+        {
+          "phase": "idle",
+          "ms": 13064,
+          "inputTokens": 13970,
+          "outputTokens": 992
+        },
+        {
+          "phase": "followup",
+          "ms": 5572,
+          "inputTokens": 17697,
+          "outputTokens": 162
+        }
+      ],
+      "facts": {
+        "account": true,
+        "release_permission": true,
+        "cancelled_job": true,
+        "running_job": true,
+        "audio_error": true,
+        "subtitle_revision": true
+      },
+      "idleMs": 41289,
+      "followupMs": 5615,
+      "answer": "```json\n{\n  \"account\": \"LIME-39\",\n  \"release_permission\": \"REVOKED\",\n  \"cancelled_job\": \"job-Q981\",\n  \"running_job\": \"job-A326\",\n  \"audio_error\": \"AUDIO_E17\",\n  \"subtitle_revision\": \"SUB-72\"\n}\n```"
+    }
+  ]
+}

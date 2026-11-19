@@ -50,7 +50,11 @@ export function completeContextUnits(messages: ModelMessage[]): ModelMessage[][]
  * Reserve a useful interval below the trigger, not merely below the hard limit. */
 export function contextCompactionTarget(pressure: ContextPressure): number {
   const trigger = contextBudgetForPressure(pressure).compactionTriggerTokens;
-  return Math.max(0, trigger - Math.min(16_000, Math.ceil(trigger * 0.2)));
+  return Math.max(0, trigger - compactionHeadroom(trigger));
+}
+
+export function compactionHeadroom(trigger: number) {
+  return Math.min(16_000, Math.ceil(trigger * 0.2));
 }
 
 /** After bounded refinement, keep at least half the desired trigger headroom.
