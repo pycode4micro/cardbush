@@ -29,6 +29,7 @@ import { REALTIME_TASK_SUMMARY_COMMAND, realtimeTaskSummaryRequestSchema } from 
 import { summarizeRealtimeTask } from './realtimeTaskSummary.js';
 import { RealtimeAgentDispatcher } from './realtimeAgent.js';
 import { collectUnreferencedCache, sessionCacheKeys, blobCacheEntries, memoryCacheEntry } from './cacheMaintenance.js';
+import { RuntimeUiError } from './runtimeUiError.js';
 import { registerSourceMemoTools, resolveSourceMemo, resolveSourceReferences, validateSourceMemoLinks } from "./sourceMemo.js";
 import { hasPendingUserSummary, registerIndividuationTools } from './individuationTools.js';
 import { recallIndividuation, changedIndividuation } from './individuationContext.js';
@@ -830,6 +831,9 @@ export class InMemoryRuntimeHost {
           }
         }).catch(error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))));
       } });
+    this.#registeredAgents.beforeRemove = async id => {
+      if (await this.#teams.usesAgent(id)) throw new RuntimeUiError('storage.agentInUse');
+    };
     this.#teams.register(this.#toolRegistry);
     registerBuiltinToolDisclosure(this.#toolRegistry);
     this.#asyncJobs = new RuntimeAsyncJobs(this.#toolExecutions, (session, turn, id, result) =>
@@ -4995,6 +4999,8 @@ export class InMemoryRuntimeHost {
       // A single deletion closes only that session's resources. Shared cache
       // collection still waits for every owner; it is deferred until idle.
       if (this.#activeAppCommands || this.#mcpApps.busy || this.#activeExtensionCommands.size ||
+          (this.#assistant.working && (!sessionIds || sessionIds.has(PERSONAL_ASSISTANT_SESSION))) ||
+          (sessionIds ? [...sessionIds].some(id => this.#teams.hasActiveRuns(id)) : this.#teams.hasActiveRuns()) ||
           (!sessionIds && (this.#pluginBackground.busy || this.#automation?.busy))) {
         throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
       }
@@ -5054,6 +5060,7 @@ export class InMemoryRuntimeHost {
   async #collectIdleCaches() {
     if (!this.#cacheCleanupPending || this.#shuttingDown) return;
     if (this.#cacheMaintenance || this.#workspaceActions || this.#activeTurns.size || this.#turnAdmissions ||
+        this.#teams.hasActiveRuns() || this.#assistant.working ||
         this.#activeAppCommands || this.#mcpApps.busy || this.#pluginBackground.busy || this.#automation?.busy || this.#activeExtensionCommands.size) {
       this.#scheduleCacheCleanup();
       return;
@@ -5110,13 +5117,16 @@ export class InMemoryRuntimeHost {
       this.#recovery.cacheEntries(), this.#automation?.cacheEntries() ?? [],
       this.#subagentTasks.cacheEntries(), this.#mcpApps.cacheEntries(), this.#modelImages.cacheEntries(),
       this.#workspaceRedo.cacheEntries(), this.#pluginHookScopes.cacheEntries(), this.#pluginBackground.cacheEntries(),
+      this.#teams.cacheEntries(), this.#registeredAgents.temporaryEntries(), this.#subagentResume.cacheEntries(),
+      this.#assistant.journal.cacheEntries(), this.#attachments.cacheEntries(),
       // Only the built-in capture directory is owned by CardBush. Custom output paths are user files.
       blobCacheEntries(this.#captureCacheRoot, 'captures', name => /^(capture|window)-[\w-]+\.png$/.test(name), 24 * 60 * 60_000),
       this.#legacyCaptureCacheRoot ? blobCacheEntries(this.#legacyCaptureCacheRoot, 'legacy_captures', name => /^(capture|window)-[\w-]+\.png$/.test(name), 24 * 60 * 60_000) : [],
     ])).flat();
     signal?.throwIfAborted();
     const result = await collectUnreferencedCache([...entries, ...childEntries],
-      [...userSessions, ...protectedChildren, ...checkpoints, automation?.roots ?? {}, ...this.#mcpApps.cacheRoots(), owners.flatMap(sessionCacheKeys)], this.#toolExecutions.fileMemoLocators(), signal);
+      [...userSessions, ...protectedChildren, ...checkpoints, automation?.roots ?? {}, ...this.#mcpApps.cacheRoots(), owners.flatMap(sessionCacheKeys)],
+      this.#toolExecutions.fileMemoLocators(), signal, await this.#assistant.journal.referenceFiles());
     for (const [key, count] of Object.entries(retention.counts)) result.counts[key] = (result.counts[key] ?? 0) + count;
     result.errors.push(...retention.errors);
     signal?.throwIfAborted();

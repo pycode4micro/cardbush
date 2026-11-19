@@ -1,7 +1,9 @@
 import { assistantDelegationOrigins } from './assistantDelegationOrigins.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { fileCacheEntry, type CacheEntry } from './cacheMaintenance.js';
 import { creationCanvasSchema, teamWorkflowSchema, teamRunSchema, type ModelRequest, type TeamWorkflow, type TeamRun } from '@cardbush/bush-protocol';
 import { DefinitionStore } from './definitionStore.js';
 import type { RegisteredAgentStore } from './registeredAgents.js';
@@ -54,6 +56,22 @@ export class TeamWorkflowManager {
     this.definitions = new DefinitionStore(value => teamWorkflowSchema.parse(value), options.directory && join(options.directory, 'definitions'));
     this.runs = new DefinitionStore(value => teamRunSchema.parse(value), options.directory && join(options.directory, 'runs'));
   }
+
+  async cacheEntries(): Promise<CacheEntry[]> {
+    const runs: CacheEntry[] = [];
+    for (const file of await this.runs.definitionFiles()) {
+      const run = teamRunSchema.parse(JSON.parse(await readFile(file.path, 'utf8')).definition);
+      if (basename(file.path) !== createHash('sha256').update(run.id).digest('hex') + '.json') throw new Error('Invalid team run cache identity.');
+      runs.push(fileCacheEntry(file, 'team_runs', [run.id, run.parentSessionId], run.parentSessionId));
+    }
+    return [...runs, ...await this.definitions.temporaryEntries(), ...await this.runs.temporaryEntries()];
+  }
+
+  async usesAgent(id: string) {
+    const definitions = await this.definitions.list();
+    if (definitions.some(({ definition }) => definition.nodes.some(node => node.agent_id === id))) return true;
+    return (await this.runs.list()).some(({ definition }) => definition.workflow.nodes.some(node => node.agent_id === id));
+  }
   register(registry: ToolRegistry) {
     registry.register<TeamInput>({
       definition: { name: 'team', description: renderPromptTemplate('team-tool-description'),
@@ -100,7 +118,7 @@ export class TeamWorkflowManager {
       if (!team) throw new Error('Team definition is unavailable. Use team_id from team list/save; run_id identifies an execution, not a workflow definition.');
       return team;
     }
-    if (value.action === 'save') {
+    if (value.action === 'save') return this.agents.withDefinitionMutation(async () => {
       const team = teamWorkflowSchema.parse(value.definition);
       await this.resolveAgents(team);
       // An execution-only edit must not erase the surrounding bush-it article.
@@ -109,7 +127,7 @@ export class TeamWorkflowManager {
         if (presentation) team.presentation = presentation;
       }
       return this.definitions.put(team, value.expected_revision!);
-    }
+    });
     if (value.action === 'delete') { await this.definitions.remove(value.team_id!, value.expected_revision!); return { deleted: true }; }
     throw new Error('Starting or resuming a Team requires an Agent turn with model and permission context.');
   }

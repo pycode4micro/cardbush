@@ -1,12 +1,21 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { runtimeSessionTurnRequestSchema, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
+import { cacheFiles, fileCacheEntry, temporaryCacheEntries } from './cacheMaintenance.js';
 
 /** Latest execution configuration per child, retaining its original prefix and persisted session history. */
 export class SubagentResumeStore {
   private memory = new Map<string, RuntimeSessionTurnRequest>();
   constructor(private directory?: string) {}
+  async cacheEntries() {
+    if (!this.directory) return [];
+    const files = await cacheFiles(this.directory, name => /^[a-f0-9]{64}\.json$/.test(name));
+    return [
+      ...files.map(file => fileCacheEntry(file, 'subagent_resume', [basename(file.path, '.json')])),
+      ...await temporaryCacheEntries(this.directory, /^[a-f0-9]{64}\.json\.[\w-]+\.tmp$/),
+    ];
+  }
   private path(session: string) { return join(this.directory!, `${createHash('sha256').update(session).digest('hex')}.json`); }
   async save(request: RuntimeSessionTurnRequest) {
     if (!this.directory) { this.memory.set(request.sessionId, structuredClone(request)); return; }

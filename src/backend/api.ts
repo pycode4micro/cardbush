@@ -1734,6 +1734,12 @@ async function productHostValue(
   return asRecord(payload.value);
 }
 
+export async function fetchStorageInventory() {
+  return (await import('@cardbush/bush-protocol')).storageInventorySchema.parse(
+    await productHostValue({ kind: 'maintenance.storage_inventory' }),
+  );
+}
+
 export async function clearConversationHistory(): Promise<MaintenanceClearResult> {
   const result=maintenanceClearResultFromPayload(await productHostValue({ kind: 'maintenance.clear_conversations' }));
   if (result.cleared && !result.errors?.length) await window.cardbushDesktop?.voice?.realtime?.forgetHistory();

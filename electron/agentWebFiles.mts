@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { normalizeWebImage } from '@cardbush/bush-runtime/web-policy';
 import { agentFileRead, agentFileUpload } from './agentFiles.mjs';
 import { FILE_TRANSFER_LIMIT, MEDIA_FILE_EXTENSION, transferredFileMime } from '@cardbush/bush-protocol';
+import { collectTemporaryDirectories } from './cacheMaintenance.js';
 
 const limit = 16 * 1024 * 1024;
 const uuid = z.string().uuid();
@@ -53,7 +54,19 @@ export async function validateWebDocument(bytes: Buffer, name: string): Promise<
 /** The staging area and manifest are outside the model-readable personal folders. */
 export class AgentWebFiles {
   #uploads: Promise<unknown> = Promise.resolve();
+  #lastSweep = 0;
   constructor(readonly root: string) {}
+  collectCache() {
+    const result = this.#uploads.then(() => this.#sweepStaging());
+    this.#uploads = result.catch(() => undefined);
+    return result;
+  }
+
+  async #sweepStaging() {
+    this.#lastSweep = Date.now();
+    return collectTemporaryDirectories(join(this.root, 'upload-staging', '.cardbush-attachments'),
+      /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i, 24 * 60 * 60_000);
+  }
   async describe(path: string): Promise<Attachment> {
     const personal = await realpath(join(this.root, 'workspaces'));
     const candidate = await realpath(isAbsolute(path) ? path : join(personal, path));
@@ -93,6 +106,9 @@ export class AgentWebFiles {
     if (!media && value.size > limit) throw new Error('file_transfer_size_limit');
     const completed = await this.attachment(value.uploadId).catch(() => null);
     if (completed) return { nextOffset: value.size, attachment: completed };
+    if (Date.now() - this.#lastSweep > 60 * 60_000) {
+      await this.#sweepStaging().catch(error => console.warn('[upload-staging]', error));
+    }
     if (value.offset + Buffer.from(value.content, 'base64').length > value.size) throw new Error('Upload size mismatch.');
     const stage = join(this.root, 'upload-staging'); await mkdir(stage, { recursive: true });
     const result = await agentFileUpload(stage, value);

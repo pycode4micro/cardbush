@@ -67,3 +67,4 @@ export * from './friends.js';
 export * from './fileTransfer.js';
 export * from './workerConnection.js';
 export * from './bridgeDelivery.js';
+export * from './storageInventory.js';

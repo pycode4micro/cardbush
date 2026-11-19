@@ -49,6 +49,41 @@ async function fixture(t, overrides = {}) {
   });
   return { root, ...open(), reopen() { for (const handle of handles) handle.close(); return open(); } };
 }
+
+test('storage cleanup keeps Assistant journal references and removes only orphaned run and recovery data', async t => {
+  const f = await fixture(t);
+  await f.runtime.runSessionTurn(request('live'));
+  const stale = new Date(0);
+  const seed = async (relative, value) => {
+    const path = join(f.root, relative);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, value);
+    await utimes(path, stale, stale);
+    return path;
+  };
+  const liveContext = await seed(`subagent-context/${hash('live')}.json`, JSON.stringify(request('live')));
+  const orphanContext = await seed(`subagent-context/${hash('orphan')}.json`, JSON.stringify(request('orphan')));
+  const staleTemp = await seed(`subagent-context/${hash('orphan')}.json.orphan-turn.tmp`, 'partial write');
+  const kept = await seed(`attachments/${hash('orphan').slice(0, 32)}/.cardbush-attachments/originals/${hash('kept').slice(0, 32)}/kept.txt`, 'kept');
+  const unused = await seed(`attachments/${hash('orphan').slice(0, 32)}/.cardbush-attachments/originals/${hash('unused').slice(0, 32)}/unused.txt`, 'unused');
+  await seed(`conversation-journal/${hash('personal-assistant')}.model.jsonl`, JSON.stringify({
+    type: 'append', messages: [{ role: 'user', content: kept }], entryIds: [],
+  }) + '\n');
+  const makeRun = async (id, parentSessionId) => seed(`teams/runs/${hash(id)}.json`, JSON.stringify({ revision: 1, updatedAt: stale.toISOString(), definition: {
+    id, parentSessionId, parentTurnId: 'turn', teamId: 'team', teamRevision: 1, status: 'completed', input: 'work',
+    createdAt: stale.toISOString(), updatedAt: stale.toISOString(),
+    workflow: { id: 'team', name: 'Team', nodes: [{ id: 'worker', agent_id: 'agent', prompt: 'Work.' }] },
+    agents: [], nodes: [],
+  } }));
+  const liveRun = await makeRun('run-live', 'live');
+  const orphanRun = await makeRun('run-orphan', 'orphan');
+  const result = await f.runtime.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  assert.deepEqual(result.errors, []);
+  for (const path of [liveContext, kept, liveRun]) assert.equal(await exists(path), true, path);
+  for (const path of [orphanContext, staleTemp, unused, orphanRun]) assert.equal(await exists(path), false, path);
+  await f.runtime.sendCommand({ kind: 'runtime.clear_sessions', payload: {} });
+  assert.equal(await exists(liveRun), false);
+});
 const record = (store, sessionId, result = {}) => store.record({ protocol: 'bush.tool_call.v1', id: 'tool-1', name: 'fixture', argumentsText: '{}' },
   { requestId: `${sessionId}-request`, sessionId, turnId: `${sessionId}-turn`, round: 1, ordinal: 0 }, { kind: 'returned', result });
 

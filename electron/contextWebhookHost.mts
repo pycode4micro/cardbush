@@ -16,12 +16,14 @@ import { snapshotWebhookFiles, readBotAcknowledgement } from './contextWebhookFi
 import { bridgePluginsSchema, bridgeToolCallSchema, bridgeFilePaths, bridgeToolName, type BridgePlugin, type BridgeToolCall } from '@cardbush/bush-protocol';
 import { applyWebhookTurnPolicy, botContextMessage } from '@cardbush/bush-protocol';
 import { bridgeDeliveryResultSchema } from '@cardbush/bush-protocol';
+import { emptyCleanup } from './cacheMaintenance.js';
 
 // Old encrypted records keep receipt and token identity across the Assistant merge.
 const owner = (id: string) => id === FRIENDS_SESSION ? PERSONAL_ASSISTANT_SESSION : id;
 type Connection = ContextWebhookConfig & { id: string; token: string; binding: StoredWebhookBinding; lastReceivedAt?: string; lastDeliveredAt?: string; lastError?: string;
   bot?: { capabilities: BotCapabilities; expiresAt: number; plugins?: BridgePlugin[]; instanceId?: string } };
 type Receipt = { id: string; connectionId: string; fingerprint: string; message: WebhookMessage; binding: StoredWebhookBinding;
+  inputCompacted?: boolean;
   guidanceFor?: string;
   status: 'accepted' | 'running' | WebhookResult['status']; reply: string; createdAt: string; errorCode?: string; errorMessage?: string; delivered: boolean; sequence: number; nextDelivery?: number; attempts: number };
 type BotDelivery = { id: string; sessionId: string; sourceRef: string; requestId: string; inputHash: string; fingerprint: string;
@@ -46,12 +48,44 @@ export class ContextWebhookHost {
   private running = new Set<string>();
   private abort = new AbortController();
   private timer?: ReturnType<typeof setInterval>;
+  private nextMaintenance = Date.now() + 60_000;
   private checkingFollowups = false;
   private followupCursor = 0;
   private followupGeneration?: number;
   private followupEntries = new Map<string, Map<string, string>>();
   constructor(private root: string, private secrets: { encrypt(value: string): string; decrypt(value: string): string },
     private runtime: WebhookRuntime, private options: { port?: number; execute?: typeof runContextWebhook } = {}) {}
+
+  async collectCache(now = Date.now()) {
+    this.nextMaintenance = now + 60 * 60_000;
+    const cutoff = now - 30 * 24 * 60 * 60_000;
+    const eligible = (receipt: Receipt) => !receipt.inputCompacted && terminal(receipt.status) && receipt.delivered &&
+      Date.parse(receipt.createdAt) <= cutoff && !this.running.has(receipt.id) && !this.deliveries.has(receipt.id) &&
+      (!receipt.guidanceFor || !this.guiding.has(receipt.guidanceFor));
+    const duplicate = (delivery: BotDelivery) => delivery.status === 'accepted' && delivery.reported && delivery.finalResult &&
+      delivery.result !== undefined && Date.parse(delivery.createdAt) <= cutoff;
+    const result = emptyCleanup();
+    if (!this.state.receipts.some(eligible) && !this.state.botDeliveries.some(duplicate) &&
+        !this.state.pairings.some(pairing => pairing.expiresAt <= now)) return result;
+    return this.write(state => {
+      const before = Buffer.byteLength(JSON.stringify(state));
+      for (const receipt of state.receipts.filter(eligible)) {
+        // Preserve exact replay identity, routing, and the terminal HTTP receipt.
+        receipt.message.text = '';
+        receipt.inputCompacted = true;
+        result.counts.webhook_inputs = (result.counts.webhook_inputs ?? 0) + 1;
+      }
+      for (const delivery of state.botDeliveries.filter(duplicate)) {
+        delete delivery.result;
+        result.counts.webhook_duplicate_payloads = (result.counts.webhook_duplicate_payloads ?? 0) + 1;
+      }
+      const pairings = state.pairings.length;
+      state.pairings = state.pairings.filter(pairing => pairing.expiresAt > now);
+      result.counts.webhook_pairings = pairings - state.pairings.length;
+      result.counts.webhook_payload_bytes = Math.max(0, before - Buffer.byteLength(JSON.stringify(state)));
+      return result;
+    });
+  }
   async start() {
     let retired = false;
     try {
@@ -471,6 +505,9 @@ export class ContextWebhookHost {
   }
   private pump() {
     if (this.abort.signal.aborted) return;
+    if (Date.now() >= this.nextMaintenance) {
+      void this.collectCache().catch(error => console.warn('[webhook-retention]', serializeError(error)));
+    }
     // A previous application instance can briefly own the fixed port during
     // restart. Keep recovering discovery without requiring a settings change.
     if (!this.server && Date.now() >= this.listenerRetryAt) void this.listen();

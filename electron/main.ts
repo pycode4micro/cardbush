@@ -71,6 +71,7 @@ import { installWindowHistoryInput } from './windowHistoryInput';
 import { browserConfigurationPath, browserConfigurationStore } from './browserSettings';
 import { collectPluginInstallCache, installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
 import { clearBrowserCaches, clearDiagnosticFiles, mergeCleanup } from './cacheMaintenance';
+import { collectVoiceModelStaging } from './voiceModelStore';
 import { appendRotatingLog } from './rotatingLog';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath } from './officePreview';
@@ -2996,6 +2997,9 @@ async function collectTemporaryCaches() {
     () => collectPluginAcquisitionCache(path.join(app.getPath('userData'), 'plugin-marketplaces')),
     () => collectPluginInstallCache(path.join(app.getPath('userData'), 'plugins')).then(results => mergeCleanup(...results)),
     () => ModelPreviewService.collectCache(),
+    () => import('./pluginRuntimeManager.mjs').then(module => module.collectPluginRuntimeStaging()),
+    () => collectVoiceModelStaging(path.join(app.getPath('userData'), 'voice-models')),
+    () => pastedTextAttachments().then(store => store.sweep()),
   ]) {
     try { results.push(await collect()); }
     catch (error) { results.push({ counts: {}, errors: [error instanceof Error ? error.message : String(error)] }); }
@@ -3017,7 +3021,9 @@ async function clearApplicationCaches() {
       }
     }
   }
-  return mergeCleanup(await clearBrowserCaches(cacheSessions), await collectTemporaryCaches());
+  const webhooks = await contextWebhookHostPromise?.then(host => host.collectCache()).catch(error =>
+    ({ counts: {}, errors: [error instanceof Error ? error.message : String(error)] }));
+  return mergeCleanup(await clearBrowserCaches(cacheSessions), await collectTemporaryCaches(), ...(webhooks ? [webhooks] : []));
 }
 ipcMain.handle('plugins:market-sources', async event => {
   assertMainWindowSender(event.sender.id);
@@ -3773,7 +3779,6 @@ app.whenReady().then(async () => {
     return;
   }
   void collectTemporaryCaches().then(result => { if (result.errors.length) console.warn('[cache-maintenance]', result.errors); }).catch(error => console.warn('[cache-maintenance]', error));
-  void pastedTextAttachments().then(store => store.sweep()).catch(error => console.warn('[text-attachment-cleanup]', error));
   await setHostApplicationMemoryProvider(applicationMemoryBytes, relievePreviewForMemoryPressure);
   // CardBush owns its complete frameless application chrome. Removing
   // Electron's hidden default menu also removes browser-style reload
@@ -4414,6 +4419,7 @@ async function initializeProductHost(controller: RuntimeHostController, signal: 
     sandbox: sandboxSetup,
     dataRoot: path.join(app.getPath('userData'), 'product-host'),
     runtimeStateRoot,
+    storageInventoryRoot: { path: app.getPath('userData'), desktop: true, sessionData: app.getPath('sessionData') },
     logRoots: [appLogsDir(), path.join(app.getPath('userData'), 'logs')],
     clearApplicationCaches,
     prepareBundledMcp: syncBrowserConnectorPlugin,

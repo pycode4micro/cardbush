@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { emptyCleanup } from './cacheMaintenance.js';
 
 export type PastedTextAttachment = { id: string; path: string; name: string; size: number };
 export type PastedTextAttachmentApi = {
@@ -137,16 +138,26 @@ export class PastedTextAttachments {
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     });
   }
-  sweep(): Promise<void> { return this.#serialize(() => this.#sweep()); }
+  sweep() { return this.#serialize(() => this.#sweep()); }
   async #sweepIfDue() { if (this.now() - this.#lastSweep > 60 * 60 * 1000) await this.#sweep(); }
   async #sweep() {
+    const result = emptyCleanup();
     await this.#root();
     for (const entry of await readdir(this.root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !validId(entry.name) || this.#active.has(entry.name)) continue;
       const directory = await this.#directory(entry.name);
       const record = await this.#record(directory).catch(() => undefined);
-      if (record && record.state !== 'retained' && this.now() - record.updatedAt > pastedTextDraftLifetime) await rm(directory, { recursive: true, force: true });
+      if (record && record.state !== 'retained' && this.now() - record.updatedAt > pastedTextDraftLifetime) {
+        const files = await readdir(directory, { withFileTypes: true });
+        if (files.some(file => !file.isFile() || file.isSymbolicLink())) continue;
+        let bytes = 0;
+        for (const file of files) bytes += (await lstat(join(directory, file.name))).size;
+        await rm(directory, { recursive: true, force: true });
+        result.counts.files! += files.length;
+        result.counts.bytes! += bytes;
+      }
     }
     this.#lastSweep = this.now();
+    return result;
   }
 }

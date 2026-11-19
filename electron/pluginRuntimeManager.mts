@@ -9,9 +9,14 @@ import { promisify } from 'node:util';
 import { activePluginRuntime, pluginRuntimeExecutable, pluginRuntimeRoot, runtimeVersionPattern, type PluginRuntime, type PluginRuntimeAction, type PluginRuntimeStatus } from '@cardbush/platform';
 import { withFileLock } from './fileLock.mjs';
 import { resolveRuntimeBuild, type RuntimeBuild } from './pluginRuntimeCatalog.mjs';
+import { collectTemporaryDirectories, leaseTemporaryDirectory, mergeCleanup } from './cacheMaintenance.js';
 
 const run = promisify(execFile);
 const kinds = ['node', 'python'] as const;
+export async function collectPluginRuntimeStaging(root = pluginRuntimeRoot()) {
+  return mergeCleanup(...await Promise.all(kinds.map(kind =>
+    collectTemporaryDirectories(join(root, kind), '.install-', 24 * 60 * 60_000))));
+}
 async function installed(kind: PluginRuntime, version: string, root: string) {
   return stat(pluginRuntimeExecutable(kind, version, root)).then(file => file.isFile(), (error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return false;
@@ -51,7 +56,9 @@ async function installBuild(kind: PluginRuntime, build: RuntimeBuild, root: stri
   if (await installed(kind, build.version, root)) return;
   const directory = join(root, kind);
   const stage = await mkdtemp(join(directory, '.install-'));
+  let release: (() => void) | undefined;
   try {
+    release = await leaseTemporaryDirectory(stage);
     const archive = join(stage, 'download');
     await download(build, archive, request);
     // Only upstream archives verified against their release digest reach the platform extractor.
@@ -64,7 +71,10 @@ async function installBuild(kind: PluginRuntime, build: RuntimeBuild, root: stri
     const {stdout} = await run(executable, kind === 'python' ? ['-I', '--version'] : ['--version'], {cwd: stage, env, windowsHide:true, timeout:15_000});
     if (stdout.trim() !== (kind === 'python' ? 'Python ' : 'v') + build.version) throw Error('Installed interpreter reported an unexpected version.');
     await rename(staged, join(directory, build.version));
-  } finally { await rm(stage, {recursive:true, force:true, maxRetries:3}); }
+  } finally {
+    try { await rm(stage, {recursive:true, force:true, maxRetries:3}); }
+    finally { release?.(); }
+  }
 }
 
 export async function managePluginRuntime(action: PluginRuntimeAction, kind?: PluginRuntime, selector?: string,

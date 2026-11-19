@@ -2,12 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DefinitionReceipt } from '@cardbush/bush-protocol';
+import { cacheFiles, temporaryCacheEntries } from './cacheMaintenance.js';
 
 /** Small versioned definitions owned by one Runtime, shared by tools and native UI. */
 export class DefinitionStore<T extends { id: string }> {
   private readonly records = new Map<string, DefinitionReceipt<T>>();
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly parse: (value: unknown) => T, private readonly directory?: string) {}
+  temporaryEntries() { return this.directory ? temporaryCacheEntries(this.directory) : Promise.resolve([]); }
+  definitionFiles() {
+    return this.directory ? cacheFiles(this.directory, name => /^[a-f0-9]{64}\.json$/.test(name)) : Promise.resolve([]);
+  }
   private serialize<R>(operation: () => Promise<R>): Promise<R> {
     const pending = this.queue.then(operation);
     this.queue = pending.then(() => {}, () => {});

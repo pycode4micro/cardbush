@@ -20,6 +20,22 @@ export const REGISTERED_AGENT_SCHEMA = {
 };
 
 export class RegisteredAgentStore extends DefinitionStore<RegisteredAgent> {
+  private mutations: Promise<unknown> = Promise.resolve();
+  beforeRemove?: (id: string) => Promise<void>;
+
+  withDefinitionMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.mutations.then(operation);
+    this.mutations = next.catch(() => undefined);
+    return next;
+  }
+
+  override remove(id: string, expectedRevision: number) {
+    return this.withDefinitionMutation(async () => {
+      await this.beforeRemove?.(id);
+      await super.remove(id, expectedRevision);
+    });
+  }
+
   constructor(directory?: string) {
     super(value => {
       const agent = registeredAgentSchema.parse(value);

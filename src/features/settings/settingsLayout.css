@@ -105,3 +105,24 @@
   .settings-shell .plugin-proxy-fields { grid-template-columns: minmax(0, 1fr); }
   .settings-shell :is(.settings-card, .settings-surface) { --settings-card-inset: 14px; }
 }
+.storage-inventory-list {
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.storage-inventory-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding-block: 0.55rem;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.storage-inventory-list small {
+  display: block;
+  opacity: 0.75;
+}

@@ -32,6 +32,7 @@ export type ProductHostCommand =
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "maintenance.clear_conversations" }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "maintenance.clear_logs_cache" }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "maintenance.clear_cache" }
+  | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "maintenance.storage_inventory" }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "maintenance.runtime_assets.plan" }
   | {
       protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
@@ -68,6 +69,7 @@ export interface ProductMaintenanceHost {
   clearConversations(): Promise<Record<string, unknown>>;
   clearLogsCache(): Promise<Record<string, unknown>>;
   clearCache?(): Promise<Record<string, unknown>>;
+  storageInventory?(): Promise<Record<string, unknown>>;
   runtimeAssetPlan(): Promise<Record<string, unknown>>;
   resetRuntimeAssets(
     categories: RuntimeAssetCategory[],
@@ -165,6 +167,11 @@ export class ProductHost {
         if (!maintenance.clearCache) throw new ProductHostProtocolError('maintenance_unavailable', 'Cache cleanup is unavailable.');
         return maintenance.clearCache();
       }
+      case "maintenance.storage_inventory": {
+        const maintenance = this.#maintenance();
+        if (!maintenance.storageInventory) throw new ProductHostProtocolError('maintenance_unavailable', 'Storage inventory is unavailable.');
+        return maintenance.storageInventory();
+      }
       case "maintenance.runtime_assets.plan":
         return this.#maintenance().runtimeAssetPlan();
       case "maintenance.runtime_assets.reset":
@@ -241,6 +248,7 @@ export function decodeProductHostCommand(input: unknown): ProductHostCommand {
     case "maintenance.clear_conversations":
     case "maintenance.clear_logs_cache":
     case "maintenance.clear_cache":
+    case "maintenance.storage_inventory":
     case "maintenance.runtime_assets.plan":
     case "maintenance.diagnostics":
       return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind };

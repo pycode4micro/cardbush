@@ -74,6 +74,7 @@ export class AssistantConversation {
     return { ...receipt, accepted: true, queueDepth: active.entries.length, modelRequestInterrupted: this.reasoning.interrupt(input.turnId) };
   }
   private busy = false;
+  get working() { return this.busy; }
   private pending = false;
   private paused = false;
   private error: string | RuntimeUiError = '';

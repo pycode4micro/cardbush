@@ -32,12 +32,42 @@ test('log cleanup and diagnostics use the actual app roots and preserve adjacent
   assert.equal(empty.value.cleared, false);
 });
 
+test('storage inventory reports scope, policy and file sizes without returning contents or paths', async t => {
+  const root = await fixture(t);
+  const registrations = join(root, 'runtime', 'registered-agents');
+  await mkdir(registrations, { recursive: true });
+  await writeFile(join(registrations, 'definition.json'), 'private role');
+  const host = new ElectronProductHostController({ ...controllerOptions(root),
+    storageInventoryRoot: { path: root, desktop: true } });
+  t.after(() => host.stopMaintenance());
+  const result = await host.execute({ protocol: 'cardbush.product_host_ipc.v1', kind: 'maintenance.storage_inventory' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.rows.find(row => row.category === 'registeredAgents'),
+    { category: 'registeredAgents', policy: 'definition', usage: { files: 1, bytes: 12 } });
+  assert.ok(result.value.rows.some(row => row.category === 'browserCaches'));
+  assert.doesNotMatch(JSON.stringify(result.value), /private role|definition\.json/);
+});
+
+test('an old upload directory with a recently appended chunk remains resumable', async t => {
+  const root = await fixture(t);
+  const upload = join(root, 'upload-resumable');
+  await mkdir(upload);
+  const chunk = join(upload, 'data');
+  await writeFile(chunk, 'latest chunk');
+  await utimes(upload, new Date(0), new Date(0));
+  await collectTemporaryDirectories(root, 'upload-', 24 * 60 * 60_000);
+  assert.equal(await exists(chunk), true);
+});
+
 test('restart preview sweep removes expired directories and protects live leases and recent previews', async t => {
   const root = await fixture(t), marketRoot = join(root, 'market'), previews = join(marketRoot, 'previews');
   const stale = join(previews, 'preview-stale'), active = join(previews, 'preview-active'), recent = join(previews, 'preview-new');
   for (const dir of [stale, active, recent]) { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'plugin.json'), '{}'); }
   const release = await leaseTemporaryDirectory(active); t.after(release);
-  for (const dir of [stale, active]) await utimes(dir, new Date(0), new Date(0));
+  for (const dir of [stale, active]) {
+    for (const name of await readdir(dir)) await utimes(join(dir, name), new Date(0), new Date(0));
+    await utimes(dir, new Date(0), new Date(0));
+  }
   const market = new PluginMarketplaceService({ dataRoot: marketRoot, userPluginRoot: join(root, 'plugins'), bundledPluginRoot: join(root, 'bundled'), fetch: async () => { throw Error('offline'); } });
   const result = await market.collectCache();
   assert.deepEqual(result.errors, []); assert.equal(await exists(stale), false); assert.equal(await exists(active), true); assert.equal(await exists(recent), true);
@@ -49,6 +79,7 @@ test('temporary sweeping protects rollback backups, foreign directories and runn
   const stale = join(root, '.cardbush-plugin-install-old'), backup = join(root, '.cardbush-plugin-install-backup'), foreign = join(root, 'user-files');
   for (const dir of [stale, backup, foreign]) { await mkdir(dir); await writeFile(join(dir, 'data'), 'keep unless expired staging'); }
   await mkdir(join(backup, 'previous')); await writeFile(join(backup, 'previous', 'user-config'), 'only backup');
+  await utimes(join(stale, 'data'), new Date(0), new Date(0));
   for (const dir of [stale, backup, foreign]) await utimes(dir, new Date(0), new Date(0));
   const result = await collectTemporaryDirectories(root, '.cardbush-plugin-install-', 1000);
   assert.deepEqual(result.errors, []); assert.equal(await exists(stale), false);
@@ -73,7 +104,7 @@ test('browser cleanup calls only cache APIs, reports partial failures and does n
     clearStorageData: async options => { calls.push(['storage', options]); },
   };
   const result = await clearBrowserCaches([session, session]);
-  assert.deepEqual(calls, ['http', ['code', {}], ['storage', { storages: ['shadercache'] }]]);
+  assert.deepEqual(calls, ['http', ['code', {}], ['storage', { storages: ['shadercache', 'cachestorage'] }]]);
   assert.equal(result.counts.browser_sessions, 1); assert.equal(result.counts.http_cache_bytes, 100); assert.match(result.errors[0], /busy/);
 });
 

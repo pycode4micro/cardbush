@@ -27,6 +27,7 @@ app.whenReady().then(async () => {
         request.onsuccess = () => { const db = request.result, tx = db.transaction('drafts', 'readwrite'); tx.objectStore('drafts').put('keep record', 'draft'); tx.oncomplete = () => { db.close(); resolve(); }; };
       });
       await (await fetch('/cached')).text();
+      await (await caches.open('cache-fixture')).put('/cached', new Response('cached response'));
     })()`);
     const session = win.webContents.session;
     await session.cookies.set({ url, name: 'login', value: 'keep login', expirationDate: Date.now() / 1000 + 3600 });
@@ -35,6 +36,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(result.errors, []);
     assert.equal((await session.cookies.get({ url, name: 'login' }))[0].value, 'keep login');
     assert.equal(await win.webContents.executeJavaScript("localStorage.getItem('draft')"), 'keep draft');
+    assert.deepEqual(await win.webContents.executeJavaScript('caches.keys()'), []);
     assert.equal(await win.webContents.executeJavaScript(`new Promise((resolve, reject) => { const request = indexedDB.open('fixture', 1); request.onerror = () => reject(request.error); request.onsuccess = () => { const db = request.result, value = db.transaction('drafts').objectStore('drafts').get('draft'); value.onsuccess = () => { resolve(value.result); db.close(); }; }; })`), 'keep record');
     console.log('CACHE_PROFILE_PRESERVED');
   } finally { win.destroy(); await new Promise(resolve => server.close(resolve)); }

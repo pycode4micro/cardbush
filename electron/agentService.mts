@@ -45,6 +45,8 @@ import { agentBundledMcpEnvironment } from './agentBundledAssets.mjs';
 import { probeAgentDesktop } from './agentDesktopProbe.mjs';
 import type { AgentDesktopSetup } from './agentDesktopTypes.js';
 import { AgentPluginMarketplaces } from './agentPluginMarketplaces.mjs';
+import { emptyCleanup, mergeCleanup } from './cacheMaintenance.js';
+import { collectPluginRuntimeStaging } from './pluginRuntimeManager.mjs';
 import { SandboxSetup } from './sandboxSetup.mjs';
 import { ElectronProductHostController } from './productHostController.mjs';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions.js';
@@ -235,9 +237,17 @@ export class AgentService {
     this.product = new ElectronProductHostController({
       sandbox,
       dataRoot: configurationRoot, runtimeStateRoot: runtimeRoot, runtimeBridge: this.runtime,
+      storageInventoryRoot: { path: root, desktop: false, webUploads: this.#webRestricted },
       bundledSkillRoot: join(bundled, 'skills'), userSkillRoot: join(extensionRoot, 'skills'),
       bundledPluginRoot: join(bundled, 'plugins'), userPluginRoot: join(extensionRoot, 'plugins'),
-      clearApplicationCaches: () => this.#marketplaces.collectCache(),
+      clearApplicationCaches: async () => {
+        const results = await Promise.allSettled([
+          this.#marketplaces.collectCache(), collectPluginRuntimeStaging(), this.#webFiles?.collectCache(),
+          this.#webhooks?.collectCache(), ...[...this.#pastedTextStores.values()].map(store => store.sweep()),
+        ]);
+        return mergeCleanup(...results.map(result => result.status === 'fulfilled' ? result.value ?? emptyCleanup() :
+          { counts: {}, errors: [result.reason instanceof Error ? result.reason.message : String(result.reason)] }));
+      },
       prepareBundledMcp: () => this.#browserConnector?.sync() ?? Promise.resolve(),
     });
     this.#webPolicy = this.#webRestricted ? new AgentWebPolicy(root, this.product) : undefined;
@@ -358,6 +368,7 @@ export class AgentService {
         await service.#embodied.start(true);
       }
       await service.#webhooks?.restore();
+      void service.#webFiles?.collectCache().catch(error => console.warn('[upload-staging]', error));
       service.#pump();
       return service;
     } catch (error) {
@@ -843,7 +854,9 @@ export class AgentService {
         }
         return result;
       }
-      case 'product.command': if (String(data.kind).startsWith('maintenance.')) this.#idle(); return this.#product(data);
+      case 'product.command':
+        if (String(data.kind).startsWith('maintenance.') && data.kind !== 'maintenance.storage_inventory') this.#idle();
+        return this.#product(data);
       case 'plugins.install': return installProductPlugin(z.string().min(1).parse(data.path), join(this.#extensionRoot, 'plugins'), (pluginId, replace) => this.product.replacePlugin(pluginId, replace)).then(async result => { await this.product.refreshMcp(); return result; });
       case 'plugins.uninstall': return this.product.uninstallPlugin(id.parse(data.id));
       case 'plugins.connections.save': return this.product.savePluginConnections(data);

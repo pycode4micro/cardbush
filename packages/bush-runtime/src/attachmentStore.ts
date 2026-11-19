@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, copyFile, link, lstat, mkdir, open, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { attachmentOwnerKey, fileCacheEntry, ownedCacheTree } from './cacheMaintenance.js';
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { collectTurnAttachments, formatTurnAttachmentContext, turnAttachmentContextSchema,
   type ConversationEntry, type RuntimeAttachment, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 import { MAX_MODEL_IMAGE_SOURCE_BYTES, ModelImageStore, readDataImage, readLocalModelImage } from './modelImageStore.js';
@@ -21,6 +22,23 @@ async function publishOriginal<T>(target: string, signal: AbortSignal | undefine
 /** Originals belong to the workspace, not to the disposable model-image cache. */
 export class AttachmentStore {
   constructor(private readonly dataRoot: string) {}
+
+  async cacheEntries() {
+    const root = join(this.dataRoot, 'attachments');
+    const cutoff = Date.now() - 24 * 60 * 60_000;
+    return (await ownedCacheTree(root)).filter(file => file.mtimeMs <= cutoff).flatMap(file => {
+      const parts = relative(root, file.path).split(sep);
+      // Only Runtime-owned attachment copies. Workspace files are deliberately outside this root.
+      if (parts.length !== 5 || !/^[a-f0-9]{32}$/.test(parts[0]!) ||
+          parts[1] !== '.cardbush-attachments' || parts[2] !== 'originals' || !/^[a-f0-9]{32}$/.test(parts[3]!)) return [];
+      const serializedPath = JSON.stringify(file.path).slice(1, -1);
+      const entry = fileCacheEntry(file, 'attachment_copies', [
+        serializedPath, file.path.replaceAll('\\', '/'), parts[3]!, attachmentOwnerKey(parts[0]!),
+      ]);
+      entry.scan = async () => {};
+      return [entry];
+    });
+  }
 
   async retainConversationEntry(sessionId: string, entry: ConversationEntry, signal?: AbortSignal): Promise<ConversationEntry> {
     if (entry.role !== 'user' || !entry.attachments?.length) return entry;

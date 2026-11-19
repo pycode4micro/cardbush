@@ -19,6 +19,8 @@ import { ComputerUseSettings, ComputerUseSettingsPanel } from './computerUse/Com
 import { SettingsKeyboardPanel } from './settings/SettingsKeyboardPanel';
 import { ArchivedItemsPanel } from './settings/ArchivedItemsPanel';
 import { AgentDataSettings } from './settings/AgentDataSettings';
+import { StorageInventoryPanel } from './settings/StorageInventoryPanel';
+import type { StorageInventory } from '@cardbush/bush-protocol';
 import type { AgentConnection } from '../../electron/agentTypes';
 import { SettingsDropdown } from './settings/SettingsDropdown';
 import { NetworkProxySettings } from './settings/NetworkProxySettings';
@@ -61,6 +63,7 @@ import {
   clearConversationHistory,
   clearLogsCache,
   clearApplicationCache,
+  fetchStorageInventory,
   fetchCardbushAppsConfiguration,
   fetchBackendCapabilities,
   fetchBackendReadiness,
@@ -529,7 +532,7 @@ export function SettingsView({
 }
 
 export function CacheMaintenancePanel({
-  scopeName, clear,
+  scopeName, clear, inventory = fetchStorageInventory,
   language,
   capabilities,
   onNotify,
@@ -538,6 +541,7 @@ export function CacheMaintenancePanel({
   onRuntimeAssetsReloaded,
 }: {
   scopeName?: string; clear?: (target: 'conversation' | 'logs' | 'cache') => Promise<MaintenanceClearResult>;
+  inventory?: () => Promise<StorageInventory>;
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
@@ -548,6 +552,7 @@ export function CacheMaintenancePanel({
   const [busyTarget, setBusyTarget] = useState<'conversation' | 'logs' | 'cache' | ''>('');
   const [result, setResult] = useState<MaintenanceClearResult | null>(null);
   const [error, setError] = useState('');
+  const [inventoryRevision, setInventoryRevision] = useState(0);
 
   const runClear = useCallback(
     async (target: 'conversation' | 'logs' | 'cache') => {
@@ -582,6 +587,7 @@ export function CacheMaintenancePanel({
             ? await clearConversationHistory()
             : target === 'cache' ? await clearApplicationCache() : await clearLogsCache();
         setResult(cleared);
+        setInventoryRevision(revision => revision + 1);
         if (cleared.errors?.length) setError(cleared.errors.join('\n'));
         if (target === 'conversation') {
           await onConversationHistoryCleared?.();
@@ -711,6 +717,7 @@ export function CacheMaintenancePanel({
           </div>
         )}
       </SettingsCard>
+      <StorageInventoryPanel load={inventory} revision={inventoryRevision} language={language} />
       {!scopeName && <details className="settings-disclosure" open={Boolean(readPendingRuntimeAssetReset()) || undefined}>
       <summary>{uiText(language)('settingsView.restoreBundledConfiguration')}</summary>
       <div className="settings-disclosure-body"><RuntimeAssetResetCard

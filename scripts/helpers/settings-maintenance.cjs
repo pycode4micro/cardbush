@@ -27,6 +27,8 @@ module.exports = async ({ run, until, window: win, root, click }) => {
         value: { ...base, selected_categories: [...command.categories, 'teams', 'agent_profiles'], changed: true, restart_required: false } };
       if (command.kind === 'maintenance.clear_cache') return { protocol: command.protocol, ok: true,
         value: { target: 'application-cache', cleared: true, counts: { files: 2 }, errors: ['fixture: one locked cache file'] } };
+      if (command.kind === 'maintenance.storage_inventory') return { protocol: command.protocol, ok: true,
+        value: { rows: [{ category: 'registeredAgents', policy: 'definition', usage: { files: 7, bytes: 5120 } }] } };
       throw Error('Unexpected maintenance command: ' + command.kind);
     };
     settingsProps.backendCapabilities = { ...settingsProps.backendCapabilities, maintenanceRuntimeAssetsReset: true,
@@ -55,9 +57,12 @@ module.exports = async ({ run, until, window: win, root, click }) => {
   assert.deepEqual(await run('maintenanceReloads'), [['prompts', 'skills']]);
   assert.doesNotMatch(await run('document.body.innerText'), /\bTeams\b|Agent Profiles/);
   assert.match(await run('document.body.innerText'), /清理应用缓存/);
+  await run("Array.from(document.querySelectorAll('summary')).find(node => node.textContent === '存储清单').click()");
+  await until("document.querySelector('.storage-inventory-list')?.textContent.includes('子 Agent 注册')");
   await run("Array.from(document.querySelectorAll('.maintenance-action-row')).find(row => row.innerText.includes('清理应用缓存')).querySelector('button').click()");
   await until("document.body.innerText.includes('fixture: one locked cache file')");
   assert.equal(await run("maintenanceCommands.filter(command => command.kind === 'maintenance.clear_cache').length"), 1);
+  await until("maintenanceCommands.filter(command => command.kind === 'maintenance.storage_inventory').length === 2");
   await run("settingsProps.runtimeBusy = true; renderSettings()");
   await until("Array.from(document.querySelectorAll('.maintenance-action-row')).find(row => row.innerText.includes('清理应用缓存')).querySelector('button').disabled");
   await run("settingsProps.runtimeBusy = false; renderSettings()");
@@ -76,10 +81,13 @@ module.exports = async ({ run, until, window: win, root, click }) => {
   await run("settingsProps.language = 'en'; settingsTheme = 'bright'; renderSettings()");
   win.setContentSize(760, 850);
   await until("document.body.innerText.includes('Restore bundled runtime assets')");
+  await run("Array.from(document.querySelectorAll('summary')).find(node => node.textContent === 'Storage inventory').parentElement.open = true");
+  await until("document.querySelector('.storage-inventory-list')?.textContent.includes('Registered subagents')");
+  assert.equal(await run("document.querySelector('.storage-inventory-list').scrollWidth <= document.querySelector('.storage-inventory-list').clientWidth + 1"), true);
   await run("document.querySelector('.runtime-asset-reset-panel').closest('details').open = true");
   await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   await new Promise(resolve => setTimeout(resolve, 100));
-  assert.doesNotMatch(await run('document.body.innerText'), /\bTeams\b|Agent Profiles/);
+  assert.doesNotMatch(await run("document.querySelector('.runtime-asset-reset-panel').innerText"), /\bTeams\b|Agent Profiles/);
   assert.equal(await run("document.querySelector('.runtime-asset-category-grid').scrollWidth <= document.querySelector('.runtime-asset-category-grid').clientWidth + 1"), true);
   fs.writeFileSync(path.join(root, 'tmp/settings-maintenance-light-narrow.png'), (await win.webContents.capturePage()).toPNG());
   win.setContentSize(1200, 850);

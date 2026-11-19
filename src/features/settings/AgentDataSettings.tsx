@@ -1,4 +1,5 @@
 import { uiText } from '../../i18n';
+import { storageInventorySchema } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentConnection, AgentInfo, AgentProject } from '../../../electron/agentTypes';
 import type { AppLanguage, BackendCapabilities } from '../../types';
@@ -25,11 +26,14 @@ function AgentDataContent({ connection, language, onNotify }: Parameters<typeof 
   const [retry, setRetry] = useState(0);
   const call = useCallback<AgentCall>(async (operation, input) => {
     const result = await window.cardbushDesktop!.agents!.call(connection.id, operation, input);
-    if (['projects.save', 'projects.remove', 'projects.default'].includes(operation) || operation === 'product.command' && String(input?.kind).startsWith('maintenance.')) {
+    if (['projects.save', 'projects.remove', 'projects.default'].includes(operation) || operation === 'product.command' &&
+        String(input?.kind).startsWith('maintenance.') && input?.kind !== 'maintenance.storage_inventory') {
       window.dispatchEvent(new CustomEvent('cardbush:agent-sessions-updated', { detail: connection.id }));
     }
     return result as never;
   }, [connection.id]);
+  const inventory = useCallback(async () => storageInventorySchema.parse(await call('product.command',
+    { kind: 'maintenance.storage_inventory' })), [call]);
   useEffect(() => {
     let alive = true; setError('');
     void window.cardbushDesktop!.agents!.connect(connection.id).then(value => { if (alive) setInfo(value); }, error => { if (alive) setError(agentErrorText(error)); });
@@ -42,7 +46,7 @@ function AgentDataContent({ connection, language, onNotify }: Parameters<typeof 
   return <div className="settings-stack">
     {info.capabilities.conversationManagement && <AgentArchivesPanel call={call} connectionId={connection.id} language={language} onNotify={onNotify}/>}
     {info.capabilities.projects && <AgentProjects call={call} language={language}/>}
-    <CacheMaintenancePanel language={language} capabilities={capabilities} runtimeBusy={false} onNotify={onNotify} scopeName={connection.name}
+    <CacheMaintenancePanel language={language} capabilities={capabilities} runtimeBusy={false} onNotify={onNotify} scopeName={connection.name} inventory={inventory}
       clear={target => call('product.command', { kind: target === 'conversation' ? 'maintenance.clear_conversations' : target === 'logs' ? 'maintenance.clear_logs_cache' : 'maintenance.clear_cache' })}/>
   </div>;
 }

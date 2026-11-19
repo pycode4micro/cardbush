@@ -81,13 +81,13 @@ export async function leaseTemporaryDirectory(directory: string) {
 }
 
 /** Reclaims restart leftovers, never a running process's staging data or a rollback backup. */
-export async function collectTemporaryDirectories(root: string, prefix: string, ageMs: number, protectedPaths = new Set<string>()): Promise<CleanupResult> {
+export async function collectTemporaryDirectories(root: string, prefix: string | RegExp, ageMs: number, protectedPaths = new Set<string>()): Promise<CleanupResult> {
   root = resolve(root);
   const result = emptyCleanup();
   if (!await ownedDirectory(root)) return result;
   const before = Date.now() - ageMs;
   for (const item of await readdir(root, { withFileTypes: true })) {
-    if (!item.isDirectory() || item.isSymbolicLink() || !item.name.startsWith(prefix)) continue;
+    if (!item.isDirectory() || item.isSymbolicLink() || !(typeof prefix === 'string' ? item.name.startsWith(prefix) : prefix.test(item.name))) continue;
     const directory = resolve(root, item.name);
     if (dirname(directory) !== root || basename(directory) !== item.name || activeTemporaryDirectories.has(directory) || protectedPaths.has(directory)) continue;
     try {
@@ -102,6 +102,7 @@ export async function collectTemporaryDirectories(root: string, prefix: string, 
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') continue; }
       }
       const counts = await directorySize(directory);
+      if (counts.modified > before || activeTemporaryDirectories.has(directory)) continue;
       // Validate the literal target again immediately before recursive deletion.
       if ((await lstat(directory)).isSymbolicLink() || dirname(directory) !== root) continue;
       await rm(directory, { recursive: true, force: true, maxRetries: 2 });
@@ -112,17 +113,18 @@ export async function collectTemporaryDirectories(root: string, prefix: string, 
   return result;
 }
 
-async function directorySize(root: string): Promise<{ files: number; bytes: number }> {
-  if (!await ownedDirectory(root)) return { files: 0, bytes: 0 };
-  let files = 0, bytes = 0;
+async function directorySize(root: string): Promise<{ files: number; bytes: number; modified: number }> {
+  if (!await ownedDirectory(root)) return { files: 0, bytes: 0, modified: 0 };
+  let files = 0, bytes = 0, modified = (await lstat(root)).mtimeMs;
   for (const item of await readdir(root, { withFileTypes: true })) {
     if (item.isSymbolicLink()) throw new Error('A temporary directory contains a link; kept for inspection.');
     const path = join(root, item.name), stat = await lstat(path);
     if (stat.isSymbolicLink()) throw new Error('Temporary directory changed during cleanup.');
-    if (stat.isDirectory()) { const child = await directorySize(path); files += child.files; bytes += child.bytes; }
+    modified = Math.max(modified, stat.mtimeMs);
+    if (stat.isDirectory()) { const child = await directorySize(path); files += child.files; bytes += child.bytes; modified = Math.max(modified, child.modified); }
     else if (stat.isFile()) { files++; bytes += stat.size; }
   }
-  return { files, bytes };
+  return { files, bytes, modified };
 }
 
 export async function removeTemporaryDirectory(root: string, directory: string, prefix: string): Promise<CleanupResult> {
@@ -133,7 +135,7 @@ export async function removeTemporaryDirectory(root: string, directory: string, 
   const counts = await directorySize(directory);
   if ((await lstat(directory)).isSymbolicLink()) throw new Error('Temporary directory changed during cleanup.');
   await rm(directory, { recursive: true, force: true, maxRetries: 2 });
-  return { counts: { ...counts, directories: 1 }, errors: [] };
+  return { counts: { files: counts.files, bytes: counts.bytes, directories: 1 }, errors: [] };
 }
 
 type BrowserCacheSession = Pick<Electron.Session, 'clearCache' | 'clearCodeCaches' | 'clearStorageData' | 'getCacheSize'>;
@@ -141,7 +143,7 @@ export async function clearBrowserCaches(sessions: Iterable<BrowserCacheSession>
   const result = emptyCleanup();
   for (const session of new Set(sessions)) {
     const before = await session.getCacheSize().catch(() => 0);
-    for (const clear of [() => session.clearCache(), () => session.clearCodeCaches({}), () => session.clearStorageData({ storages: ['shadercache'] })]) {
+    for (const clear of [() => session.clearCache(), () => session.clearCodeCaches({}), () => session.clearStorageData({ storages: ['shadercache', 'cachestorage'] })]) {
       try { await clear(); } catch (error) { result.errors.push(error instanceof Error ? error.message : String(error)); }
     }
     result.counts.http_cache_bytes = (result.counts.http_cache_bytes ?? 0) + Math.max(0, before - await session.getCacheSize().catch(() => 0));

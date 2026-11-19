@@ -34,7 +34,11 @@ export interface CacheMaintenanceResult {
   errors: string[];
 }
 export const sessionCacheKey = (id: string) => createHash('sha256').update(id).digest('hex');
-export const sessionCacheKeys = (id: string) => [id, sessionCacheKey(id), sessionCacheKey(JSON.stringify([id, 'context']))];
+export const attachmentOwnerKey = (digest: string) => `cardbush-attachment-owner:${digest}`;
+export const sessionCacheKeys = (id: string) => {
+  const hash = sessionCacheKey(id);
+  return [id, hash, sessionCacheKey(JSON.stringify([id, 'context'])), attachmentOwnerKey(hash.slice(0, 32))];
+};
 
 /** Flat, owned directories only. Never follow a directory or file symlink. */
 export async function cacheFiles(root: string, accept: (name: string) => boolean) {
@@ -55,9 +59,7 @@ export function fileCacheEntry(file: { path: string; bytes: number }, category: 
   return { category, keys, owner, bytes: file.bytes, file: file.path,
     async scan(visit, signal) {
       // Bounded reads; a large execution journal must never be loaded just to clean it.
-      const decoder = new StringDecoder('utf8');
-      for await (const chunk of journalChunks(file.path, signal)) visit(decoder.write(chunk));
-      visit(decoder.end());
+      await scanCacheReferenceFile(file.path, visit, signal);
     },
     async remove() {
       const stat = await lstat(file.path).catch(error => { if (error.code !== 'ENOENT') throw error; });
@@ -138,12 +140,36 @@ export async function blobCacheEntries(root: string, category: string, accept: (
   });
 }
 
-export function temporaryCacheEntries(root: string) {
-  return blobCacheEntries(root, 'temporary_files', name => /^(?:[a-f0-9]{64}(?:\.json)?\.)?[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.tmp$/.test(name), 24 * 60 * 60_000);
+export function temporaryCacheEntries(root: string, pattern = /^(?:[a-f0-9]{64}(?:\.json)?\.)?[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.tmp$/) {
+  return blobCacheEntries(root, 'temporary_files', name => pattern.test(name), 24 * 60 * 60_000);
+}
+
+/** Inventory and reference collection follow only regular files in host-owned trees. */
+export async function ownedCacheTree(root: string): Promise<Awaited<ReturnType<typeof cacheFiles>>> {
+  const info = await lstat(root).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  if (!info) return [];
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Cache directory is linked or unavailable.');
+  const files: Awaited<ReturnType<typeof cacheFiles>> = [];
+  for (const item of await readdir(root, { withFileTypes: true })) {
+    if (item.isSymbolicLink()) continue;
+    const path = join(root, item.name);
+    if (item.isDirectory()) files.push(...await ownedCacheTree(path));
+    else if (item.isFile()) {
+      const stat = await lstat(path).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      if (stat?.isFile() && !stat.isSymbolicLink()) files.push({ path, bytes: stat.size, mtimeMs: stat.mtimeMs });
+    }
+  }
+  return files;
+}
+
+export async function scanCacheReferenceFile(path: string, visit: (text: string) => void, signal?: AbortSignal) {
+  const decoder = new StringDecoder('utf8');
+  for await (const chunk of journalChunks(path, signal)) visit(decoder.write(chunk));
+  visit(decoder.end());
 }
 
 /** Mark all references first, then sweep. Failure to read any retained source aborts the sweep. */
-export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string; turnId?: string; toolCallId?: string; sourceNumber?: number }> = [], signal?: AbortSignal): Promise<CacheMaintenanceResult> {
+export async function collectUnreferencedCache(entries: CacheEntry[], roots: unknown[], locators: Array<{ number: number; sessionId: string; turnId?: string; toolCallId?: string; sourceNumber?: number }> = [], signal?: AbortSignal, sourceFiles: string[] = []): Promise<CacheMaintenanceResult> {
   signal?.throwIfAborted();
   const byKey = new Map<string, Set<CacheEntry>>();
   const add = (key: string, entry: CacheEntry) => { let values = byKey.get(key); if (!values) byKey.set(key, values = new Set()); values.add(entry); };
@@ -171,6 +197,7 @@ export async function collectUnreferencedCache(entries: CacheEntry[], roots: unk
   };
   const visit = scan();
   for (const root of roots) { signal?.throwIfAborted(); visit(JSON.stringify(root)); }
+  if (pattern) for (const path of sourceFiles) await scanCacheReferenceFile(path, scan(), signal);
   while (pending.length) {
     signal?.throwIfAborted();
     await pending.pop()!.scan(scan(), signal);

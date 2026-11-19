@@ -85,7 +85,9 @@ test('registered clean identities persist, reject stale edits and stay separate 
   assert.equal(clean.result.agentProfileId, 'registered:warehouse');
   assert.equal(f.tasks.get('parent', clean.result.taskId).agentName, 'Warehouse');
   const first = f.requests[0];
-  assert.deepEqual(first.prefixMessages, [{ role: 'system', content: role().system_prompt }]);
+  assert.deepEqual(first.prefixMessages.filter(message => message.role === 'system'), [{ role: 'system', content: role().system_prompt }]);
+  assert.ok(first.prefixMessages.some(message => message.role === 'developer' && message.name === 'outcome_verification'));
+  assert.doesNotMatch(JSON.stringify(first.prefixMessages), /Parent-only instructions|Private parent history/);
   assert.equal(first.metadata.registeredAgent.definition.id, 'warehouse');
   assert.equal(first.metadata.individuation.habits, false);
   assert.deepEqual(first.tools, []);
@@ -100,7 +102,8 @@ test('registered clean identities persist, reject stale edits and stay separate 
   const fork = await f.call('subagent', { prompt: 'Investigate independently' });
   assert.equal(fork.result.mode, 'fork');
   f.parent.messages.push({ role: 'user', content: 'Later parent message' });
-  assert.equal(f.requests[3].prefixMessages.length, 2);
+  assert.ok(f.requests[3].prefixMessages.some(message => message.content === 'Parent-only instructions'));
+  assert.ok(f.requests[3].prefixMessages.some(message => message.content === 'Private parent history'));
   assert.equal((await f.call('subagent', { mode: 'fork', agent_id: 'warehouse', prompt: 'mix modes' })).kind, 'failed');
 });
 
@@ -126,5 +129,12 @@ test('native host exposes Team and employee management without installing a plug
   await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'save', definition: { id: 'stock', name: 'Stock', nodes: [{ id: 'check', agent_id: 'warehouse', prompt: 'Check stock' }] }, expected_revision: 0 } });
   const result = await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'list' } });
   assert.equal(result.teams[0].definition.nodes[0].agent_id, 'warehouse');
+  const remove = () => host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'delete', agent_id: 'warehouse', expected_revision: 1 } });
+  await assert.rejects(remove(), /used by a saved team|被已保存的团队/);
+  await host.sendCommand({ kind: 'runtime.collect_cache', payload: {} });
+  assert.equal((await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'list' } })).length, 1);
+  await host.sendCommand({ kind: TEAM_WORKFLOW_COMMAND, payload: { action: 'delete', team_id: 'stock', expected_revision: 1 } });
+  await remove();
+  assert.deepEqual(await host.sendCommand({ kind: AGENT_REGISTRY_COMMAND, payload: { action: 'list' } }), []);
   await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
 });

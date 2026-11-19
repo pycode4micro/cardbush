@@ -10,7 +10,7 @@ import { InMemoryRuntimeHost, InMemoryRuntimeEventLog, SessionStore, ToolRegistr
 import { applyWebhookTurnPolicy, assistantProfileSchema, FRIENDS_COMMAND, FRIENDS_SESSION } from '@cardbush/bush-protocol';
 import { ContextWebhookHost } from '../dist-electron/contextWebhookHost.mjs';
 import { runContextWebhook } from '../dist-electron/contextWebhookRuntime.mjs';
-import { renderWebhookBody, webhookConfigSchema, incomingMessage } from '../dist-electron/contextWebhookProtocol.mjs';
+import { renderWebhookBody, webhookConfigSchema, incomingMessage, webhookHash } from '../dist-electron/contextWebhookProtocol.mjs';
 
 const secrets = { encrypt: s => Buffer.from(s).toString('base64'), decrypt: s => Buffer.from(s, 'base64').toString() };
 const request = (sessionId, text = 'hello', turnId = 'initial') => ({ protocol: 'bush.session_turn_request.v1', requestId: turnId, sessionId, turnId,
@@ -78,6 +78,29 @@ function client(connection) {
   return { send: value => fetch(connection.endpoint, { method: 'POST', headers, body: JSON.stringify(value) }),
     read: async id => { const response = await fetch(`${connection.endpoint}/${encodeURIComponent(id)}`, { headers }); return response.json(); } };
 }
+
+test('webhook cache maintenance compacts delivered input without losing the replay identity or pending records', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-retention-'));
+  const connection = { ...config(), enabled: false, id: randomUUID(), token: 'b'.repeat(64), binding: binding() };
+  const sent = message('delivered', 'old private input');
+  const receipt = { id: randomUUID(), connectionId: connection.id, fingerprint: webhookHash(sent),
+    message: sent, binding: binding(), status: 'completed', reply: 'Delivered reply', createdAt: new Date(0).toISOString(),
+    delivered: true, sequence: 2, attempts: 0 };
+  const pending = { ...receipt, id: randomUUID(), message: message('pending', 'keep pending input'), status: 'accepted', delivered: false };
+  let host;
+  try {
+    await seedConnections(root, [connection], [receipt, pending]);
+    host = await new ContextWebhookHost(root, secrets, { command: async () => ({ entries: [], generation: 0, cursor: 0 }) }, { port: 0 }).start();
+    assert.equal((await host.collectCache()).counts.webhook_inputs, 1);
+    assert.equal((await host.collectCache()).counts.files, 0);
+    const state = JSON.parse(secrets.decrypt(JSON.parse(await readFile(join(root, 'webhooks/state.json'), 'utf8')).encrypted));
+    assert.deepEqual(state.receipts[0], { ...receipt, inputCompacted: true, message: { ...sent, text: '' } });
+    assert.deepEqual(state.receipts[1], pending);
+  } finally {
+    await host?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('Assistant adopts saved Friends bindings and events; isolated notices keep the originating account across conversations and disconnect', { timeout: 30000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'friends-bridge-')), received = [], requests = [], turns = new Map();

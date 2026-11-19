@@ -11,6 +11,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { uiText } from '@cardbush/platform/i18n';
 import { clearDiagnosticFiles, mergeCleanup, scheduleDiagnosticRetention, type CleanupResult } from './cacheMaintenance.js';
+import { storageInventory, type StorageInventoryRoot } from './storageInventory.mjs';
 
 import {
   CardbushAppsConfigStore,
@@ -55,6 +56,7 @@ export interface ElectronProductHostControllerOptions {
   sandbox?: ProductSandboxHost;
   dataRoot: string;
   runtimeStateRoot: string;
+  storageInventoryRoot?: StorageInventoryRoot;
   bundledSkillRoot: string;
   userSkillRoot: string;
   bundledPluginRoot: string;
@@ -139,6 +141,8 @@ export class ElectronProductHostController {
       clearConversations: () => this.#clearConversations(),
       clearLogsCache: () => this.#clearLogsCache(),
       clearCache: () => this.#clearCache(),
+      storageInventory: () => storageInventory(this.#runtimeStateRoot,
+        options.storageInventoryRoot ?? { path: dirname(dataRoot), desktop: false }, this.#logRoots),
       runtimeAssetPlan: () => Promise.resolve(this.#runtimeAssetPlan()),
       resetRuntimeAssets: (categories) => this.#resetRuntimeAssets(categories),
       diagnostics: () => this.#diagnostics(),

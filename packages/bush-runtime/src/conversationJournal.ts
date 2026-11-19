@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { conversationEntrySchema, isAssistantPageMessage, assistantReactionsSchema, assistantProfileSchema, runtimeSessionTurnRequestSchema,
   type AssistantReaction, type ConversationEntry } from '@cardbush/bush-protocol';
 import { AssistantModelHistory } from './assistantModelHistory.js';
+import { cacheFiles, temporaryCacheEntries } from './cacheMaintenance.js';
 
 const submissionSchema = z.object({ parent: runtimeSessionTurnRequestSchema, profile: assistantProfileSchema });
 const journalEntrySchema = conversationEntrySchema.extend({ submission: submissionSchema.optional() });
@@ -20,6 +21,13 @@ export class ConversationJournal {
   private reactions = new Map<string, Record<string, AssistantReaction>>();
   private replyPositions = new Map<string, { byId: Map<string, { index: number; at: string }>; latest?: { id: string; at: string } }>();
   constructor(private root: string, private onAppend?: (sessionId: string, entry: ConversationEntry) => void) {}
+  async referenceFiles() {
+    const files = await cacheFiles(this.root, name => /^[a-f0-9]{64}(?:\.model)?\.jsonl$/.test(name));
+    return files.map(file => file.path);
+  }
+  cacheEntries() {
+    return temporaryCacheEntries(this.root, /^[a-f0-9]{64}\.jsonl\.reactions\.json\.[a-f0-9-]{36}\.tmp$/);
+  }
   private file(sessionId: string) { return join(this.root, createHash('sha256').update(sessionId).digest('hex') + '.jsonl'); }
   modelHistory(sessionId: string) {
     let history = this.histories.get(sessionId);

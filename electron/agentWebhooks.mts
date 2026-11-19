@@ -8,6 +8,7 @@ import { contextWebhookPort } from './contextWebhookDefaults.js';
 import { writePrivateJson } from './atomicJsonFile.mjs';
 import type { ContextWebhookSnapshot, WebhookBinding } from './contextWebhookTypes.js';
 import type { WebhookRuntime } from './contextWebhookRuntime.mjs';
+import { emptyCleanup } from './cacheMaintenance.js';
 
 /** Shared App protocol; this adapter owns only headless lifetime and management. */
 export class AgentWebhooks {
@@ -16,6 +17,7 @@ export class AgentWebhooks {
   #closed = false;
   constructor(readonly root: string, readonly runtime: WebhookRuntime, readonly port?: number) {}
   get keepAlive() { return Boolean(this.#host); }
+  async collectCache() { return (await this.#host)?.collectCache() ?? emptyCleanup(); }
   async restore() {
     const config = await readFile(join(this.root, 'webhooks', 'host.json'), 'utf8').then(JSON.parse,
       (error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return null; });

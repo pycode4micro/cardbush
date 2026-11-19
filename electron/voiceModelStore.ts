@@ -5,6 +5,10 @@ import { downloadVoiceFile, extractVoiceFile, extractVoiceFiles, verifyVoiceFile
 import { voiceModelManifest, voiceModelSources, voiceModelVersion, type VoiceModelArchive } from './voiceModelManifest';
 import type { VoiceModelStatus } from './voiceTypes';
 import { voiceModelLicenses } from './voiceModelLicenses';
+import { collectTemporaryDirectories, leaseTemporaryDirectory } from './cacheMaintenance';
+
+export const collectVoiceModelStaging = (root: string) => collectTemporaryDirectories(root,
+  /^[\w.-]+-staging-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/, 24 * 60 * 60_000);
 
 export interface VoiceModelDefinition {
   version: string; model: string; sources: { title: string; url: string }[];
@@ -68,9 +72,11 @@ export class VoiceModelStore {
     const staging = path.join(this.root, this.definition.version + '-staging-' + randomUUID());
     const backup = path.join(this.root, this.definition.version + '-old-' + randomUUID());
     let completed = 0, replaced = false;
+    let release: (() => void) | undefined;
     this.progress = { state: 'downloading', downloadedBytes: 0 }; this.fingerprints.clear();
     try {
       await fs.promises.mkdir(staging, { recursive: true, mode: 0o700 });
+      release = await leaseTemporaryDirectory(staging);
       for (let i = 0; i < this.archives.length; i++) {
         const archive = this.archives[i], downloaded = path.join(staging, `download-${i}.tar.bz2`);
         this.progress.state = 'downloading';
@@ -96,7 +102,10 @@ export class VoiceModelStore {
       this.progress = {}; if (replaced) await this.removeOwned(backup);
     } catch (error) {
       this.progress = cancel.aborted ? {} : { state: 'error', error: signal.aborted ? '下载超时，请重试。' : error instanceof Error ? error.message : '模型安装失败，请重试。' };
-    } finally { await this.removeOwned(staging); }
+    } finally {
+      try { await this.removeOwned(staging); }
+      finally { release?.(); }
+    }
     return this.status();
   }
   /** Verify pinned file hashes before the first use, and again if any file changes. */
