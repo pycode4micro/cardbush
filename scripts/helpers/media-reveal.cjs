@@ -93,6 +93,55 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await until(readySource(fallback), 'the replacement document is ready with its own fallback');
     assert.equal(await run("document.querySelector('.inline-html-preview').classList.contains('is-visualization')"), false);
 
+    const responsive = path.join(directory, 'responsive.html').replaceAll('\\', '/');
+    await fs.writeFile(responsive, `<!doctype html><meta charset="utf-8"><meta name="cardbush:preview" content="visualization">
+      <style>body{margin:0}svg{display:block;width:100%;height:auto}button{display:block}</style>
+      <svg viewBox="0 0 1000 470"><rect width="1000" height="470" fill="#f4dca4"/></svg>
+      <button onclick="this.textContent='Paused'">Play</button>`);
+    await run(`
+      window.previewUser={id:'preview-user',role:'user',turnId:'preview-turn',content:'Show a preview'};
+      window.previewIntro={id:'preview-optimistic',assistantMessageId:'message_intro',role:'assistant',turnId:'preview-turn',content:'Preparing the preview'};
+      window.previewFinal={...mediaMessage,id:'message_preview_final',turnId:'preview-turn',conversationId:'preview-session',status:'streaming',
+        content:${JSON.stringify(`![Responsive preview](<${responsive}>)\n\nFinished.`)}};
+      window.handoffPreview=()=>document.querySelector('[data-message-id="message_preview_final"] .inline-html-preview');
+      window.handoffSizes=[];
+      window.handoffObserver=new MutationObserver(()=>{
+        const viewport=handoffPreview()?.querySelector('.inline-html-viewport'),guest=viewport?.querySelector('webview');
+        if(viewport&&guest)handoffSizes.push({ready:viewport.classList.contains('is-ready'),height:viewport.clientHeight,width:guest.clientWidth});
+      });
+      handoffObserver.observe(document.getElementById('root'),{subtree:true,attributes:true,childList:true});
+      updateChat({ activeConversationId:'preview-session',loading:false,sending:true,activeTurnId:'preview-turn',
+        messages:[previewUser,previewIntro,previewFinal] });
+    `);
+    await until("Boolean(handoffPreview()?.querySelector('.inline-html-viewport.is-ready'))", 'responsive preview shows during final streaming');
+    await pause(260);
+    const samples = await run('handoffSizes');
+    assert.ok(samples.some(sample => !sample.ready && sample.height <= 64), 'unmeasured preview shows a compact loading row');
+    const readySamples = samples.filter(sample => sample.ready);
+    assert.ok(readySamples.length > 0);
+    assert.equal(new Set(readySamples.map(sample => sample.height)).size, 1, 'responsive content does not resize again after first paint');
+    assert.ok(samples.filter(sample => sample.width > 0).every(sample => sample.width === readySamples[0].width),
+      'measuring and visualizing use the same guest width');
+    await run(`
+      window.handoffRow=handoffPreview().closest('.message-list-item');
+      window.handoffGuest=handoffPreview().querySelector('webview');
+      window.handoffId=handoffGuest.getWebContentsId();
+    `);
+    await run(`
+      handoffGuest.executeJavaScript("document.querySelector('button').click()");
+    `);
+    const retained = async stage => {
+      await pause(240);
+      assert.equal(await run("handoffPreview().closest('.message-list-item')===handoffRow"), true, stage + ' retains the message row');
+      assert.equal(await run("handoffPreview().querySelector('webview')===handoffGuest && handoffGuest.getWebContentsId()===handoffId"), true, stage + ' retains the guest');
+      assert.equal(await run('handoffGuest.executeJavaScript("document.querySelector(\'button\').textContent")'), 'Paused', stage + ' retains playback state');
+    };
+    await run("previewFinal={...previewFinal,status:'completed'};updateChat({sending:false,messages:[previewUser,previewIntro,previewFinal]})");
+    await retained('terminal delivery');
+    await run("updateChat({activeTurnId:'',messages:[{...previewUser,id:'message_preview_user'},{...previewIntro,id:'message_intro'},{...previewFinal}]})");
+    await retained('persisted history');
+    await run('handoffObserver.disconnect()');
+
     // Exercise the transcript that owns passive following while a real embed changes height.
     await run(`updateChat({activeConversationId:'media', loading:false, sending:true, activeTurnId:'active',
       messages:[
@@ -138,7 +187,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.webContents.debugger.detach();
     console.log('Media reveal passed: real portrait video/audio, stable geometry, Markdown embeds, HTML readiness and fallback, light/dark themes, transcript follow and manual reading, reduced motion.');
   } finally {
-    await run('window.previewObserver?.disconnect();cancelAnimationFrame(window.mediaSampleFrame);cancelAnimationFrame(window.followFrame);renderView(null);if(window.mediaSavedDesktop)window.cardbushDesktop=window.mediaSavedDesktop;void 0');
+    await run('window.previewObserver?.disconnect();window.handoffObserver?.disconnect();cancelAnimationFrame(window.mediaSampleFrame);cancelAnimationFrame(window.followFrame);renderView(null);if(window.mediaSavedDesktop)window.cardbushDesktop=window.mediaSavedDesktop;void 0');
     await pause(120);
     assert.equal(path.dirname(path.resolve(directory)), path.resolve(parent));
     assert.ok(path.basename(directory).startsWith('media-reveal-'));

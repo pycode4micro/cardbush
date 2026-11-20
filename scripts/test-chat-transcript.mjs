@@ -172,6 +172,25 @@ for (const metadata of [undefined, { transcript_kind: 'assistant_segment' }]) {
   assert.equal(new Set(segmentIds).size, segmentIds.length);
   assert.equal(input[1].renderKey, undefined);
 }
+
+// A final reply that is already on screen must keep the same row through
+// terminal delivery and replacement of optimistic history by durable IDs.
+{
+  const turnId = 'preview-turn';
+  const sealed = { id: 'sealed', turnId, role: 'assistant', content: 'Before guidance', metadata: { segment_boundary: 'turn_guidance' } };
+  const final = { id: 'message_final', turnId, role: 'assistant', content: '![Chart](cardbush-memo:1)', metadata: { transcript_kind: 'assistant_final' } };
+  const running = freeze([sealed, { ...final, renderKey: 'optimistic-row' }]);
+  const terminal = api.applyTurnTerminalSnapshot({ s: running }, 's', 'optimistic-row', { turnId, status: 'completed', stopped: false });
+  const hydrated = api.mergeLoadedMessagesPreservingLocalState(terminal.s, [sealed, final]);
+  const stages = [running, terminal.s, hydrated].map(messages => api.stabilizeAssistantTranscriptRows(messages));
+  const keys = stage => plain(stage.map(message => message.renderKey ?? message.id));
+  assert.deepEqual(keys(stages[0]), ['sealed', 'assistant-turn:preview-turn']);
+  for (const settled of stages.slice(1)) assert.deepEqual(keys(settled), keys(stages[0]));
+  assert.equal(stages[0].at(-1).id, final.id);
+  assert.equal(api.stabilizeAssistantTranscriptRows([...running]).at(-1), stages[0].at(-1));
+  assert.equal(running.at(-1).renderKey, 'optimistic-row');
+}
+
 assert.equal(api.persistedChatMessageId({ id: 'optimistic', metadata: { message_id: 'message_durable' } }), 'message_durable');
 for (const id of ['message_1234', 'message-1234-abcd']) {
   const user = { id: 'user-optimistic', messageId: id, role: 'user', content: '图片问题', turnId: 'remote-turn' };

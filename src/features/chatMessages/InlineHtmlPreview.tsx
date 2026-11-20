@@ -37,14 +37,14 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
   const [retained, setRetained] = useState(false);
   const [pageVisible, setPageVisible] = useState(isWindowVisible);
   const [closed, setClosed] = useState(false);
-  // Visible pages bypass buffer preloading, regardless of the Turn's age.
-  const requested = inViewport || (nearViewport && activated);
+  const [measured, setMeasured] = useState(false);
+  // Unmeasured previews are compact. Only preload neighbours whose layout is known.
+  const requested = inViewport || (measured && nearViewport && activated);
   // Scrolling across the buffer is not a new document. Keep the guest briefly
   // so boundary jitter and a quick scroll back retain its painted surface/state.
   const visible = pageVisible && !closed && (requested || retained);
   const [revision, setRevision] = useState(0);
   const [layout, setLayout] = useState<InlineHtmlLayout>({ height: 360, blocks: [] });
-  const [measured, setMeasured] = useState(false);
   const { height } = layout;
   const [previewLimit, setPreviewLimit] = useState(previewHeightLimit);
   const [expanded, setExpanded] = useState(false);
@@ -245,7 +245,6 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       if (diagnostics.current) disconnectGuestDiagnostics = connectInlineHtmlGuestDiagnostics(
         webview as HTMLElement & { executeJavaScript(code: string): Promise<unknown> }, diagnostics.current);
       disconnectPresentation = connectInlineHtmlPresentation(webview, container.current!, value => {
-        setMeasured(true);
         setLayout(value);
         restoreReadingPosition();
       }, mode => {
@@ -253,6 +252,7 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
       }, () => {
         if (failed) return;
         window.clearTimeout(deadline);
+        setMeasured(true);
         setState('ready');
       }, (event, detail) => diagnostics.current?.record(event, detail));
     };
@@ -343,7 +343,8 @@ export const InlineHtmlPreview = memo(function InlineHtmlPreview({ path, title, 
         {!visualization && <button className="inline-html-close" type="button" onClick={closePreview} aria-label={uiText(language)('inlineHtmlPreview.closeHtmlPreview')}><X size={14} /></button>}
       </span>
     </span>
-    <span id={viewportId} className={`inline-html-viewport is-${visible ? state : 'suspended'}`} style={{ height: viewportHeight }} aria-busy={visible && state === 'loading'}>
+    <span id={viewportId} className={`inline-html-viewport is-${visible ? state : 'suspended'}${measured ? '' : ' is-measuring'}`}
+      style={measured ? { height: viewportHeight } : undefined} aria-busy={visible && state === 'loading'}>
       {visible && source && state !== 'failed' && createElement('webview', {
         key: `${source}:${revision}`,
         ref: frame,

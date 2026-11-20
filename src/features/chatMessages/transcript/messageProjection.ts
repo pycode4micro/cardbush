@@ -623,6 +623,32 @@ export function normalizeActiveTurnTranscriptForDisplay(
   return messages.flatMap(message => removed.has(message) ? [] : [replacements.get(message) ?? message]);
 }
 
+const stableAssistantRows = new WeakMap<ChatMessage, ChatMessage>();
+
+/** A Turn's open assistant row has the same owner before and after the
+ * persisted transcript takes over. Guidance-sealed replies keep their own rows. */
+export function stabilizeAssistantTranscriptRows(messages: ChatMessage[]) {
+  const tails = new Set<string>();
+  let stable: ChatMessage[] | undefined;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== 'assistant' || isGuidanceSealedAssistantSegment(message)) continue;
+    const turnId = chatMessageTurnId(message);
+    if (!turnId || tails.has(turnId)) continue;
+    tails.add(turnId);
+    const renderKey = `assistant-turn:${turnId}`;
+    if (message.renderKey === renderKey) continue;
+    let row = stableAssistantRows.get(message);
+    if (!row) {
+      row = { ...message, renderKey };
+      stableAssistantRows.set(message, row);
+    }
+    stable ??= messages.slice();
+    stable[index] = row;
+  }
+  return stable ?? messages;
+}
+
 function normalizeActiveAssistantGroup(messages: ChatMessage[], turnId: string) {
   const activeAssistantIndex = findLastIndex(
     messages,
