@@ -40,6 +40,7 @@ import type { ConversationHistoryControls } from '../../hooks/useConversationHis
 import {
   normalizeChatMessagesForDisplay,
   normalizeActiveTurnTranscriptForDisplay,
+  stabilizeAssistantTranscriptRows,
 } from '../chatMessages/transcript/messageProjection';
 import { useConversationWorkSummary } from './useConversationWorkSummary';
 import { ScrollBottomButton } from './ScrollBottomButton';
@@ -392,7 +393,7 @@ export function ChatPanel({
     const activeTranscript = sending
       ? normalizeActiveTurnTranscriptForDisplay(normalized, activeTurnId)
       : normalized;
-    return projectRenderableChatMessages(activeTranscript);
+    return stabilizeAssistantTranscriptRows(projectRenderableChatMessages(activeTranscript));
   }, [activeTurnId, visibleMessages, sending]);
   const guidanceActivities = useMemo(() => guidanceActivityMessages(renderMessages, sending, activeTurnId),
     [renderMessages, sending, activeTurnId]);
