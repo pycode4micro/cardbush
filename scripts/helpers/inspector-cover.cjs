@@ -20,6 +20,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     <button onclick="window.pageClicks=(window.pageClicks||0)+1">Page action</button></body></html>`);
   await window.webContents.insertCSS(fs.readFileSync(path.join(root,'src/features/inspector/inspectorWorkspace.css'),'utf8'));
   await window.webContents.insertCSS('.app { width:100%!important; --window-frame-height:46px; }');
+  await checkDesktopEdges({ run, until, pause, window, root });
   await run(`
     window.coverSent=[];window.coverStops=0;
     localStorage.setItem('cardbush.inspector_width','500');
@@ -260,3 +261,52 @@ module.exports = async ({ run, until, pause, window, root }) => {
   console.log('Inspector cover passed: real pointer drag, full inner/tile widths, single/multi-page, window resize and 125% renderer zoom, narrow drag handles, native bar retained, Composer and original-width restoration.');
   await require('./inspector-workspace.cjs')({run,until,pause});
 };
+
+async function checkDesktopEdges({ run, until, pause, window, root }) {
+  const css = await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/features/desktop/desktopCollection.css'), 'utf8'));
+  const originalSize = window.getSize();
+  try {
+    await run(`
+      window.renderInspectorEdge = (mode, layout, theme) => {
+        window.viewTheme = 'theme-' + theme;
+        renderView(h('main', {
+          className: 'desktop-shell sidebar-is-collapsed' + (mode === 'tabs' ? '' : mode === 'drag' ? ' inspector-covered' : ' inspector-conversation-covered'),
+          'data-page': mode === 'tabs' ? 'tabs' : 'assistant', 'data-sidebar-layout': layout, 'data-edge-mode': mode,
+        }, h('aside', {className: 'sidebar'}), h('section', {className: 'main-stage'}),
+        h('aside', {className: 'right-inspector'}, h('div', {className: 'right-inspector-viewport'},
+          h('div', {className: 'right-inspector-content'})))));
+      };
+      window.measureInspectorEdge = () => {
+        const root = document.querySelector('.desktop-shell'), rail = root.querySelector('.sidebar');
+        const pane = root.querySelector('.right-inspector'), content = pane.querySelector('.right-inspector-content');
+        const sidebar = rail.getBoundingClientRect(), shell = root.getBoundingClientRect();
+        const inspector = pane.getBoundingClientRect(), viewport = content.getBoundingClientRect();
+        return {gap: inspector.left - sidebar.right, right: shell.right - inspector.right,
+          viewportInset: viewport.left - inspector.left, viewportWidth: viewport.width, top: inspector.top,
+          shadow: getComputedStyle(rail).boxShadow, border: getComputedStyle(pane).borderInlineStartWidth};
+      };
+      void 0;
+    `);
+    for (const [width, layout, theme] of [[1180, 'drawer', 'dark'], [640, 'drawer', 'bright'], [1440, 'docked', 'dark']]) {
+      window.setSize(width, originalSize[1]);
+      const readEdge = async mode => {
+        await run(`renderInspectorEdge(${JSON.stringify(mode)}, ${JSON.stringify(layout)}, ${JSON.stringify(theme)})`);
+        await until(`document.querySelector('.desktop-shell')?.dataset.edgeMode === ${JSON.stringify(mode)}`, `desktop inspector ${mode} layout`);
+        await run("document.querySelector('.app').setAttribute('data-desktop-workspace', '')");
+        await pause(300);
+        return run('measureInspectorEdge()');
+      };
+      const tabs = await readEdge('tabs');
+      assert.ok(Math.abs(tabs.gap) < 0.5 && Math.abs(tabs.right) < 0.5 && tabs.border === '0px', JSON.stringify(tabs));
+      for (const mode of ['drag', 'snap']) {
+        const actual = await readEdge(mode);
+        assert.deepEqual(actual, tabs, `${mode} matches the tab workspace edge at ${width}px (${layout}, ${theme})`);
+      }
+    }
+    console.log('Desktop inspector edges passed: drag, snap and standalone tabs share a single boundary in drawer and docked layouts.');
+  } finally {
+    await run("document.querySelector('.app')?.removeAttribute('data-desktop-workspace'); window.viewTheme = undefined; renderView(null);");
+    await window.webContents.removeInsertedCSS(css);
+    window.setSize(...originalSize);
+  }
+}

@@ -29,7 +29,7 @@ body.inspector-layout-resizing { user-select: none; }
 .desktop-shell.inspector-covered > .main-stage, .desktop-shell.inspector-covered > .sidebar-resizer { visibility: hidden; pointer-events: none; }
 .desktop-shell.inspector-covered > .sidebar { --side-panel-width: min(var(--sidebar-width, 272px), calc(100cqw - 48px)); position: absolute; inset: 0 auto 0 0; z-index: 46; height: 100%; box-shadow: 10px 0 28px var(--shadow); }
 .desktop-shell.inspector-covered > .compact-sidebar-backdrop { z-index: 45; }
-.desktop-shell.inspector-covered > .right-inspector { --side-panel-width: calc(100cqw - 2px); position: absolute; inset: 0; width: 100%; max-width: 100%; height: 100%; border-left: 0; border-radius: 0; z-index: 20; }
+.desktop-shell.inspector-covered > .right-inspector { --side-panel-width: var(--shell-content-width); position: absolute; inset: 0; width: 100%; max-width: 100%; height: 100%; border-left: 0; border-radius: 0; z-index: 20; }
 /* Cover follows the actual viewport, while normal reveal/hide keeps its fixed inner width. */
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-content { width: 100%; }
 .desktop-shell.inspector-covered > .right-inspector .right-inspector-resizer { display: none; }
@@ -44,9 +44,9 @@ body.inspector-layout-resizing { user-select: none; }
 /* Let the existing panel flex-basis motion close the remaining conversation
    space, just like the sidebar. Keep the guest at its final width and clip it. */
 .desktop-shell.inspector-conversation-covered > .right-inspector {
-  flex-basis: calc(100cqw - 2px - var(--layout-sidebar-space)); border-left: 0;
+  flex-basis: var(--inspector-available-width); border-left: 0;
 }
-.desktop-shell.inspector-conversation-covered > .right-inspector .right-inspector-content { width: calc(100cqw - 2px - var(--layout-sidebar-space)); }
+.desktop-shell.inspector-conversation-covered > .right-inspector .right-inspector-content { width: var(--inspector-available-width); }
 /* Keep the inspector in the same layout while dragging. Taking it out of flex
    expands the conversation underneath it and changes the pointer's origin. */
 body.right-inspector-resizing .desktop-shell > .right-inspector { transition: none; }

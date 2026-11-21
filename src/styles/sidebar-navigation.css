@@ -28,7 +28,7 @@
 .desktop-shell[data-sidebar-layout] > .sidebar > .sidebar-panel-content { padding-block-start: calc(var(--rail-button-size) + 8px); }
 .desktop-shell[data-sidebar-layout].sidebar-is-collapsed,
 .desktop-shell[data-sidebar-layout="drawer"] { --layout-sidebar-space: var(--sidebar-rail-width); }
-.desktop-shell[data-sidebar-layout].sidebar-is-collapsed > .sidebar { --side-panel-width: var(--sidebar-rail-width); width: var(--side-panel-width); flex-basis: var(--side-panel-width); }
+.desktop-shell[data-sidebar-layout].sidebar-is-collapsed > .sidebar { --side-panel-width: var(--sidebar-rail-width); width: var(--side-panel-width); flex-basis: var(--side-panel-width); box-shadow: none; }
 .sidebar-is-collapsed[data-sidebar-layout] .sidebar-panel-content { padding-inline: var(--rail-button-gutter); }
 .sidebar-is-collapsed[data-sidebar-layout] :is(.desktop-search, .nav-row, .profile-trigger) {
   display: flex; align-items: center; justify-content: center; width: var(--rail-button-size); height: var(--rail-button-size);
@@ -53,7 +53,6 @@
   --side-panel-width: min(var(--sidebar-width), calc(100vw - var(--sidebar-rail-width)));
   transition: width var(--panel-motion-duration) var(--panel-motion-ease);
 }
-.desktop-shell[data-sidebar-layout="drawer"].sidebar-is-collapsed > .sidebar { box-shadow: none; }
 .desktop-shell[data-sidebar-layout="drawer"] > .compact-sidebar-backdrop { background: transparent; backdrop-filter: none; }
 .desktop-shell[data-sidebar-layout="drawer"] > .sidebar-resizer { display: none; }
 .desktop-shell[data-sidebar-layout="drawer"] > .settings-shell { left: var(--sidebar-rail-width); }

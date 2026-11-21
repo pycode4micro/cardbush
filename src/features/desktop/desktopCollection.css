@@ -70,7 +70,7 @@ html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translu
   }
 }
 .app[data-desktop-workspace] > .window-frame { position:absolute; inset:0 0 auto; width:100%; padding-inline-start:calc(10px + env(titlebar-area-x, 0px)); background:transparent; border:0; box-shadow:none; }
-.app[data-desktop-workspace] > .desktop-shell { height:100%; flex:1; inset-block-start:0; border:0; border-radius:0; background:var(--surface); }
+.app[data-desktop-workspace] > .desktop-shell { --shell-border-width:0px; height:100%; flex:1; inset-block-start:0; border-radius:0; background:var(--surface); }
 .app[data-desktop-workspace] .desktop-shell > .main-stage { margin-top:var(--workspace-bar-height); border-radius:0; box-shadow:none; }
 /* The inspector lives below the title bar, including when it covers the chat. */
 .app[data-desktop-workspace] .desktop-shell > .right-inspector {

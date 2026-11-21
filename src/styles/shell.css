@@ -423,13 +423,16 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
 }
 
 .desktop-shell {
+  --shell-border-width: 1px;
+  --shell-content-width: calc(100cqw - 2 * var(--shell-border-width));
   --layout-sidebar-space: var(--sidebar-width);
+  --inspector-available-width: calc(var(--shell-content-width) - var(--layout-sidebar-space));
   --conversation-pane-min-width: 340px;
   position: relative;
   height: calc(100vh - var(--window-frame-height));
   display: flex;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border: var(--shell-border-width) solid color-mix(in srgb, var(--border) 76%, transparent);
   border-top: 0;
   background: var(--bg);
   overflow: hidden;

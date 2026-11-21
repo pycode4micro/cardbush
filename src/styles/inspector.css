@@ -4,7 +4,7 @@
   --side-panel-width: clamp(
     min(380px, var(--right-inspector-width)),
     var(--right-inspector-width),
-    calc(100cqw - 2px - var(--layout-sidebar-space))
+    var(--inspector-available-width)
   );
   position: relative;
   z-index: 8;
