@@ -35,8 +35,8 @@ module.exports = async ({win, read, wait, visible, project}) => {
     await visible('.recent-session-rows');
     await wait(async () => {const g=await shelf();return g.count===4 && g.rows===1 && Math.abs(g.left)<2 && Math.abs(g.right)<2;},
       'the floating list leaves all four featured cards in place');
-    const cover = '.desktop-covers > button:last-child';
-    const hoveredCovers = () => read("Array.from(document.querySelectorAll('.desktop-covers > button'), card => Number(getComputedStyle(card, '::after').opacity))");
+    const cover = '.desktop-covers > :last-child > button';
+    const hoveredCovers = () => read("Array.from(document.querySelectorAll('.desktop-covers button'), card => Number(getComputedStyle(card, '::after').opacity))");
     win.webContents.sendInputEvent({type:'mouseMove', ...await center(cover)});
     await wait(async () => {const states=await hoveredCovers(); return states.at(-1)===1 && states.slice(0,-1).every(v=>v===0);},
       'only the cover under the pointer is shaded');

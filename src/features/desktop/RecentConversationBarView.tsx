@@ -37,7 +37,6 @@ export function RecentConversationBarView({ actions, language, panelId, panelRef
             aria-label={t('common.close')} title={t('common.close')}><X aria-hidden="true"/></button>
         </div>
       </div>
-      <div className="recent-summary-preview"/>
       <div className="recent-tabs" role="tablist" aria-label={t('recentBar.navigator')} onKeyDown={event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();

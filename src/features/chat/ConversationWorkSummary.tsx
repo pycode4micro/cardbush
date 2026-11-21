@@ -11,7 +11,6 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useMemo, useState, type HTMLAttributes } from 'react';
-import { createPortal } from 'react-dom';
 
 import {
   fetchSubagentTask,
@@ -62,7 +61,6 @@ export function ConversationWorkSummary({
   taskPlan,
   hoverProps,
   keepOpenUntil,
-  previewHost,
 }: {
   language: AppLanguage;
   sessionId: string;
@@ -78,7 +76,6 @@ export function ConversationWorkSummary({
   taskPlan?: TaskPlanSnapshot;
   hoverProps?: HTMLAttributes<HTMLElement>;
   keepOpenUntil?: (completion: Promise<unknown>) => void;
-  previewHost?: HTMLElement | null;
 }) {
   const host = useContext(ConversationHostContext);
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
@@ -261,7 +258,7 @@ export function ConversationWorkSummary({
       </div>
     </aside>
   );
-  return previewHost ? createPortal(panel, previewHost) : panel;
+  return panel;
 }
 
 function useSubagentTaskFeed(sessionId: string, available: boolean) {

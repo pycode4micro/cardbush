@@ -611,13 +611,14 @@ test("publishes an explicit platform shell contract and rejects unavailable shel
   const shellSchema = definition.inputSchema.properties.shell;
   const expected = process.platform === "win32" ? ["powershell", "cmd"] : ["posix"];
   assert.deepEqual(shellSchema.enum, expected);
-  assert.equal(shellSchema.default, expected[0]);
+  const { defaultCommandShell } = await import('@cardbush/platform');
+  assert.equal(shellSchema.default, defaultCommandShell());
   assert.deepEqual(definition.inputSchema.required, ["command", "cwd", "yield_time_ms", "shell"]);
   assert.equal(definition.inputSchema.properties.yield_time_ms.maximum, 30_000);
   assert.match(definition.inputSchema.properties.cwd.description, /absolute path/i);
   assert.match(definition.description, /never rewrites commands/i);
   assert.match(definition.description, /PowerShell 7 \(pwsh\)/);
-  assert.match(definition.description, /ask the user to install PowerShell 7/);
+  assert.match(definition.description, /when available and cmd otherwise/);
   assert.match(shellSchema.description, /not Windows PowerShell 5/);
 
   const unavailable = await setup.execute("session", "terminal_exec", {

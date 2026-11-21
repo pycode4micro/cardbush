@@ -569,31 +569,27 @@
   white-space: pre-wrap;
 }
 
-.permission-request-panel {
+.interaction-dialog.interaction-card.permission-request-card {
+  --approval-accent: #d98b35;
   display: grid;
-  gap: 12px;
-}
-
-.permission-request-card {
-  max-height: min(58vh, 560px) !important;
-  border-color: color-mix(in srgb, #d98b35 34%, var(--border));
-  background: color-mix(in srgb, var(--surface-strong) 96%, transparent) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: min(48dvh, 480px);
+  border-color: color-mix(in srgb, var(--approval-accent) 25%, var(--border));
+  background: var(--surface-strong);
 }
 
 .permission-request-card > header > svg {
-  color: #d98b35;
+  color: var(--approval-accent);
 }
 
 .permission-request-body {
   min-height: 0;
   display: grid;
-  gap: 12px;
+  align-content: start;
+  gap: 8px;
   overflow: auto;
-  scrollbar-width: none;
-}
-
-.permission-request-body::-webkit-scrollbar {
-  display: none;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .permission-target {
@@ -601,8 +597,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 0 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
 .permission-target-icon {
@@ -612,8 +609,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #d98b35;
-  background: color-mix(in srgb, #d98b35 12%, transparent);
+  color: var(--approval-accent);
+  background: color-mix(in srgb, var(--approval-accent) 12%, transparent);
   border-radius: 8px;
 }
 
@@ -638,8 +635,9 @@
   font-family: Consolas, "Courier New", monospace;
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.45;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   user-select: text;
 }
 
@@ -660,6 +658,37 @@
 .permission-access.write {
   color: #c67527;
   background: color-mix(in srgb, #d98b35 13%, transparent);
+}
+
+.permission-access.execute {
+  color: var(--approval-accent);
+  background: color-mix(in srgb, var(--approval-accent) 13%, transparent);
+}
+
+.permission-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-mid);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  list-style: none;
+}
+.permission-disclosure > summary::-webkit-details-marker { display: none; }
+.permission-disclosure[open] > summary svg { rotate: 180deg; }
+.permission-disclosure[open] .permission-disclosure-open,
+.permission-disclosure:not([open]) .permission-disclosure-close { display: none; }
+.permission-full-target {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .permission-request-details {
@@ -693,6 +722,7 @@
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .permission-actions {
@@ -703,7 +733,7 @@
 
 .permission-action {
   min-width: 0;
-  min-height: 48px;
+  min-height: 34px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -742,21 +772,7 @@
   font-weight: 800;
 }
 
-.permission-action small {
-  grid-column: 2;
-  color: var(--text-soft);
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  line-height: 1.3;
-}
-
-.permission-scope-note {
-  margin: 0;
-  color: var(--text-soft);
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
-  line-height: 1.45;
-}
-
-@media (max-width: 720px) {
+@media (max-width: 410px) {
   .permission-actions {
     grid-template-columns: 1fr;
   }
@@ -765,10 +781,6 @@
     min-height: 40px;
   }
 
-  .permission-target {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
 }
 
 .guidance-mode-field {

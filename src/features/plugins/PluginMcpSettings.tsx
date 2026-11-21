@@ -3,7 +3,8 @@ import { useSettingsHost } from '../settings/SettingsHostContext';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { openAiAppAuthorizationUrl, usesOpenAiHostedConnection, type OpenAiAccountStatus } from '@cardbush/bush-protocol';
 import { OpenAiAccountPanel } from './OpenAiAccountPanel';
-import { mcpConnectionState, type McpConnectionOverview } from '../../backend/mcpConnectionOverview';
+import { mcpConnectionState, mcpConnectionUpdating, type McpConnectionOverview } from '../../backend/mcpConnectionOverview';
+import { pluginMcpServerId, pluginServicesEnabled } from './pluginConnections';
 import type { CardbushAppPlugin } from '../../types';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import { ArrowUpRight } from 'lucide-react';
@@ -11,7 +12,10 @@ import { pluginTroubleshootingPrompt } from './pluginPrompts';
 import './mcp-integration.css';
 
 type Json = Record<string, unknown>;
-export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts, onOpenPrompt }: { plugin: CardbushAppPlugin; language: string; onSaved: () => void; onManageAccounts?: () => void; onOpenPrompt?: (prompt: string) => void }) {
+export function PluginMcpSettings({ plugin, serviceEnabled = true, pluginRevision, language, onSaved, onManageAccounts, onOpenPrompt }: {
+  plugin: CardbushAppPlugin; serviceEnabled?: boolean; pluginRevision?: number; language: string;
+  onSaved: () => void; onManageAccounts?: () => void; onOpenPrompt?: (prompt: string) => void;
+}) {
   const host = useSettingsHost();
 
   const [draft, setDraft] = useState<Json>(() => record(plugin.config.mcp_servers));
@@ -30,12 +34,18 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   const [secrets, setSecrets] = useState<Record<string, string | null>>({});
   const remote = JSON.stringify(record(plugin.config.mcp_servers));
   const baseline = useRef(remote);
+  const expectedPluginRevision = useRef(pluginRevision);
+  expectedPluginRevision.current = pluginRevision;
+  const effectivePluginEnabled = pluginServicesEnabled(plugin, serviceEnabled);
   const refresh = useCallback(async () => {
     const revision = ++readRevision.current;
-    const value = await host.fetchMcpConnectionOverview();
+    const value = await host.fetchMcpConnectionOverview().catch(error => {
+      if (revision === readRevision.current) setOverview(current => current && { ...current, snapshot: null });
+      throw error;
+    });
     if (revision === readRevision.current) {
       setOverview(value);
-      if (authorizationRef.current && mcpConnectionState(authorizationRef.current, true, value.snapshot, value.revision) === 'connected') {
+      if (authorizationRef.current && mcpConnectionState(authorizationRef.current, true, value.snapshot, value.revision, expectedPluginRevision.current) === 'connected') {
         authorizationRef.current = ''; setAuthorizationTarget('');
       }
     }
@@ -52,14 +62,14 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   useCapabilityCatalogRefresh(useCallback(async () => { await refresh(); }, [refresh]));
   // Snapshot reads do not reconnect or open authorization pages. Pending changes
   // can finish inside the worker without a catalog event reaching this panel.
-  const observing = overview?.snapshot?.applicationState === 'pending' || overview?.snapshot?.servers.some(server => server.health === 'restarting');
+  const observing = mcpConnectionUpdating(overview?.snapshot, pluginRevision);
   useEffect(() => {
     if (!observing) return;
     let disposed = false;
     let timer = 0;
     const check = async () => {
       try { if (document.visibilityState !== 'hidden') await refresh(); }
-      catch { /* Keep the last observation until the next read or manual refresh. */ }
+      catch { /* A failed read clears readiness until there is a new observation. */ }
       if (!disposed) timer = window.setTimeout(() => void check(), 2_000);
     };
     timer = window.setTimeout(() => void check(), 2_000);
@@ -121,7 +131,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       if (revision !== actionRevision.current) return;
       try {
         const value = await refresh();
-        if (revision === actionRevision.current && succeeded && action === 'reconnect' && mcpConnectionState(id, true, value.snapshot, value.revision) === 'connected' && authorizationRef.current === id) {
+        if (revision === actionRevision.current && succeeded && action === 'reconnect' && mcpConnectionState(id, true, value.snapshot, value.revision, expectedPluginRevision.current) === 'connected' && authorizationRef.current === id) {
           setAuthorization('');
         }
       } catch (caught) { if (revision === actionRevision.current) setError(current => current || String(caught)); }
@@ -138,7 +148,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
     finally { if (revision === actionRevision.current) { actionInFlight.current = false; setBusy(''); } }
   };
   const setConnectionEnabled = async (componentId: string, enabled: boolean) => {
-    const id = `plugin_${plugin.id.replaceAll('.', '_')}_${componentId}`;
+    const id = pluginMcpServerId(plugin.id, componentId);
     if (!host.supportsPluginConnections || changingConnection.current || busy === 'save' || (busy && !busy.startsWith(`${id}:`))) return;
     changingConnection.current = true;
     const revision = ++actionRevision.current;
@@ -184,7 +194,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   };
   useEffect(() => {
     if (!authorizationTarget || busy || dirty || openAiStatus?.state !== 'signed_in') return;
-    const component = services.find(item => `plugin_${plugin.id.replaceAll('.', '_')}_${item.id}` === authorizationTarget);
+    const component = services.find(item => pluginMcpServerId(plugin.id, item.id) === authorizationTarget);
     if (!component || !usesOpenAiHostedConnection(component.mcp?.registeredAppId, record(draft[component.id]))) return;
     // Only a user-started authorization gets a reconnect on return; no background polling.
     const onFocus = () => { if (authorizationRef.current === authorizationTarget && document.visibilityState !== 'hidden') void action(authorizationTarget, 'reconnect'); };
@@ -193,8 +203,8 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
   }, [authorizationTarget, busy, dirty, openAiStatus?.state, plugin.id, draft]);
   useEffect(() => {
     if (authorizationTarget && !busy && !dirty && openAiStatus?.state === 'signed_in' &&
-        mcpConnectionState(authorizationTarget, true, overview?.snapshot ?? null, overview?.revision) === 'connected') setAuthorization('');
-  }, [authorizationTarget, busy, dirty, openAiStatus?.state, overview]);
+        mcpConnectionState(authorizationTarget, effectivePluginEnabled, overview?.snapshot ?? null, overview?.revision, pluginRevision) === 'connected') setAuthorization('');
+  }, [authorizationTarget, busy, dirty, openAiStatus?.state, overview, effectivePluginEnabled, pluginRevision]);
   if (!services.length || ['chrome', 'computer-use'].includes(plugin.id)) return null;
   const toggleAdvanced = (id: string, open: boolean) => setAdvancedOpen(current => {
     if (current.has(id) === open) return current;
@@ -207,7 +217,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
     {!host.supportsPluginConnections && <p role="status">{uiText(language)('pluginMcpSettings.updateTheAgentServiceToEditPlugin')}</p>}
     {services.map(component => {
       const settings = record(draft[component.id]), connection = record(settings.connection), oauth = record(settings.oauth);
-      const id = `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`;
+      const id = pluginMcpServerId(plugin.id, component.id);
       const actual = overview?.snapshot?.servers.find(server => server.id === id);
       const registered = Boolean(component.mcp?.registeredAppId) || component.kind === 'app';
       const hosted = usesOpenAiHostedConnection(component.mcp?.registeredAppId, settings);
@@ -217,8 +227,8 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       const missingBinding = bound && !binding?.enabled;
       const needsConnection = !hosted && !bound && component.kind === 'app' && !connection.url;
       const required = (settings.required ?? component.mcp?.required) === true;
-      const enabled = plugin.enabled && settings.enabled !== false;
-      const connectionState = mcpConnectionState(id, enabled, overview?.snapshot ?? null, overview?.revision);
+      const enabled = effectivePluginEnabled && settings.enabled !== false;
+      const connectionState = mcpConnectionState(id, enabled, overview?.snapshot ?? null, overview?.revision, pluginRevision);
       const pending = connectionState === 'pending';
       const resourceWaiting = connectionState === 'waiting_for_resources';
       const needsAccount = !host.remote && hosted && openAiStatus?.state !== 'signed_in';
@@ -226,22 +236,23 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts,
       const ready = !modified && !needsAccount && !missingBinding && connectionState === 'connected';
       const waitingForAuthorization = hosted && authorizationTarget === id;
       const cancelling = busy === `${id}:cancel`;
-      const status = modified ? (uiText(language)('pluginMcpSettings.unsavedChanges')) : !enabled ? (uiText(language)('pluginManagementPanel.disabled'))
+      const status = modified ? (uiText(language)('pluginMcpSettings.unsavedChanges'))
+        : !enabled ? (uiText(language)('pluginManagementPanel.disabled'))
         : resourceWaiting ? (actual?.health === 'ready' ? (uiText(language)('pluginMcpSettings.connectedUpdateWaitingForResources')) : (uiText(language)('pluginMcpSettings.waitingForResources')))
         : pending ? (actual?.updateState === 'waiting_for_calls' ? (uiText(language)('pluginMcpSettings.waitingForCurrentToolCalls')) : (uiText(language)('pluginMcpSettings.synchronizingTools')))
         : needsAccount ? (uiText(language)('pluginMcpSettings.signInAboveToConnect')) : ready ? (uiText(language)('browserConnectionSettings.connected'))
           : busy === `${id}:reconnect` || connectionState === 'restarting' ? (uiText(language)('workspace.connecting'))
             : connectionState === 'unavailable' ? (uiText(language)('pluginMcpSettings.connectionFailed')) : connectionState === 'auth_required' ? (uiText(language)('pluginMcpSettings.signInRequired')) : connectionState === 'configuration_required' ? (hosted ? (uiText(language)('pluginMcpSettings.notConnected')) : (uiText(language)('pluginMcpSettings.configurationRequired')))
-              : connectionState === 'idle' ? uiText(language)('pluginMcpSettings.onDemand') : missingBinding ? (uiText(language)('pluginMcpSettings.boundServiceUnavailable')) : needsConnection ? (uiText(language)('pluginMcpSettings.configurationRequired')) : (uiText(language)('pluginMcpSettings.disconnected'));
+              : connectionState === 'idle' ? uiText(language)('pluginMcpSettings.onDemand') : missingBinding ? (uiText(language)('pluginMcpSettings.boundServiceUnavailable')) : needsConnection ? (uiText(language)('pluginMcpSettings.configurationRequired')) : (uiText(language)('pluginManagementPanel.connection_unconfirmed'));
       const tools = [...new Set([...(actual?.tools.map(tool => tool.remoteName) ?? []), ...Object.keys(record(settings.tools))])];
       const transport = bound ? binding?.transport : component.mcp?.transport;
       const network = (!bound && component.kind === 'app') || ['http', 'streamable_http', 'sse'].includes(transport ?? '');
-      const unavailable = !plugin.enabled || settings.enabled === false || missingBinding || Boolean(needsConnection);
+      const unavailable = !enabled || missingBinding || Boolean(needsConnection);
       const signingIn = busy === `${id}:login`;
       const needsSetup = !hosted && (missingBinding || needsConnection || connectionState === 'configuration_required');
       const openHostedAuthorization = !waitingForAuthorization && connectionState !== 'unavailable' && Boolean(authorizationUrl);
       return <div className="plugin-mcp-service" key={component.id}><header><div className="plugin-mcp-identity"><strong>{component.name}</strong><span className="plugin-mcp-status" data-ready={ready}>{status}</span></div>
-        {plugin.enabled && !ready && <div className="plugin-mcp-primary-actions">
+        {effectivePluginEnabled && !ready && <div className="plugin-mcp-primary-actions">
           {!enabled ? <button type="button" disabled={!host.supportsPluginConnections || Boolean(busy)} onClick={() => void setConnectionEnabled(component.id, true)}>{uiText(language)('pluginMcpSettings.enableAgain')}</button>
             : <>{!needsAccount && !signingIn && <button type="button" className="mcp-primary-action" disabled={Boolean(busy) || dirty || pending || resourceWaiting || connectionState === 'restarting'} onClick={() => {
               if (!host.remote && hosted && openHostedAuthorization) void authorizeApp(id, authorizationUrl!);

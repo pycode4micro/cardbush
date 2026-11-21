@@ -11,6 +11,7 @@ import './coding-benchmark/register-loader.mjs';
 const p = await import('../src/features/inspector/panelLayout.ts');
 const b = await import('../src/features/inspector/browserBookmarks.ts');
 const c = await import('../src/features/components/componentModel.ts');
+const home = await import('../src/features/desktop/homeLayout.ts');
 const { dispatchComponentMessage } = await import('../src/features/components/dispatchComponentMessage.ts');
 function assertPartition(tree) {
   const rects = Object.values(p.panelRects(tree));
@@ -53,6 +54,16 @@ test('only custom components survive migration; previously placed custom content
   const result = c.normalizeComponents({version:1, items, welcomeLayout:{items:[{componentId:'placed'}]}});
   assert.deepEqual(result.items.map(({id,home})=>[id,home]), [['draft',false],['placed',true]]);
   assert.equal(c.defaultComponents.items.length,0);
+});
+
+test('an existing layout replaces the old featured group with independently hidden native cards', () => {
+  let saved = { version: 1, blocks: [{ kind: 'html', id: 'widget' }, { kind: 'native', id: 'featured', hidden: true }, { kind: 'native', id: 'recent' }] };
+  const storage = { getItem: () => JSON.stringify(saved) };
+  const blocks = home.readHomeLayout(storage);
+  assert.deepEqual(blocks.map(home.blockKey), ['html:widget', ...home.featuredCards.map(id => `native:${id}`), 'native:recent']);
+  assert.ok(blocks.slice(1, 5).every(block => block.hidden));
+  saved = { version: 1, blocks: blocks.map(block => block.id === 'featured-event' ? { ...block, hidden: false } : block) };
+  assert.deepEqual(home.reconcileHomeLayout(home.readHomeLayout(storage), []).filter(block => block.kind === 'native' && !block.hidden).map(block => block.id), ['featured-event', 'recent']);
 });
 
 test('bundled frontend documents share size limits and retain resource declarations across publication', () => {

@@ -19,7 +19,11 @@ module.exports = async ({win, read, wait, visible, click, showQuickPanel, row}) 
       return {x,y};
     })()`);
     win.webContents.sendInputEvent({type:'mouseMove', ...point});
-    await wait(() => read(`document.querySelector(${JSON.stringify(selector)})?.matches(':hover') && document.querySelector(${JSON.stringify(selector)}).contains(document.elementFromPoint(${point.x},${point.y}))`), 'pointer reaches ' + selector);
+    await wait(() => read(`document.querySelector(${JSON.stringify(selector)})?.matches(':hover') && document.querySelector(${JSON.stringify(selector)}).contains(document.elementFromPoint(${point.x},${point.y}))`), 'pointer reaches ' + selector)
+      .catch(async error => {
+        const hit = await read(`(() => { const node = document.querySelector(${JSON.stringify(selector)}), hit = document.elementFromPoint(${point.x}, ${point.y}); return { width: innerWidth, bounds: node?.getBoundingClientRect().toJSON(), hovered: node?.matches(':hover'), hit: hit?.outerHTML.slice(0, 180) }; })()`);
+        throw Error(`${error.message} at ${JSON.stringify(point)}, ${JSON.stringify(hit)}`, { cause: error });
+      });
     if (button) for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type, button, clickCount:1, ...point});
   };
   win.focus(); win.webContents.focus();

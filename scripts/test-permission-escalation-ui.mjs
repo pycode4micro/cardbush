@@ -32,3 +32,17 @@ test('human escalation explains the remote restriction in the selected language 
     assert.ok(!ordinary.includes(i18n.uiText(language)('permissionRequestCard.remotePolicyRequiresHuman')));
   }
 });
+
+test('a long terminal approval preserves the whole command in its collapsed disclosure and keeps decisions outside it', () => {
+  const command = 'command ' + 'parameter '.repeat(180) + 'last-argument';
+  const html = renderToStaticMarkup(createElement(exports.PermissionRequestCard, {
+    language: 'en', busy: false, onChoose() {}, onCancel() {},
+    interaction: { id: 'terminal', sessionId: 'ordinary', raw: {}, runtimePermission: {
+      actions: ['execute'], targets: [{ kind: 'process', value: command }],
+    } },
+  }));
+  assert.match(html, /<details class="permission-disclosure"><summary>/);
+  assert.ok(html.includes(`<pre class="permission-full-target">${command}</pre>`));
+  assert.match(html, /<code>command [^<]+…<\/code>/);
+  assert.ok(html.indexOf('class="permission-actions"') > html.indexOf('</details>'));
+});

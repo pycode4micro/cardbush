@@ -15,7 +15,7 @@ export type WindowMenuEntry = WindowMenuItem | { separator: true };
 type Actions = {
   newConversation: () => void; openProject?: () => void; openFiles?: () => void;
   openSettings: () => void; showShortcuts: () => void; openDiagnostics: () => void;
-  openAppCenter?: () => void; manageApps?: () => void; openPlugins?: () => void; openAutomations?: () => void;
+  openAppCenter?: () => void; openPlugins?: () => void; openAutomations?: () => void;
   toggleSidebar: () => void; toggleInspector: () => void; search: () => void;
   openBrowser: () => void; focusBrowserAddress?: () => void; reloadBrowser?: () => void;
   openReview?: () => void; openHistory?: () => void; openShadow?: () => void;
@@ -41,7 +41,6 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
       { id: 'applications', label: uiText(language)('composer.applications'), children: [
         item('openPlugins', 'appCenterModel.plugins', actions.openPlugins, 'openPlugins'),
         item('openAutomations', 'desktop.events', actions.openAutomations, 'openAutomations'),
-        ...(actions.manageApps ? [separator, item('manageApps', 'desktop.manageApps', actions.manageApps)] : []),
       ] }, separator,
       item('openProject', 'applicationMenus.open_folder', actions.openProject, 'openProject'),
       item('openFiles', 'applicationMenus.open_files', actions.openFiles, 'openFiles'), separator,

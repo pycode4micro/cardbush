@@ -13,7 +13,6 @@ import { ConversationHostContext } from '../conversationHost';
 import { PERSONAL_ASSISTANT_SESSION, WORKSPACE_REVIEW_TURN_LIMIT } from '@cardbush/bush-protocol';
 import {
   Archive,
-  Compass,
   PanelsTopLeft,
   House,
   CircleAlert,
@@ -709,19 +708,18 @@ export const ChatSidebar = memo(function ChatSidebar({
     >
       <div className="sidebar-panel-content">
       <nav className="sidebar-nav">
+        {assistantEntry}
         <button type="button" className="desktop-search" data-shortcut="searchConversations" aria-keyshortcuts={shortcuts.aria('searchConversations')} aria-label={searchLabel} title={searchLabel} onClick={onOpenSearch}>
           <Search aria-hidden="true"/><span>{uiText(language)('desktop.search')}</span>
         </button>
         <SidebarNavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
         {quickNavigation}
-        <SidebarNavRow navSection="explore" shortcut="openAppCenter" icon={<Compass/>} label={uiText(language)('appCenter.appCenter')} active={section === 'explore'} onClick={() => onSectionChange('explore')}/>
         {workspaceNavigation}
         <SidebarNavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={section === 'tabs'} onClick={onOpenTabWorkspace}/>
         <SidebarApplications language={language}/>
       </nav>
 
       <div className="sidebar-footer">
-        {assistantEntry}
         <ProfileMenu language={language}/>
       </div>
       </div>

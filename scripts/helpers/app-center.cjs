@@ -22,7 +22,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.centerSidebarProps={language:'zh',section:'chat',activeConversationId:'draft',projects:[],conversations:[],changeReportsByConversation:{},
       onSectionChange:()=>{},onConversationChange:()=>{},onCreateConversation:()=>centerEvents.push(['new']),onAddProject:()=>{},onProjectAction:()=>{},
       onDeleteConversation:()=>{},onRenameConversation:async()=>true,onOpenConversationChanges:()=>{},onOpenSettings:()=>{},onOpenSearch:()=>centerEvents.push(['search'])};
-    window.centerMenus=views.applicationMenus('zh',{newConversation:()=>centerEvents.push(['new']),openAppCenter:views.requestAppCenter,manageApps:()=>views.requestAppCenter('manage'),
+    window.centerMenus=views.applicationMenus('zh',{newConversation:()=>centerEvents.push(['new']),openAppCenter:views.requestAppCenter,
       openPlugins:()=>centerEvents.push(['plugins']),openAutomations:()=>centerEvents.push(['automations']),openSettings:()=>centerEvents.push(['settings']),
       showShortcuts:()=>{},openDiagnostics:()=>{},toggleSidebar:()=>{},toggleInspector:()=>{},search:()=>{},openBrowser:()=>{}},
       {sidebarVisible:true,inspectorVisible:false,native:false,externalLinks:false});
@@ -33,7 +33,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
       onDraftChange:draft=>{chatProps.draft=draft;mountCenter();},onSend:async text=>{centerSent.push(text);chatProps.draft='';mountCenter();}});
     window.viewTheme='theme-bright'; mountCenter();
     window.centerClick=label=>{const target=[...document.querySelectorAll('button')].find(button=>button.getAttribute('aria-label')===label||button.getAttribute('title')===label||button.textContent.trim()===label);if(!target)throw Error('missing '+label);target.click();};
-    window.centerSetting=async label=>{if(!document.querySelector('.app-center-settings-menu:popover-open')){centerClick('探索设置');await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}centerClick(label);};
+    window.centerSetting=async label=>{if(!document.querySelector('.app-center-settings-menu:popover-open')){centerClick('应用中心设置');await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}centerClick(label);};
     window.centerInput=(label,value)=>{const node=document.querySelector('input[aria-label="'+label+'"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));};
     undefined;
   `);
@@ -41,15 +41,13 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await run("document.querySelector('.desktop-menu-toggle').focus(); document.querySelector('.desktop-menu-toggle').click(); void 0");
     await until("!!document.querySelector('[data-menu-item=file]')",'file category is available');
     await run("document.querySelector('[data-menu-item=file]').click()");
-    await until("!!document.querySelector('[data-menu-item=applications]')",'applications submenu is available');
-    await run("document.querySelector('[data-menu-item=applications]').click()");
-    await until("!!document.querySelector('[data-menu-item=manageApps]')",'management command is available');
-    await run("document.querySelector('[data-menu-item=manageApps]').click()");
+    await until("!!document.querySelector('[data-menu-item=openAppCenter]')",'App Center command is available');
+    await run("document.querySelector('[data-menu-item=openAppCenter]').click()");
   };
   await until("!!document.querySelector('.desktop-menu-toggle')", 'application menu mounted');
   await pause(150);
   const messages = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/locales/zh.json'), 'utf8')).messages;
-  assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), [messages['desktop.home'], messages['appCenter.appCenter'], messages['desktop.tabWorkspace'], messages['sidebar.moreApps']], 'sidebar navigation exposes Home, Explore and more apps');
+  assert.deepEqual(await run("Array.from(document.querySelectorAll('.sidebar-nav .nav-row')).map(button=>button.textContent.trim())"), [messages['desktop.home'], messages['desktop.tabWorkspace'], messages['sidebar.moreApps']], 'sidebar keeps Home, tabs and the app flyout');
   assert.equal(await run("!!document.querySelector('.sidebar-footer .settings-dock,.sidebar-footer .sidebar-search-button')"), false);
   assert.equal(await run("getComputedStyle(document.querySelector('[data-shortcut=searchConversations]')).opacity"), '1');
   await run("document.querySelector('[data-shortcut=searchConversations]').click()");
@@ -73,9 +71,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   const output = path.join(root,'tmp'); fs.mkdirSync(output,{recursive:true});
   fs.writeFileSync(path.join(output,'app-center-bright.png'),(await window.webContents.capturePage()).toPNG());
   assert.equal(await run("document.querySelectorAll('.app-center-display,.app-center-add-actions').length"), 0, 'secondary controls are hidden until requested');
-  assert.equal(await run("!!document.querySelector('.app-center-content>header [aria-label=探索设置]')"), true, 'settings entry is beside the app center title');
+  assert.equal(await run("!!document.querySelector('.app-center-content>header [aria-label=应用中心设置]')"), true, 'settings entry is beside the app center title');
   const gridTop = await run("document.querySelector('.app-center-grid').getBoundingClientRect().top");
-  await run("centerClick('探索设置')");
+  await run("centerClick('应用中心设置')");
   await until("!!document.querySelector('.app-center-settings-menu:popover-open')", 'header settings opens above the modal drawer');
   assert.equal(await run("document.querySelector('.app-center-grid').getBoundingClientRect().top"), gridTop, 'opening settings does not shift the app grid');
   assert.ok(await run("document.activeElement.matches('.app-center-add:not(:disabled)')"), 'settings focuses the first available action');
@@ -83,7 +81,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   await until("!document.querySelector('.app-center-settings-menu:popover-open')", 'Escape closes only settings');
   assert.ok(await run("!!document.querySelector('.app-center-drawer:modal')"), 'Escape leaves the app center open');
-  assert.equal(await run("document.activeElement.getAttribute('aria-label')"), '探索设置', 'Escape returns focus to settings');
+  assert.equal(await run("document.activeElement.getAttribute('aria-label')"), '应用中心设置', 'Escape returns focus to settings');
   window.webContents.sendInputEvent({type:'keyDown',keyCode:'Down'});window.webContents.sendInputEvent({type:'keyUp',keyCode:'Down'});
   await until("!!document.querySelector('.app-center-settings-menu:popover-open')", 'keyboard opens settings');
   // The hidden Electron window updates activeElement without emitting focusin.
@@ -101,7 +99,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("JSON.parse(localStorage.getItem('cardbush_app_center_v1')).links.length===1", 'external app persisted');
   const linkId = await run("JSON.parse(localStorage.getItem('cardbush_app_center_v1')).links[0].id");
   await until("document.querySelector('.app-center-tile[data-application-id^=\"external:\"] .browser-site-icon img')?.naturalWidth>0", 'external links reuse the real website icon');
-  await run("centerClick('关闭探索')");
+  await run("centerClick('关闭应用中心')");
   await until("!document.querySelector('.app-center-drawer')", 'animated close completes');
   assert.ok(await run("document.activeElement.matches('.desktop-menu-toggle')"));
   // This offscreen window no longer receives native focus from a drag-and-drop gesture.
@@ -113,15 +111,18 @@ module.exports = async ({ run, until, pause, window, root }) => {
     await require('./tooltip-titles.cjs')({ run, until, pause, window, root });
     await run("views.saveKeyboardShortcuts({openAppCenter:{key:'k',ctrl:true,shift:true}})");
     await pause(80);
-    await run("document.querySelector('[data-nav-section=explore]').focus(); window.dispatchEvent(new KeyboardEvent('keydown',{key:'F6',bubbles:true})); void 0");
-    await until("document.querySelector('.global-tooltip kbd')?.textContent==='Ctrl + Shift + K'", 'Explore shows the configured shortcut for keyboard navigation');
+    await run("document.querySelector('.desktop-menu-toggle').click();void 0");
+    await until("!!document.querySelector('[data-menu-item=file]')", 'file menu mounted');
+    await run("document.querySelector('[data-menu-item=file]').click();void 0");
+    await until("document.querySelector('[data-menu-item=openAppCenter]')?.textContent.includes('Ctrl + Shift + K')", 'App Center menu shows its configured shortcut');
+    await run("document.querySelector('.desktop-menu-toggle').click();void 0");
   } finally { window.webContents.debugger.detach(); }
   await run("document.querySelector('textarea[data-composer-input]').focus();window.dispatchEvent(new KeyboardEvent('keydown',{key:'K',ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true}))");
   await until("document.querySelector('.app-center-drawer')?.open", 'custom app center shortcut works');
   await run("window.viewTheme='theme-dark';mountCenter()"); await pause(260);
   assert.ok(await run("getComputedStyle(document.querySelector('.app-center-drawer')).backgroundColor !== 'rgb(255, 255, 255)'"));
   fs.writeFileSync(path.join(output,'app-center-dark.png'),(await window.webContents.capturePage()).toPNG());
-  await run("centerClick('探索设置')");
+  await run("centerClick('应用中心设置')");
   await until("!!document.querySelector('.app-center-settings-menu:popover-open')", 'settings opens in dark theme');
   fs.writeFileSync(path.join(output,'app-center-settings-dark.png'),(await window.webContents.capturePage()).toPNG());
   await run("document.querySelector('.app-center-search input').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));");
@@ -163,7 +164,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.ok(await run("document.querySelector('.app-center-drawer')?.open"),'quick reopen survives the previous exit timer');
   window.setSize(480,640);await pause(80);
   assert.ok(await run("(() => {const node=document.querySelector('.app-center-drawer'),r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=36&&r.bottom<=innerHeight&&node.scrollWidth<=node.clientWidth})()"),'drawer fits a narrow window');
-  await run("centerClick('探索设置')");
+  await run("centerClick('应用中心设置')");
   await until("!!document.querySelector('.app-center-settings-menu:popover-open')", 'settings opens in narrow window');
   assert.ok(await run("(() => {const node=document.querySelector('.app-center-settings-menu'),r=node.getBoundingClientRect();return r.left>=12&&r.right<=innerWidth-12&&r.top>=12&&r.bottom<=innerHeight-12&&node.scrollWidth<=node.clientWidth})()"),'settings fits the window without clipping');
   fs.writeFileSync(path.join(output,'app-center-settings-narrow.png'),(await window.webContents.capturePage()).toPNG());
@@ -181,6 +182,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('renderView(null)');await pause(30);await run('mountCenter()');
   await until("!!document.querySelector('.desktop-menu-toggle')",'application menu mounted');
   window.setSize(1120,780);
+  await until('innerWidth > 1000', 'window resize is complete before opening the menu');
   await openManager();
   await until("!!document.querySelector('.app-center-drawer:modal')", 'open to add local app');
   assert.equal(await run("document.querySelectorAll('.app-center-display,.app-center-add-actions').length"), 0, 'reopening app center does not reopen settings');
@@ -211,7 +213,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!document.querySelector('[data-application-id=\"local:editor\"]')",'removing local app clears its entry');
   assert.equal(await run("JSON.parse(localStorage.getItem('cardbush_app_center_v1')).localApps.length"),0);
   assert.equal(await run('localOpened.length'),1,'removing an entry does not invoke the native app');
-  await run("centerClick('关闭探索')");
+  await run("centerClick('关闭应用中心')");
   await until("!document.querySelector('.app-center-drawer')", 'close before restoring an old shortcut');
   await run(`window.refreshedLocalIcons=[];
     window.cardbushDesktop.localApplications.refreshIcons=async paths=>{refreshedLocalIcons.push(paths);return {[localAppFixture.path]:localAppFixture.icon};};
@@ -221,10 +223,10 @@ module.exports = async ({ run, until, pause, window, root }) => {
   assert.deepEqual(await run('refreshedLocalIcons'), [[await run('localAppFixture.path')]]);
   assert.equal(await run("document.querySelector('.app-center-tile[data-application-id=\"local:editor\"] img').src"), await run('localAppFixture.icon'), 'refreshed logo reaches the manager');
   assert.equal(await run("JSON.parse(localStorage.getItem('cardbush_app_center_v1')).localApps[0].title"), '我的桌面快捷方式', 'refresh retains the user name');
-  await run("centerClick('关闭探索')");
+  await run("centerClick('关闭应用中心')");
   await until("!document.querySelector('.app-center-drawer')", 'close refreshed shortcut');
   await run('views.requestAppCenter()');
   await until("!!document.querySelector('.app-center-drawer:modal')", 'reopen refreshed shortcut');
   assert.equal(await run('refreshedLocalIcons.length'), 1, 'persisted native logos do not reload on every open');
-  console.log('Explore UI passed: desktop shortcut logo migration, local app selection/cancel/deduplication, native icons, launch/errors/removal, standalone manager, persistence, themes, focus, shortcuts, links and non-executing references.');
+  console.log('App Center UI passed: desktop shortcut logo migration, local app selection/cancel/deduplication, native icons, launch/errors/removal, standalone manager, persistence, themes, focus, shortcuts, links and non-executing references.');
 };

@@ -6,6 +6,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryRuntimeHost, SubagentTaskStore, ToolRegistry, ToolExecutionCoordinator, registerSubagentTool } from '../dist/index.js';
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
 function fixture(run, { autoAccept = true, control } = {}) {
   const registry = new ToolRegistry(); const tasks = new SubagentTaskStore(); let serial = 0;
@@ -32,6 +33,16 @@ function fixture(run, { autoAccept = true, control } = {}) {
   return { tasks, requests, results, target, request, invoke, dispatcher };
 }
 const completed = text => ({ status: 'completed', finalResponse: text, errorMessage: '', usage: { inputTokens: 3, outputTokens: 2 } });
+
+test('Assistant full access does not remove remote subagent model approval', async () => {
+  const f = fixture(async () => completed('done'));
+  const parent = { ...f.request, sessionId: PERSONAL_ASSISTANT_SESSION, permissionMode: 'all_free',
+    metadata: { ...f.request.metadata, subagentPermissionRouting: 'parent' } };
+  const result = await f.invoke('subagent', { prompt: 'Read the workspace', target_agent: f.target.id }, parent);
+  assert.equal(result.kind, 'returned');
+  assert.equal(f.requests[0].permissionMode, 'task_free');
+  assert.equal(f.requests[0].permissionRouting, 'parent');
+});
 
 test('remote dispatch waits for acceptance, not completion, and never observes an unsubmitted task', async () => {
   let accept, finish, returned = false, observations = 0;

@@ -1,4 +1,5 @@
 import { createDisplayDiff } from './workspaceDiff.js';
+import { defaultCommandShell } from '@cardbush/platform';
 import { withToolFailureFacts } from './toolFailureFacts.js';
 import { applyFilePatch, parseWorkspacePatch, type FilePatch } from './workspacePatch.js';
 import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity } from './workspaceAccessPolicy.js';
@@ -510,7 +511,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "terminal_exec",
-      description: terminalToolDescription() + ' On Windows use PowerShell 7 (pwsh); shell="powershell" selects pwsh, never Windows PowerShell 5. If pwsh is missing, ask the user to install PowerShell 7 on the execution host before retrying; do not substitute powershell.exe.' + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. All commands use the conversation\'s selected host.' : ''),
+      description: terminalToolDescription() + ' On Windows the native default is PowerShell 7 (pwsh) when available and cmd otherwise. An explicit PowerShell command requires pwsh; command syntax is never translated.' + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. All commands use the conversation\'s selected host.' : ''),
       inputSchema: objectSchema({
         command: { type: "string", minLength: 1 },
         cwd: {
@@ -531,7 +532,7 @@ export function registerWorkspaceTools(
         shell: {
           type: "string",
           enum: options.remote ? ['cmd', 'powershell', 'posix'] : availableTerminalShells(),
-          ...(options.remote ? {} : { default: defaultTerminalShell() }),
+          ...(options.remote ? {} : { default: defaultCommandShell() }),
           description: "Explicit command interpreter. powershell means PowerShell 7 (pwsh), not Windows PowerShell 5. When omitted, uses the selected environment's native default. Runtime never rewrites commands between shell syntaxes.",
         },
         notify_on_exit: { type: 'boolean', default: true, description: 'After yielding a running command, Runtime delivers one completion notification during this turn and waits before ending it. Do other independent work; do not repeatedly poll. Set false for persistent servers or interactive processes that should outlive the task. Notifications stop when the turn is stopped; the command is not restarted.' },
@@ -889,7 +890,7 @@ function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput 
   if (Number(yieldTime) > MAX_TERMINAL_YIELD_MS) {
     throw new Error(`yield_time_ms must not exceed ${MAX_TERMINAL_YIELD_MS}.`);
   }
-  const shell = object.shell === undefined ? defaultTerminalShell() : String(object.shell);
+  const shell = object.shell === undefined ? defaultCommandShell() : String(object.shell);
   if (!(remoteAvailable ? ['cmd', 'powershell', 'posix'] : availableTerminalShells()).includes(shell as TerminalShell)) {
     throw new Error(
       `shell must be one of: ${availableTerminalShells().join(", ")}.`,
@@ -1006,21 +1007,14 @@ function availableTerminalShells(): TerminalShell[] {
     : ["posix"];
 }
 
-function defaultTerminalShell(): TerminalShell {
-  return process.platform === "win32" ? "powershell" : "posix";
-}
-
 function terminalToolDescription(): string {
   const shells = availableTerminalShells().join(", ");
   return [
     "Run one command in cwd.",
     "Sandbox PATH, HOME and file visibility can differ from the host. Command-not-found, false Test-Path or a venv 'No Python' error does not prove an uninstalled or broken host toolchain. Inspect environmentDiagnostic and sandbox scope; request narrow additional_permissions for required interpreter/tool directories. A host lookup is metadata only and grants no execution access. Do not switch launchers or install replacements to evade isolation.",
     `Required yield_time_ms <= ${MAX_TERMINAL_YIELD_MS} bounds waiting, not execution; use 1000 for long tasks and continue independent work. completion_notification=true delivers completion automatically. Use await with completion_task_id when blocked and available; terminal_poll reads new output by terminalSessionId. Never restart a running command. Prefer search_file_content for content search.`,
-    process.platform === "win32"
-      ? "For external waits use PowerShell Start-Sleep; reuse an existing wait session."
-      : "For external waits use POSIX sleep; reuse an existing wait session.",
     "Sessions survive turns until terminal_stop, exit or a resource limit. Windows task trees share memory/CPU budgets; detached children end with the session. Reduce workload after resource-limit failures; do not bypass limits or repeat unchanged commands.",
     "Never launch user browsers through the terminal: process cleanup can close them. Use open_external_url to keep a page open, Browser Use for control, or return a link if unavailable.",
-    `Use ${shells} syntax matching shell (default ${defaultTerminalShell()}); Runtime never rewrites commands.`,
+    `Use ${shells} syntax matching shell (local default ${defaultCommandShell()}); Runtime never rewrites commands.`,
   ].join(" ");
 }

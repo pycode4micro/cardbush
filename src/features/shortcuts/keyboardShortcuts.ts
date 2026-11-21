@@ -12,7 +12,7 @@ const appContexts: ShortcutContext[] = ['composer', 'queue', 'transcript', 'edit
 
 export const shortcutDefinitions = [
   { id: 'openAppCenter', group: 'application', contexts: appContexts, defaultBinding: { key: 'a', ctrl: true, shift: true },
-    title: 'appCenter.appCenter', description: 'keyboardShortcuts.openExplore' },
+    title: 'appCenter.appCenter', description: 'keyboardShortcuts.openAppCenterDescription' },
   { id: 'openPlugins', group: 'application', contexts: appContexts, defaultBinding: { key: 'p', ctrl: true, alt: true },
     title: 'appCenterModel.plugins', description: 'keyboardShortcuts.openPluginManagement' },
   { id: 'openAutomations', group: 'application', contexts: appContexts, defaultBinding: { key: 't', ctrl: true, alt: true },

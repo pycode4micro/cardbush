@@ -41,7 +41,7 @@ module.exports = async ({ run, until, pause, window }) => {
   `);
   await until('window.inspectorResizeState?.visible && Math.abs((inspectorRect()?.width ?? 0) - 420) < 1', 'inspector fully expanded');
   await pause(320);
-  assert.equal(await run("document.querySelector('[data-inspector-toggle]')"), null, 'expanded sidebar has no duplicate conversation button');
+  assert.equal(await run("document.querySelector('[data-inspector-toggle]').getAttribute('aria-expanded')"), 'true', 'the title toggle reflects the expanded sidebar');
   assert.equal(await run("document.querySelectorAll('.right-inspector-toolbar button').length"), 1);
 
   // Measure the expensive content viewport, not a synthetic FPS target: text
@@ -98,7 +98,7 @@ module.exports = async ({ run, until, pause, window }) => {
   const reopen = async expected => {
     await run("document.querySelector('[data-inspector-toggle]').click()");
     await until(`inspectorResizeState.visible && Math.abs(inspectorRect().width - ${expected}) < 1`, 'reopen uses saved width');
-    assert.equal(await run("document.querySelector('[data-inspector-toggle]')"), null);
+    assert.equal(await run("document.querySelector('[data-inspector-toggle]').getAttribute('aria-expanded')"), 'true');
   };
 
   // Preview can shrink below the ordinary minimum; releasing above the snap point restores the minimum.

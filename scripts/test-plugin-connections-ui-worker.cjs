@@ -27,6 +27,11 @@ app.whenReady().then(async()=>{
   await until('document.body.innerText.includes("已连接 · 26 个工具")');
   await until('!document.querySelector(".plugin-add-button").disabled');
   if (process.env.CARDBUSH_PLUGIN_MARKETPLACE_ONLY !== '1') {
+  await read('fixtureOverview.snapshot.pluginConfigurationRevision=fixtureApps.revision;fixtureApps={...fixtureApps,revision:fixtureApps.revision+1};refreshFixture();void 0');
+  await until('Array.from(document.querySelectorAll(".plugin-added-card")).find(row=>row.textContent.includes("Chrome"))?.querySelector(".plugin-connection-status.pending")!==null && Array.from(document.querySelectorAll(".plugin-added-card")).find(row=>row.textContent.includes("Chrome"))?.querySelector(".plugin-connection-status.connected")===null');
+  await read('fixtureOverview.snapshot.pluginConfigurationRevision=fixtureApps.revision;void 0');
+  await until('document.body.innerText.includes("已连接 · 15 个工具")');
+  await read('delete fixtureOverview.snapshot.pluginConfigurationRevision;refreshFixture();void 0');
   await read('Array.from(document.querySelectorAll(".plugin-added-card")).find(button=>button.textContent.includes("Personal Tools")).click()');
   await until('!!document.querySelector(".plugin-detail-hero .plugin-uninstall-button")');
   win.setSize(460,900);await capture('plugin-uninstall-detail.png');

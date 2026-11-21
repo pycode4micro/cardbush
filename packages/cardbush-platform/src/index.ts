@@ -129,16 +129,28 @@ function nativeShell(context: PlatformContext): string {
 }
 export function terminalRuntimes(context = createPlatformContext()): TerminalRuntime[] {
   if (context.platform !== 'win32') return ['bash', ...(powershell(context) ? ['powershell' as const] : [])];
-  return ['powershell', ...(findExecutable('wsl.exe',context) ? ['wsl' as const] : []), ...(gitBashExecutable(context) ? ['git_bash' as const] : [])];
+  return ['auto', ...(defaultCommandShell(context) === 'powershell' ? ['powershell' as const] : []), 'cmd',
+    ...(findExecutable('wsl.exe',context) ? ['wsl' as const] : []), ...(gitBashExecutable(context) ? ['git_bash' as const] : [])];
+}
+export function defaultCommandShell(context = createPlatformContext()): CommandShell {
+  if (context.platform !== 'win32') return 'posix';
+  // An explicit host override still validates at launch, with its original error.
+  return environment(context, 'CARDBUSH_TERMINAL_SHELL')?.trim() || powershell(context) ? 'powershell' : 'cmd';
 }
 export function terminalInvocation(runtime?: TerminalRuntime, cwd?: string, command?: string, context = createPlatformContext()): {command: string; args: string[]} {
   const override = environment(context,'CARDBUSH_TERMINAL_SHELL')?.trim();
-  let selected = normalizeTerminalRuntime(runtime,context.platform);
-  if (selected === 'powershell' && !powershell(context) && !(override && selected === defaultTerminalRuntime(context.platform))) {
+  let selected = normalizeTerminalRuntime(runtime, context.platform);
+  if (selected === 'auto') selected = defaultCommandShell(context) === 'cmd' ? 'cmd' : 'powershell';
+  if (selected === 'cmd') {
+    if (command === undefined) return {command: cmdExecutable(context), args: ['/d']};
+    const invocation = commandInvocation('cmd', command, context);
+    return {command: invocation.executable, args: invocation.args};
+  }
+  if (selected === 'powershell' && !powershell(context) && !(context.platform === 'win32' && override)) {
     if (context.platform === 'win32' || command !== undefined) powerShellExecutable(context);
     selected = defaultTerminalRuntime(context.platform);
   }
-  if (override && selected === defaultTerminalRuntime(context.platform)) {
+  if (override && selected === (context.platform === 'win32' ? 'powershell' : 'bash')) {
     const executable = terminalOverrideExecutable(override, context);
     return {command:executable,args:command === undefined ? [] : selected === 'powershell'
       ? ['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command)] : ['-lc',command]};
@@ -194,10 +206,17 @@ export function commandInvocation(shell: CommandShell, command: string, context 
     // /u affects only cmd built-ins. Mixing their UTF-16 with a native tool's
     // byte output in the same pipe corrupts decoding (and even model JSON).
     // Keep cmd's normal code-page output; PowerShell explicitly uses UTF-8.
-    return {executable:environment(context,'ComSpec')?.trim() || 'cmd.exe',args:['/d','/a','/s','/c',command]};
+    return {executable:cmdExecutable(context),args:['/d','/a','/s','/c',command]};
   }
   if (context.platform === 'win32') throw new Error('POSIX shell is unavailable in the native Windows runtime.');
   return {executable:'/bin/sh',args:['-c',command]};
+}
+
+function cmdExecutable(context: PlatformContext): string {
+  const comSpec = environment(context, 'ComSpec')?.trim();
+  if (comSpec && path.win32.isAbsolute(comSpec) && path.win32.basename(comSpec).toLowerCase() === 'cmd.exe') return comSpec;
+  const systemRoot = environment(context, 'SystemRoot');
+  return systemRoot && path.win32.isAbsolute(systemRoot) ? path.win32.join(systemRoot, 'System32', 'cmd.exe') : 'cmd.exe';
 }
 
 /** Shell built-ins may use UTF-16; native child programs still emit their own encoding. */

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
-const { mcpConnectionState, pluginMcpConnections } = await loadChatTranscript({ source:
+const { mcpConnectionState, mcpConnectionUpdating, pluginMcpConnections } = await loadChatTranscript({ source:
   ['src/backend/mcpConnectionOverview.ts', 'src/features/plugins/pluginConnections.ts']
     .map(file => `export * from ${JSON.stringify(resolve(file))};`).join('\n') });
 const snapshot = { protocol: 'bush.mcp_snapshot_result.v1', snapshotId: 'cardbush-product-mcp',
@@ -46,6 +46,13 @@ const entries = pluginMcpConnections(plugins, overview, true);
 assert.equal(entries.map(item => item.id).join(','), 'cardbush_apps,browser_use,plugin_example_tools_echo,blender');
 assert.equal(entries.filter(item => item.plugin?.id === 'chrome').length, 1, 'application and MCP declarations for one runtime connection form one row');
 assert.equal(entries[1].toolCount, 15, 'the connection tool count is not duplicated');
+const observed = { ...snapshot, pluginConfigurationRevision: 4 };
+assert.equal(pluginMcpConnections(plugins, { ...overview, snapshot: observed }, true, 5)[1].state, 'pending');
+assert.equal(pluginMcpConnections(plugins, { ...overview, snapshot: observed }, true, 4)[1].state, 'connected');
+assert.equal(pluginMcpConnections([{ ...plugins[1], removalPending: true }], overview, true)[0].state, 'disabled');
+assert.equal(mcpConnectionUpdating(observed, 5), true);
+assert.equal(mcpConnectionUpdating(observed, 4), false);
+assert.equal(mcpConnectionUpdating({ ...observed, backgroundConnectionPending: true }, 4), true);
 assert.equal(entries[1].name, 'Chrome Devtools');
 assert.equal(pluginMcpConnections([{ ...plugins[1], components: [...plugins[1].components].reverse() }], overview, true)[0].name, 'Chrome Devtools', 'transport metadata takes precedence regardless of declaration order');
 assert.equal(plugins[1].components.filter(item => item.kind === 'app').length, 1, 'the original application declaration remains available');

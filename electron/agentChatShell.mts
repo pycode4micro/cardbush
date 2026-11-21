@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { win32 } from 'node:path';
 import { terminalInvocation } from '@cardbush/platform';
 import type { ChatTerminal } from './agentChatCli.mjs';
 
@@ -12,6 +13,10 @@ export function chatShellCommand(text: string): string | undefined {
 
 export function chatShellInvocation(command: string, cwd: string, context?: Parameters<typeof terminalInvocation>[3]) {
   const invocation = terminalInvocation(undefined, cwd, command || undefined, context);
+  if ((context?.platform ?? process.platform) === 'win32' && win32.basename(invocation.command).toLowerCase() === 'cmd.exe') {
+    // cmd /s /c expects a single quoted command, not CRT-escaped arguments.
+    return command ? { ...invocation, args: [...invocation.args.slice(0, -1), `"${command}"`], windowsVerbatimArguments: true } : invocation;
+  }
   // Reuse platform shell discovery/quoting, but allow native interactive input.
   return { ...invocation, args: invocation.args.filter(argument => argument !== '-NonInteractive') };
 }
@@ -20,7 +25,8 @@ export async function runChatShell(command: string, cwd: string, signal: AbortSi
   signal.throwIfAborted();
   const invocation = chatShellInvocation(command, cwd);
   return new Promise((resolve, reject) => {
-    const child = spawn(invocation.command, invocation.args, { cwd, stdio: 'inherit', windowsHide: true, signal });
+    const child = spawn(invocation.command, invocation.args, { cwd, stdio: 'inherit', windowsHide: true, signal,
+      windowsVerbatimArguments: 'windowsVerbatimArguments' in invocation && invocation.windowsVerbatimArguments });
     let failure: Error | undefined;
     child.once('error', error => { failure = error; });
     // Wait for terminal ownership to return, including failures and cancellation.

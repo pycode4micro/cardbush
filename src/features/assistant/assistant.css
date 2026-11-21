@@ -60,6 +60,26 @@
 .assistant-settings-dialog { box-sizing:border-box; width:min(480px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); margin:auto; padding:26px; overflow:auto; border:1px solid var(--border); border-radius:22px; background:var(--surface-strong); color:var(--text); box-shadow:0 24px 80px #0005; }
 .assistant-settings-dialog[open] { animation:assistant-settings-enter .2s ease-out; }
 .assistant-settings-dialog::backdrop { background:#0006; backdrop-filter:blur(3px); }
+.assistant-permission-dialog {
+  width: min(500px, calc(100vw - 28px));
+  max-width: none;
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text);
+  box-shadow: 0 18px 72px var(--shadow);
+}
+.assistant-permission-dialog::backdrop { background: #0005; backdrop-filter: blur(3px); }
+.assistant-permission-dialog .interaction-dialog.interaction-card.permission-request-card {
+  width: 100%;
+  max-height: min(70dvh, 520px);
+  padding: 16px;
+  gap: 12px;
+  border-radius: inherit;
+  box-shadow: none;
+}
 .assistant-settings-dialog form { display:grid; gap:20px; }
 .assistant-settings-dialog header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
 .assistant-settings-dialog h2 { margin:0; font-size:19px; font-weight:600; }

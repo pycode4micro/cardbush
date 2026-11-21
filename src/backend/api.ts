@@ -825,7 +825,7 @@ export async function fetchMcpServers(): Promise<McpServersResult> {
           args: [],
           toolCount: bundledApps?.tools.length ?? 0,
           lastError: result?.applicationError ?? bundledApps?.lastError,
-          status: mcpConnectionState('cardbush_apps', apps.serviceEnabled, result),
+          status: mcpConnectionState('cardbush_apps', apps.serviceEnabled, result, revision, apps.revision),
           raw: {
             source: 'cardbush_builtin_plugin',
             bundled: true,

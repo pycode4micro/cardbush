@@ -46,7 +46,7 @@ cardbush serve --stop
 
 后台直接运行 Node，不弹 PowerShell 窗口；默认使用当前用户的 `~/.cardbush/service` 和 `127.0.0.1:4780`。`--status` 给出连接令牌、模型配置和日志路径。已有实例通过 `--data-dir` 指定原目录，保留身份与历史。后台启动不自动注册系统服务或开机启动；外部服务管理器继续托管同一个前台 `cardbush serve` 命令。
 
-Windows 终端工具要求 PowerShell 7（pwsh），不回退 Windows PowerShell 5；已支持 AppContainer 沙箱及原生资源保护。Linux 已有 bubblewrap 沙箱，但需主机安装及允许用户命名空间，尚无额外 seccomp 过滤或 Windows Job Object 同等的内核资源限额。两端沙箱失败都不回退宿主执行。详细部署步骤、平台限制、模型配置、连接与更新方法统一维护在 [cardbush-docs 的部署说明](../../assets/skills/cardbush-docs/references/agent-deployment.md)。
+Windows 终端默认优先使用 PowerShell 7（pwsh），找不到时使用 cmd。两种终端均受 AppContainer 沙箱和原生资源限制保护。Linux 已有 bubblewrap 沙箱，但需主机安装及允许用户命名空间，尚无额外 seccomp 过滤或 Windows Job Object 同等的内核资源限额。两端沙箱失败都不回退宿主执行。详细部署步骤、平台限制、模型配置、连接与更新方法统一维护在 [cardbush-docs 的部署说明](../../assets/skills/cardbush-docs/references/agent-deployment.md)。
 
 部署由 Agent 或用户执行，核心不管理系统账户、计划任务或插件依赖。第三方插件按其自己的安装说明另行处理。既有 Computer Use 桌面桥和可选 Personal Agent 桌面保留原实现，不属于默认核心部署步骤。
 

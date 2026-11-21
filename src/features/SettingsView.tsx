@@ -324,6 +324,12 @@ export function SettingsView({
               uiText(language)('settingsView.chooseTheEmbeddedTerminalShellAgentTools')
             }
           >
+            {backendCapabilities.terminalRuntimes.includes('auto') && <SettingsRadio
+              name="terminal-runtime" value="auto" title={uiText(language)('settingsView.automaticTerminal')}
+              subtitle={uiText(language)('settingsView.automaticTerminalDescription')}
+              checked={settings.terminal.runtime === 'auto'}
+              onChange={() => updateSettings(current => ({ ...current, terminal: { ...current.terminal, runtime: 'auto' } }))}
+            />}
             {backendCapabilities.terminalRuntimes.includes('powershell') && <SettingsRadio
               name="terminal-runtime"
               value="powershell"
@@ -341,6 +347,12 @@ export function SettingsView({
                   },
                 }))
               }
+            />}
+            {backendCapabilities.terminalRuntimes.includes('cmd') && <SettingsRadio
+              name="terminal-runtime" value="cmd" title={uiText(language)('settingsView.commandPrompt')}
+              subtitle={uiText(language)('settingsView.commandPromptDescription')}
+              checked={settings.terminal.runtime === 'cmd'}
+              onChange={() => updateSettings(current => ({ ...current, terminal: { ...current.terminal, runtime: 'cmd' } }))}
             />}
             {backendCapabilities.terminalRuntimes.includes('wsl') && (
               <SettingsRadio

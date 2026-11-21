@@ -1,5 +1,5 @@
 import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, type SubagentInteractionCapabilities } from '@cardbush/bush-protocol';
-import type { SubagentPermissionPolicy } from './childTurn.js';
+import { resolveSubagentPermissions, type SubagentPermissionPolicy } from './childTurn.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import type { SubagentModelCatalog } from './cleanAgentSettings.js';
 import type { RegisteredAgentStore } from './registeredAgents.js';
@@ -122,7 +122,7 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
       }
 
       const [models, hooks] = await Promise.all([options.models?.list(context.signal) ?? [], options.loadHooks?.() ?? []]);
-      const route = request.metadata.subagentPermissionRouting ?? policy?.permissionRouting ?? configured?.permissionRouting ?? 'user';
+      const { permissionRouting, permissionCeiling } = resolveSubagentPermissions(request, configured);
       const modelPolicy = policy?.model && typeof policy.model === 'object' ? policy.model as Record<string, unknown> : {};
       // The settings schema already belongs to subagent's input definition.
       // Return only configured choices and omit unavailable optional defaults.
@@ -132,8 +132,8 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
           model: modelPolicy.mode === 'fixed' ? { mode: 'fixed', id: modelPolicy.modelId, model: modelPolicy.model } : { mode: 'inherit' }, parent_model: request.model,
           reasoning_effort: modelPolicy.mode === 'fixed' ? modelPolicy.reasoningEffort : request.reasoningEffort, max_output_tokens: modelPolicy.maxOutputTokens ?? request.maxOutputTokens,
           max_context_tokens: modelPolicy.maxContextTokens ?? request.metadata.contextWindowTokens, temperature: request.temperature, top_p: request.topP,
-          permission_routing: route,
-          permission_ceiling: request.permissionMode === 'all_free' || route === 'user' ? request.permissionMode : policy?.childPermissionMode ?? configured?.childPermissionMode ?? 'task_free',
+          permission_routing: permissionRouting,
+          permission_ceiling: permissionCeiling,
           disabled_tools: disabledTools, allowed_skills: request.metadata.allowedSkills, disabled_skills: request.metadata.disabledSkills ?? [],
         },
         hooks: hooks.filter(hook => hook.trusted === true).map(({ id, event, matcher }) => ({ id, event, matcher })),

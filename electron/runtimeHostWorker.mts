@@ -141,6 +141,7 @@ let effectiveMcp: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
 type McpNetwork = { default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> };
 let mcpNetwork: McpNetwork | undefined;
 let sourceMcpRevision = 0;
+let sourcePluginRevision: number | undefined;
 let residentMode = process.env.CARDBUSH_ASSISTANT_BACKGROUND === '1';
 const desktopAssistant = residentMode || (!process.env.CARDBUSH_SERVICE_ID && process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1');
 let initialMcpDirectory: Promise<unknown> | undefined;
@@ -164,7 +165,7 @@ function publishedMcpCatalog() {
   for (const id of pluginServerDirectory.keys()) if (!visible.has(id)) {
     current.servers.push({ id, health: 'idle', restartAttempts: 0, tools: [] });
   }
-  return { ...current, configurationRevision: sourceMcpRevision };
+  return { ...current, configurationRevision: sourceMcpRevision, pluginConfigurationRevision: sourcePluginRevision };
 }
 
 async function ensureMcpDirectory(signal?: AbortSignal) {
@@ -422,6 +423,7 @@ async function executeRuntimeCommand(
         if (suspendedPluginId) throw new Error('MCP configuration changed. Retry the plugin operation.');
         return publishedMcpCatalog();
       }
+      const appsConfig = readBundledAppsConfig(process.env.CARDBUSH_APPS_CONFIG_PATH?.trim());
       const directory = new Map<string, DeferredPluginServer>();
       const pluginServers = await loadEnabledProductPluginMcpServers(
         pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '', source.servers,
@@ -434,7 +436,7 @@ async function executeRuntimeCommand(
       );
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
-      }));
+      }, appsConfig));
       if (suspendedPluginId && combined.servers.some(server => server.pluginId === suspendedPluginId)) {
         throw new Error('Plugin is still enabled. Refresh before replacing or uninstalling it.');
       }
@@ -451,6 +453,7 @@ async function executeRuntimeCommand(
       effectiveMcp = { ...combined, revision };
       mcpNetwork = network;
       sourceMcpRevision = source.revision;
+      sourcePluginRevision = appsConfig.revision;
       const result = suspendedPluginId ? await mcp.apply(effectiveMcp) : mcp.submit(effectiveMcp);
       if (uninstallPluginId && result.applicationState === 'applied') {
         for (const server of removedServers) if (server.transport.kind !== 'stdio' && server.transport.auth !== 'openai') await mcpOAuth.logout(server);
@@ -473,7 +476,7 @@ async function executeRuntimeCommand(
       if (!effectiveMcp) return null;
       const ids = effectiveMcp.servers.filter(server => server.transport.kind !== 'stdio' && server.transport.auth === 'openai').map(server => server.id);
       effectiveMcp = { ...effectiveMcp, revision: effectiveMcp.revision + 1 };
-      return { ...mcp.submit(effectiveMcp, ids), configurationRevision: sourceMcpRevision };
+      return { ...mcp.submit(effectiveMcp, ids), configurationRevision: sourceMcpRevision, pluginConfigurationRevision: sourcePluginRevision };
     });
     mcpUpdate = operation.catch(() => undefined); return operation;
   }
@@ -498,7 +501,7 @@ async function executeRuntimeCommand(
       const current = effectiveMcp?.servers.find(item => item.id === id);
       if (!current || JSON.stringify(current.transport) !== JSON.stringify(server.transport)) throw new Error('This MCP connection changed during sign-in. Use the latest saved connection.');
       effectiveMcp = { ...effectiveMcp!, revision: effectiveMcp!.revision + 1 };
-      return { ...mcp.submit(effectiveMcp, [id]), configurationRevision: sourceMcpRevision };
+      return { ...mcp.submit(effectiveMcp, [id]), configurationRevision: sourceMcpRevision, pluginConfigurationRevision: sourcePluginRevision };
     });
     mcpUpdate = operation.catch(() => undefined);
     return operation;
@@ -506,7 +509,7 @@ async function executeRuntimeCommand(
   return host.sendCommand(command, signal);
 }
 
-function withBundledAppsServer(input: unknown): unknown {
+function withBundledAppsServer(input: unknown, appsConfig: ReturnType<typeof readBundledAppsConfig>): unknown {
   const managementUrl = process.env.CARDBUSH_MCP_MANAGEMENT_URL?.trim();
   const managementToken = process.env.CARDBUSH_MCP_MANAGEMENT_TOKEN?.trim();
   const appsEntry = process.env.CARDBUSH_APPS_MCP_ENTRY?.trim();
@@ -527,7 +530,6 @@ function withBundledAppsServer(input: unknown): unknown {
     throw new Error(`${String((overridden as { id?: unknown }).id)} is a bundled MCP server id and cannot be overridden.`);
   }
   const appsConfigPath = process.env.CARDBUSH_APPS_CONFIG_PATH?.trim();
-  const appsConfig = readBundledAppsConfig(appsConfigPath);
   if (desktopBridge) {
     if (!appsConfigPath) throw Error('Agent desktop bridge requires its host Apps configuration.');
     syncAgentDesktopBridgePolicy(process.env.CARDBUSH_AGENT_DESKTOP_BRIDGE!, appsConfigPath);

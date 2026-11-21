@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { uiText } from '../../i18n';
 import type { AppLanguage } from '../../types';
 import { ComponentEditor, componentError } from '../components/ComponentEditor';
@@ -9,8 +9,9 @@ import { HomeBoardView, type NativeHomeContent } from './HomeBoardView';
 import { HomeWebsiteDialog, type WebsiteBlock } from './HomeWebsiteDialog';
 import { blockKey, homeLayoutKey, moveHomeBlock, readHomeLayout, reconcileHomeLayout, type HomeBlock, type NativeSection } from './homeLayout';
 
-export function HomeBoard({language, native, visible, editing, onDone, onCreate}: {
+export function HomeBoard({language, native, featuredShelf, visible, editing, onDone, onCreate}: {
   language: AppLanguage; native: NativeHomeContent; visible: boolean; editing: boolean; onDone(): void; onCreate?(draft: string): void;
+  featuredShelf(cards: ReactNode, key: string): ReactNode;
 }) {
   const t = uiText(language), library = useComponents();
   const [saved, setSaved] = useState(readHomeLayout);
@@ -53,7 +54,7 @@ export function HomeBoard({language, native, visible, editing, onDone, onCreate}
       : [...current, {kind:'native', id}]);
   }
   return <>
-    <HomeBoardView language={language} native={native} blocks={blocks} library={library.items} visible={visible}
+    <HomeBoardView language={language} native={native} featuredShelf={featuredShelf} blocks={blocks} library={library.items} visible={visible}
       editing={editing} picker={picker} error={error} onDone={() => { setPicker(false); onDone(); }}
       togglePicker={() => setPicker(open => !open)} toggleHtml={toggleHtml} toggleNative={toggleNative}
       createInChat={onCreate && (() => onCreate(t('homeComponents.createDraft')))}

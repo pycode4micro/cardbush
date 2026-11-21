@@ -285,6 +285,16 @@
 .plugin-added-copy small, .plugin-added-grid > small, .plugin-mcp-loading { color: var(--text-soft); font-size: 12px; }
 .plugin-added-card > svg, .plugin-row-chevron { flex-shrink: 0; color: var(--text-soft); }
 .plugin-row-chevron { margin-left: auto; }
+.plugin-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.plugin-detail-hero .plugin-status-row { margin-top: 6px; }
 .plugin-connection-status {
   display: inline-flex;
   align-items: center;

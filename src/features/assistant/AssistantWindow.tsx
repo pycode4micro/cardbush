@@ -10,7 +10,8 @@ import { importedThemeStyleStorageKey, readInitialThemePreference, resolveTheme,
 import { themeClassNames } from '../appearance/themeRuntime';
 import { useAppearanceRuntime } from '../appearance/useAppearanceRuntime';
 import { readInitialAppSettings } from '../settings/appSettingsStore';
-import { conversationAgentModel, readInitialPermissionMode, readInitialReferencePlanMode, readInitialSubagentPermissionRouting } from '../settings/agentRequestPreferences';
+import { conversationAgentModel, readInitialReferencePlanMode } from '../settings/agentRequestPreferences';
+import { useAssistantPermissions } from './assistantPermissions';
 import { effectiveModels } from '../settings/modelPreferences';
 import { readInitialLanguageMode, readSystemLanguage, resolveAppLanguage, readDisabledSkillNames, readVisualInputEnabled } from '../settings/localPreferences';
 import { useTeamChoices } from '../team/teamWorkspaceStore';
@@ -58,6 +59,7 @@ export function AssistantWindow() {
   const usingVoice = useSyncExternalStore(voice.subscribe, () => voice.snapshot().mode !== 'idle');
   const team = useTeamChoices(capabilities.teamMode);
   const selectedModel = useAssistantModelSelection(models, defaultModel);
+  const { permissionMode, subagentPermissionRouting } = useAssistantPermissions();
 
   useCapabilityCatalogRefresh(useCallback(async current => {
     await Promise.all([
@@ -68,10 +70,10 @@ export function AssistantWindow() {
   const prepare = useCallback(async (): Promise<ChatStreamRequest> => {
     if (!selectedModel) throw Error(uiText(language)('useCardbushChat.configure_an_agent_model_first'));
     return { ...conversationAgentModel(models, selectedModel, PERSONAL_ASSISTANT_SESSION), uiLanguage: language,
-      disabledSkills: [...readDisabledSkillNames()], permissionMode: readInitialPermissionMode(), subagentPermissionRouting: readInitialSubagentPermissionRouting(), referencePlanMode: readInitialReferencePlanMode(),
+      disabledSkills: [...readDisabledSkillNames()], permissionMode, subagentPermissionRouting, referencePlanMode: readInitialReferencePlanMode(),
       interactiveRequestsEnabled: capabilities.interactiveRequests, standardImageInputEnabled: capabilities.standardImageInputTool && readVisualInputEnabled(),
       teamModeEnabled: capabilities.teamMode && Boolean(team.selectedId), teamId: team.selectedId, teamInstructions: team.instructions };
-  }, [models, selectedModel, language, capabilities, team.selectedId, team.instructions]);
+  }, [models, selectedModel, language, capabilities, team.selectedId, team.instructions, permissionMode, subagentPermissionRouting]);
   useLayoutEffect(() => {
     void window.cardbushDesktop?.retainAssistantWindow?.(retainDraft || usingVoice);
   }, [retainDraft, usingVoice]);

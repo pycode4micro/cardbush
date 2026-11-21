@@ -78,9 +78,11 @@ async function capture() {
   await click('.desktop-cover');
   await visible('.desktop-detail-heading');
   await shot('03-event');
-  await click('[data-nav-section=explore]');
-  await visible('.desktop-explore .desktop-row');
-  await shot('04-explore');
+  await read("window.dispatchEvent(new Event('cardbush-open-app-center'))");
+  await visible('.app-center-drawer:modal .app-center-tile');
+  await shot('04-apps');
+  await click('.app-center-content>header button:last-child.app-center-icon');
+  await until(() => read("!document.querySelector('.app-center-drawer')"), 'App Center closes');
   await require('../helpers/open-home-editor.cjs')(read,visible,click);
   await click('[data-home-action=add]');
   await visible('[data-home-add=web]');

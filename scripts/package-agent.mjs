@@ -92,7 +92,7 @@ export async function packageAgent(root, output, platform = process.platform) {
   await verifyAgentPackage(output, platform);
   await writeFile(join(output, 'DEPLOY.txt'),
     'CardBush Agent core and CLI (no desktop GUI). Install Node.js 24 and npm 10+.\n'
-    + 'Windows: install PowerShell 7 (pwsh); Windows PowerShell 5 is unsupported.\n'
+    + 'Windows: terminals prefer PowerShell 7 (pwsh) and use cmd when it is unavailable.\n'
     + 'Linux: command/file isolation requires administrator-installed bubblewrap and usable user namespaces.\n'
     + 'In this directory run: npm ci --omit=dev --ignore-scripts\n'
     + 'Service: cardbush serve --background; inspect with --status, stop with --stop.\n'

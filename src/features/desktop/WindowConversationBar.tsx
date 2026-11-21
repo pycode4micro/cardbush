@@ -26,6 +26,7 @@ function ConversationStatusButton({ language, conversation, viewingConversation,
   const assistantStatus = activity !== 'idle' && activity !== 'error' ? t(`assistantActivity.${activity}`) : undefined;
   let { id, title, status } = conversation;
   if (id === PERSONAL_ASSISTANT_SESSION) status = assistantStatus;
+  if (viewingConversation && !status) return null;
   if (!viewingConversation && !status) {
     if (!assistantStatus) return null;
     id = PERSONAL_ASSISTANT_SESSION;

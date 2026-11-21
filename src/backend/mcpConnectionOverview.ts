@@ -10,10 +10,13 @@ export type McpConnectionOverview = {
 
 /** Configuration and connection health are separate facts; an older runtime is not confirmation. */
 export function mcpConnectionState(
-  id: string, enabled: boolean, snapshot: McpSnapshotResult | null, revision?: number,
+  id: string, enabled: boolean, snapshot: McpSnapshotResult | null, revision?: number, pluginRevision?: number,
 ): McpConnectionState {
   if (!snapshot || snapshot.snapshotId !== 'cardbush-product-mcp') return enabled ? 'unknown' : 'disabled';
   if (revision !== undefined && snapshot.configurationRevision !== revision) return enabled ? 'unknown' : 'disabled';
+  if (pluginRevision !== undefined && snapshot.pluginConfigurationRevision !== undefined && snapshot.pluginConfigurationRevision !== pluginRevision) {
+    return enabled ? 'pending' : 'disabled';
+  }
   const server = snapshot.servers.find(item => item.id === id);
   if (server?.updateState === 'waiting_for_calls') return 'pending';
   if (enabled && server?.updateState === 'waiting_for_resources') return 'waiting_for_resources';
@@ -33,4 +36,11 @@ export function mcpConnectionState(
   if (server?.health === 'ready') return 'connected';
   if (server?.health === 'restarting') return 'restarting';
   return server?.health === 'unavailable' ? 'unavailable' : 'unknown';
+}
+
+export function mcpConnectionUpdating(snapshot: McpSnapshotResult | undefined | null, pluginRevision?: number) {
+  if (!snapshot) return false;
+  return snapshot.applicationState === 'pending' || snapshot.backgroundConnectionPending === true ||
+    pluginRevision !== undefined && snapshot.pluginConfigurationRevision !== undefined && pluginRevision !== snapshot.pluginConfigurationRevision ||
+    snapshot.servers.some(server => server.health === 'restarting' || server.updateState !== undefined && server.updateState !== 'failed');
 }

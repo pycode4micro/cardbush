@@ -3,8 +3,6 @@ import { Archive, FileText, Pause, Play, Square, Trash2 } from 'lucide-react';
 import type { FriendsWorkEvent } from '@cardbush/bush-protocol';
 import type { AppLanguage, AppSection, ConversationSummary, ProjectItem } from '../../types';
 import { uiText } from '../../i18n';
-import { useApplications } from '../appCenter/appCenterStore';
-import { useLaunchApplication } from '../appCenter/AppCenter';
 import { recentVisibleConversations, useConversationArchives } from '../sidebar/conversationArchives';
 import { useComponents } from '../components/componentStore';
 import { useAssistantProfile } from '../assistant/assistantProfile';
@@ -15,8 +13,7 @@ import { useSidebarContextMenu, type SidebarMenuEvent, type SidebarContextMenuIt
 import { showUiError } from '../../shared/showUiError';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import type { HomePage } from '../navigation/appPage';
-import type { PageOffsets } from '../navigation/usePageScroll';
-import { DesktopHomeView, ExploreView, type LibraryReadingState } from './DesktopCollectionView';
+import { DesktopHomeView, type LibraryReadingState } from './DesktopCollectionView';
 import './desktopCollection.css';
 
 type Props = {
@@ -24,21 +21,17 @@ type Props = {
   language: AppLanguage; page: HomePage; ready: boolean; unavailable: boolean; visible: boolean; conversationsLoading: boolean;
   projects: ProjectItem[]; conversations: ConversationSummary[]; onPage(page: HomePage): void;
   onProject(project: ProjectItem): void; onConversation(id: string): void; onAssistant(): void;
-  onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void; onExplore(): void;
+  onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void;
 };
 // Retain a visited Home and its live guests; only active Home pages poll events.
 // Activity would disconnect guest effects and reload their src on return.
 export function DesktopCollection({section, ...props}: Props & {section: AppSection}) {
   const [reading] = useState<LibraryReadingState>(() => ({offsets: new Map(), detailOffsets: new Map(), expanded: new Set()}));
-  const [query, setQuery] = useState('');
   const active = section === 'home' && props.visible;
   const home = useSoftPanelPresence(active, 0, {keepMounted:true});
   const needsEvents = props.page.kind === 'overview' || props.page.kind === 'events' || props.page.kind === 'event';
   const execution = useEventExecution(active && props.ready && needsEvents, props.page.kind === 'event' ? 1500 : 15000);
-  return <>
-    {home.mounted && <DesktopHome {...props} visible={active} execution={execution} reading={reading}/>}
-    {section === 'explore' && <DesktopExplore language={props.language} offsets={reading.offsets} query={query} onQuery={setQuery}/>}
-  </>;
+  return home.mounted ? <DesktopHome {...props} visible={active} execution={execution} reading={reading}/> : null;
 }
 function DesktopHome(props: Props & {execution: ReturnType<typeof useEventExecution>; reading: LibraryReadingState}) {
   const { snapshot, error, refresh, refreshAfterChange } = props.execution;
@@ -83,18 +76,4 @@ function DesktopHome(props: Props & {execution: ReturnType<typeof useEventExecut
     .sort((a, b) => Number(b.status === 'waiting_user') - Number(a.status === 'waiting_user') || b.updatedAt.localeCompare(a.updatedAt)), [snapshot?.events]);
   return <><DesktopHomeView {...props} assistantName={profile.name} projects={projects} conversations={conversations}
     components={components} events={events} snapshot={snapshot} error={error || props.unavailable} retry={refresh} onEventMenu={openEventMenu}/>{menu}</>;
-}
-function DesktopExplore({language, offsets, query, onQuery}: {language: AppLanguage; offsets: PageOffsets; query: string; onQuery(value: string): void}) {
-  const apps = useApplications(language);
-  const launch = useLaunchApplication();
-  const needle = query.trim().toLocaleLowerCase(language);
-  const matches = apps.filter(app => [app.title, app.description].some(value => value.toLocaleLowerCase(language).includes(needle)));
-  const t = uiText(language);
-  const groups = [
-    {label: t('desktop.workspaceApps'), entries: matches.filter(app => app.kind === 'builtin')},
-    {label: t('desktop.addedApps'), entries: matches.filter(app => app.kind !== 'builtin')},
-  ].filter(group => group.entries.length);
-  return <ExploreView language={language} offsets={offsets} groups={groups} query={query} onQuery={onQuery}
-    featured={needle ? [] : ['builtin:md-presentation','builtin:team'].flatMap(id => apps.find(app => app.id === id) ?? [])}
-    onLaunch={launch}/>;
 }

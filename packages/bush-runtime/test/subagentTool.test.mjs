@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { createProductAgentTurnRequest } from '@cardbush/bush-product-agent';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
 import {
   SubagentTaskStore,
@@ -224,7 +225,26 @@ test("freezes the configured parent/child permission route into each child Turn"
       expectedScope: "child_session",
       expectedRouting: "parent",
     },
+    {
+      sessionId: PERSONAL_ASSISTANT_SESSION,
+      policy: { permissionRouting: 'user', childPermissionMode: 'all_free' },
+      requestedRouting: 'parent',
+      parentMode: 'all_free',
+      expectedMode: 'task_free',
+      expectedScope: 'child_session',
+      expectedRouting: 'parent',
+    },
+    {
+      sessionId: PERSONAL_ASSISTANT_SESSION,
+      policy: { permissionRouting: 'parent', childPermissionMode: 'task_free' },
+      requestedRouting: 'user',
+      parentMode: 'all_free',
+      expectedMode: 'all_free',
+      expectedScope: PERSONAL_ASSISTANT_SESSION,
+      expectedRouting: 'user',
+    },
   ]) {
+    const sessionId = fixture.sessionId ?? 'parent_session';
     let childRequest;
     const registry = new ToolRegistry();
     const tasks = new SubagentTaskStore({ now: () => NOW });
@@ -250,7 +270,7 @@ test("freezes the configured parent/child permission route into each child Turn"
       },
       {
         requestId: "parent_request",
-        sessionId: "parent_session",
+        sessionId,
         turnId: "parent_turn",
         round: 1,
         ordinal: 0,
@@ -260,7 +280,7 @@ test("freezes the configured parent/child permission route into each child Turn"
         request: {
           protocol: "bush.model_request.v1",
           requestId: "parent_request",
-          sessionId: "parent_session",
+          sessionId,
           turnId: "parent_turn",
           model: "fixture-model",
           messages: [],
@@ -276,7 +296,7 @@ test("freezes the configured parent/child permission route into each child Turn"
     assert.equal(childRequest.permissionMode, fixture.expectedMode);
     assert.equal(childRequest.metadata.permissionRouting, fixture.expectedRouting);
     assert.equal(childRequest.metadata.permissionScopeSessionId, fixture.expectedScope);
-    assert.equal(childRequest.metadata.permissionEventSessionId, "parent_session");
+    assert.equal(childRequest.metadata.permissionEventSessionId, sessionId);
     assert.equal(childRequest.metadata.permissionEventTurnId, "parent_turn");
   }
 });

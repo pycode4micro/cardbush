@@ -183,16 +183,12 @@ async function run() {
   }
   if (process.argv.includes('--workspace-headings')) {
     win.setContentSize(1112, 760);
-    await click('[data-nav-section=explore]');
     const toggle = '.recent-panel-header [data-inspector-toggle]';
     for (const [key, selector] of [
       ['components', '.components-app > header h1'], ['plugins', '.plugin-catalog-heading h2'],
-      ['workflows', '.team-flow-header h1'], ['create', '.canvas-toolbar input'],
+      ['team', '.team-flow-header h1'], ['md-presentation', '.canvas-toolbar input'],
     ]) {
-      await visible('.desktop-explore .desktop-row');
-      const labels = ['zh', 'en'].map(locale => require('../src/i18n/locales/' + locale + '.json').messages['appCenterModel.' + key]);
-      await read(`[...document.querySelectorAll('.desktop-explore .desktop-row')]
-        .find(row => ${JSON.stringify(labels)}.includes(row.querySelector('strong').textContent)).click()`);
+      await read(`window.dispatchEvent(new CustomEvent('cardbush-open-application',{detail:{id:'builtin:${key}'}}));void 0`);
       await visible('.feature-panel ' + selector);
       assert.equal(await read("document.querySelector('.feature-panel .topbar') !== null"), false, key + ' has one content header');
       await showQuickPanel(); await visible(toggle);
@@ -204,7 +200,7 @@ async function run() {
       }
       await click('.recent-panel-close'); await click('[data-history-action=back]:enabled');
     }
-    await visible('.desktop-explore');
+    await visible('[data-desktop-page=overview]');
     console.log('Workspace headings and title bar inspector passed for all built-in feature pages.');
     app.quit(); return;
   }
@@ -218,8 +214,12 @@ async function run() {
   const checkWorkspaceNavigation = async () => {
     win.setContentSize(1400, 800);
     await visible('.desktop-shell[data-sidebar-layout=docked]');
-    await click('[data-nav-section=explore]');
-    await visible('.desktop-explore');
+    await click('[data-nav-section=home]');
+    await visible('[data-page=home]');
+    if (await read("!document.querySelector('[data-desktop-page=overview]')?.checkVisibility()")) {
+      await click('[data-nav-section=home]');
+    }
+    await visible('[data-desktop-page=overview]');
     const selected = () => read("Array.from(document.querySelectorAll('.sidebar-nav .nav-row[aria-current=page]'), b => b.dataset.navSection)");
     const tabs = '.sidebar-nav [data-nav-section=tabs]';
     await click(tabs);
@@ -234,16 +234,16 @@ async function run() {
     await visible(tabs + '[aria-current=page]');
     assert.equal(await tabId(), originalTab, 'Back restores the exact tab workspace');
     await click('[data-history-action=back]:enabled');
-    await visible('[data-page=explore] .desktop-explore');
+    await visible('[data-page=home] [data-desktop-page=overview]');
     await read("window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',altKey:true,bubbles:true}));void 0");
     await visible('[data-page=tabs]');
     await click(tabs);
-    await visible('.desktop-explore');
-    assert.deepEqual(await selected(), ['explore'], 'closing the workspace restores its source page');
+    await visible('[data-desktop-page=overview]');
+    assert.deepEqual(await selected(), ['home'], 'closing the workspace restores its source page');
     const toggleSplit = () => read("window.dispatchEvent(new KeyboardEvent('keydown',{key:'b',ctrlKey:true,altKey:true,bubbles:true}));void 0");
     await toggleSplit();
     await visible('.desktop-shell:not(.inspector-covered) .right-inspector-tab-page.active');
-    assert.deepEqual(await selected(), ['explore'], 'the right-side split keeps Explore selected');
+    assert.deepEqual(await selected(), ['home'], 'the right-side split keeps Home selected');
     await click(tabs);
     await visible('[data-page=tabs]');
     assert.deepEqual(await selected(), ['tabs']);
@@ -259,14 +259,14 @@ async function run() {
     await click('[data-history-action=back]:enabled');
     await visible('[data-page=tabs]');
     await click(tabs);
-    await visible('[data-page=explore] .right-inspector.soft-panel-visible');
+    await visible('[data-page=home] .right-inspector.soft-panel-visible');
     win.setContentSize(1400, 800);
     await wait(() => read('innerWidth === 1400'), 'wide workspace restored');
     await click(tabs);
     await click('[data-nav-section=home]');
     await visible('[data-desktop-page=overview]');
     assert.deepEqual(await selected(), ['home'], 'navigating away from full-page tabs selects Home');
-    const assistant = '.sidebar-footer [data-nav-section=assistant]';
+    const assistant = '.sidebar-nav [data-nav-section=assistant]';
     await click(assistant);
     await visible(assistant + '[aria-current=page]');
     await click(tabs);
@@ -283,11 +283,11 @@ async function run() {
     app.quit(); return;
   }
   assert.equal(await read("!!document.querySelector('.recent-chat-copy')"), false, 'idle Assistant has no activity title');
-  assert.ok(await read("!!document.querySelector('.sidebar-footer .assistant-sprite[data-state=idle]') && !document.querySelector('.window-frame .recent-chat-copy')"), 'the Assistant entry shows its identity and activity');
+  assert.ok(await read("!!document.querySelector('.sidebar-nav .assistant-sprite[data-state=idle]') && !document.querySelector('.window-frame .recent-chat-copy')"), 'the Assistant entry shows its identity and activity');
   assert.equal(await read("Boolean(document.querySelector('.recent-turn-scroll'))"), false);
   assert.equal(await read("!!document.querySelector('.window-frame .assistant-stage')"), false, 'the title bar leaves the character in the sidebar');
-  assert.ok(await read("document.querySelectorAll('[data-nav-section=assistant]').length===1 && !!document.querySelector('.sidebar-footer .sidebar-assistant + .profile-menu')"), 'the Assistant sits directly above the profile');
-  assert.deepEqual(await read("Array.from(document.querySelectorAll('.sidebar :is([data-nav-section=chat],[data-nav-section=projects],[data-nav-section=assistant])'), b => b.dataset.navSection)"), ['chat','projects','assistant']);
+  assert.ok(await read("document.querySelectorAll('[data-nav-section=assistant]').length===1 && !!document.querySelector('.sidebar-nav > .sidebar-assistant:first-child')"), 'the Assistant leads the left navigation');
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.sidebar :is([data-nav-section=chat],[data-nav-section=projects],[data-nav-section=assistant])'), b => b.dataset.navSection)"), ['assistant','chat','projects']);
   const bounds = () => read(`(() => {
     const quick=document.querySelector('.sidebar-nav .recent-bar-list'), home=document.querySelector('[data-nav-section=home]');
     const r=quick.getBoundingClientRect(), h=home.getBoundingClientRect();
@@ -422,65 +422,54 @@ async function run() {
   await visible('[data-message-id="' + targetId + '"]');
   await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'one click enters the chat');
   await visible('.main-stage .chat-panel[role=region]');
-  assert.equal(await read("!!document.querySelector('.main-stage .chat-panel[role=region] > .topbar')"), false, 'the transcript starts directly below the window toolbar');
-  const summary = '.recent-panel-header [data-work-summary-toggle]', inspector = '.recent-panel-header [data-inspector-toggle]';
-  const toggleTool = async selector => {
-    await showQuickPanel();
-    await click(selector);
-    await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'workspace tool replaces the drawer: ' + selector)
-      .catch(async error => { throw Error(error.message + ' ' + await read(`JSON.stringify({
-        focused:document.activeElement?.className, visible:document.querySelector('.recent-bar-list')?.getAttribute('aria-expanded'),
-        inspector:document.querySelector('[data-inspector-toggle]')?.getAttribute('aria-expanded'),
-        summary:document.querySelector('[data-work-summary-toggle]')?.getAttribute('aria-expanded')
-      })`), {cause:error}); });
-  };
-  const toolbarFits = async () => {
-    await showQuickPanel();
-    return read(`(() => {
-      const controls = document.querySelector('.recent-bar-actions');
+  const header = '.main-stage > .chat-panel:not([hidden]) > .topbar';
+  await visible(header);
+  const summary = header + ' [data-work-summary-toggle]', inspector = header + ' [data-inspector-toggle]';
+  const toggleTool = click;
+  const toolbarFits = () => read(`(() => {
+      const controls = document.querySelector(${JSON.stringify(header)});
+      const title = controls.querySelector('h1').getBoundingClientRect();
       const summary = controls.querySelector('[data-work-summary-toggle]').getBoundingClientRect();
       const inspector = controls.querySelector('[data-inspector-toggle]').getBoundingClientRect();
-      const close = controls.querySelector('.recent-panel-close').getBoundingClientRect();
-      const panel = controls.closest('aside').getBoundingClientRect();
-      return summary.width >= 24 && panel.left <= summary.left && close.right <= panel.right &&
-        Math.abs(summary.top - inspector.top) <= 1 && summary.right <= inspector.left && inspector.right <= close.left;
+      const panel = controls.getBoundingClientRect();
+      return summary.width >= 24 && title.right <= summary.left && inspector.right <= panel.right &&
+        Math.abs(summary.top - inspector.top) <= 1 && summary.right <= inspector.left;
     })()`);
-  };
-  assert.ok(await toolbarFits(), 'summary and inspector are grouped in Quick access');
+  assert.ok(await toolbarFits(), 'summary and inspector are grouped at the right of the conversation title');
   const summaryPoint = await read(`(() => {const r=document.querySelector('${summary}').getBoundingClientRect();
     return {x:Math.round(r.x+r.width/2), y:Math.round(r.y+r.height/2)};})()`);
   move(summaryPoint);
-  const preview = '.recent-summary-preview > .conversation-work-summary';
+  const preview = '.chat-body > .conversation-work-summary';
   await visible(preview+'.soft-panel-visible');
   await wait(()=>read(`!document.querySelector('${preview}')?.getAnimations().length`),'work summary reveal settles');
   const previewPoint = await read(`(() => {
-    const el=document.querySelector('${preview}'), r=el.getBoundingClientRect(), panel=el.closest('.recent-turn-drawer').getBoundingClientRect();
+    const el=document.querySelector('${preview}'), r=el.getBoundingClientRect(), panel=el.closest('.chat-body').getBoundingClientRect();
     const y=Math.round(r.top+25);
     return {x:Math.round(r.x+r.width/2), y, rect:r.toJSON(), panel:panel.toJSON(),
       hits:[r.left+4,r.right-4].map(x=>document.elementFromPoint(x,y)?.className), fits:r.left>=panel.left && r.right<=panel.right && r.bottom<=panel.bottom &&
       [r.left+4,r.right-4].every(x=>el.contains(document.elementFromPoint(x,y)))};
   })()`);
-  assert.ok(previewPoint.fits, 'both sides of the summary are visible and reachable inside the drawer: '+JSON.stringify(previewPoint));
+  assert.ok(previewPoint.fits, 'the summary is visible and reachable inside the conversation: '+JSON.stringify(previewPoint));
   move({x:previewPoint.x,y:previewPoint.y}); await pause(440);
   await visible(preview);
   await toggleTool(summary); await visible('.conversation-work-summary');
   await toggleTool(summary); await wait(() => read("!document.querySelector('.conversation-work-summary')"), 'summary closes from the same group');
   await toggleTool(inspector); await visible('.right-inspector');
-  await wait(() => read("document.querySelector('.recent-panel-header [data-inspector-toggle]')?.getAttribute('aria-expanded') === 'true'"), 'Quick access controls the real inspector');
+  await visible(inspector + '[aria-expanded=true]');
   await toggleTool(inspector);
   win.maximize();
   await wait(() => win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window maximized');
   await wait(toolbarFits, 'title and action spacing and stacked rail shortcuts when maximized');
-  await click('.recent-panel-close');
   win.unmaximize();
   await wait(() => !win.isMaximized() && read('innerWidth === ' + win.getContentSize()[0]), 'native window restored');
   await wait(toolbarFits, 'matching title and icon spacing after restoring the window');
   for (const width of [1180, 900, 640, 480]) {
     win.setContentSize(width, 720);
-    await wait(() => read('innerWidth === ' + width), 'chat window resized to ' + width);
+    // Windows can round the minimum content width to a neighboring CSS pixel at non-integer DPI scales.
+    await wait(() => read(`Math.abs(innerWidth - ${width}) <= 2`), 'chat window resized to ' + width)
+      .catch(async error => { throw Error(`${error.message} (actual ${await read('innerWidth')}, native ${win.getContentSize()[0]})`, { cause: error }); });
     await wait(toolbarFits, 'chat controls fit at ' + width + ' pixels');
   }
-  await click('.recent-panel-close');
   const checkChatMargins = async (label, selector) => {
     const chat = '.main-stage > .chat-panel[role=region]';
     await visible(chat + ' .composer-surface');
@@ -513,15 +502,14 @@ async function run() {
   win.setContentSize(1400, 800);
   await click('[data-nav-section=assistant]');
   await visible('.assistant-view:not([hidden]) [data-message-id=assistant-question]');
-  assert.equal(await read("document.querySelector('.sidebar-footer [data-nav-section=assistant]').getAttribute('aria-current')"), 'page');
-  const titleText = () => read("document.querySelector('.recent-chat-copy strong')?.textContent ?? null");
+  assert.equal(await read("document.querySelector('.sidebar-nav [data-nav-section=assistant]').getAttribute('aria-current')"), 'page');
+  const titleText = () => read("document.querySelector('.main-stage > .chat-panel:not([hidden]) > .topbar h1')?.textContent ?? null");
   const titleStatus = () => read("document.querySelector('.recent-chat-copy small')?.textContent ?? null");
   const sidebarName = () => read("document.querySelector('.sidebar-assistant-name').textContent");
   assert.equal(await titleText(), await sidebarName());
   assert.equal(await titleStatus(), null, 'an idle Assistant only shows its name');
-  assert.equal(await read("!!document.querySelector('.assistant-view > .topbar')"), false, 'Assistant has a single desktop title bar');
-  await showQuickPanel(); await visible(summary);
-  assert.deepEqual(await read("Array.from(document.querySelectorAll('.window-chat-actions button'), button => [button.hasAttribute('data-work-summary-toggle'),button.hasAttribute('data-inspector-toggle')])"),
+  await visible(summary);
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.assistant-view > .topbar button'), button => [button.hasAttribute('data-work-summary-toggle'),button.hasAttribute('data-inspector-toggle')])"),
     [[true,false],[false,true]], 'Assistant toolbar offers work summary and inspector only');
   await toggleTool(summary); await visible('.assistant-view .conversation-work-summary');
   await toggleTool(summary);
@@ -535,18 +523,18 @@ async function run() {
   await wait(async () => await sidebarName() === customName, 'rename updates the Assistant identity immediately and preserves the full name');
   assert.equal(await titleText(), customName);
   win.setContentSize(480, 720);
-  await wait(toolbarFits, 'Assistant actions fit in the narrow Quick panel');
-  await click('.recent-panel-close'); await visible('.assistant-view:not([hidden])');
+  await wait(toolbarFits, 'Assistant title actions fit in a narrow window');
+  await visible('.assistant-view:not([hidden])');
   await showQuickPanel(); await click('[data-recent-tab=sessions]');
   await click('[data-recent-session=personal-assistant]');
   await visible('.assistant-view [data-message-id=assistant-answer]');
   assert.equal(await read("!!document.querySelector('.recent-turn-drawer:popover-open,[data-turn-message]')"), false);
   win.setContentSize(1400, 800);
-  await click('[data-nav-section=explore]');
+  await click('[data-nav-section=home]');
   assert.equal(await read("!!document.querySelector('.window-chat-actions')"), false, 'chat-only controls leave with the conversation');
-  assert.equal(await titleText(), null, 'exploring after an idle Assistant does not advertise active work');
+  assert.equal(await titleText(), null, 'the conversation title leaves with the idle Assistant');
   await showQuickPanel();
-  await visible('[data-desktop-page=explore]');
+  await visible('[data-desktop-page=overview]');
   await visible('[data-recent-tab=sessions][aria-selected=true]');
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
@@ -566,6 +554,11 @@ async function run() {
   await click('[data-recent-session=local-empty]');
   await wait(() => read("document.querySelector('.main-stage .chat-panel[role=region]')?.getAttribute('aria-label')==='Empty conversation' && !document.querySelector('.recent-turn-drawer:popover-open')"), 'empty chat opens directly');
   assert.equal(await titleText(), 'Empty conversation');
+  if (process.argv.includes('--conversation-title')) {
+    console.log('Conversation titles passed: Assistant naming, grouped summary and inspector, keyboard dismissal, narrow windows, and recent chat navigation.');
+    app.quit();
+    return;
+  }
   await click('[data-nav-section=home]'); await showQuickPanel();
   await click('[data-recent-tab=sessions]');
   const earlierRow = '[data-recent-session=local-earlier]';
@@ -593,7 +586,7 @@ async function run() {
   assert.equal(await titleText(), 'Earlier conversation', 'the title follows the selected chat');
   assert.equal(await titleStatus(), null);
   assert.equal(await read("document.querySelector('.sidebar-assistant-name').textContent"), customName);
-  await click('[data-nav-section=explore]');
+  await click('[data-nav-section=home]');
   assert.equal(await titleText(), null);
   await enterChatFromList('local-earlier');
   await visible('[data-page=chat] [data-message-id=other-user]');
@@ -622,11 +615,10 @@ async function run() {
   win.setContentSize(1084, 760);
   await pause(300);
   await read("window.pageEntrances=[];document.addEventListener('animationstart',event=>{if(event.animationName==='workspace-page-entrance') pageEntrances.push(event.target.className)});void 0");
-  await click('[data-nav-section=explore]');
-  await visible('[data-desktop-page=explore]');
-  await wait(()=>read("pageEntrances.includes('main-stage')"),'Explore enters with the Windows page transition');
-  assert.ok(await read("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"),'Explore has a title followed directly by search');
-  assert.equal(await read("!!document.querySelector('.desktop-explore button[aria-haspopup=dialog]')"),false,'no app management button on Explore');
+  await click('[data-nav-section=assistant]');
+  await visible('.assistant-view:not([hidden]) > .topbar');
+  await wait(()=>read("pageEntrances.includes('main-stage')"),'Assistant enters with the Windows page transition');
+  assert.equal(await read("!!document.querySelector('[data-nav-section=explore]')"), false);
   assert.equal(await read("!!document.querySelector('.desktop-menu-toggle')"),false);
   assert.ok(await bounds(), 'Quick stays aligned below Home in the compact sidebar');
   await click('.window-sidebar-toggle'); await visible('.desktop-menu-toggle');
@@ -634,13 +626,12 @@ async function run() {
   assert.ok(await read("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.sidebar').getBoundingClientRect().right+1"),'menu remains within the expanded sidebar');
   await click('.desktop-menu-toggle');
   await click('[data-menu-item=file]');
-  await click('[data-menu-item=applications]');
-  await click('[data-menu-item=manageApps]');
+  await click('[data-menu-item=openAppCenter]');
   await visible('.app-center-drawer:modal');
   await click('.app-center-content>header button:last-child.app-center-icon');
   await wait(()=>read("!document.querySelector('.app-center-drawer')"),'manager dismissed');
   await click('.window-sidebar-toggle'); await pause(300);
-  fs.writeFileSync(path.join(project,'tmp','explore-titlebar-alignment.png'),(await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(path.join(project,'tmp','assistant-titlebar-alignment.png'),(await win.webContents.capturePage()).toPNG());
   await click('.sidebar-footer .profile-trigger');
   await click('.profile-popover:popover-open [data-profile-action=settings]');
   await visible('.settings-directory');
@@ -661,13 +652,12 @@ async function run() {
   } finally { win.webContents.debugger.detach(); }
   await read("localStorage.setItem('cardbush_archived_conversation_ids',JSON.stringify(['local-navigation-test','local-earlier','local-empty']));window.dispatchEvent(new Event('cardbush-conversation-archives-changed'));void 0");
   await click('[data-nav-section=chat]');
-  await click(quick); await visible(drawer); await visible(inspector);
-  assert.equal(await titleText(), null, 'empty history has no task title and the inspector remains available');
+  await visible(inspector);
+  assert.equal(await titleStatus(), null, 'empty history has no running status and the inspector remains available');
   await toggleTool(inspector); await visible('.right-inspector'); await toggleTool(inspector);
   win.setContentSize(1180, 760);
   await visible('.new-chat-input .composer-surface');
-  await showQuickPanel(); assert.equal(await titleText(), null, 'an unsent draft does not advertise running work');
-  await click('.recent-panel-close');
+  assert.equal(await titleStatus(), null, 'an unsent draft does not advertise running work');
   await visible('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed');
   await checkChatMargins('Welcome input centers beside the rail', '.new-chat-input .composer-surface');
   await click('.window-sidebar-toggle');
@@ -678,7 +668,7 @@ async function run() {
   assert.equal(await sidebarName(), customName, 'Assistant keeps its saved name after reload even with no ordinary chats');
   await showQuickPanel(); await click('[data-recent-tab=sessions]'); await click('[data-recent-session=personal-assistant]'); await visible('.assistant-view [data-message-id=assistant-answer]');
   win.setContentSize(480, 700);
-  await wait(() => read('innerWidth === 480'), 'narrow workspace');
+  await wait(() => read('Math.abs(innerWidth - 480) <= 2'), 'narrow workspace');
   await click('.window-sidebar-toggle');
   await visible('.desktop-shell[data-sidebar-layout=drawer]:not(.sidebar-is-collapsed)');
   await wait(() => read("['chat','projects'].every(section => { const b = document.querySelector('.sidebar [data-nav-section='+section+']'); const r = b.getBoundingClientRect(); return b.lastElementChild.checkVisibility() && r.width>=24 && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })"), 'both expanded rail rows show labels and accept clicks');
@@ -700,7 +690,7 @@ async function run() {
   await click('.sidebar [data-nav-section=tabs]');
   await visible('[data-page=tabs] .right-inspector-tab-page.active');
   assert.equal(await read("document.querySelector('.right-inspector-tab-page.active').getAttribute('data-inspector-page-id')"), tab);
-  console.log('Workspace navigation passed: compact rail and caption alignment, Explore without a management button, section/category entrance and reduced motion.');
+  console.log('Workspace navigation passed: compact rail, local conversation title actions, section/category entrance and reduced motion.');
   console.log('Recent conversation navigation passed: hover categories, direct chat entry, resume, Escape, reload, empty state, archive and narrow layout.');
   await checkWorkspaceNavigation();
   app.quit();

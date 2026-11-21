@@ -2,7 +2,8 @@ import { conversationAgentModel, modelConfigFor, selectedModelName, readInitialR
 export { modelConfigFor, selectedModelName } from '../features/settings/agentRequestPreferences';
 import { isDefaultConversationTitle } from '@cardbush/platform/i18n';
 import { uiText } from '../i18n';
-import { readUserPrompt, promptContextMetadata, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION, readUserPrompt, promptContextMetadata, type UserPromptInput, type PromptContext } from '@cardbush/bush-protocol';
+import { readAssistantPermissions } from '../features/assistant/assistantPermissions';
 import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision, streamAttachmentsFromChatAttachments } from '../shared/chatAttachments';
 import { createRealtimeAgentExecutor } from '../backend/realtimeAgent';
 import { journalMessages } from '../backend/conversationJournal';
@@ -2930,8 +2931,8 @@ export function useCardbushChat(
       ...conversationAgentModel(managedModelConfigs, voiceModel, conversation.id),
       projectDir: conversationProjectRequestDir(conversation), workspaceDir: conversationWorkspaceRoot(conversation),
       teamInstructions: requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined, uiLanguage: languageRef.current,
-      disabledSkills: [...(requestContext.disabledSkillNames ?? [])], referencePlanMode, permissionMode,
-      subagentPermissionRouting,
+      disabledSkills: [...(requestContext.disabledSkillNames ?? [])], referencePlanMode,
+      ...(fixedSessionId === PERSONAL_ASSISTANT_SESSION ? readAssistantPermissions() : { permissionMode, subagentPermissionRouting }),
       interactiveRequestsEnabled: requestContext.interactiveRequestsAvailable === true,
       standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
       teamModeEnabled: requestContext.teamModeEnabled === true, teamId: requestContext.selectedTeamId,
@@ -4406,7 +4407,7 @@ export function useCardbushChat(
     sendMessage,
     sendVoiceMessage,
     voiceAgent,
-    prepareAssistantRequest: () => prepareVoiceRequest('personal-assistant'),
+    prepareAssistantRequest: () => prepareVoiceRequest(PERSONAL_ASSISTANT_SESSION),
     retryFailedUserMessage,
     regenerateAssistantMessage,
     editUserMessageAndRegenerate,

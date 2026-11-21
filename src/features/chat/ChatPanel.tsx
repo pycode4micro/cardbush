@@ -233,7 +233,6 @@ export function ChatPanel({
   draft,
   onDraftChange,
   headerActions,
-  headerActionsTarget,
   composerAccessory,
   welcomeWorkspaceControl,
   transcriptFooter,
@@ -352,7 +351,6 @@ export function ChatPanel({
   draft: string;
   onDraftChange: (value: string) => void;
   headerActions?: ReactNode;
-  headerActionsTarget?: HTMLElement | null;
   composerAccessory?: ReactNode;
   welcomeWorkspaceControl?: ReactNode;
   transcriptFooter?: ReactNode;
@@ -2257,7 +2255,7 @@ export function ChatPanel({
     ],
   );
 
-  const { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence, previewHost,
+  const { showWorkSummary, workSummaryDocked, workSummaryAnchorRight, workSummaryPresence,
     toggleWorkSummary, workSummaryHoverProps, workSummaryPanelProps, keepWorkSummaryOpenUntil } =
     useConversationWorkSummary(chatBodyRef, activeConversationId, inspectorOpen);
   const openChangeReview = useCallback((filePath?: string) => {
@@ -2399,8 +2397,8 @@ export function ChatPanel({
     </QuickInputStatus>}
     <div
       hidden={progressive}
-      role={headerActionsTarget !== undefined ? 'region' : undefined}
-      aria-label={headerActionsTarget !== undefined ? conversationDisplayTitle(title) : undefined}
+      role={!embedded ? 'region' : undefined}
+      aria-label={!embedded ? conversationDisplayTitle(title) : undefined}
       className={`chat-panel${!embedded ? ' composer-layout-managed' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${workSummaryPresence.visible ? ' work-summary-visible' : ''}${workSummaryDocked ? ' work-summary-docked' : ' work-summary-overlay'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
     >
       {!embedded && <TopBar
@@ -2411,7 +2409,6 @@ export function ChatPanel({
         workSummaryHoverProps={workSummaryHoverProps}
         inspectorOpen={inspectorOpen}
         workspaceControl={headerActions}
-        actionsTarget={headerActionsTarget}
         onToggleWorkSummary={workSummaryAvailable && renderMessages.length > 0
           ? toggleWorkSummary
           : undefined}
@@ -2523,7 +2520,6 @@ export function ChatPanel({
             running={sending}
             activeTurnId={activeTurnId}
             hoverProps={workSummaryPanelProps}
-            previewHost={previewHost}
             keepOpenUntil={keepWorkSummaryOpenUntil}
           />
         )}

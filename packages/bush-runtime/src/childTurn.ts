@@ -2,6 +2,7 @@ import {
   BUSH_SESSION_TURN_REQUEST_PROTOCOL,
   OUTCOME_VERIFICATION_INSTRUCTIONS,
   OUTCOME_VERIFICATION_MESSAGE,
+  PERSONAL_ASSISTANT_SESSION,
   REPORT_DELIVERY_INSTRUCTIONS,
   SOURCE_BINDING_INSTRUCTIONS,
   individuationPreferenceText,
@@ -10,6 +11,7 @@ import {
   runtimeProviderBindingRefSchema,
   reasoningEffortSchema,
   type ModelMessage,
+  type ModelRequest,
   type RuntimeEvent,
   type RuntimePermissionMode,
   type RuntimeSessionTurnRequest,
@@ -54,6 +56,23 @@ export const DEFAULT_SUBAGENT_PERMISSION_POLICY: SubagentPermissionPolicy = {
   model: { mode: "inherit" },
   disabledTools: [...DEFAULT_SUBAGENT_DISABLED_TOOLS],
 };
+
+export function resolveSubagentPermissions(parent: ModelRequest, configured = DEFAULT_SUBAGENT_PERMISSION_POLICY,
+  roleRouting?: SubagentPermissionPolicy['permissionRouting']) {
+  const requested = parent.metadata.subagentPermissionRouting;
+  const explicit = requested === 'user' || requested === 'parent' ? requested : undefined;
+  const policy = childAgentPolicy(parent.metadata.childAgentPolicy);
+  const defaultRouting = explicit ?? policy.permissionRouting ?? configured.permissionRouting;
+  const permissionRouting = explicit ?? roleRouting ?? defaultRouting;
+  // Assistant model approval keeps the child's workspace boundary even when
+  // the parent is authorized for full access.
+  const permissionCeiling = parent.sessionId === PERSONAL_ASSISTANT_SESSION && permissionRouting === 'parent'
+    ? 'task_free'
+    : parent.permissionMode === 'all_free' || defaultRouting === 'user'
+      ? parent.permissionMode ?? 'task_free'
+      : policy.childPermissionMode ?? configured.childPermissionMode;
+  return { permissionRouting, permissionCeiling };
+}
 
 export function inheritedChildMessages(
   context: ToolHandlerContext<unknown>,
@@ -120,18 +139,7 @@ export function buildChildTurnRequest(input: {
   // plugin or workspace. Explicit user-disabled tools still take precedence.
   const submissionTool = input.metadata.teamRunId && !disabledTools.has('team_submit') ? childVisible.get('team_submit') : undefined;
   if (submissionTool && !childTools.some(tool => tool.name === submissionTool.name)) childTools.push(structuredClone(submissionTool));
-  const requestedPermissionRouting = parentRequest.metadata.subagentPermissionRouting;
-  const defaultPermissionRouting = requestedPermissionRouting === "user" || requestedPermissionRouting === "parent"
-    ? requestedPermissionRouting
-    : turnPolicy.permissionRouting ?? configuredPolicy.permissionRouting;
-  const permissionCeiling = parentRequest.permissionMode === "all_free"
-    ? "all_free"
-    : defaultPermissionRouting === "user"
-      ? parentRequest.permissionMode
-      : turnPolicy.childPermissionMode ?? configuredPolicy.childPermissionMode;
-  // The user's per-turn choice owns approval routing, including registered roles.
-  const permissionRouting = requestedPermissionRouting === 'user' || requestedPermissionRouting === 'parent'
-    ? requestedPermissionRouting : settings.permission_routing ?? defaultPermissionRouting;
+  const { permissionRouting, permissionCeiling } = resolveSubagentPermissions(parentRequest, configuredPolicy, settings.permission_routing);
   const permissionMode = settings.permission_mode ?? permissionCeiling;
   const levels = ['task_free', 'user_free', 'all_free'];
   if (levels.indexOf(permissionMode) > levels.indexOf(permissionCeiling)) throw new Error('Clean permission_mode exceeds the configured child permission ceiling.');

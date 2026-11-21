@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
-import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes, localPath, decodeCommandOutput } from '../dist/index.js';
+import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, defaultCommandShell, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes, localPath, decodeCommandOutput } from '../dist/index.js';
 
 test('Windows output decoding preserves Unicode cmd built-ins and native UTF-8/legacy output', () => {
   for (const text of ['中文目录.txt\r\n', '中文\r\n', 'plain\r\n']) {
@@ -52,7 +52,25 @@ test('Windows PATH and Git installations tolerate spaces, Unicode, and case vari
   assert.equal(findExecutable('pwsh',windows),'C:\\工具 空间\\pwsh.EXE');
   assert.equal(terminalInvocation('powershell',undefined,undefined,windows).command,'C:\\工具 空间\\pwsh.exe');
   assert.equal(terminalInvocation('git_bash',undefined,undefined,windows).command,'D:\\Git Tools\\bin\\bash.exe');
-  assert.equal(defaultTerminalRuntime('win32'),'powershell');
+  assert.equal(defaultTerminalRuntime('win32'),'auto');
+});
+
+test('Windows automatic terminal prefers pwsh and uses native cmd syntax on a first installation without pwsh', () => {
+  const cmd = 'C:\\Windows\\System32\\cmd.exe';
+  const pwsh = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+  const env = { SystemRoot: 'C:\\Windows', ProgramFiles: 'C:\\Program Files' };
+  const firstInstall = context('win32', [cmd], env);
+  assert.equal(defaultCommandShell(firstInstall), 'cmd');
+  assert.deepEqual(terminalRuntimes(firstInstall), ['auto', 'cmd']);
+  assert.deepEqual(terminalInvocation(undefined, undefined, undefined, firstInstall), { command: cmd, args: ['/d'] });
+  const command = 'type "file name.txt"';
+  assert.deepEqual(terminalInvocation('auto', undefined, command, firstInstall), { command: cmd, args: ['/d', '/a', '/s', '/c', command] });
+  assert.throws(() => terminalInvocation('powershell', undefined, command, firstInstall), { code: 'powershell_not_found' });
+  const both = context('win32', [cmd, pwsh], env);
+  assert.equal(defaultCommandShell(both), 'powershell');
+  assert.deepEqual(terminalRuntimes(both), ['auto', 'powershell', 'cmd']);
+  assert.equal(terminalInvocation('auto', undefined, undefined, both).command, pwsh);
+  assert.equal(terminalInvocation('cmd', undefined, undefined, both).command, cmd);
 });
 
 test('Windows requires pwsh and never substitutes Windows PowerShell 5', () => {

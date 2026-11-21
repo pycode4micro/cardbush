@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatStreamRequest } from '../../../backend/api';
 import { eventBackend } from './eventBackend';
 import { useAssistantProfile } from '../assistantProfile';
+import { useAssistantPermissions } from '../assistantPermissions';
 import { useComponents } from '../../components/componentStore';
 
 /** Mounted with the App, so closing the Assistant surface never owns its scheduler. */
@@ -9,6 +10,7 @@ export function AssistantEventConnection({ prepare, language, configuration, ena
   prepare(): Promise<ChatStreamRequest>; language: string; configuration: unknown; enabled: boolean; floating?: boolean;
 }) {
   const profile = useAssistantProfile(), prepareRef = useRef(prepare), profileRef = useRef(profile);
+  const { permissionMode, subagentPermissionRouting } = useAssistantPermissions();
   prepareRef.current = prepare; profileRef.current = profile;
   const componentCatalog = JSON.stringify(useComponents(enabled && !floating).items.slice(0, 40).map(({id, title}) => ({id, title})));
   const [catalogRevision, setCatalogRevision] = useState(0);
@@ -31,6 +33,6 @@ export function AssistantEventConnection({ prepare, language, configuration, ena
     };
     void connect();
     return () => { disposed = true; controller.abort(); clearTimeout(timer); };
-  }, [profile, language, configuration, enabled, componentCatalog, floating, catalogRevision]);
+  }, [profile, language, configuration, enabled, componentCatalog, floating, catalogRevision, permissionMode, subagentPermissionRouting]);
   return null;
 }

@@ -1,7 +1,7 @@
 import { uiText } from '../../i18n';
 import { fetchCardbushAppsConfiguration } from '../../backend/api';
 import { dialogEventHandler } from '../../shared/dialogEvents';
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppWindow, Blocks, ExternalLink, FileText, LayoutGrid, Pencil, Search, Trash2, UsersRound, X } from 'lucide-react';
 import { PluginIcon } from '../../components/PluginIcon';
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
@@ -14,7 +14,6 @@ import { applicationCatalog, applicationLink, type ApplicationEntry } from './ap
 import { OPEN_APPLICATION_EVENT, OPEN_APP_CENTER_EVENT, saveAppCenterPreferences, useAppCenterPreferences, useApplications } from './appCenterStore';
 import './app-center.css';
 
-const LaunchApplicationContext = createContext<(app: ApplicationEntry) => void>(() => {});
 
 export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; size?: number }) {
   const [failedIcon, setFailedIcon] = useState('');
@@ -27,12 +26,11 @@ export function ApplicationIcon({ app, size = 20 }: { app: ApplicationEntry; siz
   return <Icon size={size} aria-hidden="true" />;
 }
 
-export function useLaunchApplication() { return useContext(LaunchApplicationContext); }
 
-export function AppCenterProvider({ language, exploring = false, onNavigate, onExplore, children }: { language: AppLanguage; exploring?: boolean; onExplore?: () => void; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
+export function AppCenterProvider({ language, onNavigate, children }: { language: AppLanguage; onNavigate: (app: ApplicationEntry, environmentId?: string) => void; children: ReactNode }) {
   const [open, setOpen] = useState(false), [query, setQuery] = useState('');
   const localCatalog = !useContext(ConversationHostContext);
-  const listening = exploring || open;
+  const listening = open;
   const apps = useApplications(language, listening), prefs = useAppCenterPreferences();
   const [link, setLink] = useState<{ id?: string; title: string; url: string } | null>(null), [error, setError] = useState('');
   const [selectingLocal, setSelectingLocal] = useState(false);
@@ -68,10 +66,6 @@ export function AppCenterProvider({ language, exploring = false, onNavigate, onE
     else { show(); setError(uiText(language)('appCenter.thisAppWasRemovedOrDisabled')); }
   }, [openApplication, show, language]);
   useEffect(() => {
-    const center = (event: Event) => {
-      if ((event as CustomEvent).detail === 'manage' || !onExplore) show();
-      else onExplore();
-    };
     const application = async (event: Event) => {
       const { id, environmentId, reference } = (event as CustomEvent).detail ?? {};
       const revision = ++requestRevision.current;
@@ -94,9 +88,9 @@ export function AppCenterProvider({ language, exploring = false, onNavigate, onE
         await openApplication(app, environmentId);
       } catch (cause) { if (revision === requestRevision.current) { show(); setError(String(cause)); } }
     };
-    window.addEventListener(OPEN_APP_CENTER_EVENT, center); window.addEventListener(OPEN_APPLICATION_EVENT, application);
-    return () => { requestRevision.current++; window.removeEventListener(OPEN_APP_CENTER_EVENT, center); window.removeEventListener(OPEN_APPLICATION_EVENT, application); };
-  }, [language, localCatalog, onExplore, show, openApplication]);
+    window.addEventListener(OPEN_APP_CENTER_EVENT, show); window.addEventListener(OPEN_APPLICATION_EVENT, application);
+    return () => { requestRevision.current++; window.removeEventListener(OPEN_APP_CENTER_EVENT, show); window.removeEventListener(OPEN_APPLICATION_EVENT, application); };
+  }, [language, localCatalog, show, openApplication]);
   useEffect(() => {
     if (!presence.mounted) return;
     const node = dialog.current; node?.showModal();
@@ -149,12 +143,12 @@ export function AppCenterProvider({ language, exploring = false, onNavigate, onE
     if (saved) dialog.current?.querySelector<HTMLInputElement>('.app-center-search input')?.focus({preventScroll:true});
   };
   const filtered = apps.filter(app => `${app.title} ${app.description}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  return <LaunchApplicationContext.Provider value={launch}>
+  return <>
     {children}
     {presence.mounted && <dialog ref={dialog} className="app-center-drawer" data-visible={presence.visible} aria-labelledby="app-center-title" aria-modal="true" role="dialog"
       onCancel={dialogEventHandler(event => { event.preventDefault(); setOpen(false); })} onClick={event => { if (event.target === event.currentTarget) setOpen(false); }}>
       <div className="app-center-content" inert={!open ? true : undefined}>
-        <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{uiText(language)(onExplore ? 'desktop.manageApps' : 'appCenter.appCenter')}</h2></div>
+        <header><div><LayoutGrid size={20}/><h2 id="app-center-title">{uiText(language)('appCenter.appCenter')}</h2></div>
           <div className="app-center-header-actions">
             <AppCenterSettingsMenu language={language} active={open}
               selectingLocal={selectingLocal} onAddLocal={() => void addLocal()} onAddLink={() => { setLink({ title: '', url: '' }); setError(''); }}/>
@@ -185,5 +179,5 @@ export function AppCenterProvider({ language, exploring = false, onNavigate, onE
         {error && <p className="app-center-error" role="alert">{error}</p>}
       </div>
     </dialog>}
-  </LaunchApplicationContext.Provider>;
+  </>;
 }

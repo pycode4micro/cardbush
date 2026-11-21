@@ -26,6 +26,7 @@ import {
 import {
   buildChildTurnRequest,
   inheritedChildMessages,
+  resolveSubagentPermissions,
   resolveChildTurn,
   type ChildTurnRunner,
   type SubagentPermissionPolicy,
@@ -362,10 +363,7 @@ export function registerSubagentTool(
           name: employee.definition.name, instructions: employee.definition.system_prompt } : undefined);
         const remote = { connectionId: targetId, agentId, ...(worker ? { worker } : {}) };
         const parent = context.turn.request;
-        const policy = parent.metadata.childAgentPolicy as Partial<SubagentPermissionPolicy> | undefined;
-        const route = parent.metadata.subagentPermissionRouting ?? policy?.permissionRouting ?? options.permissionPolicy?.permissionRouting ?? 'user';
-        const permissionMode = parent.permissionMode === 'all_free' || route === 'user'
-          ? parent.permissionMode ?? 'task_free' : policy?.childPermissionMode ?? options.permissionPolicy?.childPermissionMode ?? 'task_free';
+        const { permissionRouting, permissionCeiling } = resolveSubagentPermissions(parent, options.permissionPolicy);
         const childSessionId = previous?.childSessionId ?? `delegated-${taskId}`;
         const childTurnId = `turn-${taskId}`;
         const preceding = previous && context.input.delivery === 'queue'
@@ -389,7 +387,7 @@ export function registerSubagentTool(
             sessionId: childSessionId, turnId: childTurnId, prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${context.input.prompt}`,
             ...(context.input.delivery === 'queue' ? { queue: true } : {}),
             ...(Array.isArray(context.input.files) && context.input.files.length ? { files: z.array(z.string().min(1).max(4000)).max(32).parse(context.input.files) } : {}),
-            permissionMode, permissionRouting: route === 'parent' ? 'parent' : 'user', language: resolveUiLanguage(parent.metadata.uiLanguage),
+            permissionMode: permissionCeiling, permissionRouting, language: resolveUiLanguage(parent.metadata.uiLanguage),
           }, context.signal, () => {
             if (tasks.get(context.sessionId, taskId)?.remoteAcceptedAt) return;
             tasks.acceptRemote(context.sessionId, taskId);

@@ -1,12 +1,14 @@
 import { uiText } from '../../i18n';
 import {
   Check,
+  ChevronDown,
   Clock3,
   Edit3,
   Eye,
   Folder,
   LoaderCircle,
   MessageSquare,
+  ShieldCheck,
   Terminal,
   X,
 } from 'lucide-react';
@@ -37,6 +39,9 @@ export function PermissionRequestCard({
   onCancel: () => void;
 }) {
   const details = permissionDetails(interaction, language);
+  const t = uiText(language);
+  const firstLine = details.target.split(/\r?\n/, 1)[0];
+  const targetPreview = firstLine.length > 160 ? `${firstLine.slice(0, 157)}…` : firstLine;
   const question = permissionQuestion(interaction.questions ?? []);
   const options = normalizedPermissionOptions(question?.options ?? [], language);
   const sourceTitle = interaction.title?.trim() ?? '';
@@ -55,16 +60,17 @@ export function PermissionRequestCard({
     <section
       className="interaction-dialog interaction-card permission-request-card"
       data-no-floating-input="true"
-      aria-live="assertive"
+      aria-label={title}
     >
       <header>
-        <Folder size={17} />
-        <strong>{title}</strong>
+        <ShieldCheck size={17} aria-hidden="true" />
+        <strong aria-live="polite">{title}</strong>
         <button
           type="button"
           onClick={onCancel}
           disabled={busy}
-          title={uiText(language)('permissionRequestCard.cancelRequest')}
+          title={t('permissionRequestCard.cancelRequest')}
+          aria-label={t('permissionRequestCard.cancelRequest')}
         >
           <X size={16} />
         </button>
@@ -80,18 +86,24 @@ export function PermissionRequestCard({
             {details.resourceKind === 'process' ? <Terminal size={17} /> : <Folder size={17} />}
           </span>
           <span className="permission-target-copy">
-            <small>{uiText(language)('permissionRequestCard.exactTarget')}</small>
-            <code>{details.target || (uiText(language)('permissionRequestCard.structuredTargetUnavailable'))}</code>
+            <small>{t('permissionRequestCard.exactTarget')}</small>
+            <code>{targetPreview || t('permissionRequestCard.structuredTargetUnavailable')}</code>
           </span>
           {details.accessKind && (
             <span className={`permission-access ${details.accessKind}`}>
-              {details.accessKind === 'write' ? <Edit3 size={13} /> : <Eye size={13} />}
+              {details.accessKind === 'write' ? <Edit3 size={13} /> : details.accessKind === 'execute' ? <Terminal size={13} /> : <Eye size={13} />}
               {permissionAccessLabel(details.accessKind, language)}
             </span>
           )}
         </div>
 
-        <div className="permission-request-details">
+        <details className="permission-disclosure">
+          <summary><ChevronDown size={14} aria-hidden="true" />
+            <span className="permission-disclosure-open">{t('permissionRequestCard.showDetails')}</span>
+            <span className="permission-disclosure-close">{t('permissionRequestCard.hideDetails')}</span>
+          </summary>
+          <div className="permission-request-details">
+          {details.target && <pre className="permission-full-target">{details.target}</pre>}
           {details.reason && (
             <div>
               <MessageSquare size={14} />
@@ -122,28 +134,26 @@ export function PermissionRequestCard({
               </span>
             </div>
           )}
-        </div>
+          </div>
+        </details>
+      </div>
 
-        <div className="permission-actions">
+        <div className="permission-actions" aria-busy={busy}>
           {options.map((option) => (
             <button
               key={option.id}
               className={`permission-action ${permissionOptionClass(option.id)}`}
               type="button"
+              title={option.description}
               disabled={busy}
               onClick={() => onChoose(option.id)}
             >
               {busy ? <LoaderCircle className="spin" size={14} /> : permissionOptionIcon(option.id)}
               <span>{option.label}</span>
-              {option.description && <small>{option.description}</small>}
             </button>
           ))}
         </div>
 
-        <p className="permission-scope-note">
-          {uiText(language)('permissionRequestCard.allowOnceAppliesToThisRequestSession')}
-        </p>
-      </div>
     </section>
   );
 }
@@ -161,13 +171,14 @@ function permissionDetails(interaction: PendingInteraction, language: AppLanguag
   const targets = permission?.targets ?? [];
   const primaryTarget = targets[0];
   const actions = permission?.actions ?? [];
-  const accessKind = normalizeAccessKind(actions[0] ?? '');
+  const resourceKind = targets.some(target => target.kind === 'process') ? 'process' : primaryTarget?.kind ?? '';
+  const accessKind = normalizeAccessKind(actions[0] ?? '') || (resourceKind === 'process' ? 'execute' : '');
   return {
     target: targets.map((target) => target.label || target.value).join('\n'),
-    resourceKind: targets.some(target => target.kind === 'process') ? 'process' : primaryTarget?.kind ?? '',
+    resourceKind,
     accessKind,
     reason: permission?.reason || interaction.reason || '',
-    operation: accessKind ? '' : actions.join(', '),
+    operation: actions.join(', '),
     description: interaction.description?.trim() ?? '',
     scopeNotice: permissionScopeNotice(permission?.scope, language),
   };
@@ -211,6 +222,7 @@ function permissionOptionDescription(optionId: string, language: AppLanguage) {
 }
 
 function permissionAccessLabel(accessKind: string, language: AppLanguage) {
+  if (accessKind === 'execute') return uiText(language)('permissionRequestCard.execute');
   if (accessKind === 'write') {
     return uiText(language)('permissionRequestCard.write');
   }
@@ -231,6 +243,7 @@ function permissionOptionIcon(optionId: string) {
 
 function normalizeAccessKind(value: string) {
   const normalized = value.trim().toLowerCase();
+  if (normalized === 'execute') return 'execute';
   if (normalized === 'write' || normalized.includes('write')) return 'write';
   if (normalized === 'read' || normalized.includes('read')) return 'read';
   return '';

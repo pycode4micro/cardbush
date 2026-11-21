@@ -13,7 +13,7 @@ export type AssistantComposerControls = Pick<ComposerProps,
   'subagentPermissionRouting' | 'onSubagentPermissionRoutingChange' | 'onRetainDraft' | 'reasoningLevel' |
   'reasoningLevelAvailable' | 'reasoningLevels' | 'onReasoningLevelChange' | 'skills' | 'disabledSkillNames' | 'onToggleSkill'>;
 
-export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, busy, onSend, onCancel, queuedMessages, messages, fileDropTarget, browserTabs, userMessagePrediction, predictionPending, interaction, quote }: {
+export function AssistantComposer({ controls, language, draft, onDraftChange, ready, submitting, busy, onSend, onCancel, queuedMessages, messages, fileDropTarget, browserTabs, userMessagePrediction, predictionPending, quote }: {
   controls: AssistantComposerControls; language: string; draft: string; onDraftChange(value: string): void;
   ready: boolean; submitting: boolean; busy: boolean; onSend: ComposerProps['onSend']; onCancel: ComposerProps['onCancel'];
   queuedMessages: ComposerProps['queuedMessages']; messages: ChatMessage[];
@@ -21,13 +21,12 @@ export function AssistantComposer({ controls, language, draft, onDraftChange, re
   browserTabs: BrowserPromptReference[];
   userMessagePrediction?: UserMessagePrediction;
   predictionPending?: boolean;
-  interaction?: ReactNode;
   quote?: ReactNode;
 }) {
   return <ComposerReferenceContext.Provider value={{ sessionId: PERSONAL_ASSISTANT_SESSION, browserTabs, messages, userMessagePrediction, predictionPending }}>
     <ComposerPresentationContext.Provider value={{ style: 'simple' }}>
-      <Composer {...controls} compact language={language} draft={draft} onDraftChange={onDraftChange}
-        topAccessory={(interaction || quote) && <div className="assistant-composer-accessories">{interaction}{quote}</div>}
+      <Composer {...controls} compact permissionsInAddMenu language={language} draft={draft} onDraftChange={onDraftChange}
+        topAccessory={quote}
         fileDropTarget={fileDropTarget} inputReadOnly={!ready} submissionPending={submitting}
         sending={busy} guidanceDeliveryMode="immediate" queuedMessages={queuedMessages}
         referencePlanAvailable={false} retainUntilAccepted optimisticSubmission

@@ -10,8 +10,18 @@ export type PluginMcpConnection = {
   toolCount?: number;
 };
 
+export function pluginMcpServerId(pluginId: string, componentId: string) {
+  if (pluginId === 'computer-use') return 'cardbush_apps';
+  if (pluginId === 'chrome') return 'browser_use';
+  return `plugin_${pluginId.replaceAll('.', '_')}_${componentId}`;
+}
+
+export function pluginServicesEnabled(plugin: CardbushAppPlugin, serviceEnabled: boolean) {
+  return serviceEnabled && plugin.installed && plugin.enabled && !plugin.removalPending;
+}
+
 export function pluginMcpConnections(
-  plugins: CardbushAppPlugin[], overview: McpConnectionOverview | null, serviceEnabled: boolean,
+  plugins: CardbushAppPlugin[], overview: McpConnectionOverview | null, serviceEnabled: boolean, pluginRevision?: number,
 ): PluginMcpConnection[] {
   const snapshot = overview?.snapshot ?? null;
   const owned = plugins.filter(plugin => plugin.installed).flatMap(plugin => {
@@ -23,11 +33,10 @@ export function pluginMcpConnections(
     const connections = new Map<string, PluginMcpConnection>();
     for (const component of components) {
       // Product-owned launchers have fixed IDs; external plugins use productPlugins.ts's namespace.
-      const id = plugin.id === 'computer-use' ? 'cardbush_apps' : plugin.id === 'chrome' ? 'browser_use'
-        : `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`;
+      const id = pluginMcpServerId(plugin.id, component.id);
       if (connections.has(id)) continue;
       connections.set(id, { id, name: component.name, description: component.description, plugin,
-        state: mcpConnectionState(id, serviceEnabled && plugin.enabled && (plugin.config.mcp_servers as Record<string, { enabled?: boolean }> | undefined)?.[component.id]?.enabled !== false, snapshot),
+        state: mcpConnectionState(id, pluginServicesEnabled(plugin, serviceEnabled) && (plugin.config.mcp_servers as Record<string, { enabled?: boolean }> | undefined)?.[component.id]?.enabled !== false, snapshot, overview?.revision, pluginRevision),
         toolCount: snapshot?.servers.find(server => server.id === id)?.tools.length });
     }
     return [...connections.values()];

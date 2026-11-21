@@ -50,6 +50,13 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     await win.webContents.session.cookies.set({url:origin, name:'home_fixture', value:'private', sameSite:'lax'});
     assert.equal(await js("!!document.querySelector('.desktop-library [data-home-action]')"),false,'home opens without editing controls');
     await edit();
+    const covers = (await js(order)).filter(key => key.startsWith('native:featured-'));
+    assert.equal(covers.length, 4, 'each cover has independent layout controls');
+    await click('[data-home-block="native:featured-assistant"] [data-home-action=remove]');
+    assert.deepEqual((await js(order)).filter(key => key.startsWith('native:featured-')), covers.filter(key => !key.endsWith('-assistant')));
+    await click(add); await click('[data-home-native=featured-assistant]');
+    assert.deepEqual((await js(order)).filter(key => key.startsWith('native:featured-')), covers);
+    await click(add);
     await click('[data-history-action=back]'); await visible('.components-app [data-home-action=edit]');
     await click('[data-nav-section=home]'); await visible('.home-board[data-editing=false]');
     await edit(); await click(add); await click('[data-home-add=web]');
@@ -72,7 +79,7 @@ module.exports = async function verifyBoard({win, js, wait, click, reload, captu
     await js(`(() => { const body=document.querySelector('${web} .home-block-body');body.scrollIntoView({block:'center'});
       const box=body.getBoundingClientRect();const source=document.elementFromPoint(box.x+box.width/2,box.y+box.height/2);
       if (!source?.draggable) throw Error('Card body does not accept drag');
-      const target=document.querySelector('[data-home-block="native:featured"]');
+      const target=document.querySelector('[data-home-block="native:featured-event"]');
       const dataTransfer=new DataTransfer();
       source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer}));
       target.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer}));

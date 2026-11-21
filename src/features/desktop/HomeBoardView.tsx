@@ -5,19 +5,24 @@ import type { AppLanguage } from '../../types';
 import { HtmlComponentSurface } from '../components/HtmlComponentSurface';
 import { HomeWebsiteView } from '../components/HomeWebsiteView';
 import type { HtmlComponent } from '../components/componentModel';
-import { blockKey, nativeSections, type HomeBlock, type HomeDimensions, type NativeSection } from './homeLayout';
+import { blockKey, isFeaturedCard, nativeSections, type HomeBlock, type HomeDimensions, type NativeSection } from './homeLayout';
 import { HomeBlockResizeHandles } from './HomeBlockResizeHandles';
 import './homeBoard.css';
 
 export type NativeHomeContent = Record<NativeSection, {title: string; content: ReactNode}>;
 type ViewProps = {
   language: AppLanguage; blocks: HomeBlock[]; native: NativeHomeContent; library: HtmlComponent[];
+  featuredShelf(cards: ReactNode, key: string): ReactNode;
   editing: boolean; picker: boolean; visible: boolean; error: string;
   onDone(): void; togglePicker(): void; toggleNative(id: NativeSection): void; toggleHtml(item: HtmlComponent): void;
   createInChat?(): void; editHtml(item?: HtmlComponent): void; editWeb(item?: Extract<HomeBlock, {kind:'web'}>): void;
   openWeb(url: string): void; remove(block: HomeBlock): void; move(source: string, target: string): void;
   resize(block: HomeBlock, dimensions: HomeDimensions): void;
 };
+
+function automaticCover(block?: HomeBlock): block is Extract<HomeBlock, {kind: 'native'}> {
+  return block?.kind === 'native' && isFeaturedCard(block.id) && !block.width && !block.column && !block.height;
+}
 
 function NearViewport({children, active}: {children: ReactNode; active: boolean}) {
   const host = useRef<HTMLDivElement>(null);
@@ -71,9 +76,19 @@ export function HomeBoardView(p: ViewProps) {
     <div className="home-board" data-editing={p.editing}>
       {p.blocks.map((block, index) => {
         const key = blockKey(block);
+        if (!p.editing && automaticCover(block)) {
+          if (automaticCover(p.blocks[index - 1])) return null;
+          const covers = [];
+          for (let next = index; next < p.blocks.length; next++) {
+            const cover = p.blocks[next];
+            if (!automaticCover(cover)) break;
+            covers.push(<div className="home-featured-cover" key={blockKey(cover)} data-kind="native" data-home-block={blockKey(cover)}>{p.native[cover.id].content}</div>);
+          }
+          return <div className="home-featured-shelf" key={key}>{p.featuredShelf(covers, key)}</div>;
+        }
         const html = block.kind === 'html' ? p.library.find(item => item.id === block.id) : undefined;
         const name = block.kind === 'web' ? block.title : block.kind === 'native' ? p.native[block.id].title : html!.title;
-        const width = block.width ?? html?.width ?? (block.kind === 'native' ? 12 : 6);
+        const width = block.width ?? html?.width ?? (block.kind === 'native' ? isFeaturedCard(block.id) ? 3 : 12 : 6);
         const height = block.height ?? html?.height ?? (block.kind === 'web' ? 320 : undefined);
         const column = block.column && Math.min(block.column, 13 - width);
         const heights = [...new Set([160, 240, 320, 480, 640, 960, ...(height ? [height] : [])])].sort((a,b) => a-b);

@@ -34,7 +34,6 @@
 .assistant-message-quote svg { width: 15px; height: 15px; flex-shrink: 0; }
 .assistant-quote-cancel { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; padding: 0; margin-right: 6px; background: transparent; color: var(--text-soft); border: 0; border-radius: 8px; cursor: pointer; }
 .assistant-quote-cancel:hover { color: var(--text); background: var(--hover); }
-.assistant-composer-accessories { display: flex; flex-direction: column; width: 100%; min-width: 0; gap: 8px; }
 .assistant-message-quote.is-draft { width: 100%; margin: 0; }
 .assistant-message-user:has(>.assistant-message-quote) { width: 100%; align-items: flex-end; }
 .assistant-message-reaction { display: inline-flex; align-self: flex-start; margin-top: 6px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-strong); color: var(--text); font-size: 17px; cursor: pointer; }

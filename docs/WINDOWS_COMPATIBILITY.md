@@ -20,8 +20,9 @@ Browser Use retains explicit connection approval, page authorization and session
 isolation on both operating systems. MSIX retains normal package virtualization;
 Windows 10 support does not add registry exemptions or restricted capabilities.
 
-The desktop distribution includes Electron/Node and native helpers. Terminal
-execution requires PowerShell 7; Git repository operations require Git for Windows.
+The desktop distribution includes Electron/Node and native helpers. The default
+terminal prefers PowerShell 7 and can use Command Prompt. Git repository operations
+require Git for Windows.
 The internal plugin collection includes its own Python/Node runtimes and media
 dependencies. Business accounts, NAS permissions and optional hardware drivers
 remain separate requirements. This compatibility change does not copy credentials

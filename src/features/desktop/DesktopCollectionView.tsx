@@ -1,10 +1,8 @@
-import { Suspense, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type UIEvent } from 'react';
-import { ArrowUpRight, Blocks, ChevronLeft, ChevronRight, Folder, MessageSquare, Plus, Search, Waves } from 'lucide-react';
+import { Children, Suspense, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type UIEvent } from 'react';
+import { ArrowUpRight, Blocks, ChevronLeft, ChevronRight, Folder, MessageSquare, Plus, Waves } from 'lucide-react';
 import type { EventPresentation, FriendsSnapshot, FriendsWorkEvent } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
 import type { AppLanguage, ConversationSummary, ProjectItem } from '../../types';
-import { ApplicationIcon } from '../appCenter/AppCenter';
-import type { ApplicationEntry } from '../appCenter/appCenterModel';
 import { FriendsEventDetails, FriendsExecutionRequests } from '../assistant/events/EventDetails';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { useDisclosureState } from '../navigation/useDisclosureState';
@@ -55,10 +53,11 @@ function CoverCard({card}: {card?: Card}) {
     <ArrowUpRight aria-hidden="true"/>
   </button>;
 }
-function FeaturedShelf({ language, busy, children, offsets }: { language: AppLanguage; busy: boolean; children: ReactNode; offsets: PageOffsets }) {
+function FeaturedShelf({ language, busy, children, offsets, shelfKey }: { language: AppLanguage; busy: boolean; children: ReactNode; offsets: PageOffsets; shelfKey: string }) {
   const t = uiText(language);
   const track = useRef<HTMLDivElement>(null);
-  const restoreTrack = usePageScroll(offsets, 'featured', 'scrollLeft');
+  const restoreTrack = usePageScroll(offsets, shelfKey, 'scrollLeft');
+  const count = Children.count(children);
   const [edges, setEdges] = useState({ previous: false, next: false });
   useLayoutEffect(() => {
     const node = track.current!;
@@ -71,9 +70,10 @@ function FeaturedShelf({ language, busy, children, offsets }: { language: AppLan
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
+    for (let index = 0; index < count; index++) if (node.children[index]) observer.observe(node.children[index]);
     node.addEventListener('scroll', measure, { passive: true });
     return () => { release?.(); observer.disconnect(); node.removeEventListener('scroll', measure); };
-  }, [restoreTrack]);
+  }, [restoreTrack, count]);
   const scroll = (direction: number) => {
     const node = track.current;
     if (node) node.scrollBy({ left: direction * node.clientWidth });
@@ -105,7 +105,7 @@ type HomeProps = {
   events: FriendsWorkEvent[]; snapshot?: FriendsSnapshot; components: HtmlComponent[]; error: boolean; retry(): Promise<void>;
   onEventMenu(trigger: SidebarMenuEvent, event: FriendsWorkEvent): void;
   onPage(page: HomePage): void; onProject(project: ProjectItem): void; onConversation(id: string): void;
-  onAssistant(): void; onExplore(): void; onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void;
+  onAssistant(): void; onCreateComponent(draft:string): void; onNew(): void; onAddProject(): void;
 };
 export function DesktopHomeView(p: HomeProps) {
   const {language, page, events, projects, conversations, onPage} = p;
@@ -144,14 +144,14 @@ export function DesktopHomeView(p: HomeProps) {
   // Keep the two local shortcuts in place while the runtime supplies event cards.
   const waitingForEvents = !p.snapshot && !p.error;
   const pendingRow = <div className="desktop-row" role="status">{t('common.loading')}</div>;
-  const explore: Card = {art:'fern', title:t('appCenter.appCenter'), caption:t('desktop.workspaceApps'), open:p.onExplore};
   const library: Card = {art:'tide', title:eventLabel, caption:t('desktop.eventLibrary'), open:() => onPage({kind:'events'})};
   const assistant: Card = {art:'prism', title:p.assistantName, caption:t('desktop.openAssistant'), open:p.onAssistant};
   const projectCard: Card = {art:'fold', title:projects[0]?.title ?? projectLabel,
     caption:projects.length ? projectLabel : t('desktop.openProjects'),
     open:() => onPage(projects[0] ? {kind:'project', id:projects[0].id} : {kind:'projects'})};
-  const lead = eventCards[0] ?? (waitingForEvents ? undefined : explore);
-  const last = eventCards[1] ?? (waitingForEvents ? undefined : eventCards.length ? explore : library);
+  const recentCard: Card = {art:'fern', title:recent, caption:t('desktop.openRecent'), open:() => onPage({kind:'recent'})};
+  const lead = eventCards[0] ?? (waitingForEvents ? undefined : library);
+  const last = eventCards[1] ?? (waitingForEvents ? undefined : recentCard);
   return <section key={pageKey} className="desktop-library" aria-label={heading} data-desktop-page={page.kind}
     data-page-visible={p.visible} aria-hidden={!p.visible || undefined} inert={!p.visible} ref={scroll} onScroll={trackHeaderUnderlap}>
     {page.kind !== 'overview' && <nav className="desktop-crumbs" aria-label={t('desktop.breadcrumb')}>
@@ -167,10 +167,12 @@ export function DesktopHomeView(p: HomeProps) {
         {!selected.conversationExecution && <p>{selected.presentation?.summary ?? selected.intent}</p>}</div>
     </header> : page.kind !== 'overview' && <h1>{heading}</h1>}
     {page.kind === 'overview' && <HomeBoard language={language} visible={p.visible} editing={!!page.editing}
-      onDone={() => onPage({kind:'overview'})} onCreate={p.onCreateComponent} native={{
-      featured: {title:t('desktop.featured'), content:<FeaturedShelf language={language} busy={waitingForEvents} offsets={p.reading.offsets}>
-        <CoverCard card={lead}/><CoverCard card={assistant}/><CoverCard card={projectCard}/><CoverCard card={last}/>
-      </FeaturedShelf>},
+      onDone={() => onPage({kind:'overview'})} onCreate={p.onCreateComponent}
+      featuredShelf={(cards, key) => <FeaturedShelf language={language} busy={waitingForEvents} offsets={p.reading.offsets} shelfKey={key}>{cards}</FeaturedShelf>} native={{
+      'featured-event': {title:t('desktop.featuredEventCard'), content:<CoverCard card={lead}/>},
+      'featured-assistant': {title:t('desktop.openAssistant'), content:<CoverCard card={assistant}/>},
+      'featured-project': {title:t('desktop.openProjects'), content:<CoverCard card={projectCard}/>},
+      'featured-recent': {title:t('desktop.featuredRecentCard'), content:<CoverCard card={last}/>},
       events: {title:eventLabel, content:<Shelf title={eventLabel} open={() => onPage({kind:'events'})}><div className="desktop-rows">{waitingForEvents ? pendingRow : events.length ? eventRows(events.slice(0,6)) :
         <Row title={p.error ? t('desktop.retryEvents') : t('desktop.openAssistant')} detail={p.error ? undefined : p.assistantName} icon={<Waves/>} open={p.error ? p.retry : p.onAssistant}/>}</div></Shelf>},
       projects: {title:projectLabel, content:<Shelf title={projectLabel} open={() => onPage({kind:'projects'})}><div className="desktop-rows">{projects.length ? projectRows(projects.slice(0,6)) : addProject}</div></Shelf>},
@@ -195,23 +197,5 @@ export function DesktopHomeView(p: HomeProps) {
     {component && <ComponentPage item={component}/>}
     {((page.kind === 'event' && !selected) || (page.kind === 'component' && !component) || (page.kind === 'project' && !project)) &&
       <p role="status">{t(page.kind === 'event' && !p.snapshot ? (p.error ? 'desktop.eventsUnavailable' : 'desktop.loadingEvents') : 'desktop.itemUnavailable')}</p>}
-  </section>;
-}
-type ExploreProps = {
-  offsets: PageOffsets;
-  language: AppLanguage; groups: {label:string; entries:ApplicationEntry[]}[]; featured: ApplicationEntry[]; query:string;
-  onQuery(query:string):void; onLaunch(app:ApplicationEntry):void;
-};
-export function ExploreView(p: ExploreProps) {
-  const t = uiText(p.language);
-  const scroll = usePageScroll(p.offsets, 'explore');
-  return <section className="desktop-library desktop-explore" aria-label={t('appCenter.appCenter')} data-desktop-page="explore" ref={scroll} onScroll={trackHeaderUnderlap}>
-    <h1>{t('appCenter.appCenter')}</h1>
-    <label className="desktop-filter"><Search/><input type="search" aria-label={t('appCenter.searchApps')} placeholder={t('appCenter.searchApps')} value={p.query} onChange={event => p.onQuery(event.target.value)}/></label>
-    {p.featured.length > 0 && <div className="desktop-discover-covers">{p.featured.map((app,index) =>
-      <button type="button" key={app.id} onClick={() => p.onLaunch(app)}><strong>{app.title}</strong><small>{app.description}</small><span aria-hidden="true" data-cover={index ? 'fold' : 'tide'}/></button>)}</div>}
-    {p.groups.map(group => <Shelf key={group.label} title={group.label}><div className="desktop-rows">{group.entries.map(app =>
-      <Row key={app.id} title={app.title} detail={app.description} icon={<ApplicationIcon app={app}/>} open={() => p.onLaunch(app)}/>)}</div></Shelf>)}
-    {!p.groups.length && <p role="status">{t('appCenter.noMatchingApps')}</p>}
   </section>;
 }

@@ -8,7 +8,7 @@ Keep projects, files and reminders in one desktop workspace. Pick up where you l
 
 Open CardBush to see your recent projects, the events you’re following and results that are ready to read. Planning a weekend walk? Ask Assistant to turn a few ideas into an itinerary, register a weather reminder and open the route and packing list from Home.
 
-Arrange Home around the way you work. Open Components from Explore to edit the layout, move events and projects into reach, embed a website or add an interactive HTML component of your own.
+Arrange Home around the way you work. Open Components from the App Center to edit the layout, move events and projects into reach, embed a website or add an interactive HTML component of your own.
 
 When you switch to another app, the floating Assistant stays within reach for text, voice and notifications. Use the system tray to return to Home or close the floating window independently.
 
@@ -19,7 +19,7 @@ AI features require a supported model service that you configure. Your provider 
 - Arrange and resize sections on your Home page.
 - Work with Assistant by text or voice in a shared context.
 - Register reminders and subscriptions, then open events to read the results.
-- Find plugins, skills, components and workspace apps from Explore.
+- Open plugin management, components and other workspace apps from the App Center.
 
 ## What's new in 1.0.17
 
@@ -33,6 +33,6 @@ See how much space conversations, attachments, registered subagents and local mo
 
 ![Open an event to read the saved itinerary and its related pages.](03-event.png)
 
-![Find plugins, components and workspace apps in Explore.](04-explore.png)
+![Open plugin management, components and other workspace apps from the App Center.](04-apps.png)
 
 ![Choose built-in sections, websites or HTML components in the Home layout editor.](05-layout.png)

@@ -219,6 +219,15 @@ test('actual host detects its sandbox without installing packages and retains en
   assert.equal((await setup.get()).enabled, false);
 });
 
+test('Windows sandbox readiness runs the actual cmd probe without pwsh', { skip: process.platform !== 'win32' }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'cardbush-setup-cmd-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const setup = new SandboxSetup({ path: join(directory, 'sandbox.json'),
+    env: { PATH: '', ProgramFiles: '', LOCALAPPDATA: '', CARDBUSH_TERMINAL_SHELL: undefined, CARDBUSH_EXECUTION_SANDBOX: undefined } });
+  const status = await setup.get();
+  assert.equal(status.state, 'ready', JSON.stringify(status));
+});
+
 test('Windows readiness rejects a selected shell that crashes or returns without running its probe', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'cardbush-shell-check-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

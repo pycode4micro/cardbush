@@ -28,8 +28,8 @@ import { type CSSProperties, type ReactNode, useCallback, useContext, useEffect,
 import { PageNavigationScope, usePageState } from '../navigation/PageNavigation';
 
 
-import type { McpConnectionOverview } from '../../backend/mcpConnectionOverview';
-import { pluginMcpConnections, type PluginMcpConnection } from './pluginConnections';
+import { mcpConnectionUpdating, type McpConnectionOverview } from '../../backend/mcpConnectionOverview';
+import { pluginMcpConnections, pluginServicesEnabled, type PluginMcpConnection } from './pluginConnections';
 import { fileUrl } from '../../shared/localPaths';
 import type {
   AppLanguage,
@@ -180,8 +180,10 @@ export function PluginManagementPanel({
   const receiveConfiguration = useCallback((apps: CardbushAppsConfiguration) => {
     setConfiguration(current => {
       if (current && apps.revision < current.revision) return current;
-      const next = { ...apps, plugins: apps.plugins.map(plugin => dirtyPluginIds.current.has(plugin.id)
-        ? current?.plugins.find(item => item.id === plugin.id) ?? plugin : plugin) };
+      const next = { ...apps, plugins: apps.plugins.map(plugin => {
+        const draft = dirtyPluginIds.current.has(plugin.id) && current?.plugins.find(item => item.id === plugin.id);
+        return draft ? { ...plugin, config: draft.config } : plugin;
+      }) };
       return JSON.stringify(current) === JSON.stringify(next) ? current : next;
     });
   }, []);
@@ -212,14 +214,12 @@ export function PluginManagementPanel({
     setError('');
     void loadConnections();
     try {
-      const [apps, loadedSkills] = await Promise.all([
-        host.fetchCardbushAppsConfiguration(),
-        onReloadSkills(),
+      const [apps, loadedSkills] = await Promise.allSettled([
+        host.fetchCardbushAppsConfiguration().then(receiveConfiguration),
+        onReloadSkills().then(setLocalSkills),
       ]);
-      receiveConfiguration(apps);
-      setLocalSkills(loadedSkills);
-    } catch (caught) {
-      setError(errorMessage(caught));
+      if (apps.status === 'rejected') setError(errorMessage(apps.reason));
+      else if (loadedSkills.status === 'rejected') setError(errorMessage(loadedSkills.reason));
     } finally {
       setBusy('');
     }
@@ -252,11 +252,13 @@ export function PluginManagementPanel({
       dirtyPluginIds.current.clear();
       receiveConfiguration(saved);
       void loadConnections();
-      setLocalSkills(await onReloadSkills());
       onNotify(message);
+      await onReloadSkills().then(setLocalSkills).catch(caught => setError(errorMessage(caught)));
       return true;
     } catch (caught) {
       setError(errorMessage(caught));
+      await host.fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
+      void loadConnections();
       return false;
     } finally {
       setBusy('');
@@ -291,9 +293,10 @@ export function PluginManagementPanel({
     finally { uninstalling.current = false; setBusy(''); }
   };
 
-  const observingConnections = mcpOverview?.snapshot?.applicationState === 'pending' || mcpOverview?.snapshot?.servers.some(server => server.health === 'restarting');
+  const observingConnections = mcpConnectionUpdating(mcpOverview?.snapshot, configuration?.revision);
+  const statusVisible = presentation !== 'network' && ['catalog', 'plugin', 'manage'].includes(page.kind);
   useEffect(() => {
-    if (!observingConnections || page.kind !== 'manage') return;
+    if (!observingConnections || !statusVisible) return;
     let disposed = false;
     let timer = 0;
     const check = async () => {
@@ -302,7 +305,7 @@ export function PluginManagementPanel({
     };
     timer = window.setTimeout(() => void check(), 2_000);
     return () => { disposed = true; window.clearTimeout(timer); };
-  }, [observingConnections, page.kind, loadConnections]);
+  }, [observingConnections, statusVisible, loadConnections]);
 
   const installLocal = async (kind: 'directory' | 'zip') => {
     setAddOpen(false);
@@ -325,10 +328,7 @@ export function PluginManagementPanel({
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const plugins = configuration?.plugins ?? [];
-  const connections = pluginMcpConnections(plugins, mcpOverview, configuration?.serviceEnabled ?? true);
-  const filteredConnections = connections.filter(item => !normalizedQuery || [
-    item.id, item.name, item.description, item.plugin?.name ?? '', 'MCP',
-  ].join(' ').toLocaleLowerCase().includes(normalizedQuery));
+  const connections = pluginMcpConnections(plugins, mcpOverview, configuration?.serviceEnabled ?? true, configuration?.revision);
   const filteredPlugins = useMemo(() => plugins.filter((plugin) => !normalizedQuery || [
     plugin.name,
     plugin.description,
@@ -337,6 +337,10 @@ export function PluginManagementPanel({
     ...plugin.keywords,
     ...plugin.components.flatMap((component) => [component.name, component.description, component.id]),
   ].join(' ').toLocaleLowerCase().includes(normalizedQuery)), [normalizedQuery, plugins, language]);
+  const matchingPluginIds = new Set(filteredPlugins.map(plugin => plugin.id));
+  const filteredConnections = connections.filter(item => !normalizedQuery || item.plugin && matchingPluginIds.has(item.plugin.id) || [
+    item.id, item.name, item.description, 'MCP',
+  ].join(' ').toLocaleLowerCase().includes(normalizedQuery));
   const filteredSkills = useMemo(() => localSkills.filter((skill) => !normalizedQuery || [
     skill.name,
     skill.displayName ?? '',
@@ -485,6 +489,9 @@ export function PluginManagementPanel({
         onOpenPrompt={onOpenPrompt}
         language={language}
         plugin={selectedPlugin}
+        serviceEnabled={configuration?.serviceEnabled ?? true}
+        pluginRevision={configuration?.revision}
+        connections={connections.filter(item => item.plugin?.id === selectedPlugin.id)}
         onOpenWorkspace={extensionId => setPage({ kind: 'workspace', pluginId: selectedPlugin.id, extensionId })}
         proxyDefaults={configuration?.proxy}
         onProxySave={proxy => savePluginProxy(selectedPlugin.id, proxy)}
@@ -529,7 +536,7 @@ export function PluginManagementPanel({
         mcpLoading={mcpLoading}
         mcpError={mcpError}
         onOpenMcp={openMcp}
-        onRefreshMcp={() => void loadConnections()}
+        onRefreshMcp={() => { setMcpLoading(true); void loadConnections(); }}
         busy={Boolean(busy)}
         onQuery={setQuery}
         onOpen={(plugin) => setPage({ kind: 'plugin', pluginId: plugin.id })}
@@ -635,7 +642,8 @@ function PluginCatalog({ language, configuration, plugins, connections, mcpLoadi
         <div className="plugin-added-grid">
           {installed.map((plugin) => <button className="plugin-added-card" type="button" key={plugin.id} onClick={() => onOpen(plugin)}>
             <PluginLogo plugin={plugin} />
-            <span className="plugin-added-copy"><strong>{plugin.name}</strong><small>{uiText(language)('pluginManagementPanel.plugin')} · {plugin.enabled && configuration?.serviceEnabled ? (uiText(language)('featureContentPanel.enabled')) : (uiText(language)('pluginManagementPanel.disabled'))}</small></span>
+            <span className="plugin-added-copy"><strong>{plugin.name}</strong><PluginStatus plugin={plugin} language={language}
+              serviceEnabled={configuration?.serviceEnabled ?? true} connections={connections}/></span>
             <ChevronRight size={16} />
           </button>)}
           {standalone.map(item => <button className="plugin-added-card" type="button" key={`mcp:${item.id}`} onClick={() => onOpenMcp(item.id)}>
@@ -833,8 +841,9 @@ function PluginManagementList({ language, activeTab, onTabChange, configuration,
       <div className="plugin-manage-list">
         {activeTab === 'plugins' && installed.map((plugin) => (
           <article key={plugin.id}>
-            <button className="plugin-featured-main" type="button" onClick={() => onOpen(plugin)}><PluginLogo plugin={plugin} /><span><strong>{plugin.name}</strong><small>{pluginPresentation(plugin, language).description}</small></span></button>
-            <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration || plugin.removalPending} onClick={() => togglePlugin(plugin)}><span /></button>
+            <button className="plugin-featured-main" type="button" onClick={() => onOpen(plugin)}><PluginLogo plugin={plugin} /><span><strong>{plugin.name}</strong><small>{pluginPresentation(plugin, language).description}</small>
+              <PluginStatus plugin={plugin} language={language} serviceEnabled={configuration?.serviceEnabled ?? true} connections={connections}/></span></button>
+            <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" aria-label={plugin.name} aria-pressed={plugin.enabled} disabled={busy || !configuration || plugin.removalPending} onClick={() => togglePlugin(plugin)}><span /></button>
             {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy || !configuration} aria-label={uiText(language)('pluginManagementPanel.uninstall', { value1: plugin.name })} title={uiText(language)('pluginManagementPanel.uninstallPluginAndDeleteItsFilesAnd')} onClick={() => onUninstall(plugin)}><Trash2 size={16}/></button>}
           </article>
         ))}
@@ -844,7 +853,7 @@ function PluginManagementList({ language, activeTab, onTabChange, configuration,
               <PluginLogo plugin={plugin} />
               <span><strong>{component.name}</strong><small>{component.description} · {plugin.name}</small></span>
             </button>
-            <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration} onClick={() => togglePlugin(plugin)}><span /></button>
+            <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" aria-label={plugin.name} aria-pressed={plugin.enabled} disabled={busy || !configuration || plugin.removalPending} onClick={() => togglePlugin(plugin)}><span /></button>
           </article>
         ))}
         {activeTab === 'mcp' && connections.map(item => <article key={`${item.plugin?.id ?? 'standalone'}:${item.id}`}>
@@ -867,19 +876,34 @@ function McpCatalogNotice({ language, loading, error }: { language: AppLanguage;
   return loading ? <p className="plugin-mcp-loading" role="status">{uiText(language)('pluginManagementPanel.readingMcpServerStatus')}</p> : null;
 }
 
-function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; language: AppLanguage }) {
+function PluginStatus({ plugin, language, serviceEnabled, connections }: {
+  plugin: CardbushAppPlugin; language: AppLanguage; serviceEnabled: boolean; connections: PluginMcpConnection[];
+}) {
+  const t = uiText(language);
+  const enabled = pluginServicesEnabled(plugin, serviceEnabled);
+  const own = connections.filter(item => item.plugin?.id === plugin.id);
+  const states = new Map(own.map(item => [item.state, item]));
+  return <span className="plugin-status-row">
+    <span className="plugin-config-status">{t(plugin.removalPending ? 'pluginManagementPanel.removalPending' : !plugin.installed ? 'pluginManagementPanel.notInstalledStatus'
+      : !plugin.enabled ? 'pluginManagementPanel.disabled' : !serviceEnabled ? 'pluginManagementPanel.serviceDisabledStatus' : 'featureContentPanel.enabled')}</span>
+    {enabled && [...states.values()].map(item => <McpConnectionBadge key={item.state} item={item} language={language} showToolCount={own.length === 1}/>)}
+  </span>;
+}
+
+function McpConnectionBadge({ item, language, showToolCount = true }: { item: PluginMcpConnection; language: AppLanguage; showToolCount?: boolean }) {
   const labels = {
     idle: 'pluginMcpSettings.onDemand' as const, waiting_for_resources: 'pluginMcpSettings.waitingForResources' as const,
     auth_required: 'pluginMcpSettings.signInRequired' as const, configuration_required: 'pluginMcpSettings.configurationRequired' as const, connected: 'browserConnectionSettings.connected' as const, pending: 'pluginManagementPanel.pending' as const, restarting: 'pluginManagementPanel.reconnecting' as const,
     unavailable: 'pluginManagementPanel.unavailable' as const, disabled: 'pluginManagementPanel.disabled' as const, unknown: 'pluginManagementPanel.connection_unconfirmed' as const,
   };
   return <span className={`plugin-connection-status ${item.state}`}>
-    <i aria-hidden="true" />{uiText(language)(labels[item.state])}
-    {item.state === 'connected' && item.toolCount !== undefined && ` · ${item.toolCount} ${uiText(language)('pluginManagementPanel.tools')}`}
+    <i aria-hidden="true" />{showToolCount && item.state === 'connected' && item.toolCount !== undefined
+      ? uiText(language)('pluginManagementPanel.connectedToolCount', { count: item.toolCount })
+      : uiText(language)(labels[item.state])}
   </span>;
 }
 
-function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
+function PluginDetail({ onOpenWorkspace, language, plugin, serviceEnabled, pluginRevision, connections, busy, error, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
   onOpenWorkspace: (id: string) => void;
   onOpenPrompt?: (prompt: string) => void;
   onUninstall: () => void;
@@ -889,6 +913,9 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onReplac
   onManageAccounts: () => void;
   language: AppLanguage;
   plugin: CardbushAppPlugin;
+  serviceEnabled: boolean;
+  pluginRevision?: number;
+  connections: PluginMcpConnection[];
   busy: boolean;
   error: string;
   onReplace: (plugin: CardbushAppPlugin) => void;
@@ -900,8 +927,8 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onReplac
     <div className="plugin-detail-page">
       <header className="plugin-detail-hero">
         <PluginLogo plugin={plugin} large />
-        <div><h2>{plugin.name}</h2><p>{presentation.description}</p></div>
-        {plugin.installed ? <div className="plugin-detail-actions"><button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || plugin.removalPending} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (uiText(language)('pluginManagementPanel.pluginDisabled')) : (uiText(language)('pluginManagementPanel.pluginEnabled')))}><span /></button>
+        <div><h2>{plugin.name}</h2><p>{presentation.description}</p><PluginStatus plugin={plugin} language={language} serviceEnabled={serviceEnabled} connections={connections}/></div>
+        {plugin.installed ? <div className="plugin-detail-actions"><button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" aria-pressed={plugin.enabled} aria-label={plugin.name} disabled={busy || plugin.removalPending} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (uiText(language)('pluginManagementPanel.pluginDisabled')) : (uiText(language)('pluginManagementPanel.pluginEnabled')))}><span /></button>
           {plugin.source === 'user' && <button className="plugin-uninstall-button" type="button" disabled={busy} onClick={onUninstall}><Trash2 size={15}/>{uiText(language)('pluginManagementPanel.uninstall_776f552')}</button>}</div>
           : <button className="plugin-detail-primary" type="button" disabled={busy} onClick={() => onPersist({ ...plugin, installed: true, enabled: true }, uiText(language)('pluginManagementPanel.pluginInstalled'))}>{uiText(language)('pluginManagementPanel.install')}</button>}
       </header>
@@ -917,7 +944,8 @@ function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onReplac
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
       {!host.remote && plugin.installed && plugin.enabled && plugin.components.filter(component => component.kind === 'runtime' && component.runtime?.settings).map(component => <section className="plugin-detail-section" key={component.id}><button type="button" className="plugin-back" onClick={() => onOpenWorkspace(component.id)}><Settings size={16}/>{uiText(language)('pluginManagementPanel.openPluginSettings')}</button></section>)}
       {plugin.removalPending && <p className="plugin-market-error">{uiText(language)('pluginManagementPanel.uninstallIsIncompleteClickUninstallToRetry')}</p>}
-      {plugin.installed && !plugin.removalPending && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
+      {plugin.installed && !plugin.removalPending && <PluginMcpSettings plugin={plugin} serviceEnabled={serviceEnabled} pluginRevision={pluginRevision}
+        language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
       {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{uiText(language)('pluginManagementPanel.networkProxy')} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language)}</summary>
         <NetworkProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />
       </details>}

@@ -17,9 +17,11 @@
 .home-block .desktop-shelf { margin-top:0; }
 .home-block-body { min-width:0; container-type:inline-size; }
 .home-block[data-kind=native] .home-block-body { height:var(--resize-height,var(--block-height,auto)); overflow:auto; }
-.home-block[data-kind=native] .featured-step { inset-inline:auto; }
-.home-block[data-kind=native] .featured-step[data-step=previous] { inset-inline-start:0; }
-.home-block[data-kind=native] .featured-step[data-step=next] { inset-inline-end:0; }
+.home-featured-shelf { grid-column: 1 / -1; min-width: 0; container-type: inline-size; }
+.home-featured-shelf .desktop-shelf { margin-top: 0; }
+.home-featured-shelf .featured-step[data-step=previous] { inset-inline: 0 auto; }
+.home-featured-shelf .featured-step[data-step=next] { inset-inline: auto 0; }
+.home-featured-cover { min-width: 0; scroll-snap-align: start; }
 .home-block:not([data-kind=native]) .home-block-body {
   height:var(--resize-height,var(--block-height)); display:flex; flex-direction:column; overflow:hidden;
   border:0; border-radius:0; background:transparent;

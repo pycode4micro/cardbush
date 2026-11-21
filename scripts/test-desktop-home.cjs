@@ -65,6 +65,12 @@ async function verify() {
   const rail = await js("(()=>{const r=document.querySelector('.desktop-shell>.sidebar').getBoundingClientRect();return [r.top,innerHeight-r.bottom]})()");
   assert.ok(rail.every(n => Math.abs(n)<=1),'full-height sidebar: '+rail);
   assert.equal(await js("!!document.querySelector('.main-stage .feature-panel, .desktop-explore')"), false, 'unvisited pages stay unmounted');
+  assert.equal(await js("document.querySelector('.sidebar-nav').firstElementChild?.dataset.navSection"), 'assistant');
+  assert.equal(await js("!!document.querySelector('[data-nav-section=explore]')"), false);
+  const visitAssistant = async () => {
+    await click('[data-nav-section=assistant]');
+    await wait("document.querySelector('.assistant-view:not([hidden]) > .topbar h1')?.checkVisibility()");
+  };
   win.setMinimumSize(550,380); win.setSize(1000,500);
   await wait('innerHeight < 600');
   const scroller = "document.querySelector('.desktop-library:not([data-page-visible=\"false\"])')";
@@ -78,16 +84,15 @@ async function verify() {
   await js("Array.from(document.querySelectorAll('.desktop-shelf h2 button')).find(b=>b.textContent==='事件').click()");
   await active('events'); await atScroll(0);
   const listOffset = await scrollTo(420);
-  await click('[data-nav-section=explore]'); await active('explore');
-  const exploreOffset = await scrollTo(85);
+  await visitAssistant();
   await click('[data-nav-section=home]'); await active('events'); await atScroll(listOffset);
   await click('.desktop-crumbs button'); await active('overview'); await atScroll(homeOffset);
   await click('[data-history-action=back]'); await active('events'); await atScroll(listOffset);
-  await click('[data-nav-section=explore]'); await active('explore'); await atScroll(exploreOffset);
+  await visitAssistant();
   await click('[data-nav-section=home]'); await active('events');
   await click('.desktop-crumbs button'); await active('overview'); await atScroll(homeOffset);
   win.setSize(1340,850);
-  console.log('Home, event list and Explore restore independent scroll positions across sidebar, breadcrumb and window Back.');
+  console.log('Home and event list restore independent scroll positions across Assistant, breadcrumb and window Back.');
   await capture('home-light'); await click('.desktop-cover'); await active('event');
   await click('.desktop-list .desktop-row'); await wait("document.querySelector('.desktop-authored[data-layout=facts]')?.innerText.includes('已通过')");
   await click('.desktop-list .desktop-row'); await wait("document.querySelector('.desktop-authored[data-layout=article]')?.innerText.includes('回归')");
@@ -125,7 +130,7 @@ async function verify() {
   await click('.friends-event-details .event-history summary');
   await click('.friends-event-details .event-result-disclosure > summary');
   await wait("document.querySelector('.event-result-disclosure[open]')?.innerText.includes('原始执行结果')");
-  await click('[data-nav-section=explore]'); await active('explore');
+  await visitAssistant();
   await click('[data-history-action=back]'); await active('event');
   await wait("document.querySelector('.event-history[open] .event-result-disclosure[open]')?.innerText.includes('原始执行结果')");
   assert.equal(await js("document.querySelector('.desktop-library').innerText.includes('检查项目')"), false, 'history does not expose the scheduler prompt');
@@ -159,8 +164,17 @@ async function verify() {
   await wait("document.querySelector('.desktop-covers')?.getAttribute('aria-busy')==='false'");
   assert.equal(await js(`!!${eventButton('.desktop-cover, .desktop-row', report)} || !!${eventButton('.desktop-row', savedCheck)}`), false);
   console.log('Home events passed: context menu on covers and rows, keyboard menu, named delete confirmation, cancellation, and persistent deletion of Assistant and conversation events.');
-  await click('[data-nav-section=explore]'); await active('explore'); await capture('explore');
-  assert.equal(await js("Array.from(document.querySelectorAll('.desktop-explore .desktop-row strong')).some(node=>node.textContent==='设置')"), false);
+  const appCenter = async () => {
+    await js("window.dispatchEvent(new Event('cardbush-open-app-center'));void 0");
+    await wait("!!document.querySelector('.app-center-drawer:modal .app-center-tile')");
+  };
+  const closeAppCenter = async () => {
+    await click('.app-center-header-actions > button:last-child');
+    await wait("!document.querySelector('.app-center-drawer')");
+  };
+  await appCenter();
+  assert.equal(await js("!!document.querySelector('[data-application-id=\"builtin:settings\"]')"), false);
+  await closeAppCenter();
   const more = '.sidebar-more-apps', flyout = '.sidebar-app-flyout:popover-open';
   const hover = async selector => {
     const point = await js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
@@ -196,17 +210,18 @@ async function verify() {
   await wait("!document.querySelector('.desktop-explore,.sidebar-app-flyout:popover-open') && !!document.querySelector('.components-app')");
   await wait("!!document.querySelector('.feature-panel .html-component-frame')");
   await js("window.previousComponentsPage = document.querySelector('.feature-panel .components-app'); void 0");
-  await click('[data-nav-section=explore]'); await active('explore');
+  await visitAssistant();
   await wait("!previousComponentsPage.checkVisibility() && !previousComponentsPage.querySelector('iframe')");
   await click('[data-history-action=back]');
   await wait("previousComponentsPage.checkVisibility() && !!previousComponentsPage.querySelector('iframe')");
-  await click('[data-nav-section=explore]'); await active('explore');
-  assert.equal(await js("document.querySelector('.desktop-explore > h1')?.nextElementSibling?.matches('.desktop-filter')"), true, 'search immediately follows the Explore title');
-  await js(`(()=>{const n=document.querySelector('.desktop-filter input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'xyz-no-match');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  await wait("!document.querySelector('.desktop-explore .desktop-row')");
-  await click('[data-nav-section=home]'); await active('overview');
-  await click('[data-nav-section=explore]'); await active('explore');
-  assert.equal(await js("document.querySelector('.desktop-filter input').value"), 'xyz-no-match', 'returning retains the Explore filter');
+  await appCenter();
+  assert.equal(await js("document.querySelector('.app-center-content header')?.nextElementSibling?.matches('.app-center-search')"), true);
+  await js(`(()=>{const n=document.querySelector('.app-center-search input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'xyz-no-match');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await wait("!document.querySelector('.app-center-tile')");
+  await closeAppCenter();
+  await js("window.dispatchEvent(new Event('cardbush-open-app-center'));void 0");
+  await wait("document.querySelector('.app-center-drawer:modal .app-center-search input')?.value==='xyz-no-match'");
+  await closeAppCenter();
   await click('[data-nav-section=home]'); await active('overview');
   await js("Array.from(document.querySelectorAll('.desktop-shelf h2 button')).find(b=>b.textContent==='项目').click()");
   await active('projects');
@@ -231,7 +246,7 @@ async function verify() {
   assert.ok(await js(`(() => {const r=document.querySelector('${flyout}').getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight;})()`));
   await capture('sidebar-apps');
   press('Escape'); await wait("!document.querySelector('.sidebar-app-flyout:popover-open') && document.activeElement.matches('.sidebar-more-apps')");
-  console.log('Desktop Home passed: event card, authored detail and history, Explore search, project drill-down, flat rail, dark/narrow layout.');
+  console.log('Desktop Home passed: component cards, event detail and history, app center search, Assistant navigation, project drill-down and narrow layout.');
   await checkBoard();
   app.quit();
 }

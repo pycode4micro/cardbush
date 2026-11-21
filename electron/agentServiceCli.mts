@@ -43,7 +43,7 @@ in every permission mode. Without an override, follow host settings and the capa
 
 Without --background, run in this terminal. Background mode survives closing
 the launching terminal; it does not register an OS service or boot task.
-Windows terminal tools require PowerShell 7 (pwsh); PowerShell 5 is unsupported.
+Windows terminal tools prefer PowerShell 7 (pwsh) and use cmd when it is unavailable.
 Linux isolation requires bubblewrap and usable user namespaces. Sandbox startup
 failure never falls back to host execution. See the bundled cardbush-docs Skill.
 The access-token file authenticates clients; config/models.json configures models.

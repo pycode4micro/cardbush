@@ -331,6 +331,7 @@ export function Composer({
   referencePlanMode,
   permissionMode,
   subagentPermissionRouting,
+  permissionsInAddMenu = false,
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
@@ -390,6 +391,7 @@ export function Composer({
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
   subagentPermissionRouting: SubagentPermissionRouting;
+  permissionsInAddMenu?: boolean;
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
@@ -529,6 +531,7 @@ export function Composer({
   const [previewImage, setPreviewImage] = useState<ImagePreview | null>(null);
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(420);
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
+  const addMenuTrigger = useRef<HTMLElement>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const [cancelReady, setCancelReady] = useState(false);
   const teamWorkspace = useTeamChoices(!host && teamAvailable);
@@ -747,6 +750,7 @@ export function Composer({
   function toggleMenu(menu: Exclude<ComposerMenu, null>, event?: React.MouseEvent<HTMLElement>) {
     if (menu === 'teams') teamInsertionCaret.current = draft.length;
     if (event?.currentTarget) {
+      if (menu === 'more') addMenuTrigger.current = event.currentTarget;
       setPopoverAnchor(composerPopoverAnchorFromTrigger(event.currentTarget, menu));
     }
     setActiveMenu((current) => {
@@ -1468,6 +1472,11 @@ export function Composer({
               onSelectModel={selectModel}
               onSelectPermissionMode={onPermissionModeChange}
               onSelectSubagentPermissionRouting={onSubagentPermissionRoutingChange}
+              onOpenPermissions={permissionsInAddMenu ? () => {
+                const trigger = addMenuTrigger.current;
+                if (trigger) setPopoverAnchor(composerPopoverAnchorFromTrigger(trigger, 'permissions'));
+                setActiveMenu('permissions');
+              } : undefined}
               onSelectReasoningLevel={onReasoningLevelChange}
               onSelectReferencePlanMode={onReferencePlanModeChange}
               selectedTeamId={draftTeam?.id ?? selectedTeam?.id ?? ''}
@@ -1700,7 +1709,7 @@ export function Composer({
                 <span>{selectedTeam.name}</span>
               </button>
             )}
-            <button
+            {!permissionsInAddMenu && <button
               className={`permission-center-button mode-${permissionMode} ${
                 activeMenu === 'permissions' ? 'active' : ''
               }`}
@@ -1712,7 +1721,7 @@ export function Composer({
               {permissionIcon(permissionMode, 14)}
               <span>{permissionLabel}</span>
               <ChevronDown size={13} />
-            </button>
+            </button>}
             <ExtractionBulbs onInsert={insertExtraction} />
           </div>
           <div className="composer-actions">
@@ -1962,6 +1971,7 @@ function ComposerPopover({
   onSelectModel,
   onConfigureModels,
   onPickAttachments,
+  onOpenPermissions,
   onSelectPermissionMode,
   onSelectSubagentPermissionRouting,
   onSelectReasoningLevel,
@@ -1995,6 +2005,7 @@ function ComposerPopover({
   onSelectModel: (model: string) => void;
   onConfigureModels: () => void;
   onPickAttachments: () => void;
+  onOpenPermissions?: () => void;
   onSelectPermissionMode: (mode: PermissionMode) => void;
   onSelectSubagentPermissionRouting: (routing: SubagentPermissionRouting) => void;
   onSelectReasoningLevel: (level: ReasoningLevel) => void;
@@ -2005,9 +2016,14 @@ function ComposerPopover({
   anchor: ComposerPopoverAnchor | null;
 }) {
   const skillList = useRef<HTMLDivElement>(null);
+  const permissionList = useRef<HTMLDivElement>(null);
+  const permissionsViaAdd = Boolean(onOpenPermissions);
   useEffect(() => {
     if (menu === 'skills') skillList.current?.querySelector<HTMLButtonElement>('.skill-popover-main:enabled')?.focus();
   }, [menu]);
+  useEffect(() => {
+    if (menu === 'permissions' && permissionsViaAdd) permissionList.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+  }, [menu, permissionsViaAdd]);
   const memory = useIndividuation();
   const models = availableModels;
   const pickerMenu = menu === 'models';
@@ -2058,6 +2074,13 @@ function ComposerPopover({
               <small>{uiText(language)('composer.attachToThisMessage')}</small>
             </span>
           </button>
+          {onOpenPermissions && <button className="composer-add-action" type="button" onClick={onOpenPermissions}>
+            <Shield size={18} />
+            <span className="composer-add-copy">
+              <strong>{uiText(language)('composer.permissions')}</strong>
+              <small>{permissionModeLabel(permissionMode, language)}</small>
+            </span>
+          </button>}
           {canSwitchStyle && <button type="button" className="composer-add-action" role="switch" aria-checked={simpleModels}
             aria-label={uiText(language)('homeComponents.simpleComposer')} onClick={() => setComposerStyle(simpleModels ? 'standard' : 'simple')}>
             <SlidersHorizontal/><span className="composer-add-copy"><strong>{uiText(language)('homeComponents.simpleComposer')}</strong></span>
@@ -2100,7 +2123,7 @@ function ComposerPopover({
         </div>
       )}
       {menu === 'permissions' && (
-        <div className="popover-list permission-mode-list">
+        <div className="popover-list permission-mode-list" ref={permissionList}>
           {permissionModeOptions(language).map((option) => (
             <button
               className={`popover-row permission-mode-row mode-${option.id} ${
@@ -2108,6 +2131,7 @@ function ComposerPopover({
               }`}
               type="button"
               key={option.id}
+              aria-pressed={option.id === normalizePermissionMode(permissionMode)}
               onClick={() => selectPermission(option.id)}
             >
               {permissionIcon(option.id, 15)}
@@ -2124,7 +2148,7 @@ function ComposerPopover({
               <small>
                 {subagentPermissionRouting === 'user'
                   ? uiText(language)('composer.parentAndChildAgentsUseThePermission')
-                  : uiText(language)('composer.subagentsInheritPermissionLimitsExtraRequestsGo')}
+                  : uiText(language)(onOpenPermissions ? 'composer.assistantSubagentApproval' : 'composer.subagentsInheritPermissionLimitsExtraRequestsGo')}
               </small>
             </div>
             <div

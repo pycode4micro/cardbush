@@ -678,6 +678,10 @@ test('native shell parsing is explicit and reuses platform discovery without non
     const interactive = chatShellInvocation('', '/work', context);
     assert.ok(!interactive.args.includes('-Command') && !interactive.args.includes('-lc'));
   }
+  const windowsWithoutPwsh = { platform: 'win32', arch: 'x64', env: { SystemRoot: 'C:\\Windows' }, isExecutable: () => false };
+  assert.deepEqual(chatShellInvocation('type "file name.txt"', 'C:\\work', windowsWithoutPwsh), {
+    command: 'C:\\Windows\\System32\\cmd.exe', args: ['/d', '/a', '/s', '/c', '"type "file name.txt""'], windowsVerbatimArguments: true,
+  });
 });
 
 test('native child exit status returns without a model or extra window', async () => {

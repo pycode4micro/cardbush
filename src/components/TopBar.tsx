@@ -46,8 +46,8 @@ export function TopBar({
           <AlignLeft size={15} aria-hidden="true" />
         </button>
       )}
-      {onToggleInspector && (!inspectorOpen || actionsTarget) && <button
-        className="topbar-inspector-action icon-only"
+      {onToggleInspector && <button
+        className={`topbar-inspector-action icon-only${inspectorOpen ? ' active' : ''}`}
         type="button"
         data-inspector-toggle
         data-shortcut="toggleInspector"

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
-import { commandInvocation, createPlatformContext, findExecutable } from '@cardbush/platform';
+import { commandInvocation, createPlatformContext, defaultCommandShell, findExecutable } from '@cardbush/platform';
 import { loadCommandSandboxConfiguration, resolveLinuxSandboxExecutable, resolveProcessResourceHost, spawnResourceManagedProcess, windowsInterpreterRoots } from '@cardbush/bush-runtime/processes';
 import type { SandboxSetupStatus } from './sandboxTypes.js';
 
@@ -116,12 +116,12 @@ export class SandboxSetup {
     const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 15000);
     try {
       // Exercise the same selected shell and base modules as terminal_exec.
-      // cmd.exe can start successfully while USER32/PowerShell initialization
-      // fails in a service session; that must not be reported as ready.
       const marker = `cardbush-sandbox-${randomUUID()}`;
-      const invocation = this.#platform === 'win32'
-        ? commandInvocation('powershell', `$ErrorActionPreference='Stop'; Set-Content -LiteralPath './probe.txt' -Value '${marker}'; if ((Get-Content -LiteralPath './probe.txt') -ne '${marker}') { throw 'Sandbox file verification failed' }; @{ ready = $true } | ConvertTo-Json -Compress`, createPlatformContext({ platform: this.#platform, env: this.#env }))
-        : { executable: '/bin/sh', args: ['-c', 'exit 0'] };
+      const context = createPlatformContext({ platform: this.#platform, env: this.#env });
+      const shell = defaultCommandShell(context);
+      const probeCommand = { powershell: `$ErrorActionPreference='Stop'; Set-Content -LiteralPath './probe.txt' -Value '${marker}'; if ((Get-Content -LiteralPath './probe.txt') -ne '${marker}') { throw 'Sandbox file verification failed' }`,
+        cmd: `>probe.txt echo ${marker}&& type probe.txt`, posix: 'exit 0' }[shell];
+      const invocation = commandInvocation(shell, probeCommand, context);
       const managed = await spawnResourceManagedProcess({ ...invocation,
         cwd: directory, env: this.#env, hostPath, signal: abort.signal,
         sandbox: { writableRoots: [directory], readableRoots: windowsInterpreterRoots(invocation.executable, this.#env, this.#platform), network: 'disabled', linuxExecutable } });

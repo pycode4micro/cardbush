@@ -47,7 +47,7 @@ cardbush serve --stop --data-dir /path/to/agent-a
 
 ## Windows / Windows Server
 
-终端工具使用 PowerShell 7（`pwsh`），不支持 Windows PowerShell 5。缺失时提示安装 PowerShell 7，不尝试换回 `powershell.exe`。核心后台启动直接使用 Node，不弹出 PowerShell 窗口。
+默认终端优先使用 PowerShell 7（`pwsh`），找不到时使用 `cmd.exe`。终端工具按选定的解释器执行，显式指定 PowerShell 时需要 `pwsh`。核心后台服务直接使用 Node 启动。
 
 在目标主机的既定运行用户下执行：
 
@@ -61,7 +61,7 @@ cardbush serve --status --data-dir 'C:\cardbush\data\agent-a'
 
 沿用已有账户和启动环境，不用部署/SSH 登录用户替换已有运行账户。需要系统安装权限时，按主机正常管理员授权流程处理。需要登录启动或系统托管时，由部署方使用 Windows 自带机制托管同一前台命令；核心不再提供另一套账户或计划任务管理层。后台运行并不保证注销或重启后自动启动。
 
-Windows 已有 AppContainer 文件/命令沙箱和原生 Job Object 资源保护，所需原生组件随包提供。PowerShell 7 必须在实际运行账户下可用。部分 Session 0 服务环境曾出现进程初始化失败 `0xC0000142`；必须在真实启动场景验收，不能用 SSH 用户或另一个 Shell 成功代替，也不能关闭沙箱或退回宿主执行来掩盖。
+Windows 已有 AppContainer 文件/命令沙箱和原生 Job Object 资源保护，所需原生组件随包提供。终端按实际运行账户可用的 Shell 选择默认值。部分 Session 0 服务环境曾出现进程初始化失败 `0xC0000142`；必须在真实启动场景验收，不能用 SSH 用户或另一个 Shell 成功代替，也不能关闭沙箱或退回宿主执行来掩盖。
 
 ## Linux
 

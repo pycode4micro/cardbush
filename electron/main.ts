@@ -1,7 +1,7 @@
 import { assistantCallPhases, assistantSurfaceState, dragAssistantSurface, maxAssistantReplyHeight, residentCapsuleSize, sizeAssistantSurface, type AssistantCallPhase, type AssistantSurface } from './assistantSurface';
 import { browserConnectionEnvironment } from './browserEnvironment';
 import { resolveUiLanguage, uiText } from '@cardbush/platform/i18n';
-import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
+import { terminalInvocation, terminalRuntimes, bundledToolPath, platformFeatures, localPath, windowsReleaseSupported, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { readWorkspaceDirectory } from './workspaceFiles';
 import { inspectLocalApplication, launchLocalApplication, localApplicationDialog, validateLocalApplication } from './localApplications';
@@ -624,7 +624,7 @@ function traceMainWindowComposition(
   }
 }
 
-function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' | 'settings' | 'explore' } = {}) {
+function createWindow(options: { reveal?: boolean; workspace?: 'team' | 'home' | 'settings' } = {}) {
   if (mainWindow != null && !mainWindow.isDestroyed()) {
     return mainWindow;
   }
@@ -3216,10 +3216,11 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('app:host-capabilities', () => ({
-  platform: process.platform, arch: process.arch, terminalRuntimes: terminalRuntimes(),
-  defaultTerminalRuntime: defaultTerminalRuntime(process.platform), ...platformFeatures(process.platform, process.arch),
-}));
+ipcMain.handle('app:host-capabilities', () => {
+  const runtimes = terminalRuntimes();
+  return { platform: process.platform, arch: process.arch, terminalRuntimes: runtimes,
+    defaultTerminalRuntime: runtimes[0], ...platformFeatures(process.platform, process.arch) };
+});
 
 ipcMain.handle('terminal:create', (event, cwd?: string, runtime?: TerminalRuntime) => {
   return createTerminalSession(event.sender.id, cwd, runtime, processOwnerSignal(event.sender));

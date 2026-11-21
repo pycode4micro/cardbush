@@ -118,7 +118,7 @@ module.exports = async ({win,BrowserWindow,openHome,openAssistant,wait,root,proj
   await action('settings'); await visible('.settings-directory');
   await click('[data-settings-target=connections]'); await visible('[data-settings-section=models][aria-expanded=true]');
   await click('[data-settings-overview]'); await visible('.settings-directory');
-  await click('[data-nav-section=explore]'); await visible('[data-desktop-page=explore]');
+  await click('[data-nav-section=home]'); await visible('[data-desktop-page=overview]');
   assert.ok(await read("settingsSidebarIdentity === document.querySelector('.desktop-shell > .sidebar')"));
   current.setContentSize(1180, 760);
   await visible('.desktop-shell[data-sidebar-layout=drawer].sidebar-is-collapsed');

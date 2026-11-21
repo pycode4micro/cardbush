@@ -40,7 +40,7 @@ async function buildFixture(directory) {
           reset:async()=>{fixture.resetCount=(fixture.resetCount??0)+1;fixture.generation=(fixture.generation??0)+1;fixture.entries=[];fixture.reactions={};window.dispatchEvent(new Event('cardbush:assistant-reset'));},
           send:async(text,config,spoken,version,identity,onDispatch)=>{
             onDispatch?.();
-            fixture.sendCalls??=[];fixture.sendCalls.push({text,identity});
+            fixture.sendCalls??=[];fixture.sendCalls.push({text,identity,permissionMode:config.permissionMode,subagentPermissionRouting:config.subagentPermissionRouting});
             if(fixture.holdSend)await new Promise(resolve=>fixture.releaseSend=resolve);
             if(version!==(fixture.generation??0))throw Error('fixture context reset');
             if(fixture.failSend)throw Error('fixture send failed');
@@ -65,14 +65,14 @@ async function buildFixture(directory) {
         import {ApplicationVoiceHost,applicationVoiceSession} from ${file('src/features/voice/VoiceConversation.tsx')};
         import {realtimeConversationSnapshot} from ${file('src/features/voice/realtimeAgentBridge.ts')};
         import {useAssistantProfile} from ${file('src/features/assistant/assistantProfile.ts')};
+        import {readAssistantPermissions,useAssistantPermissions} from ${file('src/features/assistant/assistantPermissions.ts')};
         import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};import ${file('src/features/voice/voice.css')};
         import ${file('src/features/inspector/inspectorWorkspace.css')};
         window.cardbushDesktop={onCapsuleCallPhase:handler=>{fixture.callPhase=handler;return()=>delete fixture.callPhase;},pickAttachments:async()=>['C:/fixture/report.txt'],inspectAttachments:async paths=>paths.map(path=>({path,name:'report.txt',kind:'file',size:100})),
           voice:{settings:async()=>({engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,voice:'female',language:'zh-CN'}),
             cancel:async()=>{},setCallActive:async()=>{},transcribe:async()=>{if(fixture.holdTranscription)await new Promise(resolve=>fixture.releaseTranscription=resolve);return{text:'录音发送也应定位到最新消息'};}}};
         const noop=()=>{};const controls={selectedModel:'fixture',availableModels:[],onModelChange:noop,onConfigureModels:()=>fixture.configure=true,
-          referencePlanMode:'off',onReferencePlanModeChange:noop,permissionMode:'task_free',onPermissionModeChange:()=>fixture.permissionChanged=true,
-          subagentPermissionRouting:'inherit',onSubagentPermissionRoutingChange:noop,reasoningLevel:'medium',reasoningLevels:['medium'],reasoningLevelAvailable:false,onReasoningLevelChange:noop,
+          referencePlanMode:'off',onReferencePlanModeChange:noop,reasoningLevel:'medium',reasoningLevels:['medium'],reasoningLevelAvailable:false,onReasoningLevelChange:noop,
           skills:[],disabledSkillNames:new Set(),onToggleSkill:noop};
         window.fixture={sent:[],entries:[
           {id:'u',role:'user',content:'帮我整理一下重点。',source:'text',visibility:'conversation',createdAt:new Date().toISOString()},
@@ -89,6 +89,7 @@ async function buildFixture(directory) {
         fixture.callHistory=()=>applicationVoiceSession().target?.historyMessages??[];
         fixture.voiceState=()=>applicationVoiceSession().snapshot();
         function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile();
+          const permissions=useAssistantPermissions();
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
           const [skin,setSkin]=useState(pixelRobot);
           fixture.changeSkin=custom=>setSkin(custom?{...pixelRobot,props:{anchor:{x:10,y:45,size:40},paths:{pencil:'M1 1h3v3H1z'},gestures:{pencil:'scan'}}}:pixelRobot);
@@ -98,7 +99,7 @@ async function buildFixture(directory) {
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
             <section className="main-stage"><AssistantView active={active} language={language}
-              composerControls={controls} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:''};}} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
+              composerControls={{...controls,...permissions}} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:'',...readAssistantPermissions()};}} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
               composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
             {portal&&<aside ref={setTarget} className="inspector-quick-input" style={{position:"fixed",bottom:20,left:300,width:450,zIndex:30}}/>}
           </ProfileCenter></ApplicationVoiceHost></AssistantSkinContext.Provider></div>;
@@ -175,11 +176,27 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".assistant-view .conversation-connection-notice")');
     await until('!document.querySelector(".assistant-typing-bubble")');
     assert.equal(await read('!!document.querySelector(".assistant-composer-dock .composer-stack.simple")'), true);
-    assert.equal(await read('fixture.permissionChanged'), undefined);
+    assert.equal(await read('!!document.querySelector(".assistant-composer-dock .permission-center-button")'), false);
+    const openPermissions = async () => {
+      await click('.assistant-composer-dock .composer-tools .tool-chip');
+      await until('document.querySelector(".composer-add-menu")');
+      await read('[...document.querySelectorAll(".composer-add-action")].find(row=>row.querySelector("strong")?.textContent===fixture.uiText("zh")("composer.permissions")).click();void 0');
+      await until('document.querySelector(".permission-mode-list")');
+    };
+    await openPermissions();
+    assert.equal(await read('!!document.querySelector(".permission-mode-row.mode-all_free.active")'), true);
+    assert.equal(await read('document.querySelector(".subagent-routing-switch").classList.contains("mode-parent")'), true);
+    await click('.permission-mode-row.mode-task_free');
+    await openPermissions();
+    assert.equal(await read('!!document.querySelector(".permission-mode-row.mode-task_free.active")'), true);
+    await click('.subagent-routing-switch button:first-child');
+    await until('document.querySelector(".subagent-routing-switch").classList.contains("mode-user")');
+    await click('.subagent-routing-switch button:last-child');
+    await click('.permission-mode-row.mode-all_free');
     assert.equal(await read('document.querySelector(".assistant-view .topbar").getBoundingClientRect().height'),48,'shared header height');
     assert.ok(await read('Math.abs(document.querySelector(".composer-surface").getBoundingClientRect().width-704)<1'),'shared default input width');
     assert.ok(await read('Math.abs(innerHeight-document.querySelector(".composer-surface").getBoundingClientRect().bottom-20)<1'),'shared bottom inset');
-    await click('[data-inspector-toggle]');assert.equal(await read('fixture.inspected'),true);await until('!document.querySelector("[data-inspector-toggle]")');
+    await click('[data-inspector-toggle]');assert.equal(await read('fixture.inspected'),true);await until('!!document.querySelector(".assistant-view .topbar [data-inspector-toggle][aria-expanded=true]")');
     await read('fixture.inspector(false);void 0');await until('document.querySelector("[data-inspector-toggle]")');
     await click('[data-work-summary-toggle]');await until('document.querySelector(".conversation-work-summary.soft-panel-visible")');
     await read('document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));void 0');await until('!document.querySelector(".conversation-work-summary")');
@@ -364,6 +381,8 @@ app.whenReady().then(async () => {
     await click('.assistant-composer-dock .send-button');
     await until('document.querySelector(".assistant-composer-dock .runtime-queue-item")?.textContent.includes("补充信息立即进入当前任务")');
     assert.equal(await read('fixture.sendCalls.at(-1).identity.delivery'),'insert','Assistant defaults to immediate guidance');
+    assert.equal(await read('fixture.sendCalls.at(-1).permissionMode'),'all_free');
+    assert.equal(await read('fixture.sendCalls.at(-1).subagentPermissionRouting'),'parent');
     assert.equal(await read('document.querySelectorAll(".assistant-messages [data-message-id="+fixture.sendCalls.at(-1).identity.id+"]").length'),0,'unconsumed guidance stays above the composer');
     await read('fixture.pendingInputs=[];fixture.busy=false;void 0');
     await until('!document.querySelector(".assistant-composer-dock .runtime-queue-item") && document.querySelectorAll(".assistant-messages [data-message-id="+fixture.sendCalls.at(-1).identity.id+"]").length===1');

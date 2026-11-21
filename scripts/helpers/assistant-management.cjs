@@ -15,7 +15,7 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   const show = async id => {
     await read(`fixture.management.permissions=[{permissionId:${JSON.stringify(id)},toolCallId:'schedule-call',sessionId:'personal-assistant',turnId:'parent-turn',request:{
       reason:'Approve this scheduled report',actions:['schedule.create'],targets:[{kind:'path',value:'C:/fixture/report.html'}],requestedCapabilityIds:['schedule.create'],scope:{mode:'task_free',roots:['C:/fixture']}}}];void 0`);
-    await until('!!document.querySelector(".permission-request-card")');
+    await until('!!document.querySelector(".assistant-permission-dialog:modal .permission-request-card")');
     assert.equal(await read('document.querySelectorAll(".permission-request-card").length'), 1);
     assert.equal(await read('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")'), 'true', 'the scroll control does not cover the approval card');
   };
@@ -29,7 +29,7 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
     }
     if (index === 1) {
       await read('fixture.portal(true);void 0');
-      await until('!!document.querySelector(".inspector-quick-input .permission-request-card")');
+      await until('!!document.querySelector(".inspector-quick-input textarea") && !!document.querySelector(".assistant-permission-dialog:modal")');
     }
     await click(decision === 'cancel' ? '.permission-request-card header button' : '.permission-action.' + ({ allow_once: 'allow', allow_session: 'session', deny: 'deny' }[decision]));
     await until('!document.querySelector(".permission-request-card")');
@@ -40,6 +40,10 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   for (const theme of ['dark', 'bright']) {
     await read('fixture.theme(' + JSON.stringify(theme) + ');void 0'); win.setSize(680, 760);
     await show('layout-' + theme); await pause(100);
+    assert.equal(await read('document.querySelector(".permission-disclosure").open'), false);
+    await click('.permission-disclosure > summary');
+    await until('document.querySelector(".permission-disclosure[open] .permission-full-target").textContent.includes("report.html")');
+    await click('.permission-disclosure > summary');
     await read('fixture.language("en");void 0');
     await until('document.querySelector(".permission-action.allow span")?.textContent===fixture.uiText("en")("permission.allow_once")');
     await read('fixture.language("zh");void 0');

@@ -94,7 +94,7 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .app[data-desktop-workspace] .nav-row[data-nav-section=chat] .nav-row-icon svg {
   width:var(--compose-action-icon-size); height:var(--compose-action-icon-size); stroke-width:var(--compose-action-icon-stroke);
 }
-.desktop-search,.desktop-filter { display:flex; align-items:center; gap:9px; color:var(--text-mid); background:color-mix(in srgb,var(--surface) 65%,transparent); border:1px solid var(--rail-divider,var(--border)); border-bottom-color:var(--text-soft); border-radius:5px; }
+.desktop-search { display:flex; align-items:center; gap:9px; }
 .desktop-search {
   padding:7px 10px; width:100%; margin:0 0 12px; font:inherit; text-align:start;
   color:var(--sidebar-text-mid,var(--text-mid)); background:var(--chrome-control,transparent);
@@ -133,7 +133,7 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .featured-step[data-step="next"] { inset-inline-start:100%; }
 .featured-step:hover { background:var(--menu-hover); }
 .featured-step:disabled { visibility:hidden; }
-.desktop-covers > .desktop-cover:focus-visible { outline-offset:-3px; }
+.desktop-covers .desktop-cover:focus-visible { outline-offset:-3px; }
 @container (max-width: 1000px) { .featured-carousel { --featured-cover-count:3; } }
 @container (max-width: 640px) { .featured-carousel { --featured-cover-count:2; } }
 @container (max-width: 410px) { .featured-carousel { --featured-cover-count:1; } }
@@ -145,18 +145,18 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .desktop-library [data-cover="fold"] { --cover-image:url('./art/fold.jpg'); }
 .desktop-library [data-cover="fern"] { --cover-image:url('./art/fern.jpg'); }
 .desktop-library [data-cover="prism"] { --cover-image:url('./art/prism.jpg'); }
-.desktop-cover,.desktop-detail-art,.desktop-discover-covers [data-cover] { background:var(--surface-raised) var(--cover-image) center/cover no-repeat; border-radius:9px; }
+.desktop-cover,.desktop-detail-art { background:var(--surface-raised) var(--cover-image) center/cover no-repeat; border-radius:9px; }
 .desktop-library .desktop-cover { color:white; display:flex; position:relative; align-items:end; justify-content:space-between; gap:7px; overflow:hidden; width:100%; min-width:0; aspect-ratio:3 / 4; max-height:360px; scroll-snap-align:start; border:0; text-align:start; padding:clamp(12px,1.45vw,24px); isolation:isolate; }
 .desktop-library .desktop-cover-pending { background:var(--surface-raised); cursor:default; }
 .desktop-cover-pending::before { display:none; }
 .desktop-cover::before { content:""; position:absolute; z-index:-1; inset:0; background:linear-gradient(0deg,rgba(8,12,21,.85),rgba(5,8,20,.36) 37%,transparent 68%); }
 @media (any-hover: hover) {
-  .desktop-covers > button::after {
+  .desktop-covers button::after {
     content:""; position:absolute; inset:0; z-index:-2; pointer-events:none;
     background:rgb(64 64 64 / 32%); opacity:0;
     transition:opacity var(--motion-fast) var(--ease-standard);
   }
-  .desktop-covers > button:enabled:hover::after { opacity:1; }
+  .desktop-covers button:enabled:hover::after { opacity:1; }
 }
 .desktop-cover-copy { min-width:0; display:grid; gap:5px; }
 .desktop-cover-copy>span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; font-size:13px; line-height:1.4; }
@@ -168,10 +168,10 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .desktop-row { min-width:0; display:flex; align-items:center; gap:12px; min-height:60px; padding:7px 2px; text-align:start; background:transparent; border:0; border-bottom:1px solid var(--border); }
 .desktop-row:hover,.desktop-crumbs button:hover { color:var(--accent); }
 .desktop-row-icon { width:38px; height:38px; flex:none; display:grid; place-items:center; border-radius:7px; background:color-mix(in srgb,var(--accent) 8%,var(--surface)); color:var(--text-mid); }
-.desktop-row-icon svg,.desktop-filter svg { width:17px; height:17px; }
+.desktop-row-icon svg { width:17px; height:17px; }
 .desktop-row>span:nth-child(2) { min-width:0; display:grid; gap:3px; }
 .desktop-row strong,.desktop-row small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:540; }
-.desktop-row small,.desktop-discover-covers small { color:var(--text-soft); font-size:12px; font-weight:400; }
+.desktop-row small { color:var(--text-soft); font-size:12px; font-weight:400; }
 .desktop-row-arrow { margin-inline-start:auto; width:14px; height:14px; flex:none; color:var(--text-soft); }
 .desktop-crumbs { display:flex; align-items:center; gap:4px; flex-wrap:wrap; color:var(--text-mid); font-size:13px; margin-bottom:19px; }
 .desktop-crumb-part { display:inline-flex; align-items:center; gap:4px; }
@@ -189,18 +189,11 @@ html[data-window-material] .app[data-desktop-workspace] > .window-frame { border
 .desktop-authored[data-layout="list"]>div { display:list-item; margin-inline-start:1.2em; }
 .desktop-authored[data-layout="article"] { max-width:72ch; }
 .desktop-component { min-height:250px; height:min(60vh,600px); margin-block:20px; }
-.desktop-filter { display:flex; align-items:center; gap:9px; }
-.desktop-filter { max-width:380px; margin-block:19px; padding:6px 10px; }
-.desktop-filter input { width:100%; border:0; background:transparent; color:var(--text); font:inherit; }
-.desktop-discover-covers { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
-.desktop-discover-covers button { display:grid; gap:4px; min-width:0; text-align:start; padding:0; border:0; background:transparent; }
-.desktop-discover-covers strong { font-size:20px; }
-.desktop-discover-covers [data-cover] { width:100%; margin-top:7px; aspect-ratio:1.95; }
 @container (max-width: 760px) {
   .desktop-rows { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @container (max-width: 485px) {
-  .desktop-rows,.desktop-discover-covers { grid-template-columns:minmax(0,1fr); }
+  .desktop-rows { grid-template-columns:minmax(0,1fr); }
   .desktop-detail-heading { align-items:start; }
 }
 

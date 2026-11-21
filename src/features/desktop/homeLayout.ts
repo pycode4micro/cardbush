@@ -2,7 +2,8 @@ import type { HtmlComponent } from '../components/componentModel';
 import { websiteAddress } from '../../../electron/homeWebsiteAddress';
 export { websiteAddress };
 
-export const nativeSections = ['featured', 'events', 'projects', 'recent'] as const;
+export const featuredCards = ['featured-event', 'featured-assistant', 'featured-project', 'featured-recent'] as const;
+export const nativeSections = [...featuredCards, 'events', 'projects', 'recent'] as const;
 export type NativeSection = typeof nativeSections[number];
 export type HomeDimensions = { width?: number; height?: number; column?: number };
 export type HomeBlock = HomeDimensions & (
@@ -14,17 +15,29 @@ export const homeLayoutKey = 'cardbush.home-layout.v1';
 export const blockKey = (block: HomeBlock) => block.kind + ':' + block.id;
 const defaults = (): HomeBlock[] => nativeSections.map(id => ({kind: 'native', id}));
 
-export function readHomeLayout(): HomeBlock[] | undefined {
+export function isFeaturedCard(id: NativeSection) {
+  return featuredCards.some(card => card === id);
+}
+
+function within(value: unknown, min: number, max: number): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+}
+
+export function readHomeLayout(storage?: Pick<Storage, 'getItem'>): HomeBlock[] | undefined {
   try {
-    const raw = localStorage.getItem(homeLayoutKey);
+    const raw = (storage ?? localStorage).getItem(homeLayoutKey);
     if (!raw) return;
     const data = JSON.parse(raw);
     if (data?.version !== 1 || !Array.isArray(data.blocks)) return;
     const seen = new Set<string>(), blocks: HomeBlock[] = [];
-    for (const item of data.blocks) {
+    const saved = data.blocks as Array<Record<string, unknown> | null>;
+    const entries = saved.flatMap<Record<string, unknown> | null>(item => item?.kind === 'native' && item.id === 'featured'
+      ? featuredCards.map(id => ({ kind: 'native', id, hidden: item.hidden })) : [item]);
+    for (const item of entries) {
       if (!item || typeof item.id !== 'string' || !/^[a-z0-9-]{1,80}$/i.test(item.id)) continue;
       let block: HomeBlock;
-      if (item.kind === 'native' && nativeSections.some(id => id === item.id)) block = {kind: 'native', id: item.id, hidden: item.hidden === true};
+      const nativeId = item.kind === 'native' ? nativeSections.find(id => id === item.id) : undefined;
+      if (nativeId) block = {kind: 'native', id: nativeId, hidden: item.hidden === true};
       else if (item.kind === 'html') block = {kind: 'html', id: item.id};
       else if (item.kind === 'web' && typeof item.url === 'string' && typeof item.title === 'string') {
         const url = websiteAddress(item.url);
@@ -33,9 +46,9 @@ export function readHomeLayout(): HomeBlock[] | undefined {
       } else continue;
       if (seen.has(blockKey(block))) continue;
       seen.add(blockKey(block));
-      if (Number.isInteger(item.width) && item.width >= 3 && item.width <= 12) block.width = item.width;
-      if (Number.isInteger(item.height) && item.height >= 120 && item.height <= 1200) block.height = item.height;
-      if (Number.isInteger(item.column) && item.column >= 1 && item.column <= 10) block.column = item.column;
+      if (within(item.width, 3, 12)) block.width = item.width;
+      if (within(item.height, 120, 1200)) block.height = item.height;
+      if (within(item.column, 1, 10)) block.column = item.column;
       blocks.push(block);
     }
     return blocks;
@@ -48,7 +61,7 @@ export function reconcileHomeLayout(saved: HomeBlock[] | undefined, components: 
   const blocks = saved ?? defaults();
   const known = new Set(blocks.filter(block => block.kind === 'html').map(block => block.id));
   const extra = components.filter(item => item.home && !known.has(item.id)).map(item => ({kind: 'html' as const, id: item.id}));
-  return saved ? [...blocks, ...extra] : [blocks[0], ...extra, ...blocks.slice(1)];
+  return saved ? [...blocks, ...extra] : [...blocks.slice(0, featuredCards.length), ...extra, ...blocks.slice(featuredCards.length)];
 }
 
 export function moveHomeBlock(blocks: HomeBlock[], source: string, target: string) {

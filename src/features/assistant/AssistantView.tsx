@@ -42,14 +42,14 @@ import { copyText } from '../messageFeedback';
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'preparing' | 'sending' | 'accepted' | 'failed' };
 export function AssistantView({ active, language, floating, prepare, observeActivity, ownsConfiguration = true, composerControls,
-  headerActionsTarget, workSummaryAvailable = true, transcriptFooter, inspectorOpen = false, onToggleInspector, noticeTarget, onNoticeLocated, transcriptVisible = active,
+  workSummaryAvailable = true, transcriptFooter, inspectorOpen = false, onToggleInspector, noticeTarget, onNoticeLocated, transcriptVisible = active,
   browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
   active: boolean; language: string; observeActivity?: boolean; floating?: { retainDraft?(value: boolean): void };
   prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean;
   composerControls?: AssistantComposerControls;
   noticeTarget?: { id: string }; onNoticeLocated?(): void; transcriptVisible?: boolean;
   transcriptFooter?: ReactNode;
-  headerActionsTarget?: HTMLElement | null; workSummaryAvailable?: boolean;
+  workSummaryAvailable?: boolean;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
 }) {
@@ -382,11 +382,13 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   return <section className={`assistant-view chat-panel composer-layout-managed${summary.workSummaryPresence.mounted ? ' work-summary-requested' : ''}${summary.workSummaryPresence.visible ? ' work-summary-visible' : ''} ${summary.workSummaryDocked ? 'work-summary-docked' : 'work-summary-overlay'} ${windowMaximized ? 'window-maximized' : 'window-restored'}`}
     hidden={!active} aria-label={profile.name}>
     {floatingView}
-    <TopBar title={profile.name} actionsTarget={headerActionsTarget} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
+    <TopBar title={profile.name} language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
       titleIcon={<span title={callHere ? uiText(language)('assistantView.inCallContinuesInTheBackground') : profile.name}><AssistantCharacter/></span>}
       conversationContentAvailable={workSummaryAvailable && timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {eventsOpen && active && <AssistantEventsDialog language={language} close={() => setEventsOpen(false)}/>}
+    {active && management?.permissions[0] && <AssistantPermissionCard key={management.permissions[0].permissionId}
+      permission={management.permissions[0]} language={language} onResolved={refresh}/>}
     {messageMenu && active && <AssistantMessageMenu key={messageMenu.entry.id} target={messageMenu} language={language} reaction={reactions[messageMenu.entry.id]} pending={reacting}
       onClose={closeMessageMenu} onReply={excerpt => {
         const replyTo = { messageId: messageMenu.entry.id, ...(excerpt ? { excerpt } : {}) };
@@ -405,7 +407,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       {summary.workSummaryPresence.mounted && <ConversationWorkSummary language={language} sessionId={sessionId} messages={pageMessages} changeReports={[]}
         taskPlan={taskPlan}
         onOpenChangeReview={() => {}} subagentObservabilityAvailable={subagentObservabilityAvailable}
-        hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil} previewHost={summary.previewHost}
+        hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil}
         running={busy} softVisible={summary.workSummaryPresence.visible}/>}
       <div className="chat-content-frame">
       <div className="assistant-messages message-list" ref={scroller} tabIndex={-1} role="log" aria-label={uiText(language)('assistantView.assistantConversation')}>
@@ -427,8 +429,6 @@ export function AssistantView({ active, language, floating, prepare, observeActi
           <AssistantComposer controls={composerControls} language={language} draft={draft} onDraftChange={setDraft}
             quote={quote && <AssistantQuote source={pageEntries.find(item => item.id === quote.messageId)} excerpt={quote.excerpt}
               language={language} assistantName={profile.name} onJump={() => jumpToMessage(quote.messageId)} onCancel={() => { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); focusComposer(); }}/>}
-            interaction={management?.permissions[0] && <AssistantPermissionCard key={management.permissions[0].permissionId}
-              permission={management.permissions[0]} language={language} onResolved={refresh}/>}
             userMessagePrediction={userMessagePrediction} predictionPending={busy || submitting || Boolean(error || runtimeError)}
              ready={ready} submitting={submitting} busy={busy} queuedMessages={queuedMessages}
              onSend={(text, options) => send(text, undefined, options?.immediate === false ? 'queue' : 'insert')}

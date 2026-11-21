@@ -691,7 +691,7 @@ app.whenReady().then(async () => {
     await until("document.querySelectorAll('.topbar button').length === 2", 'both conversation actions visible');
     assert.equal(await run("document.querySelector('[data-work-summary-toggle]').nextElementSibling?.matches('[data-inspector-toggle]')"), true, 'work summary precedes the right sidebar toggle');
     await run('showToolbar()');
-    await until("!document.querySelector('[data-inspector-toggle]')", 'the expanded inspector owns its close control without a duplicate in the title');
+    await until("!!document.querySelector('.topbar [data-inspector-toggle][aria-expanded=true]')", 'the title bar keeps the inspector toggle reachable');
     assert.equal(await run("document.querySelector('.topbar .lucide-menu')"), null, 'the old left sidebar hamburger is removed from conversation titles');
     await require('./helpers/window-sidebar-toggle.cjs')({ run, until, pause, window, root });
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'titlebar') {

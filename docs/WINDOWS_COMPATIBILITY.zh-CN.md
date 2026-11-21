@@ -8,7 +8,7 @@
 
 Windows 10 使用普通不透明背景。Mica 仅在 Windows 11 build 22621+、合成器可用且无障碍／主题设置兼容时开启。外观回退不关闭应用能力。两种系统都保留 Browser Use 的连接审批、页面授权与会话隔离。MSIX 保持正常包虚拟化，不为 Windows 10 添加注册表豁免或受限能力。
 
-桌面发行包含 Electron/Node 与原生辅助程序。终端需要 PowerShell 7，Git 仓库操作需要 Git for Windows。内置插件集合包含其 Python/Node 运行时与媒体依赖。业务账号、NAS 权限及可选硬件驱动仍须单独配置；兼容性改动不复制凭据或改变插件业务权限。
+桌面发行包含 Electron/Node 与原生辅助程序。默认终端优先使用 PowerShell 7，也可使用命令提示符。Git 仓库操作需要 Git for Windows。内置插件集合包含其 Python/Node 运行时与媒体依赖。业务账号、NAS 权限及可选硬件驱动仍须单独配置；兼容性改动不复制凭据或改变插件业务权限。
 
 ## 验证
 
