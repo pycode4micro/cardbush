@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode, type Ref } from 'react';
-import { Bell, X, Zap, CircleAlert, CircleCheck, MessageCircleQuestion } from 'lucide-react';
+import { Bell, ChevronRight, X, Zap, CircleAlert, CircleCheck, MessageCircleQuestion } from 'lucide-react';
 import { EventReadButton } from '../automations/ConversationEventInbox';
 import { sessionAttentionLabel } from '../sessionAttention';
 import type { WorkspaceNotice } from './workspaceNotifications';
@@ -7,10 +7,12 @@ import type { AppLanguage, ConversationSummary } from '../../types';
 import { uiText } from '../../i18n';
 
 export type RecentTab = 'sessions' | 'notifications';
+export type RecentInlineDisclosure = { expanded: boolean; onToggle(): void; content: ReactNode };
 
-export function RecentConversationBarView({ actions, language, panelId, panelRef, expanded, unread, tab, onTab, onToggle, onActivate, onBrowse, children }: {
+export function RecentConversationBarView({ actions, inline, language, panelId, panelRef, expanded, unread, tab, onTab, onToggle, onActivate, onBrowse, children }: {
   language: AppLanguage; panelId: string; panelRef: Ref<HTMLElement>; expanded: boolean;
   actions?: ReactNode;
+  inline?: RecentInlineDisclosure;
   unread: number;
   onActivate(): void; onBrowse(): void;
   tab: RecentTab; onTab(tab: RecentTab): void; onToggle(value: boolean): void; children: ReactNode;
@@ -18,14 +20,22 @@ export function RecentConversationBarView({ actions, language, panelId, panelRef
   const t = uiText(language), tabId = useId();
   const tabs = [{ id: 'sessions', label: t('conversationSearchDialog.chats') }, { id: 'notifications', label: t('recentBar.notifications') }] as const;
   const listLabel = unread ? t('recentBar.navigatorUnread', { count: unread }) : t('recentBar.navigator');
+  const inlineId = panelId + '-inline';
   return <div className="recent-bar">
-    <button className="nav-row recent-bar-list" type="button" {...{ interestfor: panelId }}
-      aria-description={t('recentBar.quickHint')} aria-keyshortcuts="ArrowDown" onClick={onActivate}
-      onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); onBrowse(); } }}
-      data-unread={unread > 0 || undefined} aria-haspopup="dialog" aria-controls={panelId} aria-expanded={expanded} aria-label={listLabel}>
-      <span className="nav-row-icon" aria-hidden="true"><Zap/>{unread > 0 && <i className="recent-unread-dot"/>}</span>
-      <span>{t('recentBar.navigator')}</span>
-    </button>
+    <div className="recent-bar-heading" data-inline={inline ? '' : undefined}>
+      <button className="nav-row recent-bar-list" type="button" {...{ interestfor: panelId }}
+        aria-description={t('recentBar.quickHint')} aria-keyshortcuts="ArrowDown" onClick={onActivate}
+        onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); onBrowse(); } }}
+        data-unread={unread > 0 || undefined} aria-haspopup="dialog" aria-controls={panelId} aria-expanded={expanded} aria-label={listLabel}>
+        <span className="nav-row-icon" aria-hidden="true"><Zap/>{unread > 0 && <i className="recent-unread-dot"/>}</span>
+        <span>{t('recentBar.navigator')}</span>
+      </button>
+      {inline && <button className="recent-inline-toggle" type="button" aria-controls={inlineId} aria-expanded={inline.expanded}
+        aria-label={t('recentBar.quickSections')} title={t('recentBar.quickSections')} onClick={inline.onToggle}>
+        <ChevronRight aria-hidden="true"/>
+      </button>}
+    </div>
+    {inline && <div className="recent-inline-sessions" id={inlineId} hidden={!inline.expanded}>{inline.content}</div>}
     <aside className="recent-turn-drawer" ref={panelRef} id={panelId} popover="auto" role="dialog"
       aria-label={t('recentBar.navigator')} onToggle={event => {
         if (event.target === event.currentTarget) onToggle(event.newState === 'open');

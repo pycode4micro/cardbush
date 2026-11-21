@@ -143,6 +143,13 @@ body.sidebar-resizing .right-inspector {
   margin-top: 0;
 }
 
+.sidebar-nav:has(.recent-bar-heading[data-inline]) {
+  min-height: 0;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
 .sidebar-nav > .sidebar-assistant ~ .desktop-search {
   margin-block-start: var(--sidebar-search-gap, 8px);
 }

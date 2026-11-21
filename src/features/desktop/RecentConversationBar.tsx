@@ -2,7 +2,7 @@ import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AppLanguage, ConversationSummary } from '../../types';
 import { recentVisibleConversations } from '../sidebar/conversationArchives';
-import { RecentConversationBarView, NotificationListView, type RecentTab } from './RecentConversationBarView';
+import { RecentConversationBarView, NotificationListView, type RecentInlineDisclosure, type RecentTab } from './RecentConversationBarView';
 import type { WorkspaceNotice } from './workspaceNotifications';
 import './recentConversationBar.css';
 
@@ -13,12 +13,13 @@ export type RecentListOutlet = {
 };
 type Props = {
   actions?: ReactNode;
+  inline?: RecentInlineDisclosure;
   language: AppLanguage; assistantName: string; selectedId: string; conversations: ConversationSummary[];
   notices: WorkspaceNotice[]; openNotice(notice: WorkspaceNotice): void;
   open(id: string): void; onRecentList(value: RecentListOutlet | null): void;
 };
 
-export function RecentConversationBar({ actions, language, assistantName, selectedId, conversations, open, onRecentList, notices, openNotice }: Props) {
+export function RecentConversationBar({ actions, inline, language, assistantName, selectedId, conversations, open, onRecentList, notices, openNotice }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [present, setPresent] = useState(false);
   const toggleVersion = useRef(0);
@@ -60,7 +61,7 @@ export function RecentConversationBar({ actions, language, assistantName, select
     if (animations?.length) void Promise.allSettled(animations.map(animation => animation.finished)).then(finish);
     else finish();
   };
-  return <RecentConversationBarView actions={actions} language={language} panelId={id}
+  return <RecentConversationBarView actions={actions} inline={inline} language={language} panelId={id}
     panelRef={panel} expanded={expanded} unread={notices.length} tab={tab} onTab={setTab}
     onBrowse={() => {
       panel.current?.showPopover();

@@ -138,8 +138,8 @@ assert.doesNotMatch(
   'OS, Team, tools, and skills must not remain duplicated in primary sidebar navigation',
 );
 assert.match(sidebarSource, /cardbush_pinned_conversation_ids/);
-assert.match(sidebarSource, /pinnedProjects\.map\(project => renderProjectBlock\(project, true\)\)/);
-assert.match(sidebarSource, /pinnedConversations\.map\(renderDrawerConversation\)/);
+assert.match(sidebarSource, /pinnedProjects\.map\(project => renderProjectBlock\(project, list\)\)/);
+assert.match(sidebarSource, /pinnedConversations\.map\(renderConversation\)/);
 assert.match(sidebarSource, /options\.pinned\s*\? uiText\(language\)\('chatSidebar\.unpinChat'\)\s*:\s*uiText\(language\)\('chatSidebar\.pinChat'\)/);
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
 const windowFrameBlock = appSource.match(/function WindowFrame\([\s\S]*?function WindowFrameMenu\(/)?.[0] ?? '';
@@ -149,8 +149,9 @@ assert.doesNotMatch(windowFrameBlock, /only-talk-toggle|onOnlyTalkModeChange/);
 assert.doesNotMatch(sidebarSource, /onlyTalkMode|onOnlyTalkModeChange|only-talk-toggle/);
 assert.doesNotMatch(stylesSource, /\.only-talk-toggle|new-chat-mode-row|sidebar-mode-enter/);
 assert.match(sidebarSource, /projectsHost && createPortal[\s\S]*?visibleProjects.map[\s\S]*?projectsHost\)/);
-assert.doesNotMatch(sidebarSource.slice(sidebarSource.indexOf('<aside'),sidebarSource.indexOf('</aside>')), /pinnedProjects|renderProjectBlock|recentConversations/);
-assert.match(sidebarSource, /recentList && createPortal[\s\S]*?recentConversations\.map[\s\S]*?recentList\.element/);
+assert.match(sidebarSource, /quickNavigation\?\.\(showQuickSections \? \{[\s\S]*?content: quickExpanded && renderQuickSessions\(/);
+assert.match(sidebarSource, /recentList && createPortal\(renderQuickSessions\(recentList\), recentList\.element\)/);
+assert.match(sidebarSource, /recentConversations\.slice\(0, list\.limit\)\.map\(renderConversation\)/);
 assert.match(sidebarSource, /cardbush_conversation_read_state_v1/);
 assert.match(sidebarSource, /conversationReadReceipt\(/);
 assert.match(sidebarSource, /if \(!isCardbushForeground\(\)\) return;/,

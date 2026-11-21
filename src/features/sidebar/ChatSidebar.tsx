@@ -2,7 +2,7 @@ import { uiText } from '../../i18n';
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 import { SidebarNavRow } from './SidebarNavRow';
 import type { RecentListOutlet } from '../desktop/RecentConversationBar';
-import { ConversationRowContent } from '../desktop/RecentConversationBarView';
+import { ConversationRowContent, type RecentInlineDisclosure } from '../desktop/RecentConversationBarView';
 import { ProfileMenu } from '../profile/ProfileMenu';
 import { SidebarApplications } from './SidebarApplications';
 import { recentVisibleConversations, setConversationsArchived, useConversationArchives } from './conversationArchives';
@@ -177,6 +177,9 @@ type ConversationMenuOptions = {
 
 import { useSidebarContextMenu, type SidebarContextMenuItem, type SidebarMenuEvent } from './SidebarContextMenu';
 
+const inlineRecentPageSize = 6;
+type QuickSessions = Omit<RecentListOutlet, 'element'>;
+
 export const ChatSidebar = memo(function ChatSidebar({
   language,
   section,
@@ -199,12 +202,12 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenArchives,
   onOpenSearch,
   projectsHost, onOpenProject, onOpenTabWorkspace, workspaceNavigation, quickNavigation, assistantEntry,
-  softVisible = true, showRail = true, recentList,
+  softVisible = true, showRail = true, showQuickSections = false, recentList, onOpenQuickConversation = onConversationChange,
 }: {
   language: AppLanguage;
   section: AppSection | 'settings' | 'tabs' | 'projects';
   workspaceNavigation?: React.ReactNode;
-  quickNavigation?: React.ReactNode;
+  quickNavigation?: (inline?: RecentInlineDisclosure) => React.ReactNode;
   assistantEntry?: React.ReactNode;
   activeConversationId: string;
   runningConversationIds?: Set<string>;
@@ -223,6 +226,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
   showRail?: boolean;
+  showQuickSections?: boolean;
+  onOpenQuickConversation?: (id: string) => void;
   recentList?: RecentListOutlet | null;
   onOpenArchives?: () => void;
   onOpenSearch: () => void;
@@ -246,6 +251,8 @@ export const ChatSidebar = memo(function ChatSidebar({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [quickExpanded, setQuickExpanded] = useState(true);
+  const [quickLimit, setQuickLimit] = useState(inlineRecentPageSize);
   const [pinnedConversationIds, setPinnedConversationIds] = useState<Set<string>>(
     readPinnedConversationIds,
   );
@@ -314,13 +321,6 @@ export const ChatSidebar = memo(function ChatSidebar({
     () => visibleConversations.filter((conversation) => pinnedConversationIds.has(conversation.id)),
     [pinnedConversationIds, visibleConversations],
   );
-  const recentOpen = Boolean(recentList);
-  const recentConversations = useMemo(() => {
-    if (!recentOpen) return [];
-    const expanded = pinnedProjects.filter(project => expandedProjectIds.has(project.id));
-    return visibleConversations.filter(item => !pinnedConversationIds.has(item.id) && !expanded.some(project =>
-      conversationMatchesScope(item, { mode: 'project', projectId: project.id, projectDir: project.rootPath })));
-  }, [recentOpen, visibleConversations, pinnedConversationIds, pinnedProjects, expandedProjectIds]);
   const unreadConversationIds = useMemo(() => {
     if (!conversationReadState.initialized) return new Set<string>();
     return new Set(
@@ -608,7 +608,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     return items;
   }
 
-  function renderProjectBlock(project: ProjectItem, inDrawer = false) {
+  function renderProjectBlock(project: ProjectItem, quickList?: QuickSessions) {
     const projectConversations = visibleConversations.filter(item => conversationMatchesScope(item, {
       mode: 'project', projectId: project.id, projectDir: project.rootPath,
     }));
@@ -619,9 +619,9 @@ export const ChatSidebar = memo(function ChatSidebar({
       <ProjectBlock
         key={project.id}
         project={project}
-        conversations={inDrawer ? projectConversations.filter(item => !pinnedConversationIds.has(item.id)) : projectConversations}
+        conversations={quickList ? projectConversations.filter(item => !pinnedConversationIds.has(item.id)) : projectConversations}
         previewConversations={projectConversations}
-        activeConversationId={activeConversationId}
+        activeConversationId={quickList?.selectedId ?? activeConversationId}
         runningConversationIds={runningConversationIds}
         attentionByConversation={attentionByConversation}
         unreadConversationIds={unreadConversationIds}
@@ -636,7 +636,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           onProjectAction(action, project);
         }}
         onRenameProject={title => onRenameProject(project, title)}
-        onConversationChange={inDrawer && recentList ? recentList.enter : onConversationChange}
+        onConversationChange={quickList?.enter ?? onConversationChange}
         onConversationArchive={toggleConversationArchive}
         onDeleteConversation={onDeleteConversation}
         onRenameConversation={onRenameConversation}
@@ -644,7 +644,7 @@ export const ChatSidebar = memo(function ChatSidebar({
           openContextMenu(
             event,
             `conversation:${conversation.id}`,
-            conversationMenuItems(conversation, options),
+            conversationMenuItems(conversation, options, quickList?.enter),
           )
         }
         pinnedConversationIds={pinnedConversationIds}
@@ -659,8 +659,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     );
   }
 
-  function renderDrawerConversation(conversation: ConversationSummary) {
-    if (!recentList) return null;
+  function renderQuickConversation(conversation: ConversationSummary, list: QuickSessions, drawer: boolean) {
     const project = projectItems.find(item => conversationMatchesScope(conversation, {
       mode: 'project', projectId: item.id, projectDir: item.rootPath,
     }));
@@ -668,8 +667,8 @@ export const ChatSidebar = memo(function ChatSidebar({
       <ConversationRow
         key={conversation.id}
         conversation={conversation}
-        drawer
-        active={conversation.id === recentList.selectedId}
+        drawer={drawer}
+        active={conversation.id === list.selectedId}
         running={runningConversationIds?.has(conversation.id) ?? false}
         attention={attentionByConversation?.[conversation.id]}
         unread={unreadConversationIds.has(conversation.id)}
@@ -689,16 +688,44 @@ export const ChatSidebar = memo(function ChatSidebar({
           openContextMenu(
             event,
             `conversation:${conversation.id}`,
-            conversationMenuItems(conversation, options, recentList.enter),
+            conversationMenuItems(conversation, options, list.enter),
           )
         }
-        onClick={() => recentList.enter(conversation.id)}
+        onClick={() => list.enter(conversation.id)}
       />
     );
   }
 
   const trackDrag = (event: React.DragEvent) => setDraggedConversationId(event.dataTransfer.getData(CONVERSATION_DRAG_TYPE));
   const endDrag = () => { setDraggedConversationId(''); setWorkspaceDropTarget(null); };
+
+  function renderQuickSessions(list: QuickSessions, inline = false) {
+    const projects = inline ? visibleProjects : pinnedProjects;
+    const expandedProjects = projects.filter(project => expandedProjectIds.has(project.id));
+    const unpinnedProjects = projects.filter(project => !project.pinned);
+    const recentConversations = visibleConversations.filter(item => !pinnedConversationIds.has(item.id) && !expandedProjects.some(project =>
+      conversationMatchesScope(item, { mode: 'project', projectId: project.id, projectDir: project.rootPath })));
+    const renderConversation = (item: ConversationSummary) => renderQuickConversation(item, list, !inline);
+    const t = uiText(language);
+    return <div className="recent-session-rows" onDragStart={trackDrag} onDragEnd={endDrag}>
+      {(pinnedProjects.length > 0 || pinnedConversations.length > 0) && <section data-recent-group="pinned">
+        <h3>{t('chatSidebar.pinned')}</h3>
+        {pinnedProjects.map(project => renderProjectBlock(project, list))}
+        {pinnedConversations.map(renderConversation)}
+      </section>}
+      {unpinnedProjects.length > 0 && <section data-recent-group="projects">
+        <h3>{t('archivedItemsPanel.projects')}</h3>
+        {unpinnedProjects.map(project => renderProjectBlock(project, list))}
+      </section>}
+      <section data-workspace-drop="recent" className={workspaceDropTarget === 'recent' ? 'workspace-drop-active' : undefined} {...workspaceDropHandlers(null)}>
+        {recentConversations.length > 0 && <h3>{t('recentBar.sessions')}</h3>}
+        {recentConversations.slice(0, list.limit).map(renderConversation)}
+        {!visibleConversations.length && !projects.length && list.selectedId !== PERSONAL_ASSISTANT_SESSION && <p>{t('conversationSearchDialog.noChatsYet')}</p>}
+        {recentConversations.length > list.limit && <button className="recent-turn-more" type="button" onClick={list.more}>{t('recentBar.moreChats')}</button>}
+      </section>
+    </div>;
+  }
+
   return <>
     {showRail && <aside
       className={`sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
@@ -713,7 +740,14 @@ export const ChatSidebar = memo(function ChatSidebar({
           <Search aria-hidden="true"/><span>{uiText(language)('desktop.search')}</span>
         </button>
         <SidebarNavRow navSection="home" icon={<House/>} label={uiText(language)('desktop.home')} active={section === 'home'} onClick={() => onSectionChange('home')}/>
-        {quickNavigation}
+        {quickNavigation?.(showQuickSections ? {
+          expanded: quickExpanded,
+          onToggle: () => setQuickExpanded(value => !value),
+          content: quickExpanded && renderQuickSessions({
+            selectedId: activeConversationId, enter: onOpenQuickConversation, limit: quickLimit,
+            more: () => setQuickLimit(value => value + inlineRecentPageSize),
+          }, true),
+        } : undefined)}
         {workspaceNavigation}
         <SidebarNavRow navSection="tabs" icon={<PanelsTopLeft/>} label={uiText(language)('desktop.tabWorkspace')} active={section === 'tabs'} onClick={onOpenTabWorkspace}/>
         <SidebarApplications language={language}/>
@@ -731,19 +765,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         <button type="button" onClick={onOpenArchives ?? onOpenSettings}><Archive/>{uiText(language)('chatSidebar.manageArchives')}</button>
       </div>
     </div>, projectsHost)}
-    {recentList && createPortal(<div className="recent-session-rows" onDragStart={trackDrag} onDragEnd={endDrag}>
-      {(pinnedProjects.length > 0 || pinnedConversations.length > 0) && <section data-recent-group="pinned">
-        <h3>{uiText(language)('chatSidebar.pinned')}</h3>
-        {pinnedProjects.map(project => renderProjectBlock(project, true))}
-        {pinnedConversations.map(renderDrawerConversation)}
-      </section>}
-      <section data-workspace-drop="recent" className={workspaceDropTarget === 'recent' ? 'workspace-drop-active' : undefined} {...workspaceDropHandlers(null)}>
-        {recentConversations.length > 0 && <h3>{uiText(language)('recentBar.sessions')}</h3>}
-        {recentConversations.slice(0, recentList.limit).map(renderDrawerConversation)}
-        {!visibleConversations.length && !pinnedProjects.length && recentList.selectedId !== PERSONAL_ASSISTANT_SESSION && <p>{uiText(language)('conversationSearchDialog.noChatsYet')}</p>}
-        {recentConversations.length > recentList.limit && <button className="recent-turn-more" type="button" onClick={recentList.more}>{uiText(language)('recentBar.moreChats')}</button>}
-      </section>
-    </div>, recentList.element)}
+    {recentList && createPortal(renderQuickSessions(recentList), recentList.element)}
       {menu}
   </>;
 });

@@ -309,14 +309,22 @@ async function run() {
   assert.equal(await isOpen(), false, 'moving past Quick does not interrupt navigation');
   move(point); await visible(drawer);
   await wait(()=>read("!document.querySelector('.recent-turn-drawer').getAnimations().length"),'Quick preview settles');
-  const popup = await read("(()=>{const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect(), b=document.querySelector('.recent-bar-list').getBoundingClientRect();return {x:Math.round(p.left+32), y:Math.round(p.top+40), beside:p.left>=b.right && p.left-b.right<16}})()");
-  assert.ok(popup.beside, 'the flyout is anchored to the sidebar button');
+  const popup = await read("(()=>{const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect(), b=(document.querySelector('.recent-bar-heading[data-inline]') ?? document.querySelector('.recent-bar-list')).getBoundingClientRect();return {x:Math.round(p.left+32), y:Math.round(p.top+40), beside:p.left>=b.right && p.left-b.right<16}})()");
+  assert.ok(popup.beside, 'the flyout is anchored to the outside edge of Quick access');
   move({x:popup.x,y:popup.y}); await pause(480);
   assert.equal(await isOpen(),true,'the preview remains interactive as the pointer enters it');
   assert.equal(await contentWidth(), originalWidth, 'Quick does not resize the workspace');
   move(away); await wait(async()=>!await isOpen(),'leaving Quick closes the preview');
   if (process.argv.includes('--quick-access')) {
-    console.log('Sidebar Quick access hover, position, hit testing and dismissal passed.');
+    const quickSections = '.sidebar-nav .recent-inline-sessions';
+    await visible(quickSections + ' .conversation-row');
+    await click('.recent-inline-toggle');
+    await wait(() => read("document.querySelector('.recent-inline-sessions').hidden"), 'Quick sections collapse in the live sidebar');
+    await click('.recent-inline-toggle');
+    await visible(quickSections + ' .conversation-row');
+    await click(quickSections + ' .conversation-row');
+    await visible('[data-message-id="turn-45-0"]');
+    console.log('Sidebar Quick access passed: native hover, positioning, dismissal, inline disclosure and direct navigation.');
     app.quit(); return;
   }
   const titleColors = [];
@@ -547,7 +555,7 @@ async function run() {
   assert.equal(await read("document.querySelector('.main-stage .chat-panel[role=region]').getAttribute('aria-label')"), '设计评审记录', 'the chat retains its own accessible title');
   // Recent rows open even an empty conversation in one step.
   await click('[data-nav-section=home]');
-  assert.equal(await read("document.querySelectorAll('.sidebar .conversation-row').length"), 0);
+  await visible('.sidebar .recent-inline-sessions .conversation-row');
   await showQuickPanel(); await click('[data-recent-tab=sessions]');
   await visible('[data-recent-session=local-earlier]');
   assert.equal(await read("document.querySelectorAll('[data-recent-session]').length"), 3);
@@ -567,8 +575,8 @@ async function run() {
   await visible('[data-recent-group=pinned] ' + earlierRow);
   await visible('[data-workspace-drop=recent] [data-recent-session=local-navigation-test]');
   assert.equal(await read("document.querySelectorAll('[data-recent-session=local-earlier]').length"), 1);
-  assert.equal(await read("[...document.querySelectorAll('.sidebar .conversation-row')].every(row => row.closest('.recent-turn-drawer'))"), true);
-  const latestTitle = await read("document.querySelector('[data-workspace-drop=recent] .recent-row-copy').textContent");
+  assert.equal(await read("[...document.querySelectorAll('.sidebar .conversation-row')].every(row => row.closest('.recent-turn-drawer, .recent-inline-sessions'))"), true);
+  const latestTitle = await read("document.querySelector('.recent-turn-drawer [data-workspace-drop=recent] .recent-row-copy').textContent");
   assert.notEqual(latestTitle, 'Earlier conversation');
   await wait(() => read("innerWidth === 1400 && document.querySelector('.desktop-shell').dataset.sidebarLayout === 'docked' && !document.querySelector('.sidebar').getAnimations().length"), 'Quick hit target settled after resizing');
   const quickPoint = await read("(()=>{const r=document.querySelector('.recent-bar-list').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()");

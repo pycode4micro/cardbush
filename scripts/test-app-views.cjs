@@ -68,6 +68,7 @@ async function buildViews() {
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
   const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx', 'src/features/sidebar/WorkspaceChatNavigation.tsx', 'src/features/chat/QuickContextRail.tsx',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'sidebar-quick-sections' ? ['src/features/desktop/RecentConversationBar.tsx'] : []),
     'src/features/pre_test/QuickContextPreTest.tsx',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'terminal-task' ? ['src/features/tools/TerminalTaskStatus.tsx'] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'runtime-readiness' ? [
@@ -376,7 +377,7 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      if (!['sidebar-menu', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation', 'composer-memory'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
+      if (!['sidebar-menu', 'sidebar-quick-sections', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation', 'composer-memory'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'assistant-feedback') {
       await require('./helpers/assistant-feedback.cjs')({ run, until, pause });
@@ -512,6 +513,12 @@ app.whenReady().then(async () => {
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'sidebar-menu') {
       await require('./helpers/sidebar-context-menu.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no sidebar menu renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'sidebar-quick-sections') {
+      await require('./helpers/sidebar-quick-sections.cjs')({ run, until, window });
+      assert.deepEqual(await run('failures'), [], 'no Quick access renderer errors');
       assert.deepEqual(errors, []);
       return;
     }

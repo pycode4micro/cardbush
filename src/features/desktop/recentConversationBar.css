@@ -7,6 +7,22 @@
 .recent-bar-list { anchor-name:--quick-access; interest-delay:250ms 320ms; }
 .recent-bar-list .nav-row-icon { position:relative; }
 .recent-bar-list[aria-expanded="true"] { background:var(--chrome-control-hover,var(--hover)); }
+.recent-bar-heading { display:contents; }
+.recent-bar-heading[data-inline] { display:flex; align-items:center; anchor-name:--quick-access; }
+.recent-bar-heading[data-inline] .recent-bar-list { flex:1; min-width:0; anchor-name:none; }
+.recent-inline-toggle {
+  display:grid; place-items:center; flex:0 0 var(--bar-button-size); height:var(--bar-button-size);
+  padding:0; border:0; border-radius:6px; background:transparent;
+}
+.recent-bar .recent-inline-toggle { color:var(--sidebar-text-mid, var(--text-mid)); }
+.recent-inline-toggle:hover { background:var(--chrome-control-hover, var(--hover)); }
+.recent-inline-toggle svg { width:14px; height:14px; }
+.recent-inline-toggle[aria-expanded="true"] svg { rotate:90deg; }
+.recent-inline-sessions { padding-inline-start:var(--sidebar-quick-indent, 10px); margin-block-end:8px; }
+.recent-inline-sessions .recent-session-rows h3 { margin-block-start:8px; }
+.recent-inline-sessions .recent-session-rows :is(.project-row, .conversation-row) { min-height:30px; }
+.recent-inline-sessions .recent-session-rows .project-row { height:30px; }
+.recent-inline-sessions .recent-session-rows p { margin:8px; color:var(--text-mid); font-size:12px; }
 .recent-panel-header {
   display:flex; justify-content:flex-end; align-items:center; padding:8px 12px 0;
 }
@@ -84,9 +100,9 @@
 .recent-turn-scroll { min-height: 0; padding: 0 6px 12px; overflow: hidden auto; overscroll-behavior: contain; }
 .recent-turn-scroll p { font-size: 13px; color: var(--text-mid); margin: 16px 8px; }
 .recent-turn-scroll ol { padding: 0; margin: 0; list-style: none; }
-.recent-turn-scroll li button, .recent-session-rows .conversation-row { box-sizing: border-box; position: relative; display: flex; align-items: center; width: 100%; min-height: 42px; gap: 9px; padding: 6px 8px; text-align: start; border: 0; border-radius: 5px; background: transparent; color: var(--text); }
-.recent-turn-scroll li + li > button::before, .recent-session-rows .conversation-row + .conversation-row::before { content: ''; position: absolute; top: 0; inset-inline: 8px; height: 1px; background: var(--border); }
-.recent-turn-scroll li button:hover, .recent-session-rows .conversation-row:is(:hover,.active) { background: var(--surface-hover); }
+.recent-turn-scroll :is(li button, .conversation-row) { box-sizing: border-box; position: relative; display: flex; align-items: center; width: 100%; min-height: 42px; gap: 9px; padding: 6px 8px; text-align: start; border: 0; border-radius: 5px; background: transparent; color: var(--text); }
+.recent-turn-scroll :is(li + li > button, .conversation-row + .conversation-row)::before { content: ''; position: absolute; top: 0; inset-inline: 8px; height: 1px; background: var(--border); }
+.recent-turn-scroll :is(li button:hover, .conversation-row:is(:hover,.active)) { background: var(--surface-hover); }
 .recent-row-copy { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 520; line-height: 1.35; }
 .recent-turn-scroll time { flex: none; font-size: 12px; font-weight: 400; color: var(--text-mid); font-variant-numeric: tabular-nums; }
 .recent-notification { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; border-bottom:1px solid var(--border); }
@@ -106,8 +122,8 @@
 .recent-session-rows [data-workspace-drop=recent] { min-height:24px; }
 .recent-session-rows time { min-width: calc(2 * var(--recent-action-size)); text-align: end; }
 .recent-session-rows .conversation-row:has(.conversation-attention-indicator,.conversation-running-indicator) time { visibility: hidden; }
-.recent-session-rows :is(.conversation-pin,.conversation-archive) { width: var(--recent-action-size); height: var(--recent-action-size); }
-.recent-session-rows .conversation-pin { right: calc(3px + var(--recent-action-size)); }
+.recent-turn-scroll .recent-session-rows :is(.conversation-pin,.conversation-archive) { width: var(--recent-action-size); height: var(--recent-action-size); }
+.recent-turn-scroll .recent-session-rows .conversation-pin { right: calc(3px + var(--recent-action-size)); }
 .recent-session-rows .conversation-row:is(:hover,:focus-within) time { visibility: hidden; }
 .recent-turn-more { width: 100%; padding: 9px; margin-top: 6px; border: 1px solid var(--border); border-radius: 6px; background: transparent; }
 .recent-turn-more:hover { background: var(--surface-hover); }

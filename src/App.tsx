@@ -111,6 +111,7 @@ import { WindowSidebarToggle } from './components/WindowSidebarToggle';
 import { WindowFrame } from './components/WindowFrame';
 import { WorkspaceChatNavigation } from './features/sidebar/WorkspaceChatNavigation';
 import { RecentConversationBar, type RecentListOutlet } from './features/desktop/RecentConversationBar';
+import type { RecentInlineDisclosure } from './features/desktop/RecentConversationBarView';
 import { WindowConversationBar } from './features/desktop/WindowConversationBar';
 import { AssistantStageButton } from './features/desktop/AssistantStageButton';
 import { quickInputState } from './features/composer/quickInputState';
@@ -2111,7 +2112,8 @@ function CardbushApp() {
     createConversation();
   }, [createConversation]);
   const projectsActive = currentPage.section === 'home' && (currentPage.page.kind === 'projects' || currentPage.page.kind === 'project');
-  const quickNavigation = <RecentConversationBar key={JSON.stringify([currentPage, inspectorOpen && inspectorCover])}
+  const renderQuickNavigation = (inline?: RecentInlineDisclosure) => <RecentConversationBar key={JSON.stringify([currentPage, inspectorOpen && inspectorCover])}
+    inline={inline}
     conversations={chat.conversations}
     actions={chatActionsSlot} language={language} assistantName={assistantProfile.name}
     selectedId={assistantVisible ? PERSONAL_ASSISTANT_SESSION : chat.activeConversationId}
@@ -2244,7 +2246,7 @@ function CardbushApp() {
           <WindowSidebarToggle language={language} collapsed={sidebarCollapsed} onToggle={toggleSidebar}/>
           <CompactSidebarBackdrop visible={(drawerLayout || (!settingsOpen && inspectorCover)) && !sidebarCollapsed} language={language} onClose={collapseSidebar} />
           {(showChatRail || recentList || projectsHost) && <ChatSidebar showRail={showChatRail} recentList={recentList}
-            quickNavigation={quickNavigation}
+            quickNavigation={renderQuickNavigation} showQuickSections={!sidebarCollapsed} onOpenQuickConversation={openRecentConversation}
             language={language}
             section={projectsActive ? 'projects' : navigationSection} workspaceNavigation={workspaceNavigation} assistantEntry={assistantEntry}
             activeConversationId={navigationSection === 'chat' ? chat.activeConversationId : ''}
@@ -2277,13 +2279,13 @@ function CardbushApp() {
           {!sidebarCollapsed && (
             <>
               {navigationSection === 'team' ? (
-                <NativeTeamSidebar softVisible workspaceNavigation={<>{quickNavigation}{workspaceNavigation}</>} assistantEntry={assistantEntry}
+                <NativeTeamSidebar softVisible workspaceNavigation={<>{renderQuickNavigation()}{workspaceNavigation}</>} assistantEntry={assistantEntry}
                   language={language}
                   onOpenSettings={() => openSettings()}
                   onSelect={() => { if (drawerLayout) collapseSidebar(); }}
                 />
               ) : navigationSection === 'md-presentation' ? (
-                <CanvasSidebar language={language} softVisible workspaceNavigation={<>{quickNavigation}{workspaceNavigation}</>} assistantEntry={assistantEntry}
+                <CanvasSidebar language={language} softVisible workspaceNavigation={<>{renderQuickNavigation()}{workspaceNavigation}</>} assistantEntry={assistantEntry}
                   onSelect={() => { if (drawerLayout) collapseSidebar(); }}/>
               ) : null}
               <SidebarResizer
