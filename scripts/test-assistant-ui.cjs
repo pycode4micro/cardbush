@@ -30,7 +30,8 @@ async function buildFixture(directory) {
     }, load(id) {
       if (id === '\0assistant-tasks.ts') return `import {useEffect,useState} from 'react';export function useLoopSubagentTasks(){const [,update]=useState(0);useEffect(()=>{const refresh=()=>update(v=>v+1);window.addEventListener('fixture-tasks',refresh);return()=>window.removeEventListener('fixture-tasks',refresh);},[]);return fixture.tasks??[];}`;
       if (id === '\0assistant-backend.ts') return `
-        import {splitStreamAttachmentMentions,chatAttachmentsFromOutbound} from ${file('src/shared/chatAttachments.ts')};
+        import {splitStreamAttachmentMentions} from ${file('src/shared/chatAttachments.ts')};
+        import {assistantInputAttachments} from ${file('src/features/assistant/assistantTimeline.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
           read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),pendingInputs:structuredClone(fixture.pendingInputs??[]),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,toolName:fixture.toolName,expression:fixture.expression,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
           react:async(messageId,reaction)=>{if(fixture.failReact)throw Error('fixture reaction failed');fixture.reactions??={};if(reaction)fixture.reactions[messageId]=reaction;else delete fixture.reactions[messageId];return {reactions:structuredClone(fixture.reactions)};},
@@ -46,7 +47,9 @@ async function buildFixture(directory) {
             if(fixture.failSend)throw Error('fixture send failed');
             if(identity&&fixture.entries.some(entry=>entry.id===identity.id))return;
             fixture.sent.push({text,spoken});const input=splitStreamAttachmentMentions(text);
-            fixture.entries.push({id:identity?.id??'user-'+fixture.sent.length,role:'user',content:input.userInput,replyTo:identity?.replyTo,attachments:await chatAttachmentsFromOutbound(input),createdAt:identity?.createdAt??new Date().toISOString(),source:'text',visibility:'conversation'});
+            const id=identity?.id??'user-'+fixture.sent.length;
+            const attachments=(await assistantInputAttachments(input,id)).map(file=>file.type==='image'&&fixture.retainedImage?{...file,path:fixture.retainedImage}:file);
+            fixture.entries.push({id,role:'user',content:input.userInput,replyTo:identity?.replyTo,attachments,createdAt:identity?.createdAt??new Date().toISOString(),source:'text',visibility:'conversation'});
             if(identity?.delivery)(fixture.pendingInputs??=[]).push({id:identity.id,text:input.userInput,createdAt:identity.createdAt,delivery:identity.delivery});
             if(fixture.failReadAfterAccept)fixture.failRead=true;
             if(fixture.loseReceipt)throw Error('fixture acknowledgement lost');
@@ -88,9 +91,10 @@ async function buildFixture(directory) {
         fixture.uiText=uiText;
         fixture.callHistory=()=>applicationVoiceSession().target?.historyMessages??[];
         fixture.voiceState=()=>applicationVoiceSession().snapshot();
-        function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null);const profile=useAssistantProfile();
+        function Fixture(){const [language,setLanguage]=useState('zh'),[active,setActive]=useState(true),[theme,setTheme]=useState('dark'),[inspector,setInspector]=useState(false),[portal,setPortal]=useState(false),[target,setTarget]=useState(null),[noticeTarget,setNoticeTarget]=useState(undefined);const profile=useAssistantProfile();
           const permissions=useAssistantPermissions();
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
+          fixture.locateNotice=id=>setNoticeTarget(id?{id}:undefined);
           const [skin,setSkin]=useState(pixelRobot);
           fixture.changeSkin=custom=>setSkin(custom?{...pixelRobot,props:{anchor:{x:10,y:45,size:40},paths:{pencil:'M1 1h3v3H1z'},gestures:{pencil:'scan'}}}:pixelRobot);
           return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><AssistantSkinContext.Provider value={skin}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} prepare={noop} settings={noop}>
@@ -99,6 +103,7 @@ async function buildFixture(directory) {
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
             <section className="main-stage"><AssistantView active={active} language={language}
+              noticeTarget={noticeTarget} onNoticeLocated={()=>setNoticeTarget(undefined)}
               composerControls={{...controls,...permissions}} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:'',...readAssistantPermissions()};}} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
               composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
             {portal&&<aside ref={setTarget} className="inspector-quick-input" style={{position:"fixed",bottom:20,left:300,width:450,zIndex:30}}/>}
@@ -125,9 +130,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Individual UI assertions retain their short deadline; allow time for the cumulative cases.
 const deadline = setTimeout(() => { console.error('Assistant UI suite exceeded its total time budget'); app.exit(1); }, process.env.CARDBUSH_ASSISTANT_UI_CASE ? 55000 : 95000);
 app.whenReady().then(async () => {
-  if (process.env.CARDBUSH_ASSISTANT_UI_CASE === 'attachments') electron.protocol.handle('cardbush-file', request => {
+  if (process.env.CARDBUSH_ASSISTANT_UI_CASE === 'attachments') electron.protocol.handle('cardbush-file', async request => {
     const target = path.resolve(decodeURIComponent(new URL(request.url).pathname).replace(/^\/(?=[a-z]:)/i, ''));
     if (!target.startsWith(path.resolve(directory) + path.sep)) return new Response('', { status: 403 });
+    if (path.basename(target) === 'retained-portrait.png') await pause(450);
     return electron.net.fetch(require('node:url').pathToFileURL(target).href);
   });
   const win = new BrowserWindow({ show: false, width: 1120, height: 800, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false, offscreen: true } });

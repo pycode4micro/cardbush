@@ -24,6 +24,36 @@ app.whenReady().then(async()=>{
  const search=value=>read(`(()=>{const input=Array.from(document.querySelectorAll('.plugin-search input')).find(input=>input.checkVisibility());Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
  try{
   await win.loadFile(join(directory,'index.html'));
+  const permission = { id: 'background-action', serverId: 'cardbush_background_agent', sessionId: 'child', turnId: 'turn', params: {},
+    permission: { reason: 'Inspect the resource in the sandbox', actions: ['execute', 'read'],
+      targets: [{ kind: 'process', label: 'node fixture.mjs', value: 'internal-policy-json' },
+        { kind: 'filesystem_path', value: 'C:/Fixture/fixture.mjs' }], requestedCapabilityIds: ['fixture:read'] } };
+  win.setSize(420, 660);
+  await read(`showMcpRequests([${JSON.stringify(permission)}])`);
+  await until('Boolean(document.querySelector(".permission-request-dialog[open]"))');
+  assert.equal(await read('document.querySelector(".permission-disclosure").open'), false);
+  assert.match(await read('document.querySelector(".permission-target").innerText'), /node fixture\.mjs/);
+  assert.doesNotMatch(await read('document.querySelector("dialog[open]").innerText'), /internal-policy-json|Inspect the resource|插件需要你的输入/);
+  assert.equal(await read('document.querySelectorAll(".permission-actions button").length'), 3);
+  assert.equal(await read('document.querySelector(".permission-request-dialog").getBoundingClientRect().width < innerWidth'), true);
+  await read('document.querySelector(".permission-disclosure summary").click()');
+  await until('document.querySelector(".permission-disclosure").open');
+  assert.match(await read('document.querySelector(".permission-request-details").innerText'), /Inspect the resource in the sandbox/);
+  await read('document.querySelector(".permission-disclosure summary").click()');
+  await until('!document.querySelector(".permission-disclosure").open');
+  await read('document.querySelector(".permission-action.session").click()');
+  await until('!document.querySelector(".permission-request-dialog")');
+  assert.deepEqual(await read('mcpAnswers.at(-1)'), { id: permission.id, answer: { decision: 'allow_session' } });
+  const hook = { ...permission, id: 'hook-confirmation', permission: { ...permission.permission, requestedCapabilityIds: [] } };
+  await read(`showMcpRequests([${JSON.stringify(hook)}])`);
+  await until('Boolean(document.querySelector(".permission-request-dialog[open]"))');
+  assert.equal(await read('Boolean(document.querySelector(".permission-action.session"))'), false);
+  await read('document.querySelector(".permission-action.allow").click()');
+  await until('!document.querySelector(".permission-request-dialog")');
+  assert.deepEqual(await read('mcpAnswers.at(-1)'), { id: hook.id, answer: { decision: 'allow_once' } });
+  console.log('Background approval UI passed: shared card, collapsed details, narrow width and session-scoped approval.');
+  if (process.env.CARDBUSH_BACKGROUND_APPROVAL_UI_ONLY === '1') { clearTimeout(deadline); win.destroy(); app.exit(0); return; }
+  win.setSize(1000, 820);
   await until('document.body.innerText.includes("已连接 · 26 个工具")');
   await until('!document.querySelector(".plugin-add-button").disabled');
   if (process.env.CARDBUSH_PLUGIN_MARKETPLACE_ONLY !== '1') {

@@ -77,11 +77,11 @@ export function AssistantMessageMenu({ target, language, reaction, pending, onCl
 }
 
 export function AssistantQuote({ source, excerpt, language, assistantName, onJump, onCancel }: {
-  source?: ConversationEntry; excerpt?: string; language: string; assistantName: string; onJump(): void; onCancel?(): void;
+  source?: ConversationEntry; excerpt?: string; language: string; assistantName: string; onJump(moveFocus: boolean): void; onCancel?(): void;
 }) {
   const t = uiText(language), name = source?.role === 'user' ? t('assistantMessage.you') : assistantName;
   return <div className={`assistant-message-quote${onCancel ? ' is-draft' : ''}`}>
-    <button type="button" className="assistant-quote-link" onClick={onJump} disabled={!source} title={t('assistantMessage.jumpToMessage')}>
+    <button type="button" className="assistant-quote-link" onClick={event => onJump(event.detail === 0)} disabled={!source} title={t('assistantMessage.jumpToMessage')}>
       <Quote aria-hidden="true"/><span><strong>{t('assistantMessage.quoteFrom', { name })}</strong><span>{assistantQuoteText(source, language, excerpt)}</span></span>
     </button>
     {onCancel && <button className="assistant-quote-cancel" type="button" onClick={onCancel} title={t('assistantMessage.cancelQuote')} aria-label={t('assistantMessage.cancelQuote')}><X/></button>}

@@ -4,6 +4,7 @@ import { projectArchivedToolResult } from './archivedToolResultProjection.js';
 import { withFileSourceLocator } from './fileSourceReceipt.js';
 import { DEFAULT_TOOL_RESULT_MAX_CHARS } from './toolResultBudget.js';
 import { toolCallDisplay } from './toolDisplay.js';
+import { silentChildApproval } from './childApproval.js';
 import { modelMcpAppReference } from './mcpAppReference.js';
 import type { ToolNameScope } from './toolReferenceNames.js';
 import { scheduledToolName as resolveScheduledToolName, toolExecutionPhases } from './toolScheduling.js';
@@ -34,7 +35,7 @@ import { ModelImageInputError, ModelImageStore } from "./modelImageStore.js";
 import { snapshotMcpImages, omitToolImageData, omitToolImageDataFromText, type ToolImageObservation } from './toolImageContent.js';
 
 export interface RuntimeToolLoopOptions {
-  externalPermissions?: PermissionResolver;
+  externalPermissions?: PermissionResolver & { handles?(input: Parameters<PermissionResolver['request']>[0]): boolean };
   eventLog: InMemoryRuntimeEventLog;
   identity: RuntimeEventIdentity;
   registry: ToolRegistry;
@@ -61,6 +62,7 @@ export interface RuntimeToolRoundResult {
   commitDeliveries?: () => void;
   taskResultReferences?: TaskResultReference[][];
   hookStopTurn?: string;
+  childApprovals?: string[];
 }
 
 const TOOL_MESSAGE_OVERHEAD_TOKENS = 64;
@@ -125,7 +127,11 @@ export class RuntimeToolLoop {
     });
     this.#coordinator = new ToolExecutionCoordinator({
       registry: options.registry,
-      permissions: options.externalPermissions ?? this.#permissions,
+      permissions: { request: (input, signal) => {
+        const external = options.externalPermissions;
+        return external && external.handles?.(input) !== false
+          ? external.request(input, signal) : this.#permissions.request(input, signal);
+      } },
       observer: {
         completed: (call, identity, outcome) => {
           const executedCall = this.#nestedExecutingCalls.get(call.id) ?? call;
@@ -408,8 +414,13 @@ export class RuntimeToolLoop {
         ...(delivery.images.length ? { images: delivery.images } : {}),
       });
     }
+    const hookMessages = toolHookMessages(outcomes);
+    const approvals = outcomes.map((outcome, index) => executedCalls[index]?.name === 'subagent' &&
+      outcome.kind === 'returned' && !outcome.resultError && !outcome.rejectToolResult && outcome.hookFeedback === undefined
+      ? silentChildApproval(outcome.result) : undefined);
     return {
-      messages: [...toolMessages, ...toolHookMessages(outcomes)],
+      messages: [...toolMessages, ...hookMessages],
+      ...(approvals.length && !hookMessages.length && approvals.every((id): id is string => id !== undefined) ? { childApprovals: approvals } : {}),
       taskResultReferences: outcomes.map((outcome, index) => outcome.kind === 'returned'
         ? resultDelivery(outcome.result)?.references(String(toolMessages[index]?.content ?? '')) ?? [] : []),
       commitDeliveries: () => {

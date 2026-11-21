@@ -32,6 +32,7 @@ import { resolveToolReferenceName } from './toolReferenceNames.js';
 import { annotateToolRouteRecovery } from './toolRouteRecovery.js';
 import { mcpSchedulingResources } from './toolScheduling.js';
 import { resultDelivery, transferResultDelivery, type ResultDelivery } from './taskResultDelivery.js';
+import { transferChildApproval } from './childApproval.js';
 
 interface ExecutionTrace {
   dispatched: boolean;
@@ -541,6 +542,7 @@ export class ToolExecutionCoordinator {
     try {
       stableResult = snapshotJsonValue(nativeResult);
       transferResultDelivery(nativeResult, stableResult);
+      transferChildApproval(nativeResult, stableResult);
       stableWorkspaceChanges = workspaceChanges.map(
         (change) => snapshotJsonValue(change) as WorkspaceChange,
       );

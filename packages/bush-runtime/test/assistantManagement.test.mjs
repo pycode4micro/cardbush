@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { InMemoryRuntimeHost, SessionStore, ToolRegistry, ToolExecutionStore, AutomationScheduler,
+import { InMemoryRuntimeHost, SessionStore, SubagentTaskStore, ToolRegistry, ToolExecutionStore, AutomationScheduler,
   CoordinationStore, FileCoordinationPersistence, registerSkillTools } from '../dist/index.js';
 import { PERSONAL_ASSISTANT_SESSION as id, ASSISTANT_MANAGEMENT_TOOLS, assistantProfileSchema } from '@cardbush/bush-protocol';
 import { BridgePluginTools } from '../dist/botMessaging.js';
@@ -63,6 +63,138 @@ async function fixture(t, now) {
 }
 const schedule = { action: 'create', name: 'Report', prompt: 'Read the fixture project and save report.html; return its path.', time_zone: 'Asia/Shanghai', trigger: { kind: 'once', at: '2099-10-30T10:00:00+08:00' } };
 const reminder = { action: 'create', text: 'Remind me to review the report.', at: schedule.trigger.at };
+
+for (const { routing = 'parent', mode = 'text', ordinary = false, report = false, count = 1, decision = 'allow_once' } of [
+  { count: 3 }, { routing: 'user' }, { mode: 'voice' }, { report: true }, { decision: 'deny' },
+  { ordinary: true, count: 4 }, { ordinary: true, report: true }, { ordinary: true, routing: 'user' },
+]) {
+  test(`${ordinary ? 'Ordinary conversation' : 'Assistant'} background child ${routing} approval (${mode}, ${report ? 'report requested' : `${count} ${decision} requests`})`, { timeout: 12000 }, async t => {
+    const root = await mkdtemp(join(tmpdir(), 'assistant-approval-'));
+    const registry = new ToolRegistry(), sessions = new SessionStore(), tasks = new SubagentTaskStore();
+    const startChild = Promise.withResolvers(), finishChild = Promise.withResolvers(), attention = [], approvalIds = new Set(), requests = [];
+    let childRounds = 0, manualRequests = 0, executions = 0;
+    const allowed = routing === 'parent' && decision === 'allow_once';
+    const sessionId = ordinary ? 'ordinary-approval' : id;
+    sessions.ensureSession(sessionId);
+    registry.register({
+      definition: { name: 'edit_home_component', description: 'Edit the protected Home component fixture.', inputSchema: { type: 'object' } },
+      manifest, visibleToChild: true, decodeInput: value => value,
+      authorize: () => ({ kind: 'ask', request: { reason: 'Edit the LCQ component fixture', actions: ['external_tool_call'],
+        targets: [{ kind: 'mcp_resource', value: 'mcp://fixture/tools/edit_home_component' }], capabilityIds: ['fixture:edit'] } }),
+      execute: () => { executions++; return { edited: true }; },
+    });
+    function* response(request, output, preamble) {
+      const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+      yield { ...base, sequence: 0, kind: 'response_started' };
+      let sequence = 1;
+      if (preamble) yield { ...base, sequence: sequence++, kind: 'text_delta', delta: preamble };
+      if (typeof output === 'string') yield { ...base, sequence: sequence++, kind: 'text_delta', delta: output };
+      else yield { ...base, sequence: sequence++, kind: 'tool_call_delta', index: 0, toolCallId: randomUUID(),
+        nameDelta: output.name, argumentsDelta: JSON.stringify(output.args) };
+      yield { ...base, sequence, kind: 'response_completed', finishReason: typeof output === 'string' ? 'stop' : 'tool_calls' };
+    }
+    const host = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: sessions, toolRegistry: registry, subagentTaskStore: tasks,
+      onAssistantAttention: notice => attention.push(notice),
+      requestBackgroundPermission: async () => { manualRequests++; return false; },
+      ...(ordinary ? { loadPluginExtensions: async () => ({ skills: [], agents: [], hooks: [] }) } : {}),
+      provider: { async *stream(request) {
+        if (request.metadata.agentRole === 'child') {
+          assert.equal(request.metadata.pluginBackground, true);
+          assert.equal(request.metadata.permissionRouting, routing);
+          if (++childRounds === 1) await startChild.promise;
+          else assert.match(request.messages.filter(message => message.role === 'tool').at(-1).content,
+            allowed ? /"edited":true/ : /permission_rejected/);
+          if (childRounds <= count) yield* response(request, { name: 'edit_home_component', args: {} });
+          else {
+            await finishChild.promise;
+            yield* response(request, 'Fixture child settled.');
+          }
+          return;
+        }
+        requests.push(request);
+        if (requests.length === 1) {
+          yield* response(request, { name: 'subagent', args: { prompt: 'Edit the LCQ component.', ...(ordinary ? { run_in_background: true } : {}) } });
+          return;
+        }
+        const notices = request.messages.filter(message => message.name === 'child_interaction').map(message => JSON.parse(message.content.split('\n').at(-1)));
+        const interaction = notices.find(item => !approvalIds.has(item.interactionId));
+        if (interaction) {
+          assert.equal(routing, 'parent');
+          assert.equal(interaction.authority, 'parent_delegate');
+          assert.equal(interaction.resources[0].value, 'mcp://fixture/tools/edit_home_component');
+          assert.ok(request.messages.find(message => message.name === 'child_interaction').content.includes('report_approval=true'));
+          assert.equal(request.tools.find(tool => tool.name === 'subagent').inputSchema.properties.report_approval.type, 'boolean');
+          approvalIds.add(interaction.interactionId);
+          yield* response(request, { name: 'subagent', args: { task_id: interaction.taskId,
+            ...(report ? { report_approval: true } : {}),
+            response: { kind: 'permission', interactionId: interaction.interactionId, actionDigest: interaction.actionDigest, decision } } }, 'Routine approval narration.');
+          return;
+        }
+        const completed = request.messages.some(message => message.name === 'background_task_result' || (message.name === 'plugin_hook_feedback' && message.content.includes('Fixture child settled.')));
+        if (completed) yield* response(request, 'Fixture completion delivered.');
+        else if (report && approvalIds.size && request.messages.some(message => message.role === 'tool' && /"decision":"allow_once"/.test(message.content))) {
+          yield* response(request, 'I approved the component edit.');
+        } else yield* response(request, requests.length === 2 ? 'Fixture dispatched.' : 'Unexpected approval follow-up.');
+      } },
+    });
+    t.after(async () => {
+      startChild.resolve(); finishChild.resolve();
+      await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+      await rm(root, { recursive: true, force: true });
+    });
+    const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId, ...payload } });
+    const content = `Edit the LCQ component.${report ? ' Tell me after you approve the edit.' : ''}`;
+    const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'fixture-request', sessionId, turnId: 'fixture-turn',
+        model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'user-fixture', message: { role: 'user', content } }],
+        tools: registry.definitions(), permissionMode: 'task_free', metadata: { subagentPermissionRouting: routing,
+          assistantOutputMode: mode, individuation: { habits: false, predictions: false } } };
+    if (ordinary) assert.equal((await host.runSessionTurn(parent)).payload.status, 'completed');
+    else {
+      await command({ action: 'turn', parent, entry: { id: 'user-fixture', role: 'user', source: mode, visibility: 'conversation', content,
+        createdAt: new Date().toISOString() }, profile: assistantProfileSchema.parse({}) });
+      await until(async () => !(await command({ action: 'read' })).busy);
+    }
+    assert.equal(requests.length, 2);
+    startChild.resolve();
+    await until(() => childRounds === count + 1);
+    if (ordinary && routing === 'parent') {
+      const approvalTurns = () => sessions.snapshot(sessionId).turns.filter(turn => turn.turnId.startsWith('peer_turn_'));
+      await until(() => approvalTurns().length === count);
+      if (!report) {
+        assert.ok(approvalTurns().every(turn => !turn.messages.some(({ message }) => message.role === 'assistant' && message.content)));
+        for (const turn of approvalTurns()) {
+          const events = host.events(sessionId, turn.turnId);
+          assert.equal(events.at(-1).payload.reason, 'child_approval_completed');
+          assert.ok(events.every(event => !event.kind.startsWith('assistant_segment_')));
+        }
+      }
+    } else if (!ordinary) await until(async () => !(await command({ action: 'read' })).busy);
+    assert.equal(requests.length, 2 + (routing === 'parent' ? count : 0) + Number(report), 'approval adds one decision request and only an explicitly requested reply');
+    const task = tasks.list(sessionId)[0];
+    const events = host.events(task.childSessionId, task.childTurnId);
+    assert.equal(approvalIds.size, routing === 'parent' ? count : 0);
+    assert.equal(manualRequests, routing === 'user' ? 1 : 0);
+    assert.equal(executions, allowed ? count : 0);
+    assert.equal(events.filter(event => event.kind === 'permission_requested').length, approvalIds.size);
+    assert.equal(events.filter(event => event.kind === (allowed ? 'permission_answered' : 'permission_rejected')).length, approvalIds.size);
+    assert.ok(attention.every(notice => !notice.interaction), 'model approvals must not ask the desktop user');
+    const visible = async () => ordinary ? sessions.snapshot(sessionId).turns.flatMap(turn => turn.messages.map(fact => fact.message))
+      .filter(message => message.role === 'assistant' && message.content).map(message => message.content)
+      : (await command({ action: 'read' })).entries.filter(entry => entry.role === 'assistant' && entry.visibility === 'conversation').map(entry => entry.content);
+    const before = ['Fixture dispatched.', ...(report ? ['I approved the component edit.'] : [])];
+    assert.deepEqual(await visible(), before);
+    finishChild.resolve();
+    if (ordinary) {
+      await until(() => tasks.get(sessionId, task.taskId).status === 'completed');
+      await host.runSessionTurn({ ...parent, requestId: 'next-request', turnId: 'next-turn', inputMessages: [{ messageId: 'next-user',
+        message: { role: 'user', content: 'How did it go?' } }] });
+    }
+    await until(async () => (await visible()).includes('Fixture completion delivered.'));
+    assert.deepEqual(await visible(), [...before, 'Fixture completion delivered.']);
+    assert.equal(requests.length, 3 + (routing === 'parent' ? count : 0) + Number(report));
+  });
+}
+
 test('Assistant reads pre-checkpoint evidence through its real management tool', async t => {
   const f = await fixture(t);
   const history = new ConversationJournal(join(f.root, 'conversation-journal')).modelHistory(id);

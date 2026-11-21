@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryRuntimeHost, SessionStore, SubagentTaskStore, ToolRegistry } from '../dist/index.js';
@@ -113,6 +113,66 @@ test('realtime parent dispatches parallel children while text turn is busy, read
     childGate.resolve(); parentGate.resolve(); await textTurn;
     await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
   }
+});
+
+test('manual background session approval is reused for the exact action in the same session', async t => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'background-session-grant-'));
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore();
+  const prompts = [], executions = [], started = new Set();
+  let target, decision;
+  registry.register({
+    definition: { name: 'read_guarded_fixture', description: 'Read an exact protected resource.',
+      inputSchema: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] } },
+    manifest: { effect_kind: 'observation', operation: 'fixture.read', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
+    visibleToChild: true, decodeInput: input => input,
+    authorize: ({ input }) => ({ kind: 'ask', request: { reason: 'Read a protected resource', actions: ['read'],
+      targets: [{ kind: 'opaque', value: input.target }], capabilityIds: ['fixture:read'] } }),
+    execute: ({ input }) => { executions.push(input.target); return { read: true }; },
+  });
+  const host = new InMemoryRuntimeHost({ dataRoot, toolRegistry: registry, subagentTaskStore: tasks,
+    requestBackgroundPermission: async input => {
+      prompts.push(input.targets[0].value);
+      assert.ok(decision, 'a matching session grant should bypass the prompt');
+      return decision;
+    },
+    provider: { async *stream(request) {
+      const first = !started.has(request.turnId);
+      started.add(request.turnId);
+      const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+      yield { ...base, sequence: 0, kind: 'response_started' };
+      if (first) yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: crypto.randomUUID(),
+        nameDelta: 'read_guarded_fixture', argumentsDelta: JSON.stringify({ target }) };
+      else yield { ...base, sequence: 1, kind: 'text_delta', delta: 'Fixture settled.' };
+      yield { ...base, sequence: 2, kind: 'response_completed', finishReason: first ? 'tool_calls' : 'stop' };
+    } },
+  });
+  t.after(async () => {
+    await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    assert.ok(dataRoot.startsWith(join(tmpdir(), 'background-session-grant-')));
+    await rm(dataRoot, { recursive: true, force: true });
+  });
+  let index = 0;
+  const dispatch = async (sessionId, resource, choice, previous) => {
+    target = resource; decision = choice; index++;
+    const parent = { protocol: 'bush.session_turn_request.v1', requestId: `request-${index}`, sessionId,
+      turnId: `turn-${index}`, model: 'fixture', tools: registry.definitions(), prefixMessages: [],
+      inputMessages: [{ messageId: `input-${index}`, message: { role: 'user', content: 'Read fixture.' } }],
+      permissionMode: 'task_free', metadata: { subagentPermissionRouting: 'user', individuation: { habits: false, predictions: false } } };
+    const receipt = await host.sendCommand({ kind: 'runtime.realtime_agent_tool', payload: {
+      sessionId, callId: `dispatch-${index}`, action: 'subagent', parent, prompt: 'Read fixture.',
+      ...(previous ? { taskId: previous.taskId } : {}),
+    } });
+    await until(() => tasks.get(sessionId, receipt.taskId)?.status === 'completed');
+    return receipt;
+  };
+  const original = await dispatch('owner', 'first-resource', 'allow_session');
+  const resumed = await dispatch('owner', 'first-resource', undefined, original);
+  assert.equal(resumed.childSessionId, original.childSessionId);
+  await dispatch('owner', 'second-resource', 'allow_once', resumed);
+  await dispatch('owner', 'second-resource', 'deny', resumed);
+  await dispatch('another-owner', 'first-resource', 'invalid');
+  assert.deepEqual(prompts, ['first-resource', 'second-resource', 'second-resource', 'first-resource']);
+  assert.deepEqual(executions, ['first-resource', 'first-resource', 'second-resource']);
 });
 
 for (const [permissionMode, routing] of [['all_free','user'], ['all_free','parent'], ['task_free','user']]) {

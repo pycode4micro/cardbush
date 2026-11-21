@@ -224,6 +224,8 @@ import { SubagentTaskStore } from "./subagentTaskStore.js";
 import { SubagentResumeStore } from './subagentResumeStore.js';
 import { BackgroundToolCalls } from './backgroundToolCalls.js';
 import { RuntimeTurnSignals } from './turnSignals.js';
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
+import { childApprovalNoticeId, finishedChildApprovals } from './childApproval.js';
 import { TerminalCompletionNotifications } from './terminalCompletionNotifications.js';
 import { asyncResultMessage } from './subagentTool.js';
 import { LocalSubagentInteractions } from './localSubagentInteractions.js';
@@ -293,7 +295,7 @@ export interface InMemoryRuntimeHostOptions {
   /** Previous built-in capture location, supplied only by the product host. Never a user output path. */
   legacyCaptureCacheRoot?: string;
   openAgentMcpScope?: OpenAgentMcpScope;
-  requestBackgroundPermission?: (request: import('./toolRegistry.js').ToolPermissionRequest & { toolCallId: string; sessionId: string; turnId: string }, signal?: AbortSignal) => Promise<boolean>;
+  requestBackgroundPermission?: (request: import('./toolRegistry.js').ToolPermissionRequest & { toolCallId: string; sessionId: string; turnId: string }, signal?: AbortSignal) => Promise<RuntimePermissionAnswer['decision'] | boolean>;
   provider: ModelProvider;
   hostId?: string;
   runtimeVersion?: string;
@@ -784,10 +786,15 @@ export class InMemoryRuntimeHost {
           this.#subagentTasks.finish({ parentSessionId: task.parentSessionId, taskId: task.taskId, ...result });
         },
         onInteraction: (parentSessionId, taskId, observation) => {
-          for (const interaction of observation.interactions) this.#conversations.notify(parentSessionId, {
-            key: `child:${taskId}:${interaction.interactionId}`.slice(0, 200), wake: true,
-            content: `Your child task ${taskId} needs a response. Read tasks inspect if the state has changed. Reply using subagent with this task_id and response. For parent_delegate permissions, review the exact operation against the user's authorized task and submit allow_once or deny with its interactionId and actionDigest; do not ask the user to repeat approval. For human_required permissions, explain the escalationReason (remote_policy_requires_human means the remote administrator explicitly requires human approval) and use the existing human approval card (remote requests appear in the child conversation); do not create a duplicate approval question. Never claim approval succeeded before the tool confirms it or bypass the restriction by changing global permissions. Question answers are text.\n${JSON.stringify(interaction)}`,
-          });
+          const assistantTask = parentSessionId === PERSONAL_ASSISTANT_SESSION ? this.#subagentTasks.get(parentSessionId, taskId) : undefined;
+          for (const interaction of observation.interactions) {
+            const content = `${renderPromptTemplate('child-interaction-instructions', { taskId })}\n${JSON.stringify(interaction)}`;
+            if (assistantTask) {
+              if (interaction.kind === 'question' || interaction.authority === 'parent_delegate')
+                this.#assistant.notifyChildInteraction(assistantTask, interaction.interactionId, content);
+            } else this.#conversations.notify(parentSessionId, { key: `child:${taskId}:${interaction.interactionId}`.slice(0, 200), wake: true, content },
+              interaction.kind === 'permission' && interaction.authority === 'parent_delegate');
+          }
         },
         readChildConversation: sessionId => this.#childConversation(sessionId),
         saveChildRequest: request => this.#subagentResume.save(request),
@@ -973,7 +980,10 @@ export class InMemoryRuntimeHost {
     });
     this.#environment.register('friends', () => this.#assistantEvents.environment());
     this.#stopEventTriggers = this.#eventLog.observe(event => {
-      if (options.onAssistantAttention && (event.kind === 'permission_requested' || event.kind === 'solution_selection_requested') &&
+      const humanInteraction = event.kind === 'permission_requested'
+        ? event.payload.permissionRouting !== 'parent' || event.payload.permissionEscalationReason
+        : event.kind === 'solution_selection_requested' && !event.payload.blocking;
+      if (options.onAssistantAttention && humanInteraction &&
         this.#botRootSession(event.sessionId) === PERSONAL_ASSISTANT_SESSION)
         options.onAssistantAttention({ id: event.eventId, interaction: true });
       if (event.kind !== 'tool_failed' && event.kind !== 'tool_returned' && event.kind !== 'turn_terminal') return;
@@ -2549,6 +2559,8 @@ export class InMemoryRuntimeHost {
       const current = await this.#loadPluginExtensions?.() ?? pluginExtensions;
       return this.#pluginHooks.run(await this.#pluginHookScopes.select(current.hooks, request), event, { ...context, request }, observeHook);
     };
+    const childPermission = childPermissionRuntimeOptions(request, identity);
+    const modelApproval = childPermission.permissionSource?.subagentTaskId && childPermission.permissionSource.permissionRouting === 'parent';
     const toolLoop = new RuntimeToolLoop({
       eventLog: this.#eventLog,
       identity,
@@ -2557,12 +2569,19 @@ export class InMemoryRuntimeHost {
       executionStore: this.#toolExecutions,
       modelImages: this.#modelImages,
       capabilities: this.#capabilityGrants,
-      ...childPermissionRuntimeOptions(request, identity),
-      ...(request.metadata.pluginBackground ? { externalPermissions: { request: async (permission: import('./toolRegistry.js').ToolPermissionRequest & { toolCallId: string }, signal?: AbortSignal) => {
-        if (!this.#requestBackgroundPermission) throw new Error('This host cannot display background Agent permissions.');
-        const allowed = await this.#requestBackgroundPermission({ ...permission, sessionId: request.sessionId, turnId: request.turnId }, signal);
-        return { protocol: 'bush.runtime_permission_answer.v1' as const, permissionId: randomUUID(), answerId: randomUUID(), decision: allowed ? 'allow_once' as const : 'deny' as const, grantedCapabilityIds: allowed ? permission.capabilityIds : [] };
-      } } } : {}),
+      ...childPermission,
+      ...(request.metadata.pluginBackground ? { externalPermissions: {
+        // Explicit confirmations requested by a trusted hook are host prompts.
+        handles: permission => !modelApproval || permission.actions.includes('plugin_hook.confirm_tool'),
+        request: async (permission, signal) => {
+          if (!this.#requestBackgroundPermission) throw new Error('This host cannot display background Agent permissions.');
+          const answer = await this.#requestBackgroundPermission({ ...permission, sessionId: request.sessionId, turnId: request.turnId }, signal);
+          const recognized = answer === 'allow_once' || answer === 'allow_session' || answer === 'cancel';
+          const decision = answer === true ? 'allow_once' : recognized ? answer : 'deny';
+          return { protocol: 'bush.runtime_permission_answer.v1' as const, permissionId: randomUUID(), answerId: randomUUID(),
+            decision, grantedCapabilityIds: decision === 'allow_once' || decision === 'allow_session' ? permission.capabilityIds : [] };
+        },
+      } } : {}),
       ...(this.#loadPluginExtensions && !input.internalTask && !sshOnly ? { hooks: this.#pluginTerminalHooks.forTurn(request.sessionId, runHook) } : {}),
     });
     this.#toolLoops.add(toolLoop);
@@ -2866,6 +2885,15 @@ export class InMemoryRuntimeHost {
       this.#eventLog.append(identity, { kind: 'conversation_title', payload: result });
       return result;
     })().catch(() => undefined) : undefined;
+    const approvedInteractions = new Set<string>();
+    const approvalNotices = () => {
+      if (request.metadata.peerMessageWake !== true || !input.sessionCommit ||
+          !input.sessionCommit.inputMessages.every(({ message }) => message.role === 'user' && message.visibility === 'internal') ||
+          generatedMessages.some(({ message }) => message.role === 'user' && message.name === 'turn_guidance') ||
+          (Array.isArray(request.metadata.pluginBackgroundDeliveries) && request.metadata.pluginBackgroundDeliveries.length)) return [];
+      const inputs = generatedMessages.filter(({ messageId }) => messageId.startsWith(`msg_subagent_result_${request.turnId}_`));
+      return inputs.map(({ message }) => message.role === 'user' && message.name === 'child_interaction' ? childApprovalNoticeId(message.content) : undefined);
+    };
     const finalize = async (payload: TurnTerminalPayload): Promise<RuntimeEvent> => {
       this.#finalizingTurns.add(turnKey);
       let workspace: WorkspaceDescriptor | undefined;
@@ -3064,6 +3092,8 @@ export class InMemoryRuntimeHost {
             readyAtRoundBoundary,
           );
         }
+        const approvalInputs = approvalNotices();
+        const bufferApprovalText = approvalInputs.length > 0 && approvalInputs.every(id => id !== undefined);
 
         if (request.metadata.environmentContext === true && !compactionTransaction && !activeContextCompaction) {
           const observation = await this.#environment.message(request, messages, input.signal);
@@ -3533,7 +3563,7 @@ export class InMemoryRuntimeHost {
                     if (event.kind === 'usage') observedUsage = { inputTokens: event.inputTokens,
                       outputTokens: event.outputTokens, cachedInputTokens: event.cachedInputTokens };
                     if (deferProviderProjection) deferredProviderEvents.push(event);
-                    else projector.accept(event);
+                    else if (!bufferApprovalText || event.kind !== 'text_delta') projector.accept(event);
                   },
                 },
               ),
@@ -3581,7 +3611,7 @@ export class InMemoryRuntimeHost {
             result.status === "completed" &&
             result.toolCalls.some((call) => call.name === CHECKPOINT_CONTEXT_TOOL);
           if (!contextCompactionRequired && !isMaintenanceResponse) {
-            deferredProviderEvents.forEach((event) => projector.accept(event));
+            deferredProviderEvents.forEach(event => { if (!bufferApprovalText || event.kind !== 'text_delta') projector.accept(event); });
           }
           projector.completeOpenSegment();
           projector.finishFileEdits(result.status === 'completed' ? result.toolCalls : []);
@@ -4108,6 +4138,7 @@ export class InMemoryRuntimeHost {
           }
         }
         if (completedRound.toolCalls.length === 0) {
+          if (bufferApprovalText && completedRound.text) completedProjector.appendAssistantText(completedRound.text);
           if (completedRound.text) {
             const assistantMessage: ModelMessage = {
               role: "assistant",
@@ -4248,7 +4279,7 @@ export class InMemoryRuntimeHost {
 
         const assistantMessage: ModelMessage = {
           role: "assistant",
-          content: completedRound.text,
+          content: bufferApprovalText ? '' : completedRound.text,
           ...(completedRound.providerReplay
             ? { providerReplay: completedRound.providerReplay } : {}),
           ...(completedRound.reasoning
@@ -4337,6 +4368,13 @@ export class InMemoryRuntimeHost {
           generatedMessages,
         });
         messages = appliedGuidance.messages;
+        if (toolRound.childApprovals && !input.signal?.aborted && completedRound.finishReason !== 'length' &&
+            !(this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) && !this.#conversations.hasPending(request.sessionId, request.turnId)) {
+          for (const id of toolRound.childApprovals) approvedInteractions.add(id);
+          if (finishedChildApprovals(approvalNotices(), approvedInteractions)) {
+            return await finalize({ status: 'completed', reason: 'child_approval_completed', details: { rounds: round } });
+          }
+        }
         this.#recovery.save({
           request,
           messages,
@@ -5575,7 +5613,9 @@ function childPermissionRuntimeOptions(
   return {
     capabilitySessionId:
       metadataString(request.metadata.permissionScopeSessionId) || identity.sessionId,
-    permissionEventIdentity: { requestId, sessionId: parentSessionId, turnId: parentTurnId },
+    // A background child can ask after its dispatching turn has ended.
+    permissionEventIdentity: request.metadata.pluginBackground && permissionRouting === 'parent' && subagentTaskId
+      ? identity : { requestId, sessionId: parentSessionId, turnId: parentTurnId },
     permissionSource: {
       sourceSessionId: identity.sessionId,
       sourceTurnId: identity.turnId,

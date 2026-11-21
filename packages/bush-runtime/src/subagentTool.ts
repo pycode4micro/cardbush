@@ -42,6 +42,7 @@ import { pluginAgentTools, validateAgentSkills, type PluginAgent } from './plugi
 import { childConversationPage, childConversationReadHint, type ChildConversationSource } from './subagentConversation.js';
 import { presentTool } from './toolPresentation.js';
 import { onlySubagentArguments, subagentInputSchema } from './subagentContract.js';
+import { childApprovalReceipt } from './childApproval.js';
 import { SubagentInteractions, observationControl, queuedChild } from './subagentInteractions.js';
 
 export const SUBAGENT_TOOL = "subagent" as const;
@@ -78,6 +79,7 @@ export interface SubagentInput {
   taskId?: string;
   delivery?: 'queue' | 'insert';
   response?: RemoteResponse;
+  reportApproval?: boolean;
   targetAgent?: string;
   agentId?: string;
   registration?: { action: 'save' | 'delete'; agent?: unknown; id?: string; revision: number };
@@ -224,6 +226,7 @@ export function registerSubagentTool(
           prompt: { type: "string", minLength: 1, description: "Child assignment or follow-up text: necessary facts, original user's communication language, expected output and handoffs. Required for messages; omit when answering with response, whose text/decision is the complete reply. Distinguish pending dependencies from confirmed facts." },
           delivery: { type: 'string', enum: ['insert', 'queue'], description: 'Owned task_id follow-up, local or remote. For corrections or extra facts needed by the current task, omit delivery or use insert: the active turn receives guidance at its next safe boundary; dispatched tools finish first. Use queue only for separate work that should start after the current turn finishes. Queued work has not reached the active turn. An explicit insert requires an active target.' },
           response: { ...z.toJSONSchema(remoteResponseSchema), description: 'Answer a pending interaction from an owned child task. Free text answers questions; a permission needs its exact actionDigest and a structured decision. Human-required approval cannot be granted by a parent model. Use tasks inspect to read the pending interaction.' },
+          report_approval: { type: 'boolean', description: 'With a permission response, set true only when the user explicitly asked to be told about this approval. Omit for routine approvals. This does not grant permissions or change who decides.' },
           name: { type: 'string', minLength: 1, maxLength: SUBAGENT_NAME_MAX_LENGTH, description: renderPromptTemplate('subagent-name-description') },
           ...(options.remoteAgents ? { target_agent: { type: 'string', description: 'Saved HTTP Agent ID from list_subagent_options.remote_agents. Supply prompt, target_agent and optional name/run_in_background; follow up with task_id. Uses its own workspace, model, tools and instructions; parent history, credentials and local paths are not copied. Results arrive as subagent_result.' } } : {}),
           ...(options.loadChildRequest || options.guideChild || options.remoteAgents ? { task_id: { type: 'string', minLength: 1, description: 'Owned child taskId from a subagent result, or task_id with kind=subagent from tasks list. Never substitute agent_id, childSessionId, team run_id or a workflow node ID. Supply task_id and prompt, with optional run_in_background; the original history and execution host are retained.' } } : {}),
@@ -237,7 +240,7 @@ export function registerSubagentTool(
       }),
     },
     projectModelDefinition: (definition, scope) => !scope.canRecall ? definition : presentTool(definition, {
-      fields: ['action', 'name', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'run_in_background', 'delivery', 'response'], actions: ['run'],
+      fields: ['action', 'name', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'run_in_background', 'delivery', 'response', 'report_approval'], actions: ['run'],
       description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with task_id and prompt: default to immediate guidance for current-task corrections or extra facts; queue only separate work that must wait for completion. State the selected mode and actual delivery state to the user. Answer a pending interaction with task_id and response. Omit name, mode and configuration; the host retains identity and scope. Use tasks to inspect/stop/read conversations; await waits for results. Independent peers use an available collaboration plugin. For registration or a new clean child's configuration, load get_tool_schema(name="subagent"), then call_tool with its full arguments.`,
     }),
     manifest: {
@@ -329,9 +332,10 @@ export function registerSubagentTool(
       if (previous && previous.origin !== 'subagent' && !context.input.response && context.input.delivery !== 'insert' && (!execution.team || previous.teamId !== execution.team.id)) throw new Error('This task belongs to a Team workflow node. Use team resume with the workflow run_id for unfinished steps, or tasks to inspect/stop the workflow run.');
       if (!queued && (context.input.delivery === 'queue' || context.input.response)) {
         if (!previous) throw new Error('Interaction requires an owned task_id.');
-        return interactions.control(context, { profile: 'subagent-remote-proton', version: '0.1',
+        const receipt = await interactions.control(context, { profile: 'subagent-remote-proton', version: '0.1',
             contextId: previous.childSessionId, taskId: previous.taskId, messageId: interactionMessageId(context),
             ...(context.input.response ? { operation: 'respond', response: context.input.response } : { operation: 'message', delivery: context.input.delivery!, text: context.input.prompt }) });
+        return context.input.response ? childApprovalReceipt(receipt, context.input.response, context.input.reportApproval === true) : receipt;
       }
       // An older task ID addresses the same child even after a later continuation.
       const running = previous && tasks.list(context.sessionId).find(task => task.childSessionId === previous.childSessionId && task.status === 'running' && !queuedChild(task));
@@ -677,7 +681,7 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   }
   const object = input as Record<string, unknown>;
   const unexpected = Object.keys(object).filter(
-    (key) => !['prompt', 'name', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'agent_type', 'run_in_background', 'task_id', 'target_agent', 'action', 'agent_id', 'agent', 'expected_revision', 'delivery', 'response'].includes(key),
+    (key) => !['prompt', 'name', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'agent_type', 'run_in_background', 'task_id', 'target_agent', 'action', 'agent_id', 'agent', 'expected_revision', 'delivery', 'response', 'report_approval'].includes(key),
   );
   if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}`);
   if (object.action !== undefined && !['run', 'save', 'delete'].includes(String(object.action))) throw new Error('Invalid subagent action.');
@@ -689,6 +693,8 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
   }
   if (object.agent !== undefined || object.expected_revision !== undefined) throw new Error('agent and expected_revision require a registration action.');
   if ((object.delivery !== undefined || object.response !== undefined) && !object.task_id) throw new Error('delivery and response require an owned task_id.');
+  if (object.report_approval !== undefined && (typeof object.report_approval !== 'boolean' || (object.response as RemoteResponse | undefined)?.kind !== 'permission'))
+    throw new Error('report_approval must be a boolean and requires a permission response.');
   if (object.delivery !== undefined && !['queue', 'insert'].includes(String(object.delivery))) throw new Error('delivery must be queue or insert.');
   if (object.delivery !== undefined && object.response !== undefined) throw new Error('Do not combine a response with another message delivery.');
   if (['agent_id', 'task_id', 'target_agent'].filter(key => object[key] !== undefined).length > 1) throw new Error('Choose one target: agent_id starts a saved employee, target_agent starts a saved remote Agent, or task_id follows up on an owned child. Do not combine these IDs.');
@@ -717,7 +723,8 @@ export function decodeSubagentInput(input: unknown): SubagentInput {
     if (!onlySubagentArguments(object, 'followup')) throw new Error('Follow-up accepts task_id with prompt and optional delivery/run_in_background, or response (action may be run). Remove name, mode, agent_type and configuration fields; the existing child keeps its name and configuration. This call has not started or guided any child.');
     if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
     return { prompt, mode: 'fork', taskId: object.task_id.trim(), runInBackground: object.run_in_background as boolean | undefined,
-      delivery: object.delivery as 'queue' | 'insert' | undefined, response: object.response === undefined ? undefined : remoteResponseSchema.parse(object.response) };
+      delivery: object.delivery as 'queue' | 'insert' | undefined, response: object.response === undefined ? undefined : remoteResponseSchema.parse(object.response),
+      reportApproval: object.report_approval === true };
   }
   if (object.mode !== undefined && object.mode !== 'fork' && object.mode !== 'clean') throw new Error('mode must be fork or clean.');
   const mode = object.mode ?? 'fork';

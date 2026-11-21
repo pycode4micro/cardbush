@@ -24,6 +24,7 @@ import {
   mcpSnapshotSchema, mcpServerSnapshotSchema,
   pluginProxyEnvironment, type McpServerSnapshot, type NetworkProxySettings,
   type RuntimeIpcOutboundMessage,
+  type RuntimePermissionAnswer,
   type RuntimeProtocolError,
   AUTOMATION_COMMAND, runtimeSessionTurnRequestSchema, type RuntimeProviderBindingRef,
 } from '@cardbush/bush-protocol';
@@ -1018,13 +1019,10 @@ host = new InMemoryRuntimeHost({
   },
   loadPluginExtensions: () => loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? ''),
   openAgentMcpScope: (agent, request, signal) => openPluginAgentMcp(mcp, agent, request, signal, join(runtimeStateRoot || process.cwd(), 'plugin-data')),
-  requestBackgroundPermission: async (input, signal) => {
-    const result = await mcpHost.request<{ action: string; content?: { allow?: boolean } }>('elicitation', {
-      serverId: 'cardbush_background_agent', sessionId: input.sessionId, turnId: input.turnId, toolCallId: input.toolCallId,
-      params: { mode: 'form', message: `${input.reason}\n${input.targets.map(target => target.value).join('\n')}`, requestedSchema: { type: 'object', properties: { allow: { type: 'boolean', title: '允许后台 Agent 执行本次操作 / Allow this background Agent action', default: false } }, required: ['allow'] } },
-    }, signal);
-    return result.action === 'accept' && result.content?.allow === true;
-  },
+  requestBackgroundPermission: (input, signal) => mcpHost.request<RuntimePermissionAnswer['decision']>('background-agent.permission', {
+    sessionId: input.sessionId, turnId: input.turnId, reason: input.reason, targets: input.targets,
+    actions: input.actions, scope: input.scope, requestedCapabilityIds: input.capabilityIds,
+  }, signal),
   settleOrphanedTurns: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
     'runtime.siwc_account_changed',

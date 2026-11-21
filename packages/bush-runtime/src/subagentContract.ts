@@ -3,7 +3,7 @@
  * unions/conditionals. Cross-field rules are explicit in the field descriptions
  * and enforced by the decoder, before any child is started or guided. */
 export const SUBAGENT_ARGUMENTS = {
-  followup: ['action', 'prompt', 'task_id', 'run_in_background', 'delivery', 'response'],
+  followup: ['action', 'prompt', 'task_id', 'run_in_background', 'delivery', 'response', 'report_approval'],
   employee: ['action', 'prompt', 'agent_id', 'mode', 'run_in_background'],
   remote: ['action', 'prompt', 'target_agent', 'name', 'run_in_background', 'files'],
   save: ['action', 'agent', 'expected_revision'],

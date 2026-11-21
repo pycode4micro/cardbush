@@ -2,6 +2,8 @@ import { uiText } from '../../i18n';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { useEffect, useRef, useState } from 'react';
 import type { McpUserRequest } from '../../../electron/mcpDesktopHost';
+import { PermissionRequestDialog } from '../interactions/PermissionRequestDialog';
+import type { PermissionDecision } from '../interactions/PermissionRequestCard';
 import './mcp-integration.css';
 
 export function McpUserRequests({ language }: { language: string }) {
@@ -15,7 +17,26 @@ export function McpUserRequests({ language }: { language: string }) {
     refresh();
     return () => { disposed = true; unsubscribe(); };
   }, []);
-  return requests[0] ? <McpRequestForm key={requests[0].id} request={requests[0]} uiLanguage={language} /> : null;
+  const request = requests[0];
+  if (!request) return null;
+  if (request.permission) {
+    const answer = async (decision: PermissionDecision | 'cancel') => {
+      await window.cardbushDesktop!.answerMcpRequest(request.id, { decision });
+    };
+    const t = uiText(language);
+    return <PermissionRequestDialog key={request.id} language={language}
+      permissionDecisions={request.permission.requestedCapabilityIds.length ? undefined : ['allow_once', 'deny']}
+      interaction={{ id: request.id, type: 'path_permission_request', sessionId: request.sessionId, turnId: request.turnId,
+        title: t('permission.subagentTitle'), runtimePermission: request.permission,
+        questions: [{ id: 'permission', label: t('runtimeInteractionBridge.permission'),
+          question: t('runtimeInteractionBridge.allow_this_exact_access_request'), options: [] }],
+        raw: {} }}
+      onReply={async answers => {
+        const decision = answers[0]?.selectedOptionId;
+        if (decision === 'allow_once' || decision === 'allow_session' || decision === 'deny') await answer(decision);
+      }} onCancel={() => answer('cancel')} />;
+  }
+  return <McpRequestForm key={request.id} request={request} uiLanguage={language} />;
 }
 
 function McpRequestForm({ request, uiLanguage }: { request: McpUserRequest; uiLanguage: string }) {

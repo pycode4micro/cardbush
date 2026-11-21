@@ -569,6 +569,26 @@
   white-space: pre-wrap;
 }
 
+.permission-request-dialog {
+  width: min(500px, calc(100vw - 28px));
+  max-width: none;
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text);
+  box-shadow: 0 18px 72px var(--shadow);
+}
+.permission-request-dialog::backdrop { background: #0005; backdrop-filter: blur(3px); }
+.permission-request-dialog .interaction-dialog.interaction-card.permission-request-card {
+  width: 100%;
+  max-height: min(70dvh, 520px);
+  padding: 16px;
+  gap: 12px;
+  border-radius: inherit;
+  box-shadow: none;
+}
 .interaction-dialog.interaction-card.permission-request-card {
   --approval-accent: #d98b35;
   display: grid;

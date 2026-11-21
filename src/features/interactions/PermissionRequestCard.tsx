@@ -22,6 +22,7 @@ import type {
 } from '../../types';
 
 const permissionDecisionIds = ['allow_once', 'allow_session', 'deny'] as const;
+export type PermissionDecision = typeof permissionDecisionIds[number];
 
 export function PermissionRequestCard({
   language,
@@ -30,6 +31,7 @@ export function PermissionRequestCard({
   error,
   onChoose,
   onCancel,
+  permissionDecisions = permissionDecisionIds,
 }: {
   language: AppLanguage;
   interaction: PendingInteraction;
@@ -37,13 +39,14 @@ export function PermissionRequestCard({
   error?: string;
   onChoose: (optionId: string) => void;
   onCancel: () => void;
+  permissionDecisions?: readonly PermissionDecision[];
 }) {
   const details = permissionDetails(interaction, language);
   const t = uiText(language);
   const firstLine = details.target.split(/\r?\n/, 1)[0];
   const targetPreview = firstLine.length > 160 ? `${firstLine.slice(0, 157)}…` : firstLine;
   const question = permissionQuestion(interaction.questions ?? []);
-  const options = normalizedPermissionOptions(question?.options ?? [], language);
+  const options = normalizedPermissionOptions(question?.options ?? [], language, permissionDecisions);
   const sourceTitle = interaction.title?.trim() ?? '';
   const runtimePermission = interaction.raw.protocol === 'bush.runtime_permission_answer.v1';
   const fromSubagent = Boolean(interaction.raw.subagentTaskId ||
@@ -198,9 +201,10 @@ function permissionScopeNotice(
 function normalizedPermissionOptions(
   options: InteractionOption[],
   language: AppLanguage,
+  decisions: readonly PermissionDecision[],
 ) {
   const byId = new Map(options.map((option) => [option.id.toLowerCase(), option]));
-  return permissionDecisionIds.map((id) => {
+  return decisions.map((id) => {
     const source = byId.get(id);
     return {
       id,

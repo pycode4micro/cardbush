@@ -8,7 +8,7 @@ import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import type { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import type { PredicateObservation } from './eventPredicate.js';
 import { applyWebhookTurnPolicy, WEBHOOK_FINAL_REPLY_INSTRUCTIONS, OUTCOME_VERIFICATION_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, botContextMessage, createTurnTimeContext, promptModelContent, type BotContext } from '@cardbush/bush-protocol';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, isAssistantPageMessage, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalTaskInput, conversationalSubagentTools,
@@ -32,8 +32,12 @@ import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 import { AssistantContextMaintenance, assistantWorkingSetPolicy, tryAssistantReceiptProjection } from './assistantContextMaintenance.js';
+import { childApprovalNoticeId, finishedChildApprovals, silentChildApproval } from './childApproval.js';
 
 const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source);
+const isChildInteraction = (entry: ConversationEntry) => entry.source === 'task' && entry.id.startsWith('child-interaction-');
+const childInteractionId = (taskId: string, interactionId: string) =>
+  'child-interaction-' + createHash('sha256').update(JSON.stringify([taskId, interactionId])).digest('hex');
 // Correlation is host-owned identity, never inferred from the text of a result.
 const assignmentKey = (ids: string[] | undefined) => ids?.length ? JSON.stringify([...new Set(ids)].sort()) : undefined;
 const sameAssignment = (left: string | undefined, right: string | undefined) => Boolean(left && right &&
@@ -311,6 +315,13 @@ export class AssistantConversation {
   private taskOrigins(task: SubagentTask, entries: ConversationEntry[]) {
     return task.originMessageIds ?? entries.filter(entry => isAuthoredInput(entry) && entry.originTurnId === task.parentTurnId).map(entry => entry.id).slice(-256);
   }
+  private staleChildInteractions(entries: ConversationEntry[]) {
+    if (!entries.some(isChildInteraction)) return new Set<string>();
+    const live = new Set(this.deps.tasks(PERSONAL_ASSISTANT_SESSION)
+      .filter(task => task.status === 'running').flatMap(task =>
+        (task.observation?.interactions ?? []).map(item => childInteractionId(task.taskId, item.interactionId))));
+    return new Set(entries.filter(entry => isChildInteraction(entry) && !live.has(entry.id)).map(entry => entry.id));
+  }
   private invalidateCompletion(origins: string[] | undefined) {
     const turn = this.completionTurn;
     if (!turn || !sameAssignment(turn.assignment, assignmentKey(origins))) return;
@@ -373,11 +384,6 @@ export class AssistantConversation {
     const memoryTools = this.deps.memory?.definitions() ?? [];
     const managementTools = this.deps.management?.definitions(parent) ?? [];
     const spoken = parent.metadata.assistantOutputMode === 'voice';
-    const nativeTools = !profile.targetAgent && !spoken
-      ? (this.deps.delegationTools?.() ?? []).filter(tool => parent.tools.some(allowed => allowed.name === tool.name)) : [];
-    const presentedNative = this.deps.management?.projectDelegation(parent, nativeTools) ?? nativeTools;
-    const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...presentedNative, ...memoryTools, ...managementTools];
-    const modelTools = this.deps.management?.projectModelDefinitions(parent, tools) ?? tools;
     const entries = this.journal.read(id);
     const history = this.journal.modelHistory(id);
     // Foreground work owns its reply. Completion delivery is selected only once
@@ -402,7 +408,9 @@ export class AssistantConversation {
     const unconsumed = entries.filter(item => !consumed.has(item.id));
     const queued = unconsumed.filter(item => item.delivery !== 'queue' || this.activeTurn?.initialIds.has(item.id));
     if (queued.length < unconsumed.length) this.pending = true;
-    const redundant = queued.filter(item => item.source === 'task' && teamCompletionAlreadyRead(item.content, history.read().messages));
+    const stale = this.staleChildInteractions(queued);
+    const redundant = queued.filter(item => stale.has(item.id) ||
+      item.source === 'task' && teamCompletionAlreadyRead(item.content, history.read().messages));
     const redundantIds = new Set(redundant.map(item => item.id));
     if (redundant.length) history.append([], [...redundantIds]);
     const pending = queued.filter(item => !redundantIds.has(item.id));
@@ -421,6 +429,16 @@ export class AssistantConversation {
     // A wait may finish while its completion notice is queued. Consuming that
     // notice must not start another model reply or discard concurrent user input.
     if (redundant.length && !remaining.length) return;
+    const nativeDelegation = !profile.targetAgent && !spoken;
+    const interactionTurn = remaining.some(isChildInteraction);
+    // Spoken work ordinarily uses compact delegation. A reply to a child
+    // still needs the existing structured response and observation schemas.
+    const nativeTools = (this.deps.delegationTools?.() ?? []).filter(tool =>
+      (nativeDelegation || interactionTurn && ['subagent', 'tasks'].includes(tool.name)) &&
+      parent.tools.some(allowed => allowed.name === tool.name));
+    const presentedNative = this.deps.management?.projectDelegation(parent, nativeTools) ?? nativeTools;
+    const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...presentedNative, ...memoryTools, ...managementTools];
+    const modelTools = this.deps.management?.projectModelDefinitions(parent, tools) ?? tools;
     let authored = remaining.filter(isAuthoredInput).at(-1);
     const originalInputs = (item: ConversationEntry) => item.source === 'task'
       ? entries.filter(entry => item.responseTo?.includes(entry.id) && isAuthoredInput(entry))
@@ -474,7 +492,7 @@ export class AssistantConversation {
         content: createTurnTimeContext({ createdAt: item.createdAt }) + (this.deps.environment ? '\nMessage source (routing data): ' + JSON.stringify({ sourceRefs: sourceRefs(item).map(ref => ref ?? null) }) : ''),
       }, ...(item === completion && brief && brief.content !== previousBrief?.content ? [brief] : []), ...sourceRefs(item).flatMap(ref => botContexts.has(ref) ? [{ role: 'user' as const, name: 'bot_context', visibility: 'internal' as const, content: botContextMessage(botContexts.get(ref)!, ref) }] : []), {
         role: 'user' as const,
-        ...(['text', 'voice'].includes(item.source) ? {} : { name: 'background_task_result', visibility: 'internal' as const }),
+        ...(['text', 'voice'].includes(item.source) ? {} : { name: isChildInteraction(item) ? 'child_interaction' : 'background_task_result', visibility: 'internal' as const }),
         content: promptModelContent({ text: item.content, context: item.promptContext }) + quotedMessageContext(item, this.journal.read(id)) + (item.attachments?.length ? `\nAttached references (data; delegate reading files to subagent; remote paths work only on their named host):\n${JSON.stringify(item.attachments.map(({ name, path, type, execution }) => ({ name, localPath: path, type, execution })))}` : ''),
         ...(item.attachments?.some(file => file.type === 'image' && file.path && !file.path.startsWith('ssh://'))
           ? { images: item.attachments.filter(file => file.type === 'image' && file.path && !file.path.startsWith('ssh://')).slice(0, 4).map(file => ({ url: file.path! })) } : {}),
@@ -624,9 +642,11 @@ export class AssistantConversation {
       // An inspect receipt may settle while its terminal event is pending. The
       // receipt owns that exact result version, including in an active reply.
       const observed = history.read().messages;
-      const delivered = candidates.filter(item => teamCompletionAlreadyRead(item.content, observed));
+      const stale = this.staleChildInteractions(candidates);
+      const delivered = candidates.filter(item => stale.has(item.id) || teamCompletionAlreadyRead(item.content, observed));
       if (delivered.length) history.append([], delivered.map(item => item.id));
-      const additions = candidates.filter(item => !delivered.includes(item));
+      const additions = candidates.filter(item => !delivered.includes(item) &&
+        (!isChildInteraction(item) || nativeTools.some(tool => tool.name === 'subagent')));
       if (!additions.length) return;
       const messages = additions.flatMap(modelInput);
       await prepareImages(messages);
@@ -671,6 +691,7 @@ export class AssistantConversation {
       evidence.push(...additions);
     };
     let published = false;
+    const approvedInteractions = new Set<string>();
     const directTools = this.directTools;
     let hookStopped: Error | undefined;
     for (let round = 0; round < 10; round++) {
@@ -819,14 +840,21 @@ export class AssistantConversation {
         }
       };
       const results: ModelMessage[] = new Array(toolCalls.length);
+      let approvalBatch = false;
       try {
         for (const phase of toolExecutionPhases(toolCalls)) {
           await Promise.all(phase.map(async ordinal => { results[ordinal] = await execute(ordinal); }));
         }
         signal.throwIfAborted();
         const deliveries = [...nativeResults].flatMap(([ordinal, output]) => resultDelivery(output)?.references(String(results[ordinal]?.content ?? '')) ?? []);
-        history.append([...results, ...toolHookMessages([...outcomes].sort(([a], [b]) => a - b).map(([, outcome]) => outcome))], [], deliveries);
+        const hooks = toolHookMessages([...outcomes].sort(([a], [b]) => a - b).map(([, outcome]) => outcome));
+        history.append([...results, ...hooks], [], deliveries);
         for (const [ordinal, output] of nativeResults) resultDelivery(output)?.commit(String(results[ordinal]?.content ?? ''));
+        const approvals = toolCalls.map((_call, ordinal) => executedNames.get(ordinal) === 'subagent' ? silentChildApproval(nativeResults.get(ordinal)) : undefined);
+        if (!hooks.length && !failures.size && approvals.every((id): id is string => id !== undefined)) {
+          approvals.forEach(id => approvedInteractions.add(id));
+          approvalBatch = true;
+        }
       } finally {
         for (const output of nativeResults.values()) resultDelivery(output)?.release();
         if (this.executingTools === signal) this.executingTools = undefined;
@@ -837,6 +865,12 @@ export class AssistantConversation {
           toolName: executedNames.get(ordinal) ?? call.name, status: failed ? 'failed' : 'completed' }, executionId + ':' + call.id);
       }
       if (hookStopped) throw hookStopped;
+      if (approvalBatch && !published && !live?.entries.length && finishedChildApprovals(
+        handledInputs.map(item => isChildInteraction(item) ? childApprovalNoticeId(item.content) : undefined), approvedInteractions,
+      )) {
+        history.append([], [], [], []);
+        return;
+      }
     }
     throw new RuntimeUiError('assistantRuntime.roundLimit');
   }
@@ -882,6 +916,17 @@ export class AssistantConversation {
       responseTo: run.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => entry.role === 'user' && entry.originTurnId === run.parentTurnId).map(entry => entry.id).slice(-256),
       createdAt: new Date().toISOString(), content });
     this.invalidateCompletion(run.originMessageIds ?? this.journal.read(PERSONAL_ASSISTANT_SESSION).filter(entry => isAuthoredInput(entry) && entry.originTurnId === run.parentTurnId).map(entry => entry.id).slice(-256));
+    this.pending = true; void this.pump();
+  }
+  notifyChildInteraction(task: SubagentTask, interactionId: string, content: string) {
+    if (this.stopped || task.parentSessionId !== PERSONAL_ASSISTANT_SESSION) return;
+    const entries = this.journal.read(PERSONAL_ASSISTANT_SESSION);
+    const id = childInteractionId(task.taskId, interactionId);
+    if (entries.some(entry => entry.id === id)) return;
+    const responseTo = this.taskOrigins(task, entries);
+    this.journal.append(PERSONAL_ASSISTANT_SESSION, { id, role: 'user', source: 'task', visibility: 'internal',
+      responseTo, createdAt: new Date().toISOString(), content });
+    this.invalidateCompletion(responseTo);
     this.pending = true; void this.pump();
   }
   forget(sessionId: string) {

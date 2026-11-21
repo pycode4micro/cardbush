@@ -3,10 +3,12 @@ import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { McpHostOperation } from './mcpHostBridge';
 import { checkedExternalWebUrl } from './externalWebUrl';
+import type { RuntimePermissionRequest } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 export interface McpUserRequest {
   id: string; serverId: string; sessionId: string; turnId: string;
   params: Record<string, unknown>;
+  permission?: RuntimePermissionRequest;
 }
 type Json = Record<string, unknown>;
 /** Desktop owns encrypted credentials and pending forms, independently of the displayed conversation. */
@@ -20,6 +22,21 @@ export class McpDesktopHost {
   requests() { return [...this.pending.values()].map(item => structuredClone(item.request)); }
   async handle(operation: McpHostOperation, input: unknown, signal: AbortSignal): Promise<unknown> {
     const payload = object(input);
+    if (operation === 'background-agent.permission') {
+      const { runtimePermissionRequestSchema } = await import('@cardbush/bush-protocol');
+      // Trusted hook confirmation has no capability grants or resource list.
+      const schema = Array.isArray(payload.actions) && payload.actions.includes('plugin_hook.confirm_tool')
+        ? runtimePermissionRequestSchema.extend({
+          targets: runtimePermissionRequestSchema.shape.targets.element.array(),
+          requestedCapabilityIds: runtimePermissionRequestSchema.shape.requestedCapabilityIds.element.array(),
+        })
+        : runtimePermissionRequestSchema;
+      const permission = schema.parse(payload);
+      if (typeof payload.sessionId !== 'string' || !payload.sessionId || typeof payload.turnId !== 'string' || !payload.turnId)
+        throw new Error('Invalid background permission identity.');
+      return this.request({ serverId: 'cardbush_background_agent', sessionId: payload.sessionId,
+        turnId: payload.turnId, params: {}, permission }, signal);
+    }
     if (operation === 'browser.open-external') {
       const url = checkedExternalWebUrl(payload.url);
       signal.throwIfAborted();
@@ -67,7 +84,7 @@ export class McpDesktopHost {
     signal.throwIfAborted();
     const id = randomUUID();
     const request = { ...input, id };
-    const abort = () => { void this.answer(id, { action: 'cancel' }); };
+    const abort = () => { void this.answer(id, request.permission ? { decision: 'cancel' } : { action: 'cancel' }); };
     return new Promise(resolve => {
       this.pending.set(id, { request, resolve });
       signal.addEventListener('abort', abort, { once: true });
@@ -78,6 +95,16 @@ export class McpDesktopHost {
     const pending = this.pending.get(id);
     if (!pending) return false;
     const answer = object(value);
+    if (pending.request.permission) {
+      const decision = answer.decision;
+      if (decision !== 'allow_once' && decision !== 'allow_session' && decision !== 'deny' && decision !== 'cancel' ||
+          decision === 'allow_session' && !pending.request.permission.requestedCapabilityIds.length)
+        throw new Error('Invalid background permission decision.');
+      this.pending.delete(id);
+      pending.resolve(decision);
+      this.options.changed();
+      return true;
+    }
     if (!['accept', 'decline', 'cancel'].includes(String(answer.action))) throw new Error('Invalid MCP form response.');
     if (answer.action === 'accept' && pending.request.params.mode === 'client_credentials') {
       const content = object(answer.content);

@@ -171,12 +171,39 @@ test('two bundled MCP configs with the same alias remain an invalid declaration'
 test('desktop credentials stay encrypted, form validation keeps drafts pending, and URL responses are scoped and cancellable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-vault-'));
   const key = randomBytes(32), iv = randomBytes(16), path = join(root, 'vault');
-  let changes = 0; const opened = [];
-  const host = new McpDesktopHost({ path, changed: () => { changes++; }, openUrl: async url => opened.push(url),
+  let changes = 0, onChange; const opened = [];
+  const host = new McpDesktopHost({ path, changed: () => { changes++; onChange?.(); }, openUrl: async url => opened.push(url),
     encrypt: text => { const cipher = createCipheriv('aes-256-cbc', key, iv); return Buffer.concat([cipher.update(text), cipher.final()]); },
     decrypt: bytes => { const cipher = createDecipheriv('aes-256-cbc', key, iv); return Buffer.concat([cipher.update(bytes), cipher.final()]).toString(); } });
   try {
     const signal = new AbortController().signal;
+    const permission = { sessionId: 'background-child', turnId: 'background-turn', reason: 'Read the fixture',
+      actions: ['execute', 'read'], targets: [{ kind: 'process', value: 'opaque policy', label: 'node fixture.mjs' }],
+      requestedCapabilityIds: ['fixture:read'] };
+    const background = async (input, signal) => {
+      const published = new Promise(resolve => { onChange = resolve; });
+      const pending = host.handle('background-agent.permission', input, signal);
+      try { await Promise.race([published, pending]); }
+      finally { onChange = undefined; }
+      return { pending };
+    };
+    for (const decision of ['allow_once', 'allow_session', 'deny', 'cancel']) {
+      const { pending } = await background(permission, signal);
+      const request = host.requests()[0];
+      assert.equal(request.sessionId, permission.sessionId);
+      assert.deepEqual(request.permission.targets, permission.targets);
+      assert.deepEqual(request.params, {});
+      assert.equal(await host.answer(request.id, { decision }), true);
+      assert.equal(await pending, decision);
+      assert.equal(await host.answer(request.id, { decision: 'allow_once' }), false);
+    }
+    const backgroundAbort = new AbortController();
+    const hookPermission = { ...permission, actions: ['plugin_hook.confirm_tool'], targets: [], requestedCapabilityIds: [] };
+    const { pending: abortedPermission } = await background(hookPermission, backgroundAbort.signal);
+    await assert.rejects(host.answer(host.requests()[0].id, { decision: 'allow_session' }), /Invalid background permission decision/);
+    backgroundAbort.abort();
+    assert.equal(await abortedPermission, 'cancel');
+    assert.equal(host.requests().length, 0);
     await Promise.all(['a', 'b'].map(key => host.handle('credentials.write', { key: key.repeat(64), value: { access_token: 'SECRET_FIXTURE' } }, signal)));
     assert.ok(!(await readFile(path)).includes(Buffer.from('SECRET_FIXTURE')));
     assert.equal((await host.handle('credentials.read', { key: 'a'.repeat(64) }, signal)).access_token, 'SECRET_FIXTURE');

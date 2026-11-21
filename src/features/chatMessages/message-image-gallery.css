@@ -49,6 +49,24 @@
 .message-image-preview.is-thumbnail .message-image-preview-fallback > span { display: none; }
 .message-image-preview.is-thumbnail:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+.message-image-thumbnails {
+  --message-attachment-thumbnail-size: 64px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--user-attachment-gap, 8px);
+}
+.message-image-thumbnails .message-image-preview.is-thumbnail {
+  --message-image-height: var(--message-attachment-thumbnail-size);
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  border-radius: 8px;
+}
+.message-image-thumbnails .message-image-preview.is-thumbnail img {
+  object-fit: contain;
+  border: 0;
+  background: transparent;
+}
+
 :is(.message-row, .assistant-message) .markdown-content img.message-content-image {
   max-width: min(50%, 360px);
   max-height: min(40vh, 280px);

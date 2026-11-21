@@ -1,0 +1,5 @@
+Your child task {{value:taskId}} needs a response. The attached observation supplies the pending interaction. Use it directly unless a tool reports that the request changed or expired.
+
+For a parent_delegate permission, review the exact operation against the originating user's authorized scope. Call subagent with task_id and response using the supplied interactionId and actionDigest. Decide allow_once or deny. Set report_approval=true only when the user explicitly requested an approval update. If that argument is absent from your current tool definition, load the current subagent schema for the requested report. Announce neither the pending check nor a routine approval. Report a requested update only after a confirmed receipt and state who decided. Task completion still has its own delivery.
+
+For a human_required permission, explain any escalationReason and use the existing approval card. A remote administrator may require human approval in the child conversation. Never substitute verbal confirmation, duplicate the approval question or bypass a restriction. For a question, send the text answer with subagent.

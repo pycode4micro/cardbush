@@ -8,8 +8,9 @@ import { prepareRuntimeAgentRequest } from '../../backend/runtimeChat';
 import { createRealtimeAgentExecutor } from '../../backend/realtimeAgent';
 import { createDesktopRuntimeSession } from '../../runtime-client/ElectronRuntimeSession';
 import { readAssistantProfile } from './assistantProfile';
-import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttachmentsForVision } from '../../shared/chatAttachments';
+import { splitStreamAttachmentMentions, streamAttachmentsForVision } from '../../shared/chatAttachments';
 import { assistantExecutionAttachments } from './assistantAttachments';
+import { assistantInputAttachments } from './assistantTimeline';
 import { saveAssistantReceipt } from './assistantReadReceipt';
 let resetting: Promise<void> | undefined;
 let contextVersion = 0;
@@ -88,7 +89,8 @@ export const assistantBackend = {
       const prompt = readUserPrompt(text);
       const outbound = { ...splitStreamAttachmentMentions(prompt.text), promptContext: prompt.context };
       const profile = readAssistantProfile();
-      const attachments = await assistantExecutionAttachments(await chatAttachmentsFromOutbound(outbound), profile.targetAgent);
+      const messageId = identity?.id ?? `input-${crypto.randomUUID()}`;
+      const attachments = await assistantExecutionAttachments(await assistantInputAttachments(outbound, messageId), profile.targetAgent);
       const input = streamAttachmentsForVision(outbound, config.standardImageInputEnabled === true);
       stageFinished('attachments');
       const { runtimeRequest: parent } = await prepareRuntimeAgentRequest({ ...config, sessionId, userInput: input.userInput,
@@ -96,7 +98,7 @@ export const assistantBackend = {
         files: profile.targetAgent ? attachments.map(file => file.execution!.path) : input.files, images: input.images, attachments }, runtime,
         { turnId: `assistant_${crypto.randomUUID()}`, journalEntries: entries, stageFinished });
       parent.metadata.assistantOutputMode = spoken ? 'voice' : 'text';
-      const entry: ConversationEntry = { id: identity?.id ?? `input-${crypto.randomUUID()}`, role: 'user', content: outbound.displayInput || input.userInput,
+      const entry: ConversationEntry = { id: messageId, role: 'user', content: outbound.displayInput || input.userInput,
         ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
         ...(outbound.promptContext ? { promptContext: outbound.promptContext } : {}),
         ...(attachments.length ? { attachments } : {}),

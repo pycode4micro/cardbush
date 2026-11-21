@@ -66,9 +66,18 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   const quoteRevision = useRef(0);
   const [reactions, setReactions] = useState<Record<string, AssistantReaction>>({});
   const [reacting, setReacting] = useState(false), reactionPending = useRef(false);
-  const [highlighted, setHighlighted] = useState<string>();
+  const [highlighted, setHighlighted] = useState<{ id: string; quick: boolean; revision: number }>();
+  const locatorRef = useCallback((element: HTMLSpanElement | null) => {
+    if (!element) return;
+    const clear = () => setHighlighted(current => current === highlighted ? undefined : current);
+    const animation = element.getAnimations()[0];
+    if (animation) void animation.finished.then(clear, clear);
+    else clear();
+  }, [highlighted]);
   useEffect(() => { if (!active) closeMessageMenu(); }, [active, closeMessageMenu]);
-  useEffect(() => { if (highlighted) { const timer = setTimeout(() => setHighlighted(undefined), 1500); return () => clearTimeout(timer); } }, [highlighted]);
+  useEffect(() => {
+    setHighlighted(current => !active || (current?.quick && !composerPortalTarget) ? undefined : current);
+  }, [active, composerPortalTarget]);
   const submittedRef = useRef(submitted); submittedRef.current = submitted;
   const sendingRequest = useRef<string | undefined>(undefined);
   const queuedMessages = useMemo(() => [...pendingInputs, ...submitted.filter(item => item.entry.delivery && item.state !== 'failed'
@@ -161,7 +170,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       generation.current = result.generation;
       setPendingInputs(result.pendingInputs ?? []);
       if (!reactionPending.current) setReactions(current => JSON.stringify(current) === JSON.stringify(result.reactions ?? {}) ? current : result.reactions ?? {});
-      if (reset && historyLoaded.current) { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); setReactions(result.reactions ?? {}); closeMessageMenu(); }
+      if (reset && historyLoaded.current) { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); setReactions(result.reactions ?? {}); setHighlighted(undefined); closeMessageMenu(); }
       if (historyLoaded.current && !reset && activeRef.current && result.entries.length) {
         const ids = result.entries.filter(entry => isAssistantPageMessage(entry) && !submittedRef.current.some(item => item.entry.id === entry.id)).map(entry => entry.id);
         animateEntries(ids);
@@ -277,12 +286,14 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   };
   const focusComposer = () => (composerPortalTarget ?? composerDock.current)?.querySelector<HTMLElement>('.composer-surface textarea,.composer-prompt-editor[contenteditable=true]')?.focus();
   const { scrollToMessage } = viewport;
-  const jumpToMessage = useCallback((id: string) => {
-    const root = composerPortalTarget?.querySelector('.quick-input-transcript') ?? scroller.current;
-    const row = [...(root?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(node => node.dataset.messageId === id)
+  const jumpToMessage = useCallback((id: string, moveFocus = false) => {
+    const quickTranscript = composerPortalTarget?.querySelector('.quick-input-transcript:not([hidden])');
+    const row = [...(quickTranscript?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(node => node.dataset.messageId === id)
       ?? [...(scroller.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(node => node.dataset.messageId === id);
     if (!row) return false;
-    scrollToMessage(row); row.querySelector<HTMLElement>('article')?.focus({ preventScroll: true }); setHighlighted(id);
+    scrollToMessage(row);
+    if (moveFocus) row.querySelector<HTMLElement>('article')?.focus({ preventScroll: true });
+    setHighlighted(current => ({ id, quick: quickTranscript?.contains(row) === true, revision: (current?.revision ?? 0) + 1 }));
     return true;
   }, [composerPortalTarget, scrollToMessage]);
   useEffect(() => {
@@ -316,7 +327,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     send: text => voice.snapshot().mode === 'call' ? submit(text, true) : send(text) };
   target.refresh = () => ({ ...target, contextGeneration: generation.current, ...voiceMessagesRef.current, sending: busyRef.current });
   const [eventsOpen, setEventsOpen] = useState(false);
-  const renderTimelineItem = (item: typeof timeline[number]) => {
+  const renderTimelineItem = (item: typeof timeline[number], quick: boolean) => {
     if ('task' in item) return <AssistantTaskBubble key={item.key} task={item.task} language={language}/>;
     const { entry } = item;
     const pending = submitted.find(item => item.entry.id === entry.id);
@@ -326,9 +337,9 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       setMessageMenu({ entry, trigger, x, y, selection: selected, disabled: Boolean(pending && pending.state !== 'accepted') });
     };
     const reaction = Object.hasOwn(reactions, entry.id) ? reactions[entry.id] : undefined;
+    const locator = highlighted?.id === entry.id && highlighted.quick === quick ? highlighted : undefined;
     return <div className="message-list-item assistant-message-row" data-message-role={entry.role} data-message-id={entry.id} key={entry.id}><article tabIndex={0}
       aria-label={uiText(language)('assistantMessage.messageFrom', { name: entry.role === 'user' ? uiText(language)('assistantMessage.you') : profile.name })}
-      data-quote-highlight={highlighted === entry.id}
       onContextMenu={event => {
         if (event.defaultPrevented || (event.target as HTMLElement).closest('a,button,input,textarea,video,audio,[contenteditable=true]')) return;
         event.preventDefault(); event.stopPropagation(); openMenu(event.currentTarget, event.clientX, event.clientY);
@@ -337,9 +348,10 @@ export function AssistantView({ active, language, floating, prepare, observeActi
         event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openMenu(event.currentTarget, rect.left, rect.bottom);
       }} className={`assistant-message assistant-message-${entry.role}${arriving.has(entry.id) ? ' assistant-message-arriving' : ''}`}>
     {entry.replyTo && <AssistantQuote source={pageEntries.find(item => item.id === entry.replyTo!.messageId)} excerpt={entry.replyTo.excerpt}
-      language={language} assistantName={profile.name} onJump={() => jumpToMessage(entry.replyTo!.messageId)}/>}
+      language={language} assistantName={profile.name} onJump={moveFocus => jumpToMessage(entry.replyTo!.messageId, moveFocus)}/>}
     {entry.role === 'user' && Boolean(entry.attachments?.length) && <section className="user-message-attachments" aria-label={uiText(language)('image.scope.attachments')}>
-      <MessageImageStrip paths={(entry.attachments ?? []).filter(file => file.type === 'image').flatMap(file => file.path ? [file.path] : [])} language={language}/>
+      <MessageImageStrip thumbnails images={(entry.attachments ?? []).flatMap(file =>
+        file.type === 'image' && file.path ? [{ id: file.id, name: file.name, path: file.path }] : [])} language={language}/>
       <MessageFileAttachmentStrip attachments={(entry.attachments ?? []).filter(file => file.type !== 'image')} language={language}/>
     </section>}
     {entry.content && <div className="assistant-text-bubble">{entry.role === 'assistant'
@@ -353,13 +365,14 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       {uiText(language)(pending.state === 'preparing' ? 'assistantView.preparingMessage' : 'assistantView.sendingMessage')}
     </span>}
     {pending?.state === 'failed' && <button type="button" className="assistant-message-retry" disabled={submitting} onClick={() => void send(pending.prompt, pending)}>{uiText(language)('assistantView.retryMessage')}</button>}
+    {locator && <span key={locator.revision} ref={locatorRef} className="assistant-message-locator" aria-hidden="true"/>}
   </article></div>;
   };
-  const renderTimeline = (items: typeof timeline) => {
+  const renderTimeline = (items: typeof timeline, quick = false) => {
     const separators = assistantTimeSeparators(items);
     return items.map(item => <Fragment key={item.key}>
       {separators.has(item.key) && <div className="assistant-time-separator"><time dateTime={item.at}>{assistantTimeLabel(item.at, language)}</time></div>}
-      {renderTimelineItem(item)}
+      {renderTimelineItem(item, quick)}
     </Fragment>);
   };
   const typingBubble = replying && <div className="message-list-item assistant-message-row assistant-activity-row" data-message-role="status">
@@ -423,12 +436,12 @@ export function AssistantView({ active, language, floating, prepare, observeActi
           <QuickInputStatus language={language} messages={pageMessages} sending={busy || tasks.some(task => !task.terminal)}
             submitting={submitting} error={error || runtimeError}
             recovery={retry ? { ...retry, sessionId, state: 'retrying', source: 'provider' } : null} sessionId={sessionId}>
-            {renderTimeline(timeline.slice(-12))}
+            {renderTimeline(timeline.slice(-12), true)}
             {typingBubble}
           </QuickInputStatus>
           <AssistantComposer controls={composerControls} language={language} draft={draft} onDraftChange={setDraft}
             quote={quote && <AssistantQuote source={pageEntries.find(item => item.id === quote.messageId)} excerpt={quote.excerpt}
-              language={language} assistantName={profile.name} onJump={() => jumpToMessage(quote.messageId)} onCancel={() => { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); focusComposer(); }}/>}
+              language={language} assistantName={profile.name} onJump={moveFocus => jumpToMessage(quote.messageId, moveFocus)} onCancel={() => { quoteRevision.current++; quoteRef.current = undefined; setQuote(undefined); focusComposer(); }}/>}
             userMessagePrediction={userMessagePrediction} predictionPending={busy || submitting || Boolean(error || runtimeError)}
              ready={ready} submitting={submitting} busy={busy} queuedMessages={queuedMessages}
              onSend={(text, options) => send(text, undefined, options?.immediate === false ? 'queue' : 'insert')}

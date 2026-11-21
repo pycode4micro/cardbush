@@ -58,6 +58,7 @@ test('timestamp labels follow locale, show dates for older days and include a di
 test('optimistic input preserves attachments and structured context without host inspection', async () => {
   const entry = await assistantInputEntry({text:'@C:/My Files/note.txt\n@C:/My Files/photo.png\n请查看',context:[{kind:'editing-location',content:'selected paragraph'}]});
   assert.equal(entry.content,'请查看');assert.equal(entry.attachments.length,2);
+  assert.deepEqual(entry.attachments.map(item=>item.id), [`${entry.id}:attachment:0`, `${entry.id}:attachment:1`]);
   assert.equal(entry.attachments.find(item=>item.name==='photo.png').type,'image');
   assert.equal(entry.promptContext[0].content,'selected paragraph');
   assert.ok(entry.id.startsWith('input-'));assert.ok(Number.isFinite(Date.parse(entry.createdAt)));

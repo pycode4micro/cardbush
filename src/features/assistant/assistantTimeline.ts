@@ -1,11 +1,18 @@
 import { readUserPrompt, type ConversationEntry, type UserPromptInput } from '@cardbush/bush-protocol';
 import { chatAttachmentsFromOutbound, splitStreamAttachmentMentions } from '../../shared/chatAttachments';
 
+export async function assistantInputAttachments(
+  outbound: ReturnType<typeof splitStreamAttachmentMentions>, messageId: string, inspectLocal = true,
+) {
+  const attachments = await chatAttachmentsFromOutbound(outbound, inspectLocal);
+  return attachments.map((attachment, index) => ({ ...attachment, id: `${messageId}:attachment:${index}` }));
+}
+
 /** A local receipt is visible before configuration, attachment inspection or IPC. */
 export async function assistantInputEntry(text: UserPromptInput): Promise<ConversationEntry> {
   const id = `input-${crypto.randomUUID()}`, createdAt = new Date().toISOString();
   const prompt = readUserPrompt(text), outbound = splitStreamAttachmentMentions(prompt.text);
-  const attachments = await chatAttachmentsFromOutbound(outbound, false);
+  const attachments = await assistantInputAttachments(outbound, id, false);
   return { id, createdAt, role: 'user', source: 'text', visibility: 'conversation', content: outbound.displayInput || outbound.userInput,
     ...(prompt.context ? { promptContext: prompt.context } : {}), ...(attachments.length ? { attachments } : {}) };
 }

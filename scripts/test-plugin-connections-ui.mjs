@@ -181,6 +181,7 @@ try {
   if (process.argv.includes('--settings-only')) env.CARDBUSH_PLUGIN_SETTINGS_ONLY = '1';
   if (process.argv.includes('--network-only')) env.CARDBUSH_PLUGIN_NETWORK_ONLY = '1';
   if (process.argv.includes('--marketplace-only')) env.CARDBUSH_PLUGIN_MARKETPLACE_ONLY = '1';
+  if (process.argv.includes('--background-approval-only')) env.CARDBUSH_BACKGROUND_APPROVAL_UI_ONLY = '1';
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
   const worker = localization ? 'scripts/test-plugin-localization-ui.cjs' : coreSettings ? 'scripts/test-core-settings-ui.cjs' : appearanceNavigation ? 'scripts/test-plugin-appearance-worker.cjs' : 'scripts/test-plugin-connections-ui-worker.cjs';
   const run=spawnSync(require('electron'),[worker,directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});

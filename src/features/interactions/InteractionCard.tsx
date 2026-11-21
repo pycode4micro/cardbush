@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { permissionQuestion, PermissionRequestCard } from './PermissionRequestCard';
+import { permissionQuestion, PermissionRequestCard, type PermissionDecision } from './PermissionRequestCard';
 import type { AppLanguage, PendingInteraction, InteractionReplyAnswer } from '../../types';
 import { SolutionSelectionCard } from './SolutionSelectionCard';
 
@@ -8,11 +8,13 @@ export function InteractionCard({
   interaction,
   onReply,
   onCancel,
+  permissionDecisions,
 }: {
   language: AppLanguage;
   interaction: PendingInteraction;
   onReply: (reply: InteractionReplyAnswer[]) => Promise<void>;
   onCancel: () => Promise<void>;
+  permissionDecisions?: readonly PermissionDecision[];
 }) {
   const questions = interaction.questions ?? [];
   const [busy, setBusy] = useState(false);
@@ -58,6 +60,7 @@ export function InteractionCard({
       interaction={interaction}
       busy={busy}
       error={error}
+      permissionDecisions={permissionDecisions}
       onChoose={(optionId) => void submitPermission(optionId)}
       onCancel={() => void cancel()}
     />

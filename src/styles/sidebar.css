@@ -143,6 +143,14 @@ body.sidebar-resizing .right-inspector {
   margin-top: 0;
 }
 
+.sidebar-nav > .sidebar-assistant ~ .desktop-search {
+  margin-block-start: var(--sidebar-search-gap, 8px);
+}
+
+.sidebar-is-collapsed .sidebar-nav {
+  --sidebar-search-gap: 4px;
+}
+
 .nav-row,
 .settings-dock {
   width: 100%;

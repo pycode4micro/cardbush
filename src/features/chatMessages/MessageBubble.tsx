@@ -78,7 +78,7 @@ import {
   remarkSectionLists,
 } from './markdownFormat';
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
-import { MessageImageGallery } from './MessageImageGallery';
+import { MessageImageGallery, type MessageGalleryImage } from './MessageImageGallery';
 import { UserMessageDisclosure } from './UserMessageDisclosure';
 import { MessageContentImage, MessageImageGalleryFrame, useImageGalleryFallback } from './MessageImageGalleryFrame';
 import { remarkImageGroups } from './remarkImageGroups';
@@ -2806,24 +2806,30 @@ export function MessageFileAttachmentStrip({
 
 export function MessageImageStrip({
   paths,
+  images,
   language,
+  thumbnails,
 }: {
-  paths: string[];
+  paths?: string[];
+  images?: MessageGalleryImage[];
   language: AppLanguage;
+  thumbnails?: boolean;
 }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const presentedMedia = useContext(PresentedMediaContext);
-  const resolvedPaths = paths.map((pathValue) => remapProjectPath(pathValue, pathAliases));
-  if (resolvedPaths.length === 0) {
+  const resolvedImages: MessageGalleryImage[] = (images ?? paths?.map(path => ({ path })) ?? [])
+    .map(image => ({ ...image, path: remapProjectPath(image.path, pathAliases) }));
+  if (resolvedImages.length === 0) {
     return null;
   }
   return (
     <div className="message-image-strip">
-      {resolvedPaths.map((path, index) => {
+      {resolvedImages.map(({ id, path }, index) => {
         const presented = presentedMedia.get(mediaPresentationKey(path));
-        return presented ? <PresentedMediaReference key={`${path}-${index}`} artifact={presented} /> : null;
+        return presented ? <PresentedMediaReference key={id ?? `${path}-${index}`} artifact={presented} /> : null;
       })}
-      <MessageImageGallery images={resolvedPaths.filter(path => !presentedMedia.has(mediaPresentationKey(path))).map(path => ({ path }))} language={language} />
+      <MessageImageGallery images={resolvedImages.filter(({ path }) => !presentedMedia.has(mediaPresentationKey(path)))}
+        language={language} thumbnails={thumbnails} />
     </div>
   );
 }
