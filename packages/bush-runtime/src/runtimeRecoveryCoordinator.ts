@@ -103,9 +103,13 @@ export class RuntimeRecoveryCoordinator {
 
   /** Read the durable input fact of an unfinished Turn, without exposing its model request. */
   readUserMessage(sessionId: string, turnId: string, messageId: string) {
+    return this.readUserInputs(sessionId, turnId)?.find(item => item.messageId === messageId) ?? null;
+  }
+
+  readUserInputs(sessionId: string, turnId: string) {
     const commit = this.#checkpoints.load(sessionId, turnId)?.sessionCommit;
-    return [...commit?.inputMessages ?? [], ...commit?.generatedMessages ?? []].find(item =>
-      item.messageId === messageId && item.message.role === 'user' && item.message.visibility !== 'internal') ?? null;
+    return commit && [...commit.inputMessages, ...commit.generatedMessages].filter(item =>
+      item.message.role === 'user' && item.message.visibility !== 'internal');
   }
 
   /** Freeze completed exchanges only; never copy an outstanding tool call. */

@@ -193,6 +193,7 @@ export interface DeferredPluginServer {
 export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string, standalone: Array<Record<string, unknown>> = [], dataRoot = join(dirname(configPath), 'plugin-data'),
   activateOptional?: (server: DeferredPluginServer) => boolean) {
   const { resolvePluginMcpConnection } = await import('./pluginMcpConfiguration.mjs');
+  const { mcpAttachmentReadersSchema } = await import('@cardbush/bush-protocol');
   const servers: Record<string, unknown>[] = [];
   for (const plugin of await loadEnabledProductPlugins(roots, configPath)) {
     if (plugin.id === 'computer-use' || plugin.id === 'chrome') continue;
@@ -216,7 +217,10 @@ export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], co
           if (configured.transport.kind === 'stdio' || ('headersHelper' in configured.transport && configured.transport.headersHelper)) await mkdir(pluginDataDirectory(plugin.id, dataRoot), { recursive: true });
           if (configured.transport.kind !== 'stdio') return configured;
           fingerprint ??= await pluginRuntimeFingerprint(root, plugin.version);
-          return { ...configured, implementationFingerprint: fingerprint };
+          const declaration = objectOrEmpty(declarations[name]);
+          const readers = plugin.source === 'bundled' && !settings.server && !Object.keys(objectOrEmpty(settings.connection)).length
+            ? mcpAttachmentReadersSchema.safeParse(declaration.cardbush_attachment_readers).data : undefined;
+          return { ...configured, implementationFingerprint: fingerprint, ...(readers ? { attachmentReaders: readers } : {}) };
         };
         if (plugin.source === 'user' && !configured.required && activateOptional &&
           !activateOptional({ id: configured.id, pluginId: plugin.id, description: plugin.description || plugin.name, load })) continue;

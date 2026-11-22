@@ -685,6 +685,12 @@ export class McpClientManager {
     const resource = `mcp://${connection.config.id}/tools/${encodeURIComponent(tool.remote.name)}`;
     const decodeInput = mcpInputDecoder(tool.runtimeName, tool.remote.inputSchema);
     const documentTool = isDocumentFileTool(connection.config, tool.remote.name);
+    const declaredReader = connection.config.attachmentReaders && Object.hasOwn(connection.config.attachmentReaders, tool.remote.name)
+      ? connection.config.attachmentReaders[tool.remote.name] : undefined;
+    const implementationFingerprint = connection.config.implementationFingerprint;
+    const reader = declaredReader && implementationFingerprint && connection.config.transport.kind === 'stdio' &&
+      tool.remote.annotations?.readOnlyHint === true && (!documentTool || tool.remote.name === 'inspect_document')
+      ? { ...declaredReader, implementationFingerprint } : undefined;
     const use = <T>(operation: () => Promise<T>): Promise<T> => {
       if (!isDeepStrictEqual(connection.tools.find(item => item.runtimeName === tool.runtimeName), tool)) {
         return Promise.reject(preflightMcpError('tool_definition_changed', 'This MCP tool changed before dispatch. Load its current definition before calling again.',
@@ -743,7 +749,7 @@ export class McpClientManager {
         tool: tool.remote.name,
         readOnly: tool.remote.annotations?.readOnlyHint === true,
         modelVisible: !ui?.visibility || ui.visibility.includes('model'),
-        appCallable: !documentTool && (ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true),
+        appCallable: !documentTool && !reader && (ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true),
         call: async (input, options) => use(async () => {
           const validated = decodeInput(input);
           if (connection.retired || connection.health !== 'ready') throw preflightMcpError('mcp_service_unavailable',
@@ -784,8 +790,8 @@ export class McpClientManager {
       visibleToChild: tool.policy.visibleToChild,
       decodeInput,
       authorize: async context => {
-        if (documentTool) {
-          const { request, outsideScope } = await documentFilePermission(context, resource, tool.remote.name);
+        if (documentTool || reader) {
+          const { request, outsideScope } = await documentFilePermission(context, resource, tool.remote.name, reader);
           if (tool.policy.permission === 'allow' && !outsideScope && !request.requiresHuman) {
             return { kind: 'allow', capabilityIds: request.capabilityIds };
           }
@@ -809,8 +815,8 @@ export class McpClientManager {
       },
       execute: async (context) => use(async () => {
         let input = context.input;
-        if (documentTool) {
-          const admission = await documentFilePermission(context, resource, tool.remote.name);
+        if (documentTool || reader) {
+          const admission = await documentFilePermission(context, resource, tool.remote.name, reader);
           if (!context.capabilityIds.includes(admission.capabilityId)) throw preflightMcpError('document_permission_changed',
             'The document operation or file paths changed after authorization. Request permission for the current operation.', {}, 'retry');
           input = admission.input;

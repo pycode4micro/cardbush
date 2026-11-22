@@ -1,5 +1,6 @@
 import { firstTitleSource, summarizeConversationTitle } from './conversationTitle.js';
-import { createTurnTimeContext } from '@cardbush/bush-protocol';
+import { collectTurnAttachments, createTurnTimeContext } from '@cardbush/bush-protocol';
+import { normalizeIdentity } from './workspaceAccessPolicy.js';
 import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
 import { remoteAgentFacts, registerSandboxEnvironment } from './environmentResources.js';
 import { AgentExecutionRegistry } from './agentExecutionRegistry.js';
@@ -2575,6 +2576,7 @@ export class InMemoryRuntimeHost {
       executionStore: this.#toolExecutions,
       modelImages: this.#modelImages,
       capabilities: this.#capabilityGrants,
+      isTurnAttachment: this.#childAttachmentMatcher(request),
       ...childPermission,
       ...(request.metadata.pluginBackground ? { externalPermissions: {
         // Explicit confirmations requested by a trusted hook are host prompts.
@@ -4612,6 +4614,35 @@ export class InMemoryRuntimeHost {
 
   async #runPluginChild(request: RuntimeSessionTurnRequest, signal?: AbortSignal): Promise<RuntimeEvent> {
     return this.#withPluginChildEnvironment(request, signal, () => this.runSessionTurn(request, { signal }));
+  }
+
+  #childAttachmentMatcher(request: ModelRequest) {
+    if (request.metadata.agentRole !== 'child') return;
+    const parentSessionId = metadataString(request.metadata.parentSessionId);
+    const taskId = metadataString(request.metadata.subagentTaskId);
+    if (!parentSessionId || !taskId || !this.#subagentTasks.startedHere(parentSessionId, taskId)) return;
+    const task = this.#subagentTasks.get(parentSessionId, taskId);
+    if (!task || task.remote || task.status !== 'running' ||
+        task.childSessionId !== request.sessionId || task.childTurnId !== request.turnId) return;
+
+    let attachments;
+    if (parentSessionId === PERSONAL_ASSISTANT_SESSION) {
+      const origins = new Set(task.originMessageIds);
+      if (!origins.size) return;
+      attachments = this.#assistant.journal.read(parentSessionId).flatMap(entry =>
+        origins.has(entry.id) && entry.role === 'user' && ['text', 'voice'].includes(entry.source)
+          ? entry.attachments ?? [] : []);
+    } else {
+      const inputs = this.#recovery.readUserInputs(parentSessionId, task.parentTurnId)
+        ?? this.#sessions.snapshot(parentSessionId)?.turns.find(turn => turn.turnId === task.parentTurnId)?.messages
+        ?? [];
+      attachments = inputs.flatMap(({ message, messageId, metadata }) =>
+        message.role === 'user' && message.visibility !== 'internal'
+          ? collectTurnAttachments({ messageId, attachments: metadata?.attachments }) : []);
+    }
+    const paths = new Set(attachments.flatMap(({ path, type }) =>
+      type === 'document' && path && isAbsolute(path) ? [normalizeIdentity(path)] : []));
+    if (paths.size) return (path: string) => paths.has(normalizeIdentity(path));
   }
 
   async #withPluginChildEnvironment(request: RuntimeSessionTurnRequest, signal: AbortSignal | undefined, run: () => Promise<RuntimeEvent>): Promise<RuntimeEvent> {

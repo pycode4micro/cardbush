@@ -1,6 +1,12 @@
 {
   "mcpServers": {
     "documents": {
+      "cardbush_attachment_readers": {
+        "inspect_document": {
+          "pathArgument": "path",
+          "readArguments": ["expected_sha256", "sheet", "offset", "limit", "start_column"]
+        }
+      },
       "tool_timeout_sec": 150,
       "env": {
         "ELECTRON_RUN_AS_NODE": "1",

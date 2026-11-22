@@ -29,7 +29,7 @@ import {
   type RuntimeCapabilityStore,
   type ToolExecutionHooks,
 } from "./toolExecutionCoordinator.js";
-import type { ToolRegistry, PermissionResolver } from "./toolRegistry.js";
+import type { ToolRegistry, PermissionResolver, ToolHandlerContext } from "./toolRegistry.js";
 import type { ToolExecutionStore } from "./toolExecutionStore.js";
 import { ModelImageInputError, ModelImageStore } from "./modelImageStore.js";
 import { snapshotMcpImages, omitToolImageData, omitToolImageDataFromText, type ToolImageObservation } from './toolImageContent.js';
@@ -44,6 +44,7 @@ export interface RuntimeToolLoopOptions {
   modelImages?: ModelImageStore;
   capabilities?: RuntimeCapabilityStore;
   capabilitySessionId?: string;
+  isTurnAttachment?: ToolHandlerContext['isTurnAttachment'];
   hooks?: ToolExecutionHooks;
   permissionEventIdentity?: RuntimeEventIdentity;
   permissionSource?: {
@@ -170,6 +171,7 @@ export class RuntimeToolLoop {
       },
       capabilities: options.capabilities,
       capabilitySessionId: options.capabilitySessionId,
+      isTurnAttachment: options.isTurnAttachment,
       hooks: options.hooks,
     });
     this.#executionStore = options.executionStore;

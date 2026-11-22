@@ -86,6 +86,7 @@ export interface ToolExecutionCoordinatorOptions {
   capabilities?: RuntimeCapabilityStore;
   capabilitySessionId?: string;
   hooks?: ToolExecutionHooks;
+  isTurnAttachment?: ToolHandlerContext['isTurnAttachment'];
 }
 
 export interface RuntimeCapabilityStore {
@@ -107,6 +108,8 @@ export class ToolExecutionCoordinator {
   readonly #capabilities?: RuntimeCapabilityStore;
   readonly #capabilitySessionId?: string;
   readonly #hooks?: ToolExecutionHooks;
+  readonly #isTurnAttachment?: ToolHandlerContext['isTurnAttachment'];
+  readonly #turnGrants = new Set<string>();
 
   constructor(options: ToolExecutionCoordinatorOptions) {
     this.#registry = options.registry;
@@ -115,6 +118,7 @@ export class ToolExecutionCoordinator {
     this.#capabilities = options.capabilities;
     this.#capabilitySessionId = options.capabilitySessionId?.trim() || undefined;
     this.#hooks = options.hooks;
+    this.#isTurnAttachment = options.isTurnAttachment;
   }
 
   async execute(
@@ -302,6 +306,7 @@ export class ToolExecutionCoordinator {
             actionManifest,
             signal,
             turn: admissionTurn,
+            isTurnAttachment: this.#isTurnAttachment,
           })),
           signal,
           "Tool admission was cancelled.",
@@ -332,18 +337,22 @@ export class ToolExecutionCoordinator {
         const fullControl = !humanRequired && turn?.request.permissionMode === "all_free";
         const capabilitySessionId = this.#capabilitySessionId ?? identity.sessionId;
         const grantKeys = permissionGrantKeys(admission.request);
+        const turnGrant = admission.request.reuseApprovalForTurn
+          ? JSON.stringify([identity.sessionId, identity.turnId, grantKeys]) : undefined;
         if (fullControl) {
           capabilityIds = [...admission.request.capabilityIds];
-        } else if (this.#capabilities?.hasAll(capabilitySessionId, grantKeys)) {
+        } else if (turnGrant ? this.#turnGrants.has(turnGrant) : this.#capabilities?.hasAll(capabilitySessionId, grantKeys)) {
           capabilityIds = [...admission.request.capabilityIds];
         } else {
           if (turn?.request.metadata.pluginAgentDontAsk === true) return failedResult('plugin_agent_permission_denied', 'This Agent is configured to deny requests that need additional permission.', actionManifest, {}, 'permission');
           let answer: Pick<RuntimePermissionAnswer, 'decision' | 'grantedCapabilityIds'>;
+          let approvedByHook = false;
           try {
             const hookPermission = await hooks?.permission?.({ toolCall, input: parsedArguments, reason: admission.request.reason, signal });
             if (hookPermission) hookResult.messages.push(...hookPermission.messages);
             if (hookPermission?.permissionDecision === 'deny') return failedResult('plugin_hook_permission_rejected', hookPermission.blocked ?? 'Permission denied by a trusted hook.', actionManifest, {}, 'permission');
-            answer = !humanRequired && hookPermission?.permissionDecision === 'allow'
+            approvedByHook = !humanRequired && hookPermission?.permissionDecision === 'allow';
+            answer = approvedByHook
               ? { decision: 'allow_once', grantedCapabilityIds: [...admission.request.capabilityIds] }
               : await requestPermission(admission.request);
           } catch (error) {
@@ -377,7 +386,11 @@ export class ToolExecutionCoordinator {
             );
           }
           capabilityIds = [...answer.grantedCapabilityIds];
-          if (answer.decision === "allow_session") {
+          if (turnGrant) {
+            if (!approvedByHook && !signal?.aborted && admission.request.capabilityIds.every(id => capabilityIds.includes(id))) {
+              this.#turnGrants.add(turnGrant);
+            }
+          } else if (answer.decision === "allow_session") {
             this.#capabilities?.grant(capabilitySessionId, grantKeys);
           }
         }
@@ -426,6 +439,7 @@ export class ToolExecutionCoordinator {
           capabilityIds,
           signal,
           turn,
+          isTurnAttachment: this.#isTurnAttachment,
           invokeTool: async (name, input, nestedOptions) => {
             name = resolveToolReferenceName(name, turn);
             if (this.#registry.resolve(name)?.nestedCallable === false) throw Object.assign(new Error(`Tool ${name} must be called directly, not nested.`), { code: 'nested_tool_disallowed' });

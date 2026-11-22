@@ -33,6 +33,8 @@ export interface ToolPermissionRequest {
   capabilityIds: string[];
   scope?: RuntimePermissionScope;
   requiresHuman?: boolean;
+  /** The approval describes a bounded operation that can repeat within this turn. */
+  reuseApprovalForTurn?: boolean;
 }
 
 export type ToolAdmissionDecision =
@@ -48,6 +50,8 @@ export interface ToolAdmissionContext<TInput = unknown> {
   input: TInput;
   actionManifest: ActionManifest;
   signal?: AbortSignal;
+  /** Host-verified attachment of the current assignment, never inferred from model text. */
+  isTurnAttachment?: (path: string) => boolean;
   turn?: {
     request: ModelRequest;
     contextMessages: ModelMessage[];
