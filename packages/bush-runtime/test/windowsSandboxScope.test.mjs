@@ -75,7 +75,8 @@ test('a reused directory capability rejects a new hard-link alias at native star
   }); syncBuiltinESMExports();
   try {
     await assert.rejects(runResourceManagedCommand({ executable: f.executable, args: ['read-private', secret], cwd: f.work,
-      sandbox, sandboxScopePool: f.pool }), error => error.code === 'resource_protection_failed' && /multiple hard links/.test(error.message));
+      sandbox, sandboxScopePool: f.pool }), error => error.code === 'resource_protection_failed' && /multiple hard links/.test(error.message) &&
+        error.message.includes('late-alias.txt'));
     assert.equal(injected, true); assert.equal(await readFile(secret, 'utf8'), 'outside secret');
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
@@ -306,7 +307,7 @@ test('the selected host PowerShell resolves relative IO through the terminal man
   const f=await fixture(t),terminals=new TerminalSessionManager(); t.after(()=>terminals.close());
   const shell=commandInvocation('powershell','').executable;
   const command=`Set-Content './managed.txt' 'managed' -ErrorAction Stop; Get-Content './managed.txt'; & "$env:SystemRoot\\System32\\cmd.exe" /d /c cd`;
-  const result=await terminals.start({ownerSessionId:'test',cwd:f.work,shell:'powershell',command,yieldTimeMs:20000,sandbox:{writableRoots:[f.work],readableRoots:[dirname(shell)],network:'disabled'}});
+  const result=await terminals.start({ownerSessionId:'test',cwd:f.work,shell:'powershell',command,yieldTimeMs:20000,sandbox:{writableRoots:[f.work],readableRoots:windowsInterpreterRoots(shell),network:'disabled'}});
   assert.equal(result.state,'exited',JSON.stringify(result)); assert.equal(result.exitCode,0,JSON.stringify(result));
   assert.equal(result.stderr,''); assert.match(result.stdout,/managed/); assert.ok(result.stdout.includes(f.work));
   await terminals.close();

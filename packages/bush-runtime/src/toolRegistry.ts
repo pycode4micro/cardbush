@@ -20,6 +20,8 @@ import { withToolFailureFacts } from './toolFailureFacts.js';
 
 export const localCommandExecutionChannel = 'runtime:local-command';
 
+export type ParentWorkspaceAuthority = Pick<ModelRequest, 'sessionId' | 'permissionMode' | 'metadata'>;
+
 /** Host-owned queue admission, never supplied through model arguments. */
 export interface ToolSchedulingAdmission {
   scheduler: ToolResourceScheduler;
@@ -33,6 +35,8 @@ export interface ToolPermissionRequest {
   capabilityIds: string[];
   scope?: RuntimePermissionScope;
   requiresHuman?: boolean;
+  /** The operation needs authority beyond the dispatching parent's workspace policy. */
+  outsideParentScope?: boolean;
   /** The approval describes a bounded operation that can repeat within this turn. */
   reuseApprovalForTurn?: boolean;
 }
@@ -52,6 +56,8 @@ export interface ToolAdmissionContext<TInput = unknown> {
   signal?: AbortSignal;
   /** Host-verified attachment of the current assignment, never inferred from model text. */
   isTurnAttachment?: (path: string) => boolean;
+  /** The host supplies this from the parent dispatch, never from child arguments. */
+  parentWorkspaceAuthority?: ParentWorkspaceAuthority;
   turn?: {
     request: ModelRequest;
     contextMessages: ModelMessage[];

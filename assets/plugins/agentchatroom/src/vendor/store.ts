@@ -166,7 +166,7 @@ export class RoomStore {
       latest_seq: this.messages.get(room.room_id)!.length, read_after_seq: 0, read_cursor: this.cursor(room, member, 0) };
   }
 
-  async execute(name: ToolName, input: unknown, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async execute(name: ToolName, input: unknown, signal?: AbortSignal, watchPeerLeave = false): Promise<Record<string, unknown>> {
     const value = schemas[name].parse(input);
     if (this.stopped || this.broken) fail('service_unavailable', 'The room service is unavailable.', 503);
     switch (name) {
@@ -180,7 +180,7 @@ export class RoomStore {
       }
       case 'chatroom_send': return this.send(value as Input<'chatroom_send'>);
       case 'chatroom_check': return this.check(value as Input<'chatroom_check'>);
-      case 'chatroom_await': return this.wait(value as Input<'chatroom_await'>, signal);
+      case 'chatroom_await': return this.wait(value as Input<'chatroom_await'>, signal, watchPeerLeave);
       case 'chatroom_manage': return this.manage(value as Input<'chatroom_manage'>);
       case 'chatroom_leave': return this.leave(value as Input<'chatroom_leave'>);
       case 'chatroom_human_invite': return this.invite(value as Input<'chatroom_human_invite'>);
@@ -252,7 +252,7 @@ export class RoomStore {
     return { room: publicRoom(room), messages: page, next_seq: next, read_cursor: this.cursor(room, member, next), latest_seq: messages.length, has_more: next < messages.length };
   }
 
-  private wait(args: Input<'chatroom_await'>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  private wait(args: Input<'chatroom_await'>, signal?: AbortSignal, watchPeerLeave = false): Promise<Record<string, unknown>> {
     const initialRoom = this.room(args.room_id), caller = this.member(initialRoom, args.member_token);
     const after = this.position(initialRoom, caller, args, true);
     const participants = args.participants ? [...new Set(args.participants)] : undefined;
@@ -271,6 +271,7 @@ export class RoomStore {
       let scannedThrough = after;
       const matched = new Set<string>();
       const matchedSeqs: number[] = [];
+      const watchedPeers = new Set<string>();
       // Check and subscribe without yielding: a committed message cannot fall between them.
       const finish = (status: string, extra: Record<string, unknown> = {}) => {
         if (settled) return;
@@ -285,6 +286,13 @@ export class RoomStore {
         if (this.stopped || this.broken) return finish('service_stopped');
         if (!room.members.find(member => member.participant_id === caller.participant_id)?.active) return finish('membership_revoked');
         if (room.closed) return finish('room_closed');
+        if (watchPeerLeave) {
+          const departed = room.members.filter(member => !member.active && watchedPeers.has(member.participant_id));
+          if (departed.length) return finish('peer_left', { departed_peers: departed.map(member => ({ agent_id: member.name })) });
+          for (const member of room.members) {
+            if (member.active && member.kind === 'agent' && member.participant_id !== caller.participant_id) watchedPeers.add(member.participant_id);
+          }
+        }
         const messages = this.messages.get(args.room_id)!;
         for (; scannedThrough < messages.length;) {
           const message = messages[scannedThrough++];

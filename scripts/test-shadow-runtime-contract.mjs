@@ -33,7 +33,7 @@ assert.match(shadow, /permissionMode: 'task_free'/);
 assert.match(shadow, /shadowReadOnly: readOnly/);
 assert.match(shadow, /shadowWorkspaceDir: workspaceDir/);
 assert.match(shadow, /currently a child Agent/);
-assert.match(shadow, /inheritedObservationSessionId: state\.sessionId/);
+assert.doesNotMatch(shadow, /inheritedObservationSessionId/);
 assert.match(shadow, /interactiveRequests: false/);
 assert.match(shadow, /activeStreams/);
 assert.match(shadow, /modeTransitions/);

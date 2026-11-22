@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 
 import {
+  PERSONAL_ASSISTANT_SESSION,
   REPORT_DELIVERY_INSTRUCTIONS,
   registeredAgentSchema,
   resolveSubagentName,
@@ -32,7 +33,7 @@ import {
   type SubagentPermissionPolicy,
 } from "./childTurn.js";
 import type { SubagentTaskStore } from "./subagentTaskStore.js";
-import type { ToolRegistry, ToolHandlerContext } from "./toolRegistry.js";
+import type { ParentWorkspaceAuthority, ToolRegistry, ToolHandlerContext } from "./toolRegistry.js";
 import { RegisteredAgentStore, REGISTERED_AGENT_SCHEMA, validateRegisteredHooks } from './registeredAgents.js';
 import type { PluginHook } from './pluginExtensions.js';
 import { assertParentAgent } from './childAgentPolicy.js';
@@ -105,7 +106,9 @@ export interface JoinedSubagentResult {
   message: { role: "user"; name: "subagent_result" | "background_tool_result"; content: string };
 }
 
-export type SubagentChildRunner = ChildTurnRunner;
+export type SubagentChildRunner = (
+  request: Parameters<ChildTurnRunner>[0], signal?: AbortSignal, parent?: ParentWorkspaceAuthority,
+) => ReturnType<ChildTurnRunner>;
 
 export function registerSubagentTool(
   registry: ToolRegistry,
@@ -522,6 +525,12 @@ export function registerSubagentTool(
         ...(previous ? { resumedFromTaskId: previous.taskId } : {}), ...(preceding ? { queuedAfterTaskId: preceding.taskId } : {}) });
 
       const controller = new AbortController();
+      const parent = context.turn!.request;
+      const parentAuthority = parent.sessionId === PERSONAL_ASSISTANT_SESSION && childRequest.metadata.permissionRouting === 'parent'
+        ? { sessionId: parent.sessionId, permissionMode: parent.permissionMode, metadata: structuredClone({
+          workspaceDir: parent.metadata.workspaceDir, projectDir: parent.metadata.projectDir, sessionWorkspaceDir: parent.metadata.sessionWorkspaceDir,
+          taskRoots: parent.metadata.taskRoots, userRoots: parent.metadata.userRoots,
+        }) } : undefined;
       localRuns.set(taskId, { controller, request: childRequest });
       const observer = new AbortController();
       if (options.localControl) void watchChild(context, taskId, observer.signal);
@@ -537,7 +546,7 @@ export function registerSubagentTool(
           tasks.beginExecution(context.sessionId, taskId);
           await options.saveChildRequest?.(request);
           await execution.onStarted?.({ taskId, sessionId: request.sessionId });
-          return runChild(request, childSignal);
+          return runChild(request, childSignal, parentAuthority);
         },
         childRequest,
         signal: AbortSignal.any([controller.signal, ...(signal ? [signal] : []), ...(eventWork ? [eventWork] : [])]),

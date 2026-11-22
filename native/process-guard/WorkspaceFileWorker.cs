@@ -48,8 +48,8 @@ internal static partial class CardBushProcessHost
                         string path = Convert.ToString(input["path"]);
                         writable = Convert.ToBoolean(input["write"]);
                         deleting = input.ContainsKey("deleting") && Convert.ToBoolean(input["deleting"]);
-                        // Hold out other writers from the revision check through
-                        // the final flush; readers can still observe the file.
+                        // Writers receive an exact staging file or a checked
+                        // deletion target. Verification pins the original inode.
                         IntPtr handle = OpenScopeDirectory(path, (writable ? 0xC0000000u : 0x80000000u) | (deleting ? 0x10000u : 0u), writable ? 1u : 3u, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
                         Check(handle != new IntPtr(-1), "Open sandbox file");
                         file = new FileStream(new SafeFileHandle(handle, true), writable ? FileAccess.ReadWrite : FileAccess.Read);
@@ -66,9 +66,9 @@ internal static partial class CardBushProcessHost
                         var bytes = new byte[count]; file.Position = Convert.ToInt64(input["offset"]);
                         int read = file.Read(bytes, 0, count); result = Convert.ToBase64String(bytes, 0, read);
                     }
-                    else if ((operation == "truncate" && writable) || (operation == "delete" && deleting))
+                    else if ((operation == "verify" && file != null) || (operation == "delete" && deleting))
                     {
-                        WorkspaceFileStat(file);
+                        var before = WorkspaceFileStat(file);
                         if (operation == "delete" && (!input.ContainsKey("sha256") || input["sha256"] == null)) throw new IOException("Deletion requires an observed revision.");
                         if (input.ContainsKey("sha256") && input["sha256"] != null)
                         {
@@ -82,7 +82,12 @@ internal static partial class CardBushProcessHost
                             // from the digest check until the deletion commits.
                             var disposition = new WorkspaceFileDisposition { Delete = true };
                             Check(SetWorkspaceFileDisposition(file.SafeFileHandle.DangerousGetHandle(), 4, ref disposition, (uint)Marshal.SizeOf(typeof(WorkspaceFileDisposition))), "Delete checked workspace file");
-                        } else { file.SetLength(0); file.Position = 0; }
+                        } else {
+                            var after = WorkspaceFileStat(file);
+                            foreach (string key in new[] { "ctimeNs", "mtimeNs", "size" })
+                                if (!Object.Equals(before[key], after[key])) throw new IOException("workspace_revision_conflict");
+                            result = after;
+                        }
                     }
                     else if (operation == "write" && writable)
                     {
@@ -91,6 +96,7 @@ internal static partial class CardBushProcessHost
                         if (bytes.Length > 65536) throw new IOException("File protocol budget exceeded.");
                         file.Write(bytes, 0, bytes.Length);
                     }
+                    else if (operation == "sync" && file != null && writable) { WorkspaceFileStat(file); file.Flush(true); }
                     else if (operation == "release" && file != null && !writable) { file.Dispose(); file = null; }
                     else if (operation == "close") { if (file != null) { file.Dispose(); file = null; } Console.WriteLine("{\"ok\":true}"); return 0; }
                     else throw new IOException("Invalid file protocol operation.");

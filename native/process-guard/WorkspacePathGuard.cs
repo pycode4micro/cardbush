@@ -1,6 +1,7 @@
-// Metadata-only host helper. It never executes commands or changes ACLs.
+// Pins directories and publishes exact replacement names. File content stays in the sandbox.
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -25,12 +26,29 @@ internal static partial class CardBushProcessHost
                 Environment.Exit(0); // OS closes metadata handles even after a Runtime crash.
             });
             watcher.IsBackground = true; watcher.Start();
-            Console.WriteLine("{\"workspacePathGuardVersion\":1}");
+            var json = new JavaScriptSerializer();
+            Console.WriteLine("{\"workspacePathGuardVersion\":2}");
             string line;
             while ((line = Console.ReadLine()) != null)
             {
                 if (line.Length > 32768) throw new ArgumentException("File-access request too large.");
-                string path = new JavaScriptSerializer().Deserialize<string>(line);
+                if (line.StartsWith("{", StringComparison.Ordinal)) {
+                    string reply;
+                    try {
+                        var input = json.Deserialize<Dictionary<string, string>>(line);
+                        WorkspaceNamespaceOperation(input, pinned);
+                        reply = "{\"committed\":true}";
+                    } catch (Exception error) {
+                        string code = error.Message == "workspace_revision_conflict" ? error.Message :
+                            error is Win32Exception && (((Win32Exception)error).NativeErrorCode == 32 || ((Win32Exception)error).NativeErrorCode == 33) ? "workspace_resource_busy" :
+                            "workspace_atomic_write_failed";
+                        reply = json.Serialize(new { code = code, message = error.Message });
+                    }
+                    // Reply I/O can fail after publication. Never convert that to a rejection.
+                    Console.WriteLine(reply);
+                    continue;
+                }
+                string path = json.Deserialize<string>(line);
                 if (String.IsNullOrEmpty(path) || !Path.IsPathRooted(path) || path.StartsWith(@"\\") ||
                     !String.Equals(path, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException("File-access directories must be canonical local paths.");

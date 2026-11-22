@@ -29,12 +29,14 @@ test('only await accepts waiting; retired tasks(wait) and stale fields fail befo
   assert.equal(f.registry.resolve('await').nestedCallable, false);
   const definition = f.registry.resolve('await').definition;
   assert.equal(withToolDisplayTitle(definition).inputSchema.properties._display_title, undefined, 'passive waiting needs no model-generated bilingual action prose');
-  assert.throws(() => f.registry.resolve('await').decodeInput(stripToolDisplayTitle({ task_ids: ['team-run'], _display_title: 'stale title' }, definition)), /_display_title/);
+  const input = stripToolDisplayTitle({ task_ids: ['team-run'], _display_title: 'stale title' }, definition);
+  assert.deepEqual(input, { task_ids: ['team-run'] });
+  assert.throws(() => f.registry.resolve('await').decodeInput(stripToolDisplayTitle({ ...input, unexpected: true }, definition)), /unexpected/);
   assert.match(definition.description, /Team task_id\/run_id/);
   assert.match(definition.description, /plugins without waits.*start_mcp_tool.*declared read-only.*repeat_while.*host task_id/);
   assert.match(definition.description, /Plugin-native waits remain available/);
   for (const name of ['await_subagents', 'await_team_result', 'manage_tool_calls']) assert.equal(f.registry.resolve(name), undefined);
-  const current = await f.run({ task_ids: ['team-run'] });
+  const current = await f.run(input);
   assert.equal(current.tasks[0].result.output, 'verified fixture');
   let snapshots = 0;
   const retired = fixture(() => { snapshots++; return []; });

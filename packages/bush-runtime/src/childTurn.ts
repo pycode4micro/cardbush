@@ -219,7 +219,6 @@ export function buildChildTurnRequest(input: {
         parentRequest.metadata.mcpCatalogUpdates === 'additions' && parentRequest.metadata.mcpPluginDiscovery !== false,
       parentSessionId: input.context.sessionId,
       parentTurnId: input.context.turnId,
-      inheritedObservationSessionId: input.context.sessionId,
       permissionRouting,
       childAgentModelMode: modelPolicy ? "fixed" : "inherit",
       childAgentModelId: modelPolicy?.modelId ?? "",

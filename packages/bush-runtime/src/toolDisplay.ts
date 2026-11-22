@@ -4,10 +4,11 @@ export { normalizeToolDisplayTitle } from '@cardbush/bush-protocol';
 
 // Host presentation metadata. Never forward this field to a tool or MCP server.
 export const TOOL_DISPLAY_TITLE = '_display_title';
+const hostLabeledTools = new Set(['checkpoint_context', 'summary_for_user', 'await']);
 
 function acceptsDisplayTitle(definition: ToolDefinition): boolean {
   // Maintenance and passive waiting use host UI labels, not per-call model prose.
-  if (['checkpoint_context', 'summary_for_user', 'await'].includes(definition.name)) return false;
+  if (hostLabeledTools.has(definition.name)) return false;
   const schema = definition.inputSchema;
   if (schema.type !== 'object' || ['$ref', 'allOf', 'anyOf', 'oneOf', 'if', 'patternProperties'].some(key => key in schema)) return false;
   const properties = schema.properties;
@@ -35,8 +36,8 @@ export function toolCallDisplay(call: ToolCall, definition?: ToolDefinition): To
 }
 
 export function stripToolDisplayTitle(input: unknown, definition: ToolDefinition): unknown {
-  // A stray UI title must not reject a valid maintenance call.
-  if (!acceptsDisplayTitle(definition) && !['summary_for_user', 'checkpoint_context'].includes(definition.name)) return input;
+  // The host can ignore a stale display title on a tool with its own UI label.
+  if (!acceptsDisplayTitle(definition) && !hostLabeledTools.has(definition.name)) return input;
   return withoutToolDisplayTitle(input);
 }
 

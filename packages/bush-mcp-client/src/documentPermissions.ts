@@ -18,14 +18,16 @@ export async function documentFilePermission(context: ToolAdmissionContext<Recor
   const targets: RuntimePermissionTarget[] = [{ kind: 'mcp_resource', value: resource }];
   const actions = ['external_tool_call'];
   let outsideScope = false;
-  let externalWrite = false;
+  let outsideParentScope = false;
+  let requiresHuman = isParentApprovedChild(context) && tool === 'author_document';
   const file = async (value: unknown, action: 'read' | 'write') => {
     if (typeof value !== 'string' || !isAbsolute(value)) throw new Error('Use an absolute document file path.');
     const path = await resolveToolPath(context, value, action === 'write');
     const admission = await pathAdmission(context, path, action);
     if (admission.kind === 'ask') {
       outsideScope = true;
-      if (action === 'write') externalWrite = true;
+      outsideParentScope ||= admission.request.outsideParentScope === true;
+      requiresHuman ||= admission.request.requiresHuman === true;
     }
     targets.push({ kind: 'filesystem_path', value: path, label: `${action === 'read' ? 'Read' : 'Write'}: ${path}` });
     if (!actions.includes(action)) actions.push(action);
@@ -45,7 +47,6 @@ export async function documentFilePermission(context: ToolAdmissionContext<Recor
     input.path = await file(input.path, 'read');
     if (tool !== 'inspect_document') input.output = await file(input.output, 'write');
   }
-  const requiresHuman = isParentApprovedChild(context) && (tool === 'author_document' || externalWrite);
   let reason = tool === 'author_document'
     ? 'Run document authoring JavaScript with host access, using the listed input and output files.'
     : 'Allow this external document operation on the listed files.';
@@ -64,5 +65,6 @@ export async function documentFilePermission(context: ToolAdmissionContext<Recor
   }
   const capabilityId = 'capability:mcp:document:' + createHash('sha256').update(JSON.stringify(identity)).digest('hex');
   return { input, capabilityId, outsideScope, request: { reason, targets, actions, capabilityIds: [capabilityId], requiresHuman,
+    ...(outsideParentScope ? { outsideParentScope } : {}),
     ...(reuseApprovalForTurn ? { reuseApprovalForTurn } : {}) } };
 }

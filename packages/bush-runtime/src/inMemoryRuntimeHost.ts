@@ -234,6 +234,7 @@ import { observationControl } from './subagentInteractions.js';
 import { childFinalMessageIds, childConversationReadHint, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
 import { childExecutionFacts, childSubmission } from './teamSubmission.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
+import { withToolFailureFacts } from './toolFailureFacts.js';
 import { RuntimeConversations, type RuntimeConversation } from './runtimeConversations.js';
 import { validateEnvironmentSource, RuntimeEnvironment, type EnvironmentSource } from './runtimeEnvironment.js';
 import { OBSERVE_RUNTIME_AGENT_COMMAND, runtimeAgentObservationSchema, GET_RUNTIME_ENVIRONMENT_COMMAND, runtimeEnvironmentReadSchema } from '@cardbush/bush-protocol';
@@ -253,6 +254,7 @@ import {
   type RuntimeEventProjectorOptions,
 } from "./runtimeEventProjector.js";
 import { RuntimeToolLoop, modelFacingNativeToolResult } from "./runtimeToolLoop.js";
+import type { ParentWorkspaceAuthority } from './toolRegistry.js';
 import { ToolRegistry } from "./toolRegistry.js";
 import {
   InMemoryRuntimeCheckpointStore,
@@ -763,8 +765,8 @@ export class InMemoryRuntimeHost {
     const subagents = registerSubagentTool(
       this.#toolRegistry,
       this.#subagentTasks,
-      async (request, signal) => {
-        const terminal = await this.#runPluginChild(request, signal);
+      async (request, signal, parentWorkspaceAuthority) => {
+        const terminal = await this.#runPluginChild(request, signal, parentWorkspaceAuthority);
         return {
           terminal,
           session: this.#sessions.snapshot(request.sessionId),
@@ -998,6 +1000,7 @@ export class InMemoryRuntimeHost {
         .catch(error => options.onRecoveryError?.(error));
     });
     this.#extensionApi = {
+      withToolFailureFacts,
       environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
       conversations: { list: () => this.#conversations.list(), notify: (id, notice) => this.#conversations.notify(id, notice),
         dismiss: (id, key) => this.#conversations.dismiss(id, key),
@@ -2060,7 +2063,7 @@ export class InMemoryRuntimeHost {
 
   async runSessionTurn(
     input: RuntimeSessionTurnRequest,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; parentWorkspaceAuthority?: ParentWorkspaceAuthority } = {},
   ): Promise<RuntimeEvent> {
     return this.#withAgentExecution(input, options.signal, () => this.#withTurnAdmission(input.sessionId, async () => {
       const session = this.#sessions.snapshot(input.sessionId);
@@ -2175,7 +2178,7 @@ export class InMemoryRuntimeHost {
   }
   async #runSessionTurn(
     input: RuntimeSessionTurnRequest,
-    options: { signal?: AbortSignal },
+    options: { signal?: AbortSignal; parentWorkspaceAuthority?: ParentWorkspaceAuthority },
   ): Promise<RuntimeEvent> {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
     const savedPolicy = this.#sessions.modelContract(candidate.sessionId);
@@ -2314,6 +2317,7 @@ export class InMemoryRuntimeHost {
       }
       const terminal = await this.#runModelTurn(prepared.modelRequest, {
         signal: options.signal,
+        parentWorkspaceAuthority: options.parentWorkspaceAuthority,
         sessionCommit: prepared.sessionCommit,
         cacheChainState: prepared.cacheChainState,
         ...(workspaceStarted ? { finalizeWorkspace: () => this.#finalizeWorkspace(candidate.sessionId, candidate.turnId, workspace!.workspaceDir) } : {}),
@@ -2351,6 +2355,7 @@ export class InMemoryRuntimeHost {
       finalizeWorkspace?: () => Promise<void>;
       execution?: RuntimeExecutionOptions;
       internalTask?: Pick<RuntimeInternalTaskOptions, 'acceptResult'>;
+      parentWorkspaceAuthority?: ParentWorkspaceAuthority;
     } = {},
   ): Promise<RuntimeEvent> {
     const parsed = modelRequestSchema.parse(input);
@@ -2426,6 +2431,7 @@ export class InMemoryRuntimeHost {
       signal: turnController.signal,
       execution,
       internalTask: options.internalTask,
+      parentWorkspaceAuthority: options.parentWorkspaceAuthority,
       finalizeWorkspace: options.finalizeWorkspace,
       onSettled: detachAbort,
       sessionCommit: options.sessionCommit,
@@ -2518,6 +2524,7 @@ export class InMemoryRuntimeHost {
     finalizeWorkspace?: () => Promise<void>;
     execution: RuntimeTurnExecution;
     internalTask?: Pick<RuntimeInternalTaskOptions, 'acceptResult'>;
+    parentWorkspaceAuthority?: ParentWorkspaceAuthority;
   }): Promise<RuntimeEvent> {
     const { request, identity } = input;
     // Apply the current binding again for direct requests and recovered turns.
@@ -2577,6 +2584,8 @@ export class InMemoryRuntimeHost {
       modelImages: this.#modelImages,
       capabilities: this.#capabilityGrants,
       isTurnAttachment: this.#childAttachmentMatcher(request),
+      parentWorkspaceAuthority: modelApproval && childPermission.permissionSource?.parentSessionId === input.parentWorkspaceAuthority?.sessionId
+        ? input.parentWorkspaceAuthority : undefined,
       ...childPermission,
       ...(request.metadata.pluginBackground ? { externalPermissions: {
         // Explicit confirmations requested by a trusted hook are host prompts.
@@ -4612,8 +4621,8 @@ export class InMemoryRuntimeHost {
     }).messages;
   }
 
-  async #runPluginChild(request: RuntimeSessionTurnRequest, signal?: AbortSignal): Promise<RuntimeEvent> {
-    return this.#withPluginChildEnvironment(request, signal, () => this.runSessionTurn(request, { signal }));
+  async #runPluginChild(request: RuntimeSessionTurnRequest, signal?: AbortSignal, parentWorkspaceAuthority?: ParentWorkspaceAuthority): Promise<RuntimeEvent> {
+    return this.#withPluginChildEnvironment(request, signal, () => this.runSessionTurn(request, { signal, parentWorkspaceAuthority }));
   }
 
   #childAttachmentMatcher(request: ModelRequest) {

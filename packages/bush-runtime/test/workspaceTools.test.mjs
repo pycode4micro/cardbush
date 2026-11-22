@@ -320,7 +320,7 @@ test("full control cannot override protected project deletion", async (t) => {
   assert.equal(existsSync(projectRoot), true);
 });
 
-test("requires an exact observed revision before edit and permits inherited fork evidence", async (t) => {
+test("requires the actual writer to observe the current revision even with inherited fork evidence", async (t) => {
   const root = temporaryRoot(t);
   const path = join(root, "file.txt");
   writeFileSync(path, "before\n");
@@ -338,11 +338,14 @@ test("requires an exact observed revision before edit and permits inherited fork
 
   const read = await setup.execute("parent", "read_file", { path });
   assert.equal(read.kind, "returned");
-  const edited = await setup.execute("child", "edit_file", {
+  const inherited = await setup.execute("child", "edit_file", {
     path,
     old_text: "before",
     new_text: "after",
   }, { inheritedObservationSessionId: "parent" });
+  assert.equal(inherited.error.code, "workspace_revision_not_observed");
+  assert.equal((await setup.execute("child", "read_file", { path })).kind, "returned");
+  const edited = await setup.execute("child", "edit_file", { path, old_text: "before", new_text: "after" });
   assert.equal(edited.kind, "returned");
   assert.equal(readFileSync(path, "utf8"), "after\n");
   assert.equal(edited.workspaceChanges[0].status, "modified");
@@ -367,9 +370,26 @@ test("invalidates read evidence when the file changes outside Runtime", async (t
   });
 
   assert.equal(outcome.kind, "failed");
-  assert.equal(outcome.error.code, "workspace_revision_not_observed");
-  assert.match(outcome.error.message, /read_file.*expected_sha256/);
+  assert.equal(outcome.error.code, "workspace_revision_conflict");
+  assert.notEqual(outcome.error.details.expectedSha256, outcome.error.details.currentSha256);
   assert.equal(readFileSync(path, "utf8"), "changed externally");
+});
+
+test("two writers cannot use each other's project observation to overwrite a stale revision", async t => {
+  const root = temporaryRoot(t), path = join(root, "shared.txt"), setup = tools(root);
+  writeFileSync(path, "base");
+  const [a, b] = await Promise.all([setup.execute("A", "read_file", { path }), setup.execute("B", "read_file", { path })]);
+  assert.equal(a.result.sha256, b.result.sha256);
+  assert.equal((await setup.execute("A", "write_file", { path, content: "A's change" })).kind, "returned");
+  const conflict = await setup.execute("B", "write_file", { path, content: "B's stale change" });
+  assert.equal(conflict.error.code, "workspace_revision_conflict");
+  assert.equal(conflict.error.details.expectedSha256, b.result.sha256);
+  assert.equal(readFileSync(path, "utf8"), "A's change");
+  const unseen = await setup.execute("C", "write_file", { path, content: "unread" });
+  assert.equal(unseen.error.code, "workspace_revision_not_observed");
+  await setup.execute("B", "read_file", { path });
+  assert.equal((await setup.execute("B", "write_file", { path, content: "A's change plus B" })).kind, "returned");
+  assert.equal(readFileSync(path, "utf8"), "A's change plus B");
 });
 
 test("write and edit return compact receipts while Runtime retains full change evidence", async (t) => {

@@ -4,10 +4,12 @@ import type { SubagentTaskStore } from './subagentTaskStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
 import type { ModelMessage, RuntimeEnvironmentSnapshot } from '@cardbush/bush-protocol';
 import type { RuntimeConversation, RuntimeConversationsApi } from './runtimeConversations.js';
+import type { withToolFailureFacts } from './toolFailureFacts.js';
 
 /** Versioned API for installed, trusted native plugins. It is not a sandbox. */
 export interface RuntimeExtensionApi {
   tools: ToolRegistry;
+  withToolFailureFacts?: typeof withToolFailureFacts;
   dataDirectory?: string;
   getToolDefinitions: () => ReturnType<ToolRegistry['definitions']>;
   subagentTasks: SubagentTaskStore;

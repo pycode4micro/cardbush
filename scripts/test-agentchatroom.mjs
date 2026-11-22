@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import create from '../assets/plugins/agentchatroom/runtime/index.mjs';
-import { ToolRegistry, InMemoryRuntimeHost, ToolExecutionCoordinator, SubagentTaskStore } from '@cardbush/bush-runtime';
+import { ToolRegistry, InMemoryRuntimeHost, SessionStore, ToolExecutionCoordinator, SubagentTaskStore } from '@cardbush/bush-runtime';
 import { modelToolDefinitions } from '../packages/bush-runtime/dist/mcpToolDiscovery.js';
 import { synchronizeBuiltinSchemas } from '../packages/bush-runtime/dist/builtinToolDisclosure.js';
+import { PERSONAL_ASSISTANT_SESSION, assistantProfileSchema } from '@cardbush/bush-protocol';
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'cardbush-chatroom-'));
@@ -30,6 +32,10 @@ async function fixture(t) {
     const previous = plugin; api.tools = new ToolRegistry(); plugin = create(api); previous.dispose();
     return plugin;
   };
+  const reopen = async () => {
+    await plugin.dispose();
+    api.tools = new ToolRegistry(); plugin = create(api);
+  };
   t.after(async () => {
     await plugin.dispose();
     // The native plugin disposal is synchronous; its final writer release drains pending fsyncs.
@@ -39,7 +45,7 @@ async function fixture(t) {
     }
     assert.ok(directory.startsWith(tmpdir() + sep)); await rm(directory, { recursive: true, force: true });
   });
-  return { add, call, facts, notifications, directory, reload, api, get plugin() { return plugin; } };
+  return { add, call, facts, notifications, directory, reload, reopen, api, get plugin() { return plugin; } };
 }
 
 test('same-project discovery is minimal and does not reveal unrelated or unjoined idle sessions', async t => {
@@ -53,6 +59,7 @@ test('same-project discovery is minimal and does not reveal unrelated or unjoine
 test('concurrent same-project turns reuse one temporary room and admit a late third participant', async t => {
   const f = await fixture(t), a = f.add('a'), b = f.add('b');
   const child = f.add('child', 'project', 'running', true);
+  child.projectCoordinationAvailable = false;
   const internal = f.add('internal'); internal.projectCoordinationAvailable = false;
   f.add('other-project', 'other');
   await Promise.all([a, b, a, child, internal].map(fact => f.plugin.conversationChanged(fact)));
@@ -62,7 +69,11 @@ test('concurrent same-project turns reuse one temporary room and admit a late th
   assert.equal(offer.action, 'join');
   assert.match(offer.guidance, /paths you plan to write.*one writer and a handoff/);
   assert.ok(invitations.every(item => JSON.parse(item.content).room_id === room_id && !item.wake));
-  await Promise.all([f.call('a', 'join', { room_id }), f.call('b', 'join', { room_id })]);
+  await assert.rejects(f.call('a', 'join', { room_id: 'Workspace coordination' }), {
+    code: 'room_id_invalid', details: { phase: 'validation_rejected' },
+  });
+  const joined = await Promise.all([f.call('a', 'join'), f.call('b', 'join', { room_id })]);
+  assert.deepEqual(joined.map(receipt => receipt.room_id), [room_id, room_id]);
   await f.call('a', 'send', { room_id, text: 'I own css/style.css.', client_message_id: 'own-style' });
   await f.reload();
   const c = f.add('c');
@@ -92,26 +103,41 @@ test('temporary room keeps the remaining participants together and retires at th
   const { room_id } = (await f.call('a', 'discover')).coordination;
   await f.call('a', 'join', { room_id });
   await f.call('b', 'join', { room_id });
-  const waiting = Promise.withResolvers();
   const wait = f.api.conversations.wait;
+  let waiting = Promise.withResolvers();
   f.api.conversations.wait = (...args) => { waiting.resolve(); return wait(...args); };
   const pending = f.call('a', 'read', { room_id, wait_ms: 30000 });
   await waiting.promise;
+  waiting = Promise.withResolvers();
+  const peerWait = f.call('b', 'read', { room_id, wait_ms: 30000 });
+  await waiting.promise;
   a.status = 'stopped'; await f.plugin.conversationChanged(a);
   assert.equal((await pending).status, 'membership_revoked');
+  assert.equal((await peerWait).status, 'peer_left');
+  assert.deepEqual((await peerWait).departed_peers, [{ agent_id: 'a' }]);
   const c = f.add('c'); await f.plugin.conversationChanged(c);
   assert.equal((await f.call('c', 'discover')).coordination.room_id, room_id);
   await f.call('c', 'join', { room_id });
   await f.call('c', 'send', { room_id, text: 'Continue with the remaining member.', client_message_id: 'remaining' });
   assert.equal(f.notifications.some(item => item.id === 'a' && item.key === `agentchatroom:room:${room_id}`), false);
+  await f.call('c', 'read', { room_id });
+  waiting = Promise.withResolvers();
+  const explicitExitWait = f.call('c', 'read', { room_id, wait_ms: 30000 });
+  await waiting.promise;
   await f.call('b', 'leave', { room_id });
+  assert.equal((await explicitExitWait).status, 'peer_left');
+  assert.deepEqual((await explicitExitWait).departed_peers, [{ agent_id: 'b' }]);
   assert.equal((await f.call('b', 'discover')).coordination, undefined);
   b.status = 'idle'; c.status = 'stopped';
   await Promise.all([f.plugin.conversationChanged(b), f.plugin.conversationChanged(c)]);
   a.status = 'running'; a.turnId = 'turn-a-next';
   await f.plugin.conversationChanged(a);
   assert.deepEqual((await f.call('a', 'discover')).rooms, []);
-  await assert.rejects(f.call('a', 'join', { room_id }), /Room is unavailable/);
+  await assert.rejects(f.call('a', 'join', { room_id }), { code: 'room_ended' });
+  await assert.rejects(f.call('a', 'read', { room_id }), { code: 'room_ended' });
+  await f.reopen();
+  await assert.rejects(f.call('a', 'join', { room_id }), { code: 'room_ended' });
+  assert.deepEqual(JSON.parse(await readFile(join(f.directory, 'temporary-room-ids.json'), 'utf8')), [room_id]);
   const d = f.add('d'); await f.plugin.conversationChanged(d);
   const nextRoom = (await f.call('a', 'discover')).coordination.room_id;
   assert.notEqual(nextRoom, room_id);
@@ -145,40 +171,39 @@ test('canonical actions reject irrelevant fields and cannot become a child/peer 
   await assert.rejects(f.call('a', 'send', { room_id: 'room', text: 'missing retry identity' }), /client_message_id/);
   await assert.rejects(f.call('a', 'read', { room_id: 'room', wait_ms: 30001 }), /30000/);
   await assert.rejects(f.call('a', 'send', { room_id: 'room', text: 'no', client_message_id: 'no', user_authorized: true }), /Unrecognized/);
-  for (const action of ['discover', 'join']) {
-    await assert.rejects(f.call('a', action, {}, { metadata: { agentRole: 'child' } }), /explicit human user authorization/);
-  }
+  await assert.rejects(f.call('a', 'read', { room_id: 'room' }), { code: 'room_id_invalid' });
 });
 
-test('children stay hidden and every room action requires authorization, even after an invitation', async t => {
+test('active children share same-project coordination regardless of parent and require room membership', async t => {
   const f = await fixture(t); const parent = f.add('parent');
   const child = f.add('child', 'project', 'running', true);
-  assert.deepEqual(await f.plugin.conversationContext(child), []);
-  assert.deepEqual((await f.call('parent', 'discover')).peers, []);
+  f.add('sibling', 'project', 'running', true);
+  f.add('outsider', 'other-project', 'running', true);
   await f.plugin.conversationChanged(child); await f.plugin.conversationChanged(parent);
-  assert.deepEqual(f.notifications, []);
-  const { room_id } = await f.call('parent', 'join');
-  await f.call('parent', 'invite', { room_id, agent_id: 'child', reason: 'Please coordinate' });
-  const inputs = { discover: {}, join: { room_id, user_authorized: false }, invite: { room_id, agent_id: 'parent', reason: 'no' },
-    send: { room_id, text: 'no', client_message_id: 'no' }, read: { room_id }, leave: { room_id } };
-  for (const [name, input] of Object.entries(inputs)) {
-    // Host facts enforce the child boundary even when caller metadata omits its role.
-    await assert.rejects(f.call('child', name, input), /explicit human user authorization/);
-  }
-  assert.deepEqual((await f.call('parent', 'discover')).rooms[0].members, ['parent']);
+  assert.equal((await f.plugin.conversationContext(child)).length, 1);
+  const { coordination, peers } = await f.call('child', 'discover');
+  const { room_id } = coordination;
+  assert.deepEqual(peers.map(peer => peer.agent_id), ['parent', 'sibling']);
+  assert.equal((await f.call('sibling', 'discover')).coordination.room_id, room_id);
+  await assert.rejects(f.call('sibling', 'read', { room_id }), /Join this room/);
+  await assert.rejects(f.call('outsider', 'join', { room_id }), /only to the active same-project turns/);
+  await f.call('child', 'join', { room_id });
+  await f.call('sibling', 'join', { room_id });
+  await f.call('child', 'send', { room_id, text: 'Ready', client_message_id: 'ready' });
+  assert.deepEqual((await f.call('sibling', 'read', { room_id })).messages.map(message => message.text), ['Ready']);
 });
 
-test('authorized children communicate through the unified tool; reload preserves consent and leave revokes it', async t => {
+test('child room membership and cursors persist across reload and leave removes access', async t => {
   const f = await fixture(t); f.add('parent');
   const child = f.add('child', 'project', 'running', true); f.add('sibling', 'project', 'running', true);
   const { room_id } = await f.call('parent', 'join');
-  const joined = await f.call('child', 'join', { room_id, user_authorized: true }, { metadata: { agentRole: 'child' } });
+  const joined = await f.call('child', 'join', { room_id }, { metadata: { agentRole: 'child' } });
   assert.match(joined.idle_wake, /controlled by its parent/);
-  assert.equal((await f.call('child', 'join', { room_id })).joined, true, 'membership needs no repeated consent');
-  assert.deepEqual((await f.call('parent', 'discover')).peers.map(peer => peer.agent_id), ['child']);
+  assert.equal((await f.call('child', 'join', { room_id })).joined, true);
+  assert.deepEqual((await f.call('parent', 'discover')).peers.map(peer => peer.agent_id), ['child', 'sibling']);
   assert.equal((await f.plugin.conversationContext(child)).length, 1);
   await f.call('parent', 'send', { room_id, text: 'API ready', client_message_id: 'parent-1' });
-  assert.ok(f.notifications.some(notice => notice.id === 'child' && notice.key === `room:${room_id}`));
+  assert.ok(f.notifications.some(notice => notice.id === 'child' && notice.key === `room:${room_id}` && !notice.wake));
   assert.equal((await f.call('child', 'read', { room_id })).messages[0].text, 'API ready');
   const waiting = f.call('child', 'read', { room_id, wait_ms: 30000 });
   await f.call('parent', 'send', { room_id, text: 'Schema ready', client_message_id: 'parent-2' });
@@ -187,30 +212,27 @@ test('authorized children communicate through the unified tool; reload preserves
   assert.ok((await f.call('parent', 'read', { room_id })).messages.some(message => message.text === 'Tests ready'));
   await f.plugin.dispose(); await f.reload();
   assert.equal((await f.call('child', 'join', { room_id })).joined, true);
-  await assert.rejects(f.call('sibling', 'join', { room_id }), /explicit human user authorization/);
+  await assert.rejects(f.call('sibling', 'read', { room_id }), /Join this room/);
   await f.call('child', 'leave', { room_id });
-  assert.deepEqual(await f.plugin.conversationContext(child), []);
-  assert.deepEqual((await f.call('parent', 'discover')).peers, []);
-  await assert.rejects(f.call('child', 'join', { room_id }), /explicit human user authorization/);
-  await assert.rejects(f.call('child', 'read', { room_id }), /explicit human user authorization/);
+  assert.equal((await f.call('parent', 'discover')).rooms.find(room => room.room_id === room_id).members.includes(child.agentId), false);
+  await assert.rejects(f.call('child', 'read', { room_id }), /Join this room/);
   await f.call('parent', 'send', { room_id, text: 'after leave', client_message_id: 'parent-3' });
   assert.equal(f.notifications.some(notice => notice.id === 'child' && notice.key === `room:${room_id}`), false);
   assert.equal((await f.call('child', 'join', { room_id, user_authorized: true })).joined, true);
 });
 
-test('child authorization is room/project scoped and cross-project acceptance still requires an invitation', async t => {
+test('child room access is project-scoped and cross-project acceptance requires an invitation', async t => {
   const f = await fixture(t); f.add('parent'); f.add('backend', 'backend'); f.add('child', 'project', 'running', true);
   const own = await f.call('parent', 'join'); const remote = await f.call('backend', 'join');
-  await f.call('child', 'join', { room_id: own.room_id, user_authorized: true });
+  await f.call('child', 'join', { room_id: own.room_id });
   await assert.rejects(f.call('child', 'join', { room_id: remote.room_id, user_authorized: true }), /explicit invitation/);
   await f.call('backend', 'invite', { room_id: remote.room_id, agent_id: 'child', reason: 'API coordination' });
-  await assert.rejects(f.call('child', 'join', { room_id: remote.room_id }), /explicit human user authorization/);
-  await assert.rejects(f.call('child', 'read', { room_id: remote.room_id }), /explicit human user authorization/);
-  await f.call('child', 'join', { room_id: remote.room_id, user_authorized: true });
+  await assert.rejects(f.call('child', 'read', { room_id: remote.room_id }), /Join this room/);
+  await f.call('child', 'join', { room_id: remote.room_id });
   await f.call('child', 'send', { room_id: remote.room_id, text: 'Contract confirmed', client_message_id: 'contract' });
   assert.equal((await f.call('backend', 'read', { room_id: remote.room_id })).messages[0].text, 'Contract confirmed');
   f.facts.get('child').projectDir = f.facts.get('child').workspaceDir = join(f.directory, 'moved');
-  await assert.rejects(f.call('child', 'join', { room_id: own.room_id }), /explicit human user authorization/);
+  await assert.rejects(f.call('child', 'join', { room_id: own.room_id }), /explicit invitation/);
 });
 
 test('explicit joins reuse one project room; sends are durable/idempotent and never consume unread messages', async t => {
@@ -297,7 +319,7 @@ test('source and git worktree share discovery without changing their file roots'
   assert.equal(f.facts.get('b').workspaceDir, join(f.directory, 'copy'));
 });
 
-test('deferred call_tool requires child consent and still enforces explicit child tool policy', async t => {
+test('deferred call_tool allows children with the tool enabled and enforces explicit child tool policy', async t => {
   const f = await fixture(t); await f.plugin.dispose();
   f.add('a', 'project', 'running', true).turnId = 't';
   const registry = new ToolRegistry(), host = new InMemoryRuntimeHost({ toolRegistry: registry, registerDefaultWorkspaceTools: false });
@@ -317,8 +339,7 @@ test('deferred call_tool requires child consent and still enforces explicit chil
     { role: 'tool', toolCallId: 'load', content: JSON.stringify(loaded.result) });
   synchronizeBuiltinSchemas(registry, request, messages);
   request.metadata.agentRole = 'child';
-  assert.match(JSON.stringify(await run('call_tool', { name: 'agentchatroom', arguments: { action: 'join' } })), /explicit human user authorization/);
-  assert.equal((await run('call_tool', { name: 'agentchatroom', arguments: { action: 'join', user_authorized: true } })).kind, 'returned');
+  assert.equal((await run('call_tool', { name: 'agentchatroom', arguments: { action: 'join' } })).kind, 'returned');
   request.metadata.disabledTools = ['agentchatroom'];
   assert.equal((await run('call_tool', { name: 'agentchatroom', arguments: { action: 'join', user_authorized: true } })).error.code, 'child_agent_tool_unavailable');
   host.removeExtension('agentchatroom');
@@ -360,9 +381,9 @@ test('actual Runtime delivers peer context at safe boundaries and wakes only joi
     const result = await previousContext(fact);
     if (fact.agentId === 'b') {
       automaticRoom = JSON.parse(result[0].content.split('\n').at(-1)).coordination.room_id;
-      await call('b', 'join', { room_id: automaticRoom });
+      assert.equal((await call('b', 'join', {})).room_id, automaticRoom);
       await call('b', 'send', { room_id: automaticRoom, text: 'I will edit css/style.css.', client_message_id: 'auto-b' });
-      joinedB = await call('b', 'join', {});
+      joinedB = await call('b', 'join', { room_id });
       await call('b', 'send', { room_id, text: 'I own the API contract; please own the UI.', client_message_id: 'b-first' });
     } else if (fact.agentId === 'c') {
       thirdRoom = JSON.parse(result[0].content.split('\n').at(-1)).coordination.room_id;
@@ -410,7 +431,7 @@ test('actual Runtime delivers peer context at safe boundaries and wakes only joi
   assert.deepEqual(errors, []);
 });
 
-test('a real forked child joins with user consent, exchanges messages and stays finished after later room activity', async t => {
+test('a real forked child joins, exchanges messages and stays finished after later room activity', async t => {
   const f = await fixture(t); await f.plugin.dispose();
   const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), seen = [], rounds = new Map();
   let extension, conversations, roomId;
@@ -428,23 +449,19 @@ test('a real forked child joins with user consent, exchanges messages and stays 
         if (round === 1) { name = 'get_tool_schema'; args = { name: 'agentchatroom' }; }
         if (round === 2) { name = 'call_tool'; args = { name: 'agentchatroom', arguments: { action: 'join', room_id: roomId } }; }
         if (round === 3) {
-          assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('explicit human user authorization')));
-          name = 'call_tool'; args = { name: 'agentchatroom', arguments: { action: 'join', room_id: roomId, user_authorized: true } };
-        }
-        if (round === 4) {
           await call(conversations.list().find(fact => fact.agentId === 'parent'), 'send', { room_id: roomId, text: 'API v2', client_message_id: 'parent-v2' });
           name = 'call_tool'; args = { name: 'agentchatroom', arguments: { action: 'send', room_id: roomId, text: 'Tests verified', client_message_id: 'child-tests' } };
         }
-        if (round === 5) {
+        if (round === 4) {
           name = 'call_tool'; args = { name: 'agentchatroom', arguments: { action: 'read', room_id: roomId } };
         }
-        if (round === 6) {
+        if (round === 5) {
           assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('API v2')));
           const page = await call(conversations.list().find(fact => fact.agentId === 'parent'), 'read', { room_id: roomId });
           assert.ok(page.messages.some(message => message.text === 'Tests verified'));
         }
       } else if (request.turnId === 'dispatch' && round === 1) {
-        name = 'subagent'; args = { prompt: 'Implement tests. The user explicitly authorizes this child to join and communicate in the project room.', mode: 'fork' };
+        name = 'subagent'; args = { prompt: 'Implement tests.', mode: 'fork' };
       }
       if (name) yield event(request, 0, 'tool_call_delta', { index: 0, toolCallId: `${request.turnId}-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(args) });
       else yield event(request, 0, 'text_delta', { delta: 'Finished assigned work.' });
@@ -462,7 +479,7 @@ test('a real forked child joins with user consent, exchanges messages and stays 
     return context(fact);
   };
   const request = turnId => ({ protocol: 'bush.session_turn_request.v1', requestId: `r-${turnId}`, sessionId: 'parent', turnId, model: 'fixture',
-    prefixMessages: [], inputMessages: [{ messageId: `u-${turnId}`, message: { role: 'user', content: 'Delegate tests. I explicitly authorize the child to join and communicate in this project room.' } }],
+    prefixMessages: [], inputMessages: [{ messageId: `u-${turnId}`, message: { role: 'user', content: 'Delegate tests.' } }],
     tools: registry.definitions(), permissionMode: 'all_free', metadata: { projectDir: f.directory, workspaceDir: f.directory, environmentContext: true } });
   assert.equal((await host.runSessionTurn(request('dispatch'))).payload.status, 'completed');
   const task = tasks.list('parent')[0]; assert.ok(task); assert.equal(task.status, 'completed');
@@ -471,7 +488,7 @@ test('a real forked child joins with user consent, exchanges messages and stays 
   // Presence is available to every child; collaboration membership still requires joining.
   const childEnvironment = childRequests[0].messages.filter(message => message.name === 'runtime_environment').map(message => JSON.parse(message.content)).find(fact => fact.sessionId === task.childSessionId);
   assert.equal(childEnvironment.sections.agents.self.agentId, task.childSessionId);
-  assert.ok(!childRequests[0].messages.some(message => message.name === 'agent_peer_context' &&
+  assert.ok(childRequests[0].messages.some(message => message.name === 'agent_peer_context' &&
     message.content.includes('Workspace agent context.') && message.content.includes(`"self":"${task.childSessionId}"`)));
   const history = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: task.childSessionId } });
   assert.equal(history.turns.length, 1);
@@ -480,6 +497,130 @@ test('a real forked child joins with user consent, exchanges messages and stays 
   assert.equal(seen.filter(item => item.sessionId === task.childSessionId).length, childRequests.length);
   assert.equal(tasks.list('parent').length, 1);
 });
+
+for (const sameParent of [true, false]) {
+  test(`real child editors exchange messages ${sameParent ? 'under Assistant' : 'across parents'}`, { timeout: 40_000 }, async t => {
+    const f = await fixture(t); await f.plugin.dispose();
+    const workspace = await realpath(f.directory);
+    const project = join(workspace, 'editors');
+    await mkdir(project);
+    const path = name => join(project, name);
+    const part = name => path(`part-${name}.md`);
+    const log = path('log.md');
+    await Promise.all([writeFile(part('A'), 'Draft A\n'), writeFile(part('B'), 'Draft B\n'), writeFile(log, '# Log\n')]);
+    const registry = new ToolRegistry(), tasks = new SubagentTaskStore(), sessions = new SessionStore();
+    sessions.ensureSession(PERSONAL_ASSISTANT_SESSION);
+    const steps = new Map(), children = new Map(), rooms = new Map(), inbox = new Map();
+    const started = Promise.withResolvers(), joined = Promise.withResolvers(), sent = Promise.withResolvers(), firstLogged = Promise.withResolvers();
+    const joins = new Set(), sends = new Set();
+    const labels = ['A', 'B'];
+    const hash = content => createHash('sha256').update(content).digest('hex');
+    const messageText = name => `${name} finished editing part-${name}.md`;
+    const call = (name, args) => ({ name, args });
+    const chat = (action, args = {}) => call('call_tool', { name: 'agentchatroom', arguments: { action, ...args } });
+    const childCall = name => call('subagent', { name, prompt: `Edit part-${name}.md, then coordinate the shared log with the other editor.` });
+    const output = (request, round, ordinal = 0) => {
+      const id = `${request.turnId}:${round}:${ordinal}`;
+      const receipt = request.messages.find(message => message.role === 'tool' && message.toolCallId === id);
+      assert.ok(receipt, `missing tool receipt ${id}`);
+      return JSON.parse(receipt.content.split('\n\n', 1)[0]);
+    };
+    const providerFailures = [];
+    const host = new InMemoryRuntimeHost({ toolRegistry: registry, subagentTaskStore: tasks, sessionStore: sessions, dataRoot: join(f.directory, 'state'),
+      provider: {
+        async *stream(request) {
+          try {
+            const round = (steps.get(request.turnId) ?? 0) + 1; steps.set(request.turnId, round);
+            const name = request.metadata.subagentName;
+            let calls = [];
+            if (request.metadata.agentRole === 'child') {
+              const other = name === 'A' ? 'B' : 'A';
+              assert.ok(labels.includes(name));
+              if (round === 1) {
+                children.set(name, request.sessionId);
+                if (children.size === 2) started.resolve();
+                calls = [call('read_file', { path: part(name) }), call('read_file', { path: log })];
+              } else if (round === 2) {
+                const receipt = output(request, 1);
+                assert.equal(receipt.sha256, hash(`Draft ${name}\n`), JSON.stringify(receipt));
+                calls = [call('edit_file', { path: part(name), old_text: `Draft ${name}`, new_text: `Edited by ${name}` }),
+                  call('get_tool_schema', { name: 'agentchatroom' })];
+              } else if (round === 3) {
+                assert.equal(await readFile(part(name), 'utf8'), `Edited by ${name}\n`);
+                await started.promise;
+                calls = [chat('discover')];
+              } else if (round === 4) {
+                const discovery = output(request, 3);
+                assert.ok(discovery.peers.some(peer => peer.agent_id === children.get(other)));
+                rooms.set(name, discovery.coordination.room_id);
+                calls = [chat('join', { room_id: rooms.get(name) })];
+              } else if (round === 5) {
+                assert.equal(output(request, 4).joined, true);
+                joins.add(name); if (joins.size === 2) joined.resolve();
+                await joined.promise;
+                calls = [chat('send', { room_id: rooms.get(name), text: messageText(name), client_message_id: `editor-${name}`, to_agent_ids: [children.get(other)] })];
+              } else if (round === 6) {
+                assert.equal(output(request, 5).duplicate, false);
+                sends.add(name); if (sends.size === 2) sent.resolve();
+                await sent.promise;
+                calls = [chat('read', { room_id: rooms.get(name), wait_ms: 1000 })];
+              } else if (round === 7) {
+                const received = output(request, 6).messages.find(message => message.text === messageText(other));
+                assert.ok(received, `${name} did not read the other editor's message`);
+                inbox.set(name, received.text);
+                if (name === 'B') await firstLogged.promise;
+                calls = [call('read_file', { path: log })];
+              } else if (round === 8) {
+                const content = name === 'A' ? '# Log\n' : '# Log\nA received B\n';
+                assert.equal(output(request, 7).sha256, hash(content));
+                calls = [call('edit_file', { path: log, old_text: content, new_text: `${content}${name} received ${other}\n` })];
+              } else if (round === 9) {
+                assert.match(await readFile(log, 'utf8'), new RegExp(`${name} received ${other}`));
+                if (name === 'A') firstLogged.resolve();
+              }
+            } else if (round === 1) {
+              calls = (sameParent ? labels : [request.sessionId === 'parent-A' ? 'A' : 'B']).map(childCall);
+            }
+            for (const [index, item] of calls.entries()) yield event(request, index, 'tool_call_delta', {
+              index, toolCallId: `${request.turnId}:${round}:${index}`, nameDelta: item.name, argumentsDelta: JSON.stringify(item.args),
+            });
+            if (!calls.length) yield event(request, 0, 'text_delta', { delta: name ? `${name} finished.` : 'Editors dispatched.' });
+            yield event(request, Math.max(1, calls.length), 'response_completed', { finishReason: calls.length ? 'tool_calls' : 'stop' });
+          } catch (error) {
+            providerFailures.push(error);
+            throw error;
+          }
+        },
+      },
+    });
+    host.installExtension(create, { id: 'agentchatroom', enabled: true, dataDirectory: join(f.directory, 'chatroom') });
+    t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+    const content = 'Have two child agents edit the project in parallel and exchange direct messages.';
+    const request = sessionId => ({ protocol: 'bush.session_turn_request.v1', requestId: `request-${sessionId}`,
+      sessionId, turnId: `turn-${sessionId}`, model: 'fixture', prefixMessages: [],
+      inputMessages: [{ messageId: `input-${sessionId}`, message: { role: 'user', content } }], tools: registry.definitions(),
+      permissionMode: 'all_free', metadata: { projectDir: project, workspaceDir: workspace, individuation: { habits: false, predictions: false } } });
+    const parents = sameParent ? [PERSONAL_ASSISTANT_SESSION] : ['parent-A', 'parent-B'];
+    if (sameParent) {
+      await host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { action: 'turn', sessionId: PERSONAL_ASSISTANT_SESSION,
+        profile: assistantProfileSchema.parse({}), parent: request(PERSONAL_ASSISTANT_SESSION),
+        entry: { id: `input-${PERSONAL_ASSISTANT_SESSION}`, role: 'user', content, visibility: 'conversation', source: 'text', createdAt: new Date().toISOString() },
+      } });
+    } else {
+      await Promise.all(parents.map(sessionId => host.runSessionTurn(request(sessionId))));
+    }
+    const settled = () => parents.flatMap(parent => tasks.list(parent));
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline && (settled().length !== 2 || settled().some(task => task.status === 'running')))
+      await new Promise(resolve => setTimeout(resolve, 30));
+    if (providerFailures.length) throw new AggregateError(providerFailures, 'Fixture prepared unexpected child inputs');
+    assert.deepEqual(settled().map(task => [task.status, task.errorMessage]), [['completed', ''], ['completed', '']]);
+    assert.equal(rooms.get('A'), rooms.get('B'));
+    assert.equal(inbox.get('A'), messageText('B'));
+    assert.equal(inbox.get('B'), messageText('A'));
+    assert.equal(await readFile(log, 'utf8'), '# Log\nA received B\nB received A\n');
+  });
+}
 
 test('hot enabling a plugin appends current context to an active turn without rewriting its prefix', async () => {
   const gate = Promise.withResolvers(), seen = [];

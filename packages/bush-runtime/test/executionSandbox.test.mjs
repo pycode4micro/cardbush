@@ -11,16 +11,18 @@ import { ProcessResourceGovernor, runResourceManagedCommand, sandboxEnvironment,
 import { TerminalSessionManager } from '../dist/index.js';
 import { commandInvocation } from '@cardbush/platform';
 import { commandSandboxPlan } from '../dist/commandSandboxAdmission.js';
+import { windowsInterpreterRoots } from '../dist/executionSandbox.js';
 import { toolFailureFacts } from '../dist/toolFailureFacts.js';
 
 test('command sandbox removes host secrets and execution injection variables from the environment', () => {
   const environment = sandboxEnvironment({ Path: 'tools', SystemRoot: 'system', LANG: 'en_US.UTF-8',
     CARDBUSH_MCP_DESKTOP_BRIDGE: '1', CARDBUSH_TEST_SECRET: 'secret', OPENAI_API_KEY: 'secret',
-    NODE_OPTIONS: '--require malicious.js', LD_PRELOAD: 'malicious.so', PYTHONPATH: 'injection', HTTP_PROXY: 'credential',
+    NODE_OPTIONS: '--require malicious.js', LD_PRELOAD: 'malicious.so', PYTHONPATH: 'injection', HTTP_PROXY: 'credential', UV_LINK_MODE: 'hardlink',
   }, resolve('private'));
   assert.equal(environment.Path, 'tools'); assert.equal(environment.SystemRoot, 'system');
   for (const key of ['CARDBUSH_MCP_DESKTOP_BRIDGE', 'CARDBUSH_TEST_SECRET', 'OPENAI_API_KEY', 'NODE_OPTIONS', 'LD_PRELOAD', 'PYTHONPATH', 'HTTP_PROXY']) assert.equal(environment[key], undefined, key);
   assert.equal(environment.HOME, resolve('private')); assert.equal(environment.TEMP, resolve('private/tmp'));
+  assert.equal(environment.UV_LINK_MODE, 'copy');
 });
 
 test('Windows AppContainer enforces file, child process, network and environment boundaries', { skip: process.platform !== 'win32', timeout: 60_000 }, async t => {
@@ -93,8 +95,9 @@ test('Windows AppContainer enforces file, child process, network and environment
     const terminals = new TerminalSessionManager();
     t.after(() => terminals.close());
     for (const [shell, command] of [['cmd', 'echo sandbox-cmd'], ['powershell', "Write-Output 'sandbox-powershell'"]]) {
+      const executable = commandInvocation(shell, command).executable;
       const result = await terminals.start({ ownerSessionId: 'test', cwd: work, command, shell, yieldTimeMs: 20_000,
-        sandbox: { writableRoots: [work], readableRoots: shell === 'powershell' ? [dirname(commandInvocation(shell, command).executable)] : [], network: 'disabled' } });
+        sandbox: { writableRoots: [work], readableRoots: windowsInterpreterRoots(executable), network: 'disabled' } });
       assert.equal(result.state, 'exited', JSON.stringify(result));
       assert.equal(result.exitCode, 0, JSON.stringify(result));
       assert.match(result.stdout, new RegExp(`sandbox-${shell}`));

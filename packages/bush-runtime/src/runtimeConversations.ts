@@ -8,7 +8,7 @@ export interface RuntimeConversation {
   turnId: string;
   projectDir?: string;
   workspaceDir?: string;
-  /** Delegated sessions may opt into rooms, but their parent owns execution. */
+  /** Delegated sessions can coordinate, but their parent owns execution. */
   delegated?: boolean;
   /** Internal, automation, shadow and unowned registry turns cannot start automatic project coordination. */
   projectCoordinationAvailable?: false;
@@ -26,7 +26,8 @@ export interface RuntimeConversationsApi {
   dismiss(agentId: string, key: string): void;
   wait(agentId: string, turnId: string, event: Promise<unknown>, signal?: AbortSignal): Promise<string>;
 }
-type Entry = { request: RuntimeSessionTurnRequest; notices: Map<string, ConversationNotice & { childApproval: boolean }>; wakes: number; scheduled?: boolean };
+type Entry = { request: RuntimeSessionTurnRequest; childProjectCoordination: boolean;
+  notices: Map<string, ConversationNotice & { childApproval: boolean }>; wakes: number; scheduled?: boolean };
 
 /** Reuses session admission/model execution; never runs a second kind of agent loop. */
 export class RuntimeConversations {
@@ -41,8 +42,9 @@ export class RuntimeConversations {
 
   list(): RuntimeConversation[] {
     return this.closed ? [] : this.agents.list().map(fact => {
-      const request = this.entries.get(fact.agentId)?.request;
-      const available = fact.canWake && request?.turnId === fact.executionId && request.metadata.peerMessageWake !== true;
+      const entry = this.entries.get(fact.agentId);
+      const available = entry?.request.turnId === fact.executionId && entry.request.metadata?.peerMessageWake !== true &&
+        (fact.canWake || entry.childProjectCoordination);
       return {
         agentId: fact.agentId, turnId: fact.executionId, projectDir: fact.projectDir, workspaceDir: fact.workspaceDir,
         ...(fact.role === 'child' ? { delegated: true } : {}),
@@ -58,12 +60,14 @@ export class RuntimeConversations {
   begin(request: RuntimeSessionTurnRequest, executionTemplate = request): RuntimeConversation | undefined {
     if (this.closed) return;
     const previous = this.entries.get(request.sessionId);
-    this.agents.begin(request, 'running');
+    const fact = this.agents.begin(request, 'running');
+    const { automationRunId, pluginHookEvaluation, shadowMode, runtimeTask } = request.metadata;
+    const childProjectCoordination = fact.role === 'child' && !automationRunId && !pluginHookEvaluation && !shadowMode && runtimeTask !== 'internal';
     // Execution retention is bounded; do not retain old prompts via mailboxes.
     for (const [id, entry] of this.entries) if (!this.agents.get(id, entry.request.turnId)) this.entries.delete(id);
     // Re-enter the ordinary admission path with the original input. Reusing the
     // prepared request would append workspace/subagent context a second time.
-    this.entries.set(request.sessionId, { request: structuredClone(executionTemplate), notices: previous?.notices ?? new Map(),
+    this.entries.set(request.sessionId, { request: structuredClone(executionTemplate), childProjectCoordination, notices: previous?.notices ?? new Map(),
       wakes: request.metadata.peerMessageWake === true ? previous?.wakes ?? 0 : 0 });
     return this.list().find(fact => fact.agentId === request.sessionId);
   }

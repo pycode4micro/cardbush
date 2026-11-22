@@ -87,6 +87,7 @@ export interface ToolExecutionCoordinatorOptions {
   capabilitySessionId?: string;
   hooks?: ToolExecutionHooks;
   isTurnAttachment?: ToolHandlerContext['isTurnAttachment'];
+  parentWorkspaceAuthority?: ToolHandlerContext['parentWorkspaceAuthority'];
 }
 
 export interface RuntimeCapabilityStore {
@@ -109,6 +110,7 @@ export class ToolExecutionCoordinator {
   readonly #capabilitySessionId?: string;
   readonly #hooks?: ToolExecutionHooks;
   readonly #isTurnAttachment?: ToolHandlerContext['isTurnAttachment'];
+  readonly #parentWorkspaceAuthority?: ToolHandlerContext['parentWorkspaceAuthority'];
   readonly #turnGrants = new Set<string>();
 
   constructor(options: ToolExecutionCoordinatorOptions) {
@@ -119,6 +121,7 @@ export class ToolExecutionCoordinator {
     this.#capabilitySessionId = options.capabilitySessionId?.trim() || undefined;
     this.#hooks = options.hooks;
     this.#isTurnAttachment = options.isTurnAttachment;
+    this.#parentWorkspaceAuthority = options.parentWorkspaceAuthority;
   }
 
   async execute(
@@ -307,6 +310,7 @@ export class ToolExecutionCoordinator {
             signal,
             turn: admissionTurn,
             isTurnAttachment: this.#isTurnAttachment,
+            parentWorkspaceAuthority: this.#parentWorkspaceAuthority,
           })),
           signal,
           "Tool admission was cancelled.",
@@ -333,10 +337,14 @@ export class ToolExecutionCoordinator {
         );
       }
       if (admission.kind === "ask") {
-        const humanRequired = admission.request.requiresHuman === true;
+        const request = admission.request;
+        const parent = this.#parentWorkspaceAuthority;
+        const outsideParentScope = request.outsideParentScope && (!parent || !this.#capabilities?.hasAll(parent.sessionId, permissionGrantKeys(request)));
+        const permission = outsideParentScope ? { ...request, requiresHuman: true } : request;
+        const humanRequired = permission.requiresHuman === true;
         const fullControl = !humanRequired && turn?.request.permissionMode === "all_free";
         const capabilitySessionId = this.#capabilitySessionId ?? identity.sessionId;
-        const grantKeys = permissionGrantKeys(admission.request);
+        const grantKeys = permissionGrantKeys(permission);
         const turnGrant = admission.request.reuseApprovalForTurn
           ? JSON.stringify([identity.sessionId, identity.turnId, grantKeys]) : undefined;
         if (fullControl) {
@@ -354,7 +362,7 @@ export class ToolExecutionCoordinator {
             approvedByHook = !humanRequired && hookPermission?.permissionDecision === 'allow';
             answer = approvedByHook
               ? { decision: 'allow_once', grantedCapabilityIds: [...admission.request.capabilityIds] }
-              : await requestPermission(admission.request);
+              : await requestPermission(permission);
           } catch (error) {
             if (isAbortError(error)) {
               return cancelledResult(
@@ -440,6 +448,7 @@ export class ToolExecutionCoordinator {
           signal,
           turn,
           isTurnAttachment: this.#isTurnAttachment,
+          parentWorkspaceAuthority: this.#parentWorkspaceAuthority,
           invokeTool: async (name, input, nestedOptions) => {
             name = resolveToolReferenceName(name, turn);
             if (this.#registry.resolve(name)?.nestedCallable === false) throw Object.assign(new Error(`Tool ${name} must be called directly, not nested.`), { code: 'nested_tool_disallowed' });

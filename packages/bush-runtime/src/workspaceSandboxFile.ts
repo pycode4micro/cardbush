@@ -33,6 +33,12 @@ export async function verifyWorkspaceFileSandbox(linuxExecutable?: string) {
   await verifyFileSandboxBackend(process.platform === 'win32' ? resolveProcessResourceHost() : undefined, linuxExecutable);
 }
 
+export interface WorkspaceFileRevision {
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+}
+
 /** A FileHandle-shaped transport. No content is read or written by the host. */
 export class SandboxFileHandle {
   #lines: AsyncIterator<string>;
@@ -125,9 +131,12 @@ export class SandboxFileHandle {
     }
   }
 
-  async truncate(size: number) {
-    if (size !== 0) throw Error('Only a full checked replacement is supported.');
-    await this.request({ op: 'truncate', sha256: this.expectedHash }); this.#offset = 0;
+  async verifyRevision(sha256 = this.expectedHash): Promise<WorkspaceFileRevision> {
+    const value = await this.request({ op: 'verify', sha256 });
+    return { size: BigInt(value.size), mtimeNs: BigInt(value.mtimeNs), ctimeNs: BigInt(value.ctimeNs) };
+  }
+  async sync() {
+    await this.request({ op: 'sync' });
   }
   async chmod(mode: number) {
     if (process.platform !== 'win32') await this.request({ op: 'chmod', mode });

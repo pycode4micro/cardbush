@@ -147,6 +147,7 @@ export class TerminalSessionManager {
         executable: invocation.executable,
         args: invocation.args,
         cwd: input.cwd,
+        env: { ...process.env, UV_LINK_MODE: 'copy' },
         resourceLease,
         sandbox: input.sandbox,
         sandboxScopePool: this.#sandboxScopes,

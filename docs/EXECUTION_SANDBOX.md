@@ -48,6 +48,8 @@ node dist-electron/agentServiceCli.mjs \
 
 Windows `auto` 模式自动加入宿主选定的 shell 安装目录为只读范围。其他安装在用户目录中的 Node、Python 等工具，可配置或申请其**具体安装目录**，避免放开整个用户目录。命令不会继承宿主服务令牌、模型密钥、代理凭据、`NODE_OPTIONS`、`LD_PRELOAD` 或用户启动配置；依赖这些配置的工作流需要单独设计受控授权。
 
+本地终端默认设置 `UV_LINK_MODE=copy`，使 uv 安装的依赖使用独立文件。启动前发现硬链接时，Runtime 返回 `sandbox_hardlink_conflict` 和冲突文件在授权目录下的相对路径。已有的 uv 环境可用相同 Python 和依赖版本在工作区外重建，验证后切换。
+
 ## 各环境的实际范围
 
 终端失败回执提供 `environmentDiagnostic`，区分“当前 shell 无法解析命令”“访问被拒绝”和“原因尚未确认”。PowerShell 的结构化命令缺失记录可以触发一次宿主 PATH 元数据查询：仅接受简单命令名，只查绝对路径中的文件是否存在，不运行该程序、不增加授权、不自动安装。查不到也不等于未安装。沙箱内 `Test-Path` 为 false、命令找不到或 venv 启动失败，都不能单独证明宿主安装或虚拟环境损坏；应先核对回执中的沙箱范围，必要时精确申请工具安装目录或基础解释器的访问权限。该诊断不改变沙箱失败即拒绝、禁止回退宿主执行的规则。
@@ -108,7 +110,11 @@ Windows 原生测试覆盖实际文件读写、只读目录、junction、子进�
 
 本地 `read_file`、`write_file`、`edit_file`、`apply_patch` 和 `search_file_content` 强制使用进程沙箱，默认断网；终端的 `off` / `all_free` 不关闭文件工具隔离。缺少后端、旧版宿主缺少单文件能力、资源准入失败或启动被系统拒绝，均明确报错，不回退宿主内容读写或 Node 搜索。路径审批绑定本次调用解析出的实际目标和文件身份；审批、排队后目标改变，返回 `workspace_authorization_changed`。补丁的源路径与移动目的地全部在首个内容写入前校验，保留文件资源锁、读取版本证据和补丁回滚。
 
-Windows 保留 `--workspace-path-guard` 元数据入口固定目录及其祖先，拒绝重解析点替换。实际内容 I/O 由 AppContainer 内的 `--workspace-file-worker` 执行，进程只获得精确文件 ACL；原生能力握手要求 `sandboxFileVersion: 2`。Linux 使用目录描述符固定路径，保留元数据描述符防止 inode 重用；bubblewrap 挂载后，由固定的沙箱内启动器核对文件及目录身份，通过后才启动 rg、文件工作进程或获批的终端命令。这个校验在挂载后的命名空间内完成，兼容已有 bubblewrap 挂载接口，不要求新增 fd 挂载参数。工作进程打开文件后再次核对身份，写入前再次核对 SHA-256，再通过同一个句柄截断和写入。可写单文件拒绝已有多个硬链接的对象。进程结束后释放句柄并撤销本次 ACL。
+Windows 使用 `--workspace-path-guard` 固定目录及其祖先，拒绝重解析点替换。AppContainer 内的 `--workspace-file-worker` 通过精确文件 ACL 处理内容，原生能力握手要求 `sandboxFileVersion: 2`。Linux 保留目录和文件描述符，bubblewrap 挂载后再次检查对象身份。两端都拒绝有多个硬链接的对象，工作进程退出后释放句柄和临时授权。
+
+本地文件修改以写入者会话已观察的 SHA-256 为准。版本过期返回 `workspace_revision_conflict`，写入者尚未读过当前文件时返回 `workspace_revision_not_observed`。写入成功后，写入者可继续使用自己刚提交的版本。工作进程把新内容写入目标文件系统上的私有暂存文件并刷盘。Runtime 在原子替换前复核目标版本。提交前失败或取消时，原文件保留，新建目标仍不存在。
+
+单文件写入失败回执包含阶段与目标状态。`validation_rejected` 和 `before_commit` 返回 `targetCommitted: false`。Windows 发布请求已发出但未收到结果时，返回 `commit_receipt_lost` 和 `targetCommitted: null`。已确认发布后本地步骤又失败时，返回 `after_commit` 和 `targetCommitted: true`。
 
 新建文件和删除文件涉及目录命名空间权限：Runtime 的窄范围 broker 仅操作已批准的精确名称，不授予沙箱整个父目录的创建/删除权，也不在宿主读写内容。这是固定的授权路径，不是沙箱失败后的备用执行方式。新文件通过独占创建保留身份，工作进程启动失败会移除仍属于本次创建的空文件；不删除别人替换的对象。Windows 删除由沙箱内固定文件句柄执行，同一句柄校验 SHA-256 并提交删除，其间排除其他写入和替换。Linux 先原子移入私有临时目录，再在沙箱中核对身份和内容；失败时独占恢复原名，遇到并发新建则保留暂存对象并返回恢复位置，绝不覆盖新文件。Linux 临时目录必须与目标同一文件系统，跨文件系统返回 `workspace_atomic_delete_unavailable`，不改用不安全 unlink。补丁失败仍可能留下已创建的空目录，回执不得宣称所有副作用都已消除。后端能力会在命名空间变更前检查。
 

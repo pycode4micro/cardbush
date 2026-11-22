@@ -293,7 +293,10 @@ test('an I/O failure after the first patch write restores prior bytes and retain
   const f = fixture(t), path = join(f.root, 'a.md'); writeFileSync(path, 'before\n'); await f.run('read_file', { path });
   const original = SandboxFileHandle.open; let sawFirstWrite = false;
   const mocked = t.mock.method(SandboxFileHandle, 'open', async (target, identity, write, ...args) => {
-    if (String(target).endsWith('b.md') && write) { sawFirstWrite = readFileSync(path, 'utf8') === 'after\n'; throw Object.assign(new Error('Disk rejected the second write'), { code: 'EIO' }); }
+    if (write && !sawFirstWrite && String(target).includes('.cardbush-write-') && readFileSync(path, 'utf8') === 'after\n') {
+      sawFirstWrite = true;
+      throw Object.assign(new Error('Disk rejected the second write'), { code: 'EIO' });
+    }
     return original(target, identity, write, ...args);
   });
   try {
@@ -308,7 +311,7 @@ test('a patch that cannot restore a write keeps recorded effects and requires in
   const f = fixture(t), path = join(f.root, 'a.md'); writeFileSync(path, 'before\n'); await f.run('read_file', { path });
   const original = SandboxFileHandle.open;
   const mocked = t.mock.method(SandboxFileHandle, 'open', async (target, identity, write, ...args) => {
-    if (String(target).endsWith('b.md') && write) {
+    if (write && String(target).includes('.cardbush-write-') && readFileSync(path, 'utf8') === 'after\n') {
       writeFileSync(path, 'changed externally\n');
       throw Object.assign(new Error('Second write failed'), { code: 'EIO' });
     }

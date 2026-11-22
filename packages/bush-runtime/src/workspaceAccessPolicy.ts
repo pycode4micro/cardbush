@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import type { ToolAdmissionContext, ToolPermissionRequest } from './toolRegistry.js';
 
 interface PathInput { path: string }
@@ -29,6 +30,7 @@ export async function pathAdmission(
   const roots = await Promise.all(allowedRoots(context, mode).map(canonicalPath));
   if (roots.some((root) => isWithin(root, path))) return { kind: "allow" } as const;
   const capabilityId = capability(action, path);
+  const assistantApproval = usesAssistantWorkspaceApproval(context);
   return {
     kind: "ask" as const,
     request: {
@@ -37,7 +39,8 @@ export async function pathAdmission(
       targets: [{ kind: "filesystem_path", value: path }],
       capabilityIds: [capabilityId],
       scope: { mode, roots },
-      ...(action === 'write' && isParentApprovedChild(context) ? { requiresHuman: true } : {}),
+      ...(assistantApproval ? { outsideParentScope: !(await parentCoversPath(context, path, action)) }
+        : action === 'write' && isParentApprovedChild(context) ? { requiresHuman: true } : {}),
     },
   };
 }
@@ -45,6 +48,21 @@ export async function pathAdmission(
 export function isParentApprovedChild(context: ToolAdmissionContext<unknown>) {
   const metadata = context.turn?.request.metadata;
   return metadata?.agentRole === 'child' && metadata.permissionRouting === 'parent';
+}
+
+export function usesAssistantWorkspaceApproval(context: ToolAdmissionContext<unknown>) {
+  const metadata = context.turn?.request.metadata;
+  return isParentApprovedChild(context) && metadata?.parentSessionId === PERSONAL_ASSISTANT_SESSION && !metadata.remoteDelegation;
+}
+
+async function parentCoversPath(context: ToolAdmissionContext<unknown>, path: string, action: string) {
+  if (action === 'read' && context.isTurnAttachment?.(path)) return true;
+  const parent = context.parentWorkspaceAuthority;
+  if (!parent) return false;
+  if (parent.permissionMode === 'all_free') return true;
+  const roots = workspaceRoots(parent.metadata, parent.permissionMode === 'user_free' ? 'user_free' : 'task_free');
+  const canonical = await Promise.all(roots.map(root => canonicalPath(root).catch(() => undefined)));
+  return canonical.some(root => root !== undefined && isWithin(root, path));
 }
 
 export function permissionBoundaryMode(context: ToolAdmissionContext<unknown>): "task_free" | "user_free" {
@@ -56,13 +74,16 @@ export function allowedRoots(
   context: ToolAdmissionContext<unknown>,
   mode: "task_free" | "user_free",
 ): string[] {
-  const metadata = context.turn?.request.metadata ?? {};
+  return workspaceRoots(context.turn?.request.metadata ?? {}, mode);
+}
+
+function workspaceRoots(metadata: Record<string, unknown>, mode: 'task_free' | 'user_free'): string[] {
   const taskRoots = rootStringArray(metadata.taskRoots);
   const configuredUserRoots = rootStringArray(metadata.userRoots);
   const userRoots = mode === "user_free"
     ? (configuredUserRoots.length > 0 ? configuredUserRoots : [homedir()])
     : [];
-  const workspace = workspaceRoot(context);
+  const workspace = workspaceRootFromMetadata(metadata);
   return [...new Set([
     ...(workspace ? [workspace] : []),
     ...taskRoots,

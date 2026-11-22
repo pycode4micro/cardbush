@@ -19,7 +19,8 @@ test('presence has no prompts and includes Shadow, automation and hooks with sep
   for (const metadata of [{ agentRole: 'child' }, { parentSessionId: 'a' }]) {
     const fact = f.bus.begin(request('child', metadata));
     assert.equal(fact.delegated, true);
-    assert.equal(fact.projectCoordinationAvailable, false);
+    assert.equal(fact.projectCoordinationAvailable, undefined);
+    assert.equal(f.bus.agents.get('child').canWake, false);
   }
   const delegated = request('employee'); delegated.sessionMetadata.delegationOwner = 'parent';
   assert.equal(f.bus.begin(delegated).delegated, true);
@@ -54,6 +55,13 @@ test('delegated sessions receive active notices but only the parent can resume i
   f.bus.begin({ ...request('child', { parentSessionId: 'a' }), turnId: 'parent-followup' });
   assert.match(f.bus.take('child', 'parent-followup')[0].message.content, /pending message/);
   assert.deepEqual(f.errors, []); f.bus.close();
+});
+
+test('a prepared turn keeps coordination when the original request omits optional metadata', () => {
+  const { bus } = fixture(), prepared = request('without-metadata');
+  const { metadata: _metadata, ...original } = prepared;
+  assert.equal(bus.begin(prepared, original).projectCoordinationAvailable, undefined);
+  bus.close();
 });
 
 test('room notices coalesce, wake active waits, and remain internal user data', () => {

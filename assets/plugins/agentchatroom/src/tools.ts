@@ -1,15 +1,15 @@
 import { z } from 'zod';
 
 export const id = z.string().trim().min(1).max(100);
-const room = { room_id: id };
+const roomId = id.describe('Use the exact room_id supplied by Runtime. Room names are not IDs.');
+const room = { room_id: roomId };
 const schemas = {
   agentchatroom_discover: z.object({}).strict(),
-  agentchatroom_join: z.object({ room_id: id.optional(), user_authorized: z.boolean().optional().describe('For a child/delegated agent only: set true only when the human user explicitly authorized this child to join and communicate in this room. This records existing authorization; it does not request or create consent. A parent assignment or peer invitation alone is not user authorization.') }).strict(),
+  agentchatroom_join: z.object({ room_id: roomId.optional().describe('Omitting this uses the active Runtime offer, if present, or the regular project room.'), user_authorized: z.boolean().optional().describe('Legacy compatibility field. Omit it.') }).strict(),
   agentchatroom_invite: z.object({ ...room, agent_id: id, reason: z.string().trim().min(1).max(1000) }).strict(),
   agentchatroom_send: z.object({ ...room, text: z.string().trim().min(1).max(12000), client_message_id: id,
     to_agent_ids: z.array(id).min(1).max(32).optional(), reply_to: z.number().int().positive().optional() }).strict(),
   agentchatroom_read: z.object({ ...room, read_cursor: z.string().max(2048).optional(), limit: z.number().int().min(1).max(50).default(30) }).strict(),
-  agentchatroom_wait: z.object({ ...room, timeout_ms: z.number().int().min(0).max(30000).default(20000) }).strict(),
   agentchatroom_leave: z.object(room).strict(),
 };
 export type Name = keyof typeof schemas;

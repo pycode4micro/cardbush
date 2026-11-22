@@ -74,7 +74,7 @@ for (const write of [false, true]) test(`a live exact-file handle blocks a new a
     let linked = false;
     try { linkSync(path, join(f.outside, 'late.txt')); linked = true; }
     catch (error) { assert.ok(['EPERM', 'EACCES', 'EBUSY'].includes(error.code)); }
-    if (linked) await assert.rejects(write ? file.truncate(0) : file.request({ op: 'read', offset: 0, count: 64 }), { code: 'workspace_authorization_changed' });
+    if (linked) await assert.rejects(write ? file.verifyRevision() : file.request({ op: 'read', offset: 0, count: 64 }), { code: 'workspace_authorization_changed' });
     else assert.equal(Buffer.from(await file.request({ op: 'read', offset: 0, count: 64 }), 'base64').toString(), 'allowed');
     assert.equal(readFileSync(path, 'utf8'), 'allowed');
   } finally { await file.close(); }
@@ -86,7 +86,8 @@ for (const writing of [false, true]) test(`directory ${writing ? 'write' : 'read
   const invocation = commandInvocation(process.platform === 'win32' ? 'cmd' : 'posix', 'echo MUST_NOT_START');
   await assert.rejects(runResourceManagedCommand({ ...invocation, cwd: f.work, timeoutMs: 5000,
     sandbox: { network: 'disabled', readableRoots: writing ? [] : [f.work], writableRoots: writing ? [f.work] : [] } }),
-  { code: 'sandbox_approval_changed' });
+  error => error.code === 'sandbox_hardlink_conflict' && error.details?.relativePath === join('.hidden', 'nested', 'alias.txt') &&
+    error.message.includes('No command was started.'));
   assert.equal(readFileSync(f.secret, 'utf8'), 'private-outside-content-92871');
 });
 

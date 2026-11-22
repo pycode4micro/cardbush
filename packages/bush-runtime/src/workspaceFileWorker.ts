@@ -31,20 +31,25 @@ export async function workspaceFileWorkerMain() {
           const bytes = Buffer.alloc(input.count);
           const read = await file.read(bytes, 0, bytes.length, input.offset);
           result = bytes.subarray(0, read.bytesRead).toString('base64');
-        } else if (input.op === 'truncate' && file && writable) {
-          await metadata();
+        } else if (input.op === 'verify' && file) {
+          const before = await metadata();
           if (input.sha256) {
             const hash = createHash('sha256');
             for await (const chunk of file.createReadStream({ autoClose: false, start: 0 })) hash.update(chunk);
             if (hash.digest('hex') !== input.sha256) throw Object.assign(Error('The file changed before writing.'), { code: 'workspace_revision_conflict' });
           }
-          await file.truncate(0);
+          const after = await metadata();
+          if (before.ctimeNs !== after.ctimeNs || before.mtimeNs !== after.mtimeNs || before.size !== after.size)
+            throw Object.assign(Error('The file changed while checking its revision.'), { code: 'workspace_revision_conflict' });
+          result = after;
         } else if (input.op === 'write' && file && writable) {
           await metadata();
           const bytes = Buffer.from(input.data, 'base64');
           if (bytes.length > 65536 || !Number.isSafeInteger(input.offset) || input.offset < 0) throw Error('Invalid write budget.');
           let offset = 0;
           while (offset < bytes.length) offset += (await file.write(bytes, offset, bytes.length - offset, input.offset + offset)).bytesWritten;
+        } else if (input.op === 'sync' && file && writable) {
+          await metadata(); await file.sync();
         } else if (input.op === 'chmod' && file && writable) {
           await metadata();
           if (!Number.isSafeInteger(input.mode) || input.mode < 0 || input.mode > 0o777) throw Error('Invalid file mode.');

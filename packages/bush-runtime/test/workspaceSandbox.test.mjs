@@ -3,7 +3,9 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { promises as fs, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync, statSync, renameSync, linkSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { PassThrough } from 'node:stream';
+import { promises as fs, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync, statSync, renameSync, linkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +14,7 @@ import { searchWorkspaceContent } from '../dist/workspaceSearch.js';
 import { ToolExecutionCoordinator, ToolRegistry, registerWorkspaceTools } from '../dist/index.js';
 import { runResourceManagedCommand } from '../dist/processes.js';
 import { commandSandboxPlan, authorizedCommandSandbox, decodeAdditionalCommandPermissions } from '../dist/commandSandboxAdmission.js';
+import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
 const identity = path => { const s = statSync(path, { bigint: true }); return `${s.dev}:${s.ino}`; };
 function fixture(t, options) {
@@ -91,18 +94,24 @@ test('file tools use isolated content I/O even when terminal sandbox configurati
     const read = await f.run('read_file', { path: f.path, start_line: 1 });
     assert.equal(read.result.content, 'allowed'); assert.equal(read.result.sandbox.network, 'disabled');
     assert.equal(read.result.sandbox.backend, process.platform === 'win32' ? 'windows-appcontainer' : 'linux-bubblewrap');
-    assert.equal((await f.run('edit_file', { path: f.path, old_text: 'allowed', new_text: 'edited' })).kind, 'returned');
+    const edit = await f.run('edit_file', { path: f.path, old_text: 'allowed', new_text: 'edited' });
+    assert.equal(edit.kind, 'returned', JSON.stringify(edit));
     assert.equal(readFileSync(f.path, 'utf8'), 'edited');
     assert.ok(policies.length >= 3);
     for (const policy of policies) {
       assert.equal(policy.network, 'disabled'); assert.deepEqual(policy.writableRoots, []); assert.deepEqual(policy.readableRoots, []);
-      assert.ok([...policy.readableFiles ?? [], ...policy.writableFiles ?? []].includes(f.path));
+      if (policy.writableFiles?.length) {
+        assert.equal(policy.writableFiles.length, 1);
+        const [stage] = policy.writableFiles;
+        assert.equal(dirname(stage), dirname(f.path));
+        assert.match(basename(stage), /^\.cardbush-write-[a-f0-9]{32}\.tmp$/);
+      } else assert.ok(policy.readableFiles.includes(f.path));
       assert.ok(![...policy.readableFiles ?? [], ...policy.writableFiles ?? []].includes(f.sibling));
     }
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
-test('the last revision check happens inside the sandbox before truncation', async t => {
+test('the last revision check happens inside the sandbox before atomic publication', async t => {
   const f = fixture(t); await f.run('read_file', { path: f.path });
   const original = SandboxFileHandle.prototype.request;
   t.mock.method(SandboxFileHandle.prototype, 'request', async function(input) {
@@ -111,6 +120,84 @@ test('the last revision check happens inside the sandbox before truncation', asy
   });
   const result = await f.run('write_file', { path: f.path, content: 'must not overwrite' });
   assert.equal(result.error.code, 'workspace_revision_conflict'); assert.equal(readFileSync(f.path, 'utf8'), 'new external revision');
+  assert.equal(result.error.details.phase, 'validation_rejected');
+  assert.equal(result.error.details.targetCommitted, false);
+  assert.equal(result.execution.effects, 'none');
+});
+
+test('interrupting the real worker after its first write leaves the original or absent name intact', async t => {
+  const f = fixture(t), absent = join(f.external, 'new.txt');
+  const payload = 'x'.repeat(160_000);
+  await f.run('read_file', { path: f.path });
+  const original = SandboxFileHandle.prototype.request;
+  const originalIdentity = identity(f.path);
+  for (const path of [f.path, absent]) {
+    let written = 0;
+    const stopDuringWrite = t.mock.method(SandboxFileHandle.prototype, 'request', async function(input) {
+      const result = await original.call(this, input);
+      if (input.op === 'write' && written === 0) {
+        written = Buffer.from(input.data, 'base64').length;
+        assert.equal(existsSync(path), path === f.path);
+        assert.equal(readFileSync(f.path, 'utf8'), 'allowed');
+        this.process.stop();
+      }
+      return result;
+    });
+    const failed = await f.run('write_file', { path, content: payload });
+    stopDuringWrite.mock.restore();
+    assert.equal(written, 65_536, 'the worker committed a chunk only to the staging file');
+    assert.equal(failed.kind, 'failed');
+    assert.equal(failed.error.details.phase, 'before_commit', JSON.stringify(failed));
+    assert.equal(failed.error.details.targetCommitted, false);
+    assert.equal(failed.execution.effects, 'none');
+    assert.equal(failed.execution.result, 'known');
+    assert.equal(identity(f.path), originalIdentity);
+    assert.equal(readFileSync(f.path, 'utf8'), 'allowed');
+    assert.equal(existsSync(absent), false);
+    assert.deepEqual(readdirSync(f.external).sort(), ['allowed.txt', 'secret.txt']);
+  }
+  assert.equal((await f.run('write_file', { path: f.path, content: 'retry succeeded' })).kind, 'returned');
+  assert.equal(readFileSync(f.path, 'utf8'), 'retry succeeded');
+  assert.notEqual(identity(f.path), originalIdentity);
+});
+
+test('lost Windows publication reply leaves execution uncertain even when the file was committed', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t);
+  await f.run('read_file', { path: f.path });
+  const spawn = childProcess.spawn;
+  let lost = false;
+  t.mock.method(childProcess, 'spawn', (file, args, options) => {
+    const child = spawn(file, args, options);
+    if (!args?.includes('--workspace-path-guard')) return child;
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const output = new PassThrough();
+    Object.defineProperty(child, 'stdout', { value: output });
+    let publishing = false;
+    const write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (chunk, ...rest) => {
+      publishing ||= String(chunk).startsWith('{"op":"replace"');
+      return write(chunk, ...rest);
+    };
+    lines.on('line', line => {
+      if (publishing && JSON.parse(line).committed === true) {
+        lost = true;
+        output.end();
+      } else if (!output.writableEnded) output.write(line + '\n');
+    });
+    lines.on('close', () => output.end());
+    return child;
+  });
+  syncBuiltinESMExports();
+  try {
+    const failed = await f.run('write_file', { path: f.path, content: 'published without a reply' });
+    assert.equal(lost, true);
+    assert.equal(failed.error.code, 'workspace_commit_receipt_lost');
+    assert.equal(failed.error.details.phase, 'commit_receipt_lost');
+    assert.equal(failed.error.details.targetCommitted, null);
+    assert.deepEqual(failed.execution, { dispatch: 'started', effects: 'possible', result: 'unknown', recovery: 'inspect_existing' });
+    assert.equal(readFileSync(f.path, 'utf8'), 'published without a reply');
+    assert.deepEqual(readdirSync(f.external).sort(), ['allowed.txt', 'secret.txt']);
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
 test('single-file search uses a read-only file grant, including for an approved external file', async t => {
@@ -176,7 +263,9 @@ test('new external files receive exact grants and keep sibling content private',
   assert.equal(result.kind, 'returned', JSON.stringify(result)); assert.equal(readFileSync(path, 'utf8'), 'created in sandbox');
   assert.equal(readFileSync(f.sibling, 'utf8'), 'sibling secret');
   for (const grant of grants) { assert.deepEqual(grant.writableRoots, []); assert.deepEqual(grant.readableRoots, []); }
-  assert.ok(grants.some(grant => grant.writableFiles?.includes(path)));
+  assert.ok(grants.some(grant => grant.writableFiles?.some(stage => dirname(stage) === dirname(path) &&
+    /^\.cardbush-write-[a-f0-9]{32}\.tmp$/.test(basename(stage)))));
+  assert.ok(grants.every(grant => !grant.writableFiles?.includes(path)));
 });
 
 test('an identity mismatch never returns bytes, and worker termination cannot produce a successful result', async t => {
@@ -207,4 +296,26 @@ test('terminal file extensions approve exact files and invalidate the grant on s
   assert.throws(() => authorizedCommandSandbox(changed, [admitted.requiredGrant]), { code: 'sandbox_approval_changed' });
   const required = await commandSandboxPlan({ ...config, mode: 'required' }, context, f.work);
   assert.equal(required.admission.kind, 'deny'); assert.equal(required.admission.code, 'sandbox_host_limit');
+});
+
+test('Assistant can approve sandbox access within its own scope, with host limits still enforced', async t => {
+  const f = fixture(t);
+  const config = { mode: 'auto', network: 'disabled', readableRoots: [], writableRoots: [] };
+  const parent = { sessionId: PERSONAL_ASSISTANT_SESSION, permissionMode: 'task_free', metadata: { workspaceDir: f.external } };
+  const context = { sessionId: 's', input: { command: 'echo fixture', shell: process.platform === 'win32' ? 'cmd' : 'posix',
+    additionalPermissions: decodeAdditionalCommandPermissions({ write_files: [f.path] }) },
+    turn: { request: { ...f.request, metadata: { workspaceDir: f.work, agentRole: 'child', permissionRouting: 'parent',
+      parentSessionId: PERSONAL_ASSISTANT_SESSION, parentWorkspaceAuthority: { ...parent, permissionMode: 'all_free' } } } } };
+  const withoutAuthority = await commandSandboxPlan(config, context, f.work);
+  assert.equal(withoutAuthority.admission.request.outsideParentScope, true, 'child metadata cannot supply parent authority');
+  const within = await commandSandboxPlan(config, { ...context, parentWorkspaceAuthority: parent }, f.work);
+  assert.equal(within.admission.kind, 'ask');
+  assert.equal(within.admission.request.outsideParentScope, false);
+  assert.deepEqual(within.policy.writableFiles, [f.path]);
+  assert.equal(within.requiredGrant, withoutAuthority.requiredGrant, 'routing does not change what the terminal is authorized to do');
+  const hostLimit = await commandSandboxPlan({ ...config, mode: 'required' }, {
+    ...context, parentWorkspaceAuthority: { ...parent, permissionMode: 'all_free' },
+  }, f.work);
+  assert.equal(hostLimit.admission.kind, 'deny');
+  assert.equal(hostLimit.admission.code, 'sandbox_host_limit');
 });

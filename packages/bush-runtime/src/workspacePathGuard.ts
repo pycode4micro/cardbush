@@ -4,6 +4,7 @@ import { open, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { resolveProcessResourceHost } from './processResourceGuard.js';
+import { workspaceWriteFailure } from './workspaceWriteFailure.js';
 
 export const pathChanged = () => Object.assign(new Error('The authorized file or directory changed. No redirected target is authorized; inspect the current path and retry.'), { code: 'workspace_authorization_changed' });
 
@@ -26,7 +27,7 @@ export class WorkspacePathGuard {
     if (this.#directories.has(path)) { this.check(); return; }
     if (process.platform === 'win32') {
       if (!this.#child) {
-        // Fixed metadata-only helper: no model command, ACL edits or user code.
+        // Fixed namespace helper. It performs no content I/O and runs no user code.
         const child = this.#child = spawn(resolveProcessResourceHost(), ['--workspace-path-guard', String(process.pid)], { windowsHide: true, stdio: 'pipe' });
         this.#closed = new Promise(resolve => child.once('close', () => resolve()));
         child.on('error', error => { this.#error = error.message; });
@@ -34,7 +35,7 @@ export class WorkspacePathGuard {
         child.stderr.on('data', bytes => { this.#error = (this.#error + String(bytes)).slice(-4096); });
         this.#lines = createInterface({ input: child.stdout, crlfDelay: Infinity })[Symbol.asyncIterator]();
         try {
-          if ((await this.#reply()).workspacePathGuardVersion !== 1) throw pathChanged();
+          if ((await this.#reply()).workspacePathGuardVersion !== 2) throw pathChanged();
         } catch {
           throw Object.assign(new Error('The native file-access guard is unavailable. Rebuild or reinstall the matching Runtime; no file operation was started.'), { code: 'workspace_path_guard_unavailable' });
         }
@@ -53,6 +54,40 @@ export class WorkspacePathGuard {
     } else {
       throw Object.assign(new Error('Race-safe local file access is unavailable on this platform.'), { code: 'workspace_path_guard_unavailable' });
     }
+  }
+
+  /** Fixed namespace operations on paths under an already pinned parent. */
+  async windowsNamespace(input: Record<string, string | null>, signal?: AbortSignal): Promise<void> {
+    if (process.platform !== 'win32' || !this.#child) throw pathChanged();
+    const result = this.#queue.then(async () => {
+      this.check();
+      signal?.throwIfAborted();
+      const request = JSON.stringify(input) + '\n';
+      const child = this.#child!;
+      child.stdin.write(request);
+      let reply: Record<string, unknown>;
+      try {
+        reply = await this.#reply();
+        if (!reply || reply.committed !== true && typeof reply.code !== 'string') throw pathChanged();
+      } catch (cause) {
+        // A late reply must never be consumed by a later namespace operation.
+        this.#error = 'Lost workspace namespace reply';
+        child.kill();
+        if (input.op === 'replace' && input.target) {
+          throw workspaceWriteFailure(Object.assign(new Error(
+            'The atomic replacement request was sent, but its outcome was not acknowledged.', { cause },
+          ), { code: 'workspace_commit_receipt_lost' }), 'commit_receipt_lost', input.target);
+        }
+        throw cause;
+      }
+      if (reply.committed === true) return;
+      const code = typeof reply.code === 'string' ? reply.code : 'workspace_atomic_write_failed';
+      const message = code === 'workspace_revision_conflict' ? 'The destination changed before atomic replacement.'
+        : String(reply.message ?? 'Atomic workspace operation failed.');
+      throw Object.assign(Error(message), { code });
+    });
+    this.#queue = result.catch(() => {});
+    return result;
   }
 
   async #reply(): Promise<Record<string, unknown>> {

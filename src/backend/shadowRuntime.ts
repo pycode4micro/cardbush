@@ -335,7 +335,6 @@ export async function streamRuntimeShadowConversationMessage(
         ...base.metadata,
         agentRole: 'child',
         parentSessionId: state.sessionId,
-        inheritedObservationSessionId: state.sessionId,
         shadowReadOnly: readOnly,
         shadowMode: state.mode,
         shadowWorkspaceDir: workspaceDir,

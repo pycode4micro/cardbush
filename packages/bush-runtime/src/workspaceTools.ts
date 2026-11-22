@@ -2,7 +2,7 @@ import { createDisplayDiff } from './workspaceDiff.js';
 import { defaultCommandShell } from '@cardbush/platform';
 import { withToolFailureFacts } from './toolFailureFacts.js';
 import { applyFilePatch, parseWorkspacePatch, type FilePatch } from './workspacePatch.js';
-import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity } from './workspaceAccessPolicy.js';
+import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity, usesAssistantWorkspaceApproval } from './workspaceAccessPolicy.js';
 import { TerminalSessionManager, type TerminalShell } from './terminalSessionManager.js';
 // Preserve existing Runtime consumers while the implementations remain independent.
 export { authorizePath } from './workspaceAccessPolicy.js';
@@ -31,6 +31,7 @@ import { searchWorkspaceContent, type WorkspaceSearchInput as SearchInput } from
 import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
 import { renderTerminalResult, projectTerminalResult, renderTextFields } from "./toolResultText.js";
 import { workspaceEditRecoveryError } from './workspaceEditRecovery.js';
+import { workspaceWriteFailure } from './workspaceWriteFailure.js';
 import { decodeExclusiveResources, runtimeExclusiveResources } from './exclusiveResources.js';
 import { isSkillReadResource } from './skillTools.js';
 import { userDirectories } from './userDirectories.js';
@@ -102,6 +103,14 @@ export class WorkspaceObservationStore {
         ? this.#projectObservations.get(normalizeIdentity(projectRoot))?.get(identity)?.sha256 === sha256
         : false)
     );
+  }
+
+  writerRevision(sessionId: string, path: string): string | undefined {
+    return this.#observations.get(sessionId)?.get(normalizeIdentity(path))?.sha256;
+  }
+
+  forgetWriterRevision(sessionId: string, path: string) {
+    this.#observations.get(sessionId)?.delete(normalizeIdentity(path));
   }
 
   acquireMutation(path: string): () => void {
@@ -243,7 +252,8 @@ export function registerWorkspaceTools(
       }
       return requests.length ? { kind: 'ask' as const, request: { reason: 'Apply the related file changes.', actions: ['write'],
         targets: requests.flatMap(request => request.targets), capabilityIds: requests.flatMap(request => request.capabilityIds),
-        requiresHuman: requests.some(request => request.requiresHuman) } } : { kind: 'allow' as const };
+        requiresHuman: requests.some(request => request.requiresHuman),
+        outsideParentScope: requests.some(request => request.outsideParentScope) } } : { kind: 'allow' as const };
     },
     resources: async context => Promise.all(context.input.files.flatMap(file => [file.path, ...(file.moveTo ? [file.moveTo] : [])]).map(async path =>
       ({ key: `file:${normalizeIdentity(await resolveToolPath(context, path, true))}`, mode: 'write' as const }))),
@@ -263,8 +273,11 @@ export function registerWorkspaceTools(
         if (bytes === undefined) await unlink(path);
         else { await createWorkspaceParent(path); await writeFile(path, bytes, create ? { flag: 'wx' } : undefined); }
       };
-      const receipt = async (change: typeof changes[number]) => {
-        if (change.after) await observations.record(context.sessionId, change.path, digest(change.after), workspaceRoot(context));
+      const receipt = async (change: typeof changes[number], recordRevision: boolean) => {
+        if (recordRevision) {
+          if (change.after) await observations.record(context.sessionId, change.path, digest(change.after), workspaceRoot(context));
+          else observations.forgetWriterRevision(context.sessionId, change.path);
+        }
         return changeResult(context, change.path, change.before, change.after, !change.after ? 'deleted' : change.before ? 'modified' : 'added', 'utf8', createChangeId(), change.versioned);
       };
       try {
@@ -285,11 +298,12 @@ export function registerWorkspaceTools(
         }
         for (const change of changes) {
           context.signal?.throwIfAborted();
-          if (!same(await optionalBytes(change.path), change.before)) throw new Error(`File changed during patch preflight: ${change.path}`);
-          // Include the in-progress write: a failed write may have partially modified a file.
+          if (!same(await optionalBytes(change.path), change.before))
+            throw Object.assign(Error(`File changed during patch preflight: ${change.path}`), { code: 'workspace_revision_conflict', details: { path: change.path } });
+          // Include the in-progress write in recovery if its commit receipt is lost.
           applied.push(change); await write(change.path, change.after, change.before === undefined);
         }
-        return { applied: true, files: await Promise.all(changes.map(receipt)) };
+        return { applied: true, files: await Promise.all(changes.map(change => receipt(change, true))) };
       } catch (error) {
         const remaining: string[] = [];
         for (const change of applied.reverse()) {
@@ -301,8 +315,10 @@ export function registerWorkspaceTools(
           } catch { remaining.push(change.path); }
         }
         // Keep evidence for any partial write or externally changed path; never overwrite it blindly.
-        for (const path of remaining) { const change = changes.find(item => item.path === path)!; await receipt({ ...change, after: await optionalBytes(path) }); }
-        const failure = Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}${remaining.length ? ' Some paths could not be rolled back; inspect recorded changes before retrying.' : applied.length ? ' All applied changes were rolled back.' : ' No files were changed.'}`), { code: remaining.length ? 'patch_partial_failure' : 'patch_not_applied', details: { remaining_paths: remaining, rolled_back: applied.length > 0 && !remaining.length } });
+        for (const path of remaining) { const change = changes.find(item => item.path === path)!; await receipt({ ...change, after: await optionalBytes(path) }, false); }
+        const conflict = error instanceof Error && 'code' in error &&
+          ['workspace_revision_conflict', 'workspace_revision_not_observed'].includes(String(error.code)) ? String(error.code) : undefined;
+        const failure = Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}${remaining.length ? ' Some paths could not be rolled back; inspect recorded changes before retrying.' : applied.length ? ' All applied changes were rolled back.' : ' No files were changed.'}`), { code: remaining.length ? 'patch_partial_failure' : conflict ?? 'patch_not_applied', details: { remaining_paths: remaining, rolled_back: applied.length > 0 && !remaining.length } });
         // Only preflight proves no mutation was attempted. A rollback may leave
         // directories or other effects, so retain conservative facts after writes.
         throw applied.length ? failure : withToolFailureFacts(failure, { effects: 'none', result: 'known' });
@@ -338,19 +354,20 @@ export function registerWorkspaceTools(
     authorize: authorizePath("read"),
     execute: async (context: ToolHandlerContext<ReadFileInput>) => {
       const path = await resolveToolPath(context, context.input.path);
-      if (context.input.range) {
-        const result = await readFileLineRange(path, context.input.encoding, context.input.range, context.signal);
-        await observations.record(context.sessionId, path, result.sha256, workspaceRoot(context));
-        return { path, ...result };
+      try {
+        if (context.input.range) {
+          const result = await readFileLineRange(path, context.input.encoding, context.input.range, context.signal);
+          await observations.record(context.sessionId, path, result.sha256, workspaceRoot(context));
+          return { path, ...result };
+        }
+        const bytes = await readFileBounded(path, context.signal);
+        const sha256 = digest(bytes);
+        await observations.record(context.sessionId, path, sha256, workspaceRoot(context));
+        return { path, sha256, content: bytes.toString(context.input.encoding) };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') observations.forgetWriterRevision(context.sessionId, path);
+        throw error;
       }
-      const bytes = await readFileBounded(path, context.signal);
-      const sha256 = digest(bytes);
-      await observations.record(context.sessionId, path, sha256, workspaceRoot(context));
-      return {
-        path,
-        sha256,
-        content: bytes.toString(context.input.encoding),
-      };
     },
   });
 
@@ -411,8 +428,8 @@ export function registerWorkspaceTools(
         assertObservedIfExisting(context, observations, path, before);
         const versioned = await options.ownsFileVersion?.(context.sessionId, path) ?? false;
         await createWorkspaceParent(path);
-        await writeFile(path, context.input.content, { encoding: context.input.encoding });
-        const after = await readFileBounded(path, context.signal);
+        const after = Buffer.from(context.input.content, context.input.encoding);
+        await writeFile(path, after);
         const afterHash = digest(after);
         await observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
         return changeResult(
@@ -460,9 +477,11 @@ export function registerWorkspaceTools(
         let oldText = context.input.oldText, rangeOffsets: { start: number; end: number } | undefined;
         if (context.input.range) {
           const range = context.input.range;
-          if (digest(before) !== range.sha256) throw workspaceEditRecoveryError('workspace_revision_mismatch', 'expected_sha256 differs from the current file.');
+          if (digest(before) !== range.sha256) throw workspaceWriteFailure(
+            workspaceEditRecoveryError('workspace_revision_mismatch', 'expected_sha256 differs from the current file.'), 'validation_rejected', path);
           const lines = source.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [];
-          if (range.end > lines.length) throw workspaceEditRecoveryError('edit_line_range_invalid', `File has ${lines.length} lines; the range is outside it.`);
+          if (range.end > lines.length) throw workspaceWriteFailure(
+            workspaceEditRecoveryError('edit_line_range_invalid', `File has ${lines.length} lines; the range is outside it.`), 'validation_rejected', path);
           const start = lines.slice(0, range.start - 1).join('').length;
           const end = start + lines.slice(range.start - 1, range.end).join('').length;
           rangeOffsets = { start, end };
@@ -470,16 +489,16 @@ export function registerWorkspaceTools(
         }
         const count = rangeOffsets ? 1 : occurrences(source, oldText);
         if (count === 0) {
-          throw workspaceEditRecoveryError(
+          throw workspaceWriteFailure(workspaceEditRecoveryError(
             "edit_old_text_not_found",
             "old_text was not found in the current file revision.",
-          );
+          ), 'validation_rejected', path);
         }
         if (!context.input.replaceAll && count !== 1) {
-          throw workspaceEditRecoveryError(
+          throw workspaceWriteFailure(workspaceEditRecoveryError(
             "edit_old_text_ambiguous",
             `old_text matched ${count} times; the target is ambiguous.`,
-          );
+          ), 'validation_rejected', path);
         }
         const replacements = context.input.replaceAll ? count : 1;
         assertInProcessFileSize(before.length + replacements * (
@@ -489,8 +508,8 @@ export function registerWorkspaceTools(
           : context.input.replaceAll ? source.replaceAll(oldText, () => context.input.newText)
           : source.replace(oldText, () => context.input.newText);
         assertInProcessFileSize(Buffer.byteLength(next, context.input.encoding));
-        await writeFile(path, next, { encoding: context.input.encoding });
-        const after = await readFileBounded(path, context.signal);
+        const after = Buffer.from(next, context.input.encoding);
+        await writeFile(path, after);
         const afterHash = digest(after);
         await observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
         return changeResult(
@@ -652,7 +671,8 @@ export function registerWorkspaceTools(
       registry.assertLocalCommandAllowed(context);
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return terminal.sandbox ? { kind: 'allow' as const }
-        : terminalInputPermission({ ...context.input, environment: 'local' });
+        : terminalInputPermission({ ...context.input, environment: 'local',
+          outsideParentScope: usesAssistantWorkspaceApproval(context) && context.parentWorkspaceAuthority?.permissionMode !== 'all_free' });
     },
     execute: (context: ToolHandlerContext<TerminalWriteInput>) => {
       registry.assertLocalCommandAllowed(context);
@@ -732,35 +752,30 @@ function terminalWorkingDirectory(context: ToolAdmissionContext<TerminalInput>):
   return candidate;
 }
 
-function inheritedObservationSessionId(context: ToolHandlerContext<unknown>): string | undefined {
-  const candidate = context.turn?.request.metadata.inheritedObservationSessionId;
-  return typeof candidate === "string" && candidate.trim() ? candidate : undefined;
-}
-
 function assertObservedIfExisting(
   context: ToolHandlerContext<unknown>,
   observations: WorkspaceObservationStore,
   path: string,
   bytes: Buffer | undefined,
 ): void {
-  if (!bytes) return;
-  const sha256 = digest(bytes);
-  if (
-    !observations.matches(
-      context.sessionId,
-      path,
-      sha256,
-      inheritedObservationSessionId(context),
-      workspaceRoot(context),
-    )
-  ) {
+  const expected = observations.writerRevision(context.sessionId, path);
+  const current = bytes && digest(bytes);
+  if (expected !== undefined && expected !== current) {
+    const message = 'The file changed since this Agent last observed it. Read the current file and review the change before writing.';
+    throw workspaceWriteFailure(Object.assign(Error(message), {
+      code: 'workspace_revision_conflict', details: { path, expectedSha256: expected, currentSha256: current ?? null },
+    }), 'validation_rejected', path);
+  }
+  if (current !== undefined && expected === undefined) {
     if (context.toolCall?.name === 'edit_file') {
-      throw workspaceEditRecoveryError('workspace_revision_not_observed', 'The current file revision has not been read or has changed since it was read.');
+      throw workspaceWriteFailure(workspaceEditRecoveryError(
+        'workspace_revision_not_observed', 'The current file revision has not been read or has changed since it was read.'),
+      'validation_rejected', path);
     }
-    throw codedError(
+    throw workspaceWriteFailure(codedError(
       "workspace_revision_not_observed",
-      `Current file revision ${sha256} has not been observed by this Agent context; read_file first.`,
-    );
+      `Current file revision ${current} has not been read by this Agent; use read_file first.`,
+    ), 'validation_rejected', path);
   }
 }
 

@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import { stat } from 'node:fs/promises';
 import type { RuntimePermissionTarget } from '@cardbush/bush-protocol';
 import type { ToolAdmissionContext, ToolAdmissionDecision } from './toolRegistry.js';
-import { commandSandboxPolicy, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
+import { commandSandboxPolicy, commandSandboxPolicyForRequest, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
 import { canonicalSandboxRoots, canonicalSandboxFiles, sandboxError, windowsInterpreterRoots, type ExecutionSandboxPolicy } from './executionSandbox.js';
 import { commandPermission } from './commandPermission.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
-import { allowedRoots, isParentApprovedChild, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, workspaceRoot } from './workspaceAccessPolicy.js';
+import { allowedRoots, isParentApprovedChild, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, usesAssistantWorkspaceApproval, workspaceRoot } from './workspaceAccessPolicy.js';
 
 export interface AdditionalCommandPermissions {
   readRoots: string[];
@@ -44,9 +44,11 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   context: ToolAdmissionContext<CommandInput>, cwd: string,
 ): Promise<{ admission: ToolAdmissionDecision; policy?: ExecutionSandboxPolicy; requiredGrant?: string }> {
   const base = commandSandboxPolicy(configuration, context);
+  const assistantApproval = usesAssistantWorkspaceApproval(context);
   if (!base) {
     const mode = permissionBoundaryMode(context);
-    return { admission: commandPermission({ ...context.input, cwd, scope: { mode, roots: allowedRoots(context, mode) } }) };
+    return { admission: commandPermission({ ...context.input, cwd, scope: { mode, roots: allowedRoots(context, mode) },
+      outsideParentScope: assistantApproval && context.parentWorkspaceAuthority?.permissionMode !== 'all_free' }) };
   }
   // The selected host interpreter must be readable, including user-installed
   // PowerShell. No model-supplied executable or PATH entry is trusted here.
@@ -118,12 +120,29 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
     ...extraWriteFiles.map(value => ({ kind: 'filesystem_path' as const, value, label: `Write file: ${value}` })),
     ...(network ? [{ kind: 'opaque' as const, value: 'sandbox:network:enabled', label: 'Network access (all destinations)' }] : []),
   ];
+  const outsideParentScope = assistantApproval && !(await parentCoversCommandExpansion(configuration, context.parentWorkspaceAuthority, {
+    read: [...extraRead, ...extraReadFiles], write: [...extraWrite, ...extraWriteFiles], network,
+  }));
   return { policy, requiredGrant, admission: { kind: 'ask', request: {
     reason: `Additional sandbox access for this command and its child processes only. Isolation remains enabled.${context.input.justification ? ` Reason: ${context.input.justification}` : ''}`,
     actions: ['execute', ...[...extraRead, ...extraReadFiles].map(() => 'read'), ...[...extraWrite, ...extraWriteFiles].map(() => 'write'), ...(network ? ['network'] : [])],
     targets, capabilityIds: [requiredGrant], scope: { mode: 'task_free', roots: writableRoots },
-    ...((extraWrite.length || extraWriteFiles.length) && isParentApprovedChild(context) ? { requiresHuman: true } : {}),
+    ...(assistantApproval ? { outsideParentScope }
+      : (extraWrite.length || extraWriteFiles.length) && isParentApprovedChild(context) ? { requiresHuman: true } : {}),
   } } };
+}
+
+async function parentCoversCommandExpansion(configuration: CommandSandboxConfiguration,
+  parent: ToolAdmissionContext['parentWorkspaceAuthority'], expansion: { read: string[]; write: string[]; network: boolean }) {
+  if (!parent) return false;
+  const policy = commandSandboxPolicyForRequest(configuration, parent);
+  if (!policy) return parent.permissionMode === 'all_free';
+  if (expansion.network && policy.network !== 'enabled') return false;
+  const [readable, writable] = await Promise.all([
+    canonicalSandboxRoots(policy.readableRoots ?? []), canonicalSandboxRoots(policy.writableRoots),
+  ]).catch(() => [[], []] as [string[], string[]]);
+  return expansion.write.every(path => writable.some(root => isWithin(root, path))) &&
+    expansion.read.every(path => [...readable, ...writable].some(root => isWithin(root, path)));
 }
 
 export function authorizedCommandSandbox(plan: Awaited<ReturnType<typeof commandSandboxPlan>>, capabilityIds: readonly string[] = []): ExecutionSandboxPolicy | undefined {

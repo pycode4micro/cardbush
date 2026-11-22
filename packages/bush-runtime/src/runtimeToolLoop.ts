@@ -45,6 +45,7 @@ export interface RuntimeToolLoopOptions {
   capabilities?: RuntimeCapabilityStore;
   capabilitySessionId?: string;
   isTurnAttachment?: ToolHandlerContext['isTurnAttachment'];
+  parentWorkspaceAuthority?: ToolHandlerContext['parentWorkspaceAuthority'];
   hooks?: ToolExecutionHooks;
   permissionEventIdentity?: RuntimeEventIdentity;
   permissionSource?: {
@@ -172,6 +173,7 @@ export class RuntimeToolLoop {
       capabilities: options.capabilities,
       capabilitySessionId: options.capabilitySessionId,
       isTurnAttachment: options.isTurnAttachment,
+      parentWorkspaceAuthority: options.parentWorkspaceAuthority,
       hooks: options.hooks,
     });
     this.#executionStore = options.executionStore;

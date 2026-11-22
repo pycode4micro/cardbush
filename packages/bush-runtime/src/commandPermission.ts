@@ -4,7 +4,7 @@ import type { ToolAdmissionDecision } from './toolRegistry.js';
 
 /** A cwd grant is not authorization to run arbitrary commands in that directory. */
 export function commandPermission(input: {
-  command: string; cwd: string; shell: string; scope?: RuntimePermissionScope;
+  command: string; cwd: string; shell: string; scope?: RuntimePermissionScope; outsideParentScope?: boolean;
 }): ToolAdmissionDecision {
   const invocation = JSON.stringify([input.shell, input.cwd, input.command]);
   return { kind: 'ask', request: {
@@ -15,13 +15,14 @@ export function commandPermission(input: {
       { kind: 'process', value: invocation, label: `${input.shell}: ${input.command}` },
     ],
     capabilityIds: [capability('execute', invocation)],
+    ...(input.outsideParentScope ? { outsideParentScope: true } : {}),
     ...(input.scope ? { scope: input.scope } : {}),
   } };
 }
 
 /** Interactive interpreters can execute new code supplied through stdin. */
 export function terminalInputPermission(input: {
-  sessionId: string; chars: string; environment: string;
+  sessionId: string; chars: string; environment: string; outsideParentScope?: boolean;
 }): ToolAdmissionDecision {
   if (!input.chars) return { kind: 'allow' };
   const invocation = JSON.stringify([input.environment, input.sessionId, input.chars]);
@@ -31,6 +32,7 @@ export function terminalInputPermission(input: {
     targets: [{ kind: 'process', value: invocation,
       label: `${input.environment} · ${input.sessionId}\n${JSON.stringify(input.chars)}` }],
     capabilityIds: [capability('input', invocation)],
+    ...(input.outsideParentScope ? { outsideParentScope: true } : {}),
   } };
 }
 

@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'n
 import { promisify } from 'node:util';
 import { createPlatformContext, findExecutable } from '@cardbush/platform';
 import { sandboxPowerShellArgs, type WindowsSandboxScopePool } from './windowsSandboxScope.js';
-import { checkSandboxTree } from './sandboxTreeCheck.js';
+import { checkSandboxTree, sandboxHardlinkConflict } from './sandboxTreeCheck.js';
 
 const execFileAsync = promisify(execFile);
 const windowsCapabilities = new Map<string, Promise<{ scopes: boolean; files: boolean }>>();
@@ -28,20 +28,28 @@ export function windowsInterpreterRoots(executable: string, env: NodeJS.ProcessE
 // after setup; checking there closes the pathname-to-mount race on older bwrap.
 const linuxSandboxVerifier = `
 const fs = require('node:fs');
+const paths = require('node:path');
+function checkLinks(root, path, info) {
+  if (info.isFile() && info.nlink !== 1n) {
+    const relativePath = paths.relative(root, path) || paths.basename(path);
+    process.stderr.write('sandbox_hardlink_conflict: ' + JSON.stringify(relativePath) + '. No command was started.\\n');
+    process.exit(78);
+  }
+}
 try {
   for (const grant of JSON.parse(process.argv[1])) {
     const info = fs.lstatSync(grant.path, { bigint: true });
     if (info.isSymbolicLink() || info.isDirectory() !== grant.directory ||
-        String(info.dev) + ':' + String(info.ino) !== grant.identity ||
-        info.isFile() && info.nlink !== 1n) throw Error('identity mismatch');
+        String(info.dev) + ':' + String(info.ino) !== grant.identity) throw Error('identity mismatch');
+    checkLinks(grant.path, grant.path, info);
     if (grant.directory) {
       const pending = [grant.path];
       while (pending.length) {
         const path = pending.pop();
         const entry = fs.lstatSync(path, { bigint: true });
         if (entry.isSymbolicLink()) continue;
-        if (entry.isFile() && entry.nlink !== 1n) throw Error('hard-link alias');
-        if (entry.isDirectory()) for (const name of fs.readdirSync(path)) pending.push(require('node:path').join(path, name));
+        checkLinks(grant.path, path, entry);
+        if (entry.isDirectory()) for (const name of fs.readdirSync(path)) pending.push(paths.join(path, name));
       }
     }
   }
@@ -185,6 +193,7 @@ export function sandboxEnvironment(source: NodeJS.ProcessEnv, privateRoot: strin
   const environment: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(source)) if (allowed.test(key) && value !== undefined) environment[key] = value;
   return Object.assign(environment, {
+    UV_LINK_MODE: 'copy',
     HOME: privateRoot, USERPROFILE: privateRoot,
     APPDATA: join(privateRoot, 'config'), LOCALAPPDATA: join(privateRoot, 'local'),
     XDG_CONFIG_HOME: join(privateRoot, 'config'), XDG_CACHE_HOME: join(privateRoot, 'cache'),
@@ -299,9 +308,9 @@ export async function prepareExecutionSandbox(input: {
             const handle = await open(path, 0x200000 /* O_PATH */ | constants.O_NOFOLLOW);
             boundHandles.push(handle);
             const metadata = await handle.stat({ bigint: true });
-            if (metadata.isSymbolicLink() || expectedIdentities[path] && expectedIdentities[path] !== `${metadata.dev}:${metadata.ino}` ||
-                metadata.isFile() && metadata.nlink !== 1n)
+            if (metadata.isSymbolicLink() || expectedIdentities[path] && expectedIdentities[path] !== `${metadata.dev}:${metadata.ino}`)
               throw sandboxError('sandbox_approval_changed', 'An authorized filesystem object changed before sandbox setup.');
+            if (metadata.isFile() && metadata.nlink !== 1n) throw sandboxHardlinkConflict(path, path);
             mounts.push({ path, identity: `${metadata.dev}:${metadata.ino}`, directory: metadata.isDirectory(), write: writable });
           }
           args.push(writable ? '--bind' : '--ro-bind', path, path);

@@ -27,7 +27,7 @@ internal static partial class CardBushProcessHost
                     if ((info.Attributes & 0x400) != 0) continue;
                     if ((info.Attributes & 0x10) != 0) {
                         foreach (string child in Directory.EnumerateFileSystemEntries(path)) pending.Push(child);
-                    } else if (info.Links != 1) throw new IOException("Sandbox access cannot include a file with multiple hard links.");
+                    } else if (info.Links != 1) throw new IOException("Sandbox access cannot include a file with multiple hard links: " + path + ". No command was started.");
                 }
             } catch { Dispose(); throw; }
         }
@@ -81,8 +81,10 @@ internal static partial class CardBushProcessHost
         Check(GetWorkspaceHandleInformation(handle, out file), "Inspect sandbox file");
         CheckSandboxIdentity(path, expected, file);
         // Neither content nor ACL grants may escape through another hard link.
-        if ((file.Attributes & (0x10 | 0x400)) != 0 || file.Links != 1)
-            throw new IOException("Sandbox file is redirected, special, or has multiple writable aliases.");
+        if ((file.Attributes & (0x10 | 0x400)) != 0)
+            throw new IOException("Sandbox file is redirected or special: " + path + ". No command was started.");
+        if (file.Links != 1)
+            throw new IOException("Sandbox access cannot include a file with multiple hard links: " + path + ". No command was started.");
         WithSandboxAclLock(delegate {
             var security = ReadSandboxFileSecurity(handle);
             var rights = write ? FileSystemRights.Read | FileSystemRights.Write : FileSystemRights.ReadAndExecute;
