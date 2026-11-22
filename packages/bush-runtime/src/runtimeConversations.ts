@@ -10,6 +10,8 @@ export interface RuntimeConversation {
   workspaceDir?: string;
   /** Delegated sessions may opt into rooms, but their parent owns execution. */
   delegated?: boolean;
+  /** Internal, automation, shadow and unowned registry turns cannot start automatic project coordination. */
+  projectCoordinationAvailable?: false;
   status: 'running' | 'idle' | 'stopped';
 }
 export interface ConversationNotice {
@@ -37,11 +39,18 @@ export class RuntimeConversations {
     error: (error: unknown) => void;
   }, readonly agents = new AgentExecutionRegistry()) {}
 
-  list(): RuntimeConversation[] { return this.closed ? [] : this.agents.list().map(fact => ({
-    agentId: fact.agentId, turnId: fact.executionId, projectDir: fact.projectDir, workspaceDir: fact.workspaceDir,
-    ...(fact.role === 'child' ? { delegated: true } : {}),
-    status: ['queued', 'running', 'waiting'].includes(fact.status) ? 'running' : fact.status === 'completed' ? 'idle' : 'stopped',
-  })); }
+  list(): RuntimeConversation[] {
+    return this.closed ? [] : this.agents.list().map(fact => {
+      const request = this.entries.get(fact.agentId)?.request;
+      const available = fact.canWake && request?.turnId === fact.executionId && request.metadata.peerMessageWake !== true;
+      return {
+        agentId: fact.agentId, turnId: fact.executionId, projectDir: fact.projectDir, workspaceDir: fact.workspaceDir,
+        ...(fact.role === 'child' ? { delegated: true } : {}),
+        ...(!available ? { projectCoordinationAvailable: false as const } : {}),
+        status: ['queued', 'running', 'waiting'].includes(fact.status) ? 'running' : fact.status === 'completed' ? 'idle' : 'stopped',
+      };
+    });
+  }
   hasPending(sessionId: string, turnId?: string) {
     const entry = this.entries.get(sessionId);
     return !!entry && (!turnId || entry.request.turnId === turnId) && entry.notices.size > 0;

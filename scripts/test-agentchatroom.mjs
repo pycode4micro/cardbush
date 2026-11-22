@@ -23,7 +23,7 @@ async function fixture(t) {
   };
   const call = async (agent, action, input = {}, options = {}) => {
     const tool = api.tools.resolve('agentchatroom');
-    return tool.execute({ sessionId: agent, turnId: `turn-${agent}`, input: tool.decodeInput({ action, ...input }),
+    return tool.execute({ sessionId: agent, turnId: facts.get(agent)?.turnId ?? `turn-${agent}`, input: tool.decodeInput({ action, ...input }),
       toolCall: { id: 'current-call' }, turn: { request: { metadata: options.metadata ?? {} } }, signal: options.signal });
   };
   const reload = async () => {
@@ -48,6 +48,75 @@ test('same-project discovery is minimal and does not reveal unrelated or unjoine
   const result = await f.call('a', 'discover'); assert.deepEqual(result.peers.map(peer => peer.agent_id), ['b']);
   assert.doesNotMatch(JSON.stringify(result), /elsewhere|member_token|cursor|prompt/);
   await f.plugin.conversationChanged(a); assert.deepEqual(f.notifications.map(item => item.id), ['b']);
+});
+
+test('concurrent same-project turns reuse one temporary room and admit a late third participant', async t => {
+  const f = await fixture(t), a = f.add('a'), b = f.add('b');
+  const child = f.add('child', 'project', 'running', true);
+  const internal = f.add('internal'); internal.projectCoordinationAvailable = false;
+  f.add('other-project', 'other');
+  await Promise.all([a, b, a, child, internal].map(fact => f.plugin.conversationChanged(fact)));
+  const invitations = f.notifications.filter(item => JSON.parse(item.content).event === 'same_project_coordination');
+  assert.deepEqual(invitations.map(item => item.id).sort(), ['a', 'b']);
+  const offer = JSON.parse(invitations[0].content), { room_id } = offer;
+  assert.equal(offer.action, 'join');
+  assert.match(offer.guidance, /paths you plan to write.*one writer and a handoff/);
+  assert.ok(invitations.every(item => JSON.parse(item.content).room_id === room_id && !item.wake));
+  await Promise.all([f.call('a', 'join', { room_id }), f.call('b', 'join', { room_id })]);
+  await f.call('a', 'send', { room_id, text: 'I own css/style.css.', client_message_id: 'own-style' });
+  await f.reload();
+  const c = f.add('c');
+  const [catalog] = await Promise.all([f.plugin.conversationContext(c), f.plugin.conversationChanged(c)]);
+  const view = JSON.parse(catalog[0].content.split('\n').at(-1));
+  assert.equal(view.coordination.room_id, room_id);
+  assert.equal(view.rooms.length, 1);
+  assert.deepEqual({ ...view.rooms[0], members: view.rooms[0].members.sort() }, { room_id, joined: false, unread: 0, members: ['a', 'b'], temporary: true });
+  await assert.rejects(f.call('c', 'read', { room_id }), /Join this room/);
+  assert.equal((await f.call('c', 'join', { room_id })).idle_wake, 'disabled for temporary coordination');
+  assert.deepEqual((await f.call('c', 'read', { room_id })).messages.map(message => message.text), ['I own css/style.css.']);
+  await f.call('c', 'send', { room_id, text: 'I own js/main.js.', client_message_id: 'own-js' });
+  assert.ok((await f.call('a', 'read', { room_id })).messages.some(message => message.text === 'I own js/main.js.'));
+  const delivery = f.notifications.filter(item => item.key === `agentchatroom:room:${room_id}`);
+  assert.ok(delivery.length > 0 && delivery.every(item => !item.wake));
+  await assert.rejects(f.call('other-project', 'join', { room_id }), /active same-project/);
+  await assert.rejects(f.call('child', 'join', { room_id, user_authorized: true }), /active same-project/);
+  await assert.rejects(f.call('internal', 'join', { room_id }), /active same-project/);
+  await assert.rejects(f.call('c', 'invite', { room_id, agent_id: 'other-project', reason: 'No grant' }), /regular room/);
+  assert.equal(await readFile(join(f.directory, 'rooms/events.jsonl'), 'utf8'), '', 'automatic coordination writes no durable room messages');
+  await assert.rejects(readFile(join(f.directory, 'memberships.json')), { code: 'ENOENT' });
+});
+
+test('temporary room keeps the remaining participants together and retires at the end of the group', async t => {
+  const f = await fixture(t), a = f.add('a'), b = f.add('b');
+  await f.plugin.conversationChanged(b);
+  const { room_id } = (await f.call('a', 'discover')).coordination;
+  await f.call('a', 'join', { room_id });
+  await f.call('b', 'join', { room_id });
+  const waiting = Promise.withResolvers();
+  const wait = f.api.conversations.wait;
+  f.api.conversations.wait = (...args) => { waiting.resolve(); return wait(...args); };
+  const pending = f.call('a', 'read', { room_id, wait_ms: 30000 });
+  await waiting.promise;
+  a.status = 'stopped'; await f.plugin.conversationChanged(a);
+  assert.equal((await pending).status, 'membership_revoked');
+  const c = f.add('c'); await f.plugin.conversationChanged(c);
+  assert.equal((await f.call('c', 'discover')).coordination.room_id, room_id);
+  await f.call('c', 'join', { room_id });
+  await f.call('c', 'send', { room_id, text: 'Continue with the remaining member.', client_message_id: 'remaining' });
+  assert.equal(f.notifications.some(item => item.id === 'a' && item.key === `agentchatroom:room:${room_id}`), false);
+  await f.call('b', 'leave', { room_id });
+  assert.equal((await f.call('b', 'discover')).coordination, undefined);
+  b.status = 'idle'; c.status = 'stopped';
+  await Promise.all([f.plugin.conversationChanged(b), f.plugin.conversationChanged(c)]);
+  a.status = 'running'; a.turnId = 'turn-a-next';
+  await f.plugin.conversationChanged(a);
+  assert.deepEqual((await f.call('a', 'discover')).rooms, []);
+  await assert.rejects(f.call('a', 'join', { room_id }), /Room is unavailable/);
+  const d = f.add('d'); await f.plugin.conversationChanged(d);
+  const nextRoom = (await f.call('a', 'discover')).coordination.room_id;
+  assert.notEqual(nextRoom, room_id);
+  await f.call('a', 'join', { room_id: nextRoom });
+  assert.deepEqual((await f.call('a', 'read', { room_id: nextRoom })).messages, []);
 });
 
 test('one tool owns room coordination, reads or waits once, and persists membership/cursors', async t => {
@@ -222,7 +291,9 @@ test('source and git worktree share discovery without changing their file roots'
   await writeFile(join(f.directory, 'copy/.git'), `gitdir: ../source/.git/worktrees/copy\n`);
   await writeFile(join(f.directory, 'source/.git/worktrees/copy/commondir'), '../..\n');
   f.add('a', 'source'); f.add('b', 'copy');
+  await f.plugin.conversationChanged(f.facts.get('a'));
   assert.equal((await f.call('a', 'discover')).peers[0].relation, 'same_project');
+  assert.equal((await f.call('a', 'discover')).coordination.room_id, (await f.call('b', 'discover')).coordination.room_id);
   assert.equal(f.facts.get('b').workspaceDir, join(f.directory, 'copy'));
 });
 
@@ -256,25 +327,26 @@ test('deferred call_tool requires child consent and still enforces explicit chil
 
 test('actual Runtime delivers peer context at safe boundaries and wakes only joined idle sessions', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'cardbush-peer-runtime-'));
-  const registry = new ToolRegistry(), observed = [], errors = [], gate = Promise.withResolvers();
-  let extension, firstA = true;
+  const registry = new ToolRegistry(), observed = [], errors = [], gate = Promise.withResolvers(), gateB = Promise.withResolvers();
+  let extension, firstA = true, firstB = true;
   const host = new InMemoryRuntimeHost({ toolRegistry: registry, registerDefaultWorkspaceTools: false,
     onRecoveryError: error => errors.push(error), provider: { async *stream(request) {
       observed.push(structuredClone(request));
       if (request.sessionId === 'a' && firstA) { firstA = false; await gate.promise; }
+      if (request.sessionId === 'b' && firstB) { firstB = false; await gateB.promise; }
       yield event(request, 0, 'text_delta', { delta: 'Coordination checked.' });
       yield event(request, 1, 'response_completed', { finishReason: 'stop' });
     } } });
   host.installExtension(api => extension = create(api), { id: 'agentchatroom', enabled: true, dataDirectory: join(directory, 'plugin') });
   t.after(async () => {
-    gate.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    gate.resolve(); gateB.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
     host.removeExtension('agentchatroom'); await extension.dispose();
     assert.ok(directory.startsWith(tmpdir() + sep)); await rm(directory, { recursive: true, force: true });
   });
   const request = (id, turn = `turn-${id}`) => ({ protocol: 'bush.session_turn_request.v1', sessionId: id, turnId: turn, requestId: `r-${turn}`,
     model: 'fixture', prefixMessages: [{ role: 'system', content: 'fixed-prefix' }],
     inputMessages: [{ messageId: `user-${turn}`, message: { role: 'user', content: `Own task ${id}` } }],
-    tools: registry.definitions(), permissionMode: 'all_free', metadata: { projectDir: directory, workspaceDir: directory } });
+    tools: registry.definitions(), permissionMode: 'all_free', metadata: { projectDir: directory, workspaceDir: directory, environmentContext: true } });
   const call = (id, name, args) => {
     const tool = registry.resolve('agentchatroom');
     return tool.execute({ sessionId: id, turnId: `turn-${id}`, input: tool.decodeInput({action: name, ...args}), turn: { request: { metadata: {} } } });
@@ -282,24 +354,41 @@ test('actual Runtime delivers peer context at safe boundaries and wakes only joi
   const runningA = host.runSessionTurn(request('a')); await until(() => observed.some(req => req.sessionId === 'a'));
   const { room_id } = await call('a', 'join', {});
   // B's context and turn start happen before its provider response, so send while it is active.
-  let joinedB;
+  let joinedB, automaticRoom, thirdRoom;
   const previousContext = extension.conversationContext;
   extension.conversationContext = async fact => {
     const result = await previousContext(fact);
     if (fact.agentId === 'b') {
+      automaticRoom = JSON.parse(result[0].content.split('\n').at(-1)).coordination.room_id;
+      await call('b', 'join', { room_id: automaticRoom });
+      await call('b', 'send', { room_id: automaticRoom, text: 'I will edit css/style.css.', client_message_id: 'auto-b' });
       joinedB = await call('b', 'join', {});
       await call('b', 'send', { room_id, text: 'I own the API contract; please own the UI.', client_message_id: 'b-first' });
+    } else if (fact.agentId === 'c') {
+      thirdRoom = JSON.parse(result[0].content.split('\n').at(-1)).coordination.room_id;
+      await call('c', 'join', { room_id: thirdRoom });
+      assert.ok((await call('c', 'read', { room_id: thirdRoom })).messages.some(message => message.text === 'I will edit css/style.css.'));
     }
     return result;
   };
-  await host.runSessionTurn(request('b'));
+  const runningB = host.runSessionTurn(request('b'));
+  await until(() => observed.some(req => req.sessionId === 'b'));
+  await host.runSessionTurn(request('c'));
+  assert.equal(thirdRoom, automaticRoom);
+  assert.notEqual(automaticRoom, room_id);
+  gateB.resolve(); await runningB;
   assert.equal(joinedB.room_id, room_id);
-  const environment = JSON.parse(observed.find(req => req.sessionId === 'b').messages.find(message => message.name === 'runtime_environment').content);
+  const bMessages = observed.find(req => req.sessionId === 'b').messages;
+  const environment = JSON.parse(bMessages.find(message => message.name === 'runtime_environment').content);
   assert.ok(environment.sections.agents.items.some(fact => fact.agentId === 'a'));
-  assert.match(environment.sections.agents.coordination.join('\n'), /"agent_id":"a"/);
+  const catalog = bMessages.find(message => message.name === 'agent_peer_context' && message.visibility === 'internal' && message.content.includes('Workspace agent context.'));
+  const observedOffer = JSON.parse(catalog.content.split('\n').at(-1));
+  assert.ok(observedOffer.peers.some(peer => peer.agent_id === 'a'));
+  assert.equal(observedOffer.coordination.room_id, automaticRoom);
   gate.resolve(); await runningA;
   const aRequests = observed.filter(req => req.sessionId === 'a');
-  assert.ok(aRequests.some(req => req.messages.some(message => message.name === 'agent_peer_context' && message.visibility === 'internal')));
+  assert.ok(aRequests.some(req => req.messages.some(message => message.name === 'agent_peer_context' && message.visibility === 'internal' &&
+    message.content.includes('same_project_coordination') && message.content.includes(automaticRoom))));
   assert.ok(aRequests.every(req => req.messages[0].content === 'fixed-prefix'));
   assert.ok(aRequests.every(req => req.tools.every(tool => !tool.name.startsWith('agentchatroom_'))));
   // A second human turn in B sends to idle joined A. Runtime starts a normal persisted follow-up.
@@ -374,7 +463,7 @@ test('a real forked child joins with user consent, exchanges messages and stays 
   };
   const request = turnId => ({ protocol: 'bush.session_turn_request.v1', requestId: `r-${turnId}`, sessionId: 'parent', turnId, model: 'fixture',
     prefixMessages: [], inputMessages: [{ messageId: `u-${turnId}`, message: { role: 'user', content: 'Delegate tests. I explicitly authorize the child to join and communicate in this project room.' } }],
-    tools: registry.definitions(), permissionMode: 'all_free', metadata: { projectDir: f.directory, workspaceDir: f.directory } });
+    tools: registry.definitions(), permissionMode: 'all_free', metadata: { projectDir: f.directory, workspaceDir: f.directory, environmentContext: true } });
   assert.equal((await host.runSessionTurn(request('dispatch'))).payload.status, 'completed');
   const task = tasks.list('parent')[0]; assert.ok(task); assert.equal(task.status, 'completed');
   const childRequests = seen.filter(item => item.sessionId === task.childSessionId);
@@ -382,7 +471,8 @@ test('a real forked child joins with user consent, exchanges messages and stays 
   // Presence is available to every child; collaboration membership still requires joining.
   const childEnvironment = childRequests[0].messages.filter(message => message.name === 'runtime_environment').map(message => JSON.parse(message.content)).find(fact => fact.sessionId === task.childSessionId);
   assert.equal(childEnvironment.sections.agents.self.agentId, task.childSessionId);
-  assert.ok(!childEnvironment.sections.agents.coordination.some(content => content.includes(`"self":"${task.childSessionId}"`)));
+  assert.ok(!childRequests[0].messages.some(message => message.name === 'agent_peer_context' &&
+    message.content.includes('Workspace agent context.') && message.content.includes(`"self":"${task.childSessionId}"`)));
   const history = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: task.childSessionId } });
   assert.equal(history.turns.length, 1);
   assert.equal((await host.runSessionTurn(request('after-child'))).payload.status, 'completed');

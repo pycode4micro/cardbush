@@ -34,7 +34,9 @@ export class RoomStore {
   private stopped = false;
   private broken = false;
   private closing?: Promise<void>;
-  private constructor(private journal: FileHandle, private lockPath: string) {}
+  private constructor(private journal?: FileHandle, private lockPath?: string) {}
+
+  static inMemory() { return new RoomStore(); }
 
   static async open(directory: string) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -90,7 +92,12 @@ export class RoomStore {
 
   private messageKey(room: string, member: string, id: string) { return JSON.stringify([room, member, id]); }
   private async commit(event: Event) {
-    try { await this.journal.appendFile(`${JSON.stringify(event)}\n`); await this.journal.datasync(); }
+    try {
+      if (this.journal) {
+        await this.journal.appendFile(`${JSON.stringify(event)}\n`);
+        await this.journal.datasync();
+      }
+    }
     catch (error) { this.broken = true; this.wakeAll(); throw error; }
     this.apply(event);
     const id = event.type === 'room' ? event.room.room_id : event.room_id;
@@ -381,10 +388,27 @@ export class RoomStore {
 
   get pendingWaits() { return [...this.watchers.values()].reduce((count, listeners) => count + listeners.size, 0); }
   private wakeAll() { for (const listeners of this.watchers.values()) for (const wake of listeners) wake(); }
+  discardTemporary(roomId: string) {
+    return this.mutate(async () => {
+      if (this.journal) throw new Error('Only an in-memory room can be discarded.');
+      const room = this.rooms.get(roomId);
+      if (!room) return;
+      room.closed = true;
+      for (const wake of this.watchers.get(roomId) ?? []) wake();
+      for (const message of this.messages.get(roomId) ?? []) {
+        this.dedup.delete(this.messageKey(roomId, message.participant_id, message.client_message_id));
+      }
+      for (const member of room.members) this.activity.delete(member.participant_id);
+      this.messages.delete(roomId);
+      this.rooms.delete(roomId);
+    });
+  }
+
   close() {
     return this.closing ??= (async () => {
       this.stopped = true; this.wakeAll(); await this.writes;
-      await this.journal.close(); await unlink(this.lockPath);
+      await this.journal?.close();
+      if (this.lockPath) await unlink(this.lockPath);
     })();
   }
 }

@@ -17,7 +17,9 @@ function fixture() {
 test('presence has no prompts and includes Shadow, automation and hooks with separate wake policy', () => {
   const f = fixture(); f.bus.begin(request());
   for (const metadata of [{ agentRole: 'child' }, { parentSessionId: 'a' }]) {
-    assert.equal(f.bus.begin(request('child', metadata)).delegated, true);
+    const fact = f.bus.begin(request('child', metadata));
+    assert.equal(fact.delegated, true);
+    assert.equal(fact.projectCoordinationAvailable, false);
   }
   const delegated = request('employee'); delegated.sessionMetadata.delegationOwner = 'parent';
   assert.equal(f.bus.begin(delegated).delegated, true);
@@ -25,13 +27,17 @@ test('presence has no prompts and includes Shadow, automation and hooks with sep
   assert.equal(f.bus.begin(child).delegated, true);
   for (const [index, metadata] of [{ shadowMode: 'fork' }, { automationRunId: 'job' }, { pluginHookEvaluation: true }].entries()) {
     const id = `registered-${index}`;
-    assert.equal(f.bus.begin(request(id, metadata)).agentId, id);
+    const fact = f.bus.begin(request(id, metadata));
+    assert.equal(fact.agentId, id);
+    assert.equal(fact.projectCoordinationAvailable, false);
     assert.equal(f.bus.agents.get(id).canWake, false);
   }
   assert.equal(f.bus.list().length, 7);
   assert.equal(f.bus.list().find(fact => fact.agentId === 'a').delegated, undefined);
+  assert.equal(f.bus.list().find(fact => fact.agentId === 'a').projectCoordinationAvailable, undefined);
   assert.doesNotMatch(JSON.stringify(f.bus.list()), /Own task|inputMessages|prefixMessages/);
   f.bus.begin(request('a', { shadowMode: 'fork' })); assert.equal(f.bus.list().length, 7);
+  assert.equal(f.bus.begin(request('wake', { peerMessageWake: true })).projectCoordinationAvailable, false);
   f.bus.close();
 });
 
