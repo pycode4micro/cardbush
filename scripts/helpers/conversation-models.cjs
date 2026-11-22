@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict');
 
 module.exports = async ({ run, until, pause }) => {
+  const modelScope = 'conversation-model-fixture';
   await run(`
-    renderView(null);
     crypto.randomUUID ??= require('node:crypto').randomUUID;
-    window.modelScope='conversation-model-fixture';
+    window.modelScope=${JSON.stringify(modelScope)};
     window.clearModelFixture=scope=>{
       for(const id of ['','a','b','c','untouched','loading','local-queue']) views.selectConversationModel('',id,scope);
     };
@@ -43,14 +43,30 @@ module.exports = async ({ run, until, pause }) => {
         if(localQueue)delete backend.queue;
         return backend;
       },[scope,localQueue]);
-      window.switchModelSession=setSession;window.changeModelDefault=setDefault;window.replaceConversationModels=setModels;window.finishModelLoad=()=>setModelsReady(true);
-      window.conversationChat=views.useCardbushChat(models,models,{
+      const chat=views.useCardbushChat(models,models,{
         activeConversationId:session,runtimeReady:false,defaultModelId,modelsReady
       },backend);
-      return h('output',{'data-conversation':session},conversationChat.selectedModel);
+      React.useLayoutEffect(()=>{
+        window.switchModelSession=setSession;window.changeModelDefault=setDefault;
+        window.replaceConversationModels=setModels;window.finishModelLoad=()=>setModelsReady(true);
+        window.conversationChat=chat;
+      });
+      return h('output',{'data-model-conversation-fixture':'','data-conversation':session},chat.selectedModel);
     };
-    renderView(h(ModelConversationFixture));
+    void 0;
   `);
+  const mounted = 'document.querySelector("[data-model-conversation-fixture]")';
+  const unmount = async () => {
+    await run('renderView(null)');
+    await until(`!${mounted}`, 'model fixture unmounts');
+  };
+  const mount = async (props = {}) => {
+    await unmount();
+    await run(`renderView(h(ModelConversationFixture,${JSON.stringify(props)}))`);
+    // The previous instance can still expose the same selected model after unmount.
+    await until(`!!${mounted}`, 'new model fixture commits before using its controls');
+  };
+  await mount();
   await until('conversationChat.selectedModel==="a" && views.readConversationModel("a",modelScope)==="a"', 'first session remembers the default without a manual choice');
   await run('switchModelSession("untouched")');
   await until('views.readConversationModel("untouched",modelScope)==="a"', 'another untouched session captures its own default');
@@ -92,26 +108,24 @@ module.exports = async ({ run, until, pause }) => {
   assert.equal(await run('modelRequests[0].id'), 'a', 'an in-flight request keeps its captured model');
   await run('finishModelStreams.forEach(finish=>finish());Promise.all([modelSendA,modelSendB])');
   await until('conversationChat.sending===false', 'both fixture turns finished');
-  await run('renderView(null)'); await pause();
-  await run('renderView(h(ModelConversationFixture,{initialSession:"b",initialDefault:"c"}))');
+  await mount({initialSession:'b',initialDefault:'c'});
   await until('conversationChat.selectedModel==="b"', 'remount restores B instead of the global default');
   await run('replaceConversationModels(conversationModels.filter(model=>model.id!=="b"))');
   await until('conversationChat.selectedModel==="c"', 'deleted model safely falls back to available default');
+  assert.equal(await run('views.readConversationModel("b",modelScope)'), 'b', 'falling back does not overwrite the saved session choice');
   await run('replaceConversationModels(conversationModels)');
   await until('conversationChat.selectedModel==="b"', 'a temporary catalog absence does not erase the session preference');
-  await run('renderView(null)'); await pause();
-  await run('renderView(h(ModelConversationFixture,{scope:modelScope+"-other",initialSession:"b",initialDefault:"a"}))');
+  await mount({scope:`${modelScope}-other`,initialSession:'b',initialDefault:'a'});
   await until('conversationChat.selectedModel==="a"', 'same session ID on another host has independent configuration');
-  await run('renderView(null)'); await pause();
 
-  await run('renderView(h(ModelConversationFixture,{initialSession:"loading",initialDefault:"a",initialReady:false}))');
+  await mount({initialSession:'loading',initialDefault:'a',initialReady:false});
   await pause();
   assert.equal(await run('views.readConversationModel("loading",modelScope)'), '', 'cached configuration cannot pin a stale default before initial load');
   await run('changeModelDefault("b");finishModelLoad()');
   await until('conversationChat.selectedModel==="b" && views.readConversationModel("loading",modelScope)==="b"', 'first session selection uses the loaded default');
-  await run('renderView(null)'); await pause();
 
-  await run('modelRequests.length=0;finishModelStreams.length=0;renderView(h(ModelConversationFixture,{initialSession:"local-queue",localQueue:true}))');
+  await run('modelRequests.length=0;finishModelStreams.length=0;void 0');
+  await mount({initialSession:'local-queue',localQueue:true});
   await until('conversationChat.selectedModel==="a"', 'local queue fixture starts on Responses');
   await run('void conversationChat.sendMessage("active A")');
   await until('modelRequests.length===1', 'first turn holds the local queue');
@@ -133,12 +147,11 @@ module.exports = async ({ run, until, pause }) => {
   assert.deepEqual(await run('modelRequests.map(({id,protocol,reasoning})=>[id,protocol,reasoning])'), [
     ['a','openai_responses','low'], ['b','anthropic_messages','high'], ['c','openai_chat_completions','medium'],
   ]);
-  await run('renderView(null)'); await pause();
 
   // The normal local controller owns navigation internally. Draft choices
   // must transfer to the created session and never leak into the next draft.
   // A null controlled ID lets the hook own the session selection.
-  await run('renderView(h(ModelConversationFixture,{initialSession:null,initialDefault:"c"}))');
+  await mount({initialSession:null,initialDefault:'c'});
   await until('conversationChat.selectedModel==="c"', 'new draft uses configured default');
   await run('conversationChat.setSelectedModel("b")');
   await until('conversationChat.selectedModel==="b"', 'draft model changed');
@@ -146,6 +159,7 @@ module.exports = async ({ run, until, pause }) => {
   await until('conversationChat.selectedModel==="b" && views.readConversationModel(createdModelDraft.id,modelScope)==="b"', 'created conversation inherits draft choice');
   await run('conversationChat.clearConversationSelection()');
   await until('conversationChat.selectedModel==="c"', 'next draft returns to default');
-  await run('renderView(null);views.selectConversationModel("",createdModelDraft.id,modelScope);clearModelFixture(modelScope);clearModelFixture(modelScope+"-other");localStorage.removeItem(modelScope+":cardbush.selected_model")');
+  await unmount();
+  await run('views.selectConversationModel("",createdModelDraft.id,modelScope);clearModelFixture(modelScope);clearModelFixture(modelScope+"-other");localStorage.removeItem(modelScope+":cardbush.selected_model")');
   console.log('Conversation models passed: concurrent requests, target-specific queues, default isolation, delayed choices, remount, host isolation and drafts.');
 };

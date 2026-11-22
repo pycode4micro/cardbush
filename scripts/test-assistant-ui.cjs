@@ -200,6 +200,14 @@ app.whenReady().then(async () => {
     await click('.subagent-routing-switch button:last-child');
     await click('.permission-mode-row.mode-all_free');
     assert.equal(await read('document.querySelector(".assistant-view .topbar").getBoundingClientRect().height'),48,'shared header height');
+    assert.deepEqual(await read(`(() => {
+      const bar = document.querySelector('.assistant-view .topbar');
+      const {left, width} = bar.getBoundingClientRect();
+      return {
+        showsIdentity: !!bar.querySelector('h1, .assistant-character'),
+        rightAligned: [...bar.querySelectorAll('button')].map(button => button.getBoundingClientRect().left > left + width / 2)
+      };
+    })()`), {showsIdentity: false, rightAligned: [true, true]}, 'Assistant leaves the header identity area empty and keeps both actions at the right');
     assert.ok(await read('Math.abs(document.querySelector(".composer-surface").getBoundingClientRect().width-704)<1'),'shared default input width');
     assert.ok(await read('Math.abs(innerHeight-document.querySelector(".composer-surface").getBoundingClientRect().bottom-20)<1'),'shared bottom inset');
     await click('[data-inspector-toggle]');assert.equal(await read('fixture.inspected'),true);await until('!!document.querySelector(".assistant-view .topbar [data-inspector-toggle][aria-expanded=true]")');
@@ -290,7 +298,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('JSON.parse(localStorage.cardbush_personal_assistant_v1).outputMuted'),true,'mute controls are independent');
     await menu();await choose('重命名');await until('document.querySelector(".assistant-rename-dialog[open]")');
     await fill('.assistant-rename-dialog input','Nova');await click('.assistant-rename-dialog button[type=submit]');
-    await until('document.querySelector(".assistant-view .topbar h1").textContent==="Nova"');
+    await until('document.querySelector(".assistant-view").getAttribute("aria-label")==="Nova"');
     assert.ok(await read('!!document.querySelector(\'[data-nav-section=assistant][aria-label*="Nova"]\')'));
     await menu();win.webContents.invalidate();await pause(100);
     fs.writeFileSync(path.join(directory,'assistant-context-menu.png'),(await win.webContents.capturePage()).toPNG());

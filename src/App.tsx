@@ -301,6 +301,7 @@ function CardbushApp() {
   const workspacePage = typeof destination !== 'string';
   const section = workspacePage ? destination.host : destination;
   const [homePage, setHomePage] = useState<HomePage>({ kind: 'overview' });
+  const homeShowsProjects = homePage.kind === 'projects' || homePage.kind === 'project';
   const { compactLayout, drawerLayout, sidebarCollapsed, setSidebarCollapsed } = useCompactSidebar();
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
@@ -1975,18 +1976,20 @@ function CardbushApp() {
     [visualInputAvailable],
   );
 
+  const resetHomeOnNavigation = homeShowsProjects || (section === 'home' && !settingsOpen)
+    || (homePage.kind === 'overview' && homePage.editing === true);
   // Keep the sidebar outside high-frequency chat/reasoning renders. These
   // handlers used to be recreated by App on every message update, defeating
   // React.memo and making an unrelated stream interrupt title animations.
   const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
     setSettingsOpen(false);
-    if (nextSection === 'home' && ((section === 'home' && !settingsOpen) || (homePage.kind === 'overview' && homePage.editing))) {
+    if (nextSection === 'home' && resetHomeOnNavigation) {
       setHomePage({ kind: 'overview' });
     }
     if (drawerLayout) collapseSidebar();
     if (section === nextSection || (section !== 'assistant' && nextSection !== 'assistant')) revealConversation();
     setSection(nextSection);
-  }, [section, settingsOpen, homePage, revealConversation, drawerLayout, collapseSidebar]);
+  }, [section, resetHomeOnNavigation, revealConversation, drawerLayout, collapseSidebar]);
   const handleSidebarConversationChange = useCallback((conversationId: string) => {
     if (section === 'chat' && conversationId === chat.activeConversationId) revealConversation();
     openConversation(conversationId);
@@ -2111,7 +2114,7 @@ function CardbushApp() {
     setSettingsOpen(false);
     createConversation();
   }, [createConversation]);
-  const projectsActive = currentPage.section === 'home' && (currentPage.page.kind === 'projects' || currentPage.page.kind === 'project');
+  const projectsActive = currentPage.section === 'home' && homeShowsProjects;
   const renderQuickNavigation = (inline?: RecentInlineDisclosure) => <RecentConversationBar key={JSON.stringify([currentPage, inspectorOpen && inspectorCover])}
     inline={inline}
     conversations={chat.conversations}

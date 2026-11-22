@@ -22,6 +22,47 @@ export type DiffLineNumber = {
   newLine: number | null;
 };
 
+const maxHighlightLineLength = 4096;
+const diffBlockLineLimit = 24;
+const diffBlockCharacterLimit = 12_000;
+
+export type DiffBlock = { start: number; end: number; highlight: boolean };
+
+export function shouldVirtualizeDiff(lines: DiffLine[]): boolean {
+  if (lines.length > 300) return true;
+  let characters = 0;
+  for (const line of lines) {
+    characters += line.text.length;
+    if (line.text.length > maxHighlightLineLength || characters > 40_000) return true;
+  }
+  return false;
+}
+
+/** Keep each syntax pass bounded, including minified code on one line. */
+export function diffBlocks(lines: DiffLine[]): DiffBlock[] {
+  const blocks: DiffBlock[] = [];
+  let start = 0;
+  let characters = 0;
+  const flush = (end: number) => {
+    if (end > start) blocks.push({ start, end, highlight: true });
+    start = end;
+    characters = 0;
+  };
+  lines.forEach((line, index) => {
+    const length = line.text.length + 1;
+    if (line.text.length > maxHighlightLineLength) {
+      flush(index);
+      blocks.push({ start: index, end: index + 1, highlight: false });
+      start = index + 1;
+    } else {
+      if (index - start >= diffBlockLineLimit || characters + length > diffBlockCharacterLimit) flush(index);
+      characters += length;
+    }
+  });
+  flush(lines.length);
+  return blocks;
+}
+
 export function diffLineNumbers(lines: DiffLine[]): DiffLineNumber[] {
   let oldLine = 1;
   let newLine = 1;

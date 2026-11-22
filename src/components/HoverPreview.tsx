@@ -143,7 +143,8 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
     if (boundary) observer.observe(boundary);
     return () => observer.disconnect();
   }, [anchor, boundarySelector, children, close, placement]);
-  useEffect(() => {
+  // A visible preview must already respond to Escape and outside input.
+  useLayoutEffect(() => {
     if (!anchor) return;
     const pointerDown = (event: globalThis.PointerEvent) => {
       if (interactiveLabel && event.target instanceof Node && node.current?.contains(event.target)) return;

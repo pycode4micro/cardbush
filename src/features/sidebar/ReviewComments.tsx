@@ -5,7 +5,7 @@ import type { AppLanguage } from '../../types';
 import { basename } from '../../shared/localPaths';
 import type { DiffLine } from '../tools/toolChangeReports';
 import { diffLineNumbers } from '../tools/diffSyntax';
-import { reviewAnchor, reviewLineLabel, reviewRevision, type ReviewComment, type ReviewCommentAnchor, type ReviewCommentState } from './reviewCommentModel';
+import { reviewAnchor, reviewLineLabel, type ReviewComment, type ReviewCommentAnchor, type ReviewCommentDraft, type ReviewCommentState } from './reviewCommentModel';
 
 export type ReviewCommentsChange = Dispatch<SetStateAction<ReviewCommentState>>;
 type ReviewCommentsValue = {
@@ -16,47 +16,48 @@ type ReviewCommentsValue = {
   lines: DiffLine[];
   state: ReviewCommentState;
   onChange: ReviewCommentsChange;
-  rows: Map<number, { comments: ReviewComment[]; draft: boolean; selected: boolean }>;
+  comments: ReviewComment[];
+  draft: ReviewCommentDraft | null;
 };
 const ReviewCommentsContext = createContext<ReviewCommentsValue | null>(null);
 
-export function ReviewCommentsScope({ language, path, turnId, lines, state, onChange, children }: {
-  language: AppLanguage; path: string; turnId: string; lines: DiffLine[];
+export function ReviewCommentsScope({ language, path, turnId, revision, lines, state, onChange, children }: {
+  language: AppLanguage; path: string; turnId: string; revision: string; lines: DiffLine[];
   state?: ReviewCommentState; onChange?: ReviewCommentsChange; children: ReactNode;
 }) {
-  const revision = useMemo(() => reviewRevision(lines), [lines]);
-  const value = useMemo(() => {
+  const value = useMemo<ReviewCommentsValue | null>(() => {
     if (!state || !onChange) return null;
-    const rows: ReviewCommentsValue['rows'] = new Map();
-    const numbers = diffLineNumbers(lines);
     const matches = (anchor: ReviewCommentAnchor) => anchor.path === path && anchor.turnId === turnId && anchor.revision === revision;
     const comments = state.comments.filter(matches);
     const draft = state.draft && matches(state.draft) ? state.draft : null;
-    numbers.forEach((number, index) => {
-      const atEnd = (anchor: ReviewCommentAnchor) => (anchor.side === 'old' ? number.oldLine : number.newLine) === anchor.endLine;
-      const selectedLine = draft?.side === 'old' ? number.oldLine : number.newLine;
-      const rowComments = comments.filter(atEnd);
-      const rowDraft = !!draft && atEnd(draft);
-      const selected = !!draft && selectedLine != null && selectedLine >= draft.startLine && selectedLine <= draft.endLine;
-      if (rowComments.length || rowDraft || selected) rows.set(index, { comments: rowComments, draft: rowDraft, selected });
-    });
-    return { language, path, turnId, revision, lines, state, onChange, rows };
+    return { language, path, turnId, revision, lines, state, onChange, comments, draft };
   }, [language, path, turnId, revision, lines, state, onChange]);
   return <ReviewCommentsContext.Provider value={value}>{children}</ReviewCommentsContext.Provider>;
 }
 
-export function ReviewDiffLine({ index, oldLine, newLine, kind, children }: {
+export function ReviewDiffLine({ index, oldLine, newLine, kind, children, onRevealRow }: {
   index: number; oldLine: number | null; newLine: number | null; kind: string; children: ReactNode;
+  onRevealRow?: (index: number) => void;
 }) {
   const review = useContext(ReviewCommentsContext);
   const enabled = !!review && kind !== 'hunk' && (oldLine != null || newLine != null);
-  const row = review?.rows.get(index);
+  const atEnd = (anchor: ReviewCommentAnchor) => (anchor.side === 'old' ? oldLine : newLine) === anchor.endLine;
+  const rowComments = review?.comments.filter(atEnd);
+  const anchored = review?.draft;
+  const rowDraft = !!anchored && atEnd(anchored);
+  const selectedLine = anchored?.side === 'old' ? oldLine : newLine;
+  const selected = !!anchored && selectedLine != null && selectedLine >= anchored.startLine && selectedLine <= anchored.endLine;
   const open = (side: 'old' | 'new', extend: boolean, target: HTMLButtonElement) => {
     if (!review) return;
     const draft = review.state.draft;
     const extendDraft = extend && draft?.path === review.path && draft.turnId === review.turnId && draft.revision === review.revision && draft.side === side;
     if (draft && !extendDraft && (draft.text.trim() || draft.id)) {
-      target.closest('.change-review-dialog')?.querySelector<HTMLTextAreaElement>('.review-comment-editor textarea')?.focus();
+      const editor = target.closest('.change-review-dialog')?.querySelector<HTMLTextAreaElement>('.review-comment-editor textarea');
+      if (editor) editor.focus();
+      else if (anchored && onRevealRow) {
+        const line = diffLineNumbers(review.lines).findIndex(number => (anchored.side === 'old' ? number.oldLine : number.newLine) === anchored.endLine);
+        if (line >= 0) onRevealRow(line);
+      }
       return;
     }
     review.onChange(current => {
@@ -69,7 +70,7 @@ export function ReviewDiffLine({ index, oldLine, newLine, kind, children }: {
     });
   };
   return <>
-    <div className={`diff-line ${kind}${enabled ? ' review-commentable-line' : ''}${row?.selected ? ' review-comment-selected' : ''}`}>
+    <div data-diff-line-index={index} className={`diff-line ${kind}${enabled ? ' review-commentable-line' : ''}${selected ? ' review-comment-selected' : ''}`}>
       {children}
       {enabled && <span className="review-line-actions">
         <button type="button" className="review-add-comment" aria-label={uiText(review.language)('reviewComments.commentOnLine', { value1: newLine ?? oldLine })}
@@ -79,10 +80,10 @@ export function ReviewDiffLine({ index, oldLine, newLine, kind, children }: {
         {newLine != null && <button type="button" className="review-line-target new" aria-label={`R${newLine}`} title={uiText(review.language)('reviewComments.commentOnTheUpdatedLine')} onClick={event => open('new', event.shiftKey, event.currentTarget)} />}
       </span>}
     </div>
-    {review && row && (row.comments.length > 0 || row.draft) && <div className="review-line-comments">
-      {row.comments.filter(comment => review.state.draft?.id !== comment.id).map(comment => <ReviewCommentCard key={comment.id} comment={comment} language={review.language} onChange={review.onChange} editing={!!review.state.draft} />)}
-      {row.draft && <ReviewCommentEditor state={review.state} onChange={review.onChange} language={review.language} />}
-    </div>}
+    {review && (rowComments?.length || rowDraft) ? <div className="review-line-comments">
+      {rowComments?.filter(comment => review.state.draft?.id !== comment.id).map(comment => <ReviewCommentCard key={comment.id} comment={comment} language={review.language} onChange={review.onChange} editing={!!review.state.draft} />)}
+      {rowDraft && <ReviewCommentEditor state={review.state} onChange={review.onChange} language={review.language} />}
+    </div> : null}
   </>;
 }
 

@@ -621,6 +621,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         project={project}
         conversations={quickList ? projectConversations.filter(item => !pinnedConversationIds.has(item.id)) : projectConversations}
         previewConversations={projectConversations}
+        showConversationHoverPreview={quickList !== undefined}
         activeConversationId={quickList?.selectedId ?? activeConversationId}
         runningConversationIds={runningConversationIds}
         attentionByConversation={attentionByConversation}
@@ -774,6 +775,7 @@ function ProjectBlock({
   project,
   conversations: projectConversations,
   previewConversations,
+  showConversationHoverPreview,
   activeConversationId,
   runningConversationIds,
   attentionByConversation,
@@ -798,6 +800,7 @@ function ProjectBlock({
   project: ProjectItem;
   conversations: ConversationSummary[];
   previewConversations: ConversationSummary[];
+  showConversationHoverPreview: boolean;
   activeConversationId: string;
   runningConversationIds?: Set<string>;
   attentionByConversation?: Record<string, SessionAttentionState>;
@@ -905,6 +908,7 @@ function ProjectBlock({
           attention={attentionByConversation?.[conversation.id]}
           unread={unreadConversationIds.has(conversation.id)}
           nested
+          showHoverPreview={showConversationHoverPreview}
           projectLabel={project.title}
           pinned={pinnedConversationIds.has(conversation.id)}
           language={language}
@@ -940,6 +944,7 @@ function ConversationRow({
   remote = false,
   quickActionsAvailable = true,
   drawer = false,
+  showHoverPreview = true,
   projectLabel,
   hostLabel,
   pinned,
@@ -963,6 +968,7 @@ function ConversationRow({
   remote?: boolean;
   quickActionsAvailable?: boolean;
   drawer?: boolean;
+  showHoverPreview?: boolean;
   projectLabel?: string;
   hostLabel?: string;
   pinned: boolean;
@@ -985,7 +991,7 @@ function ConversationRow({
   const [renameDraft, setRenameDraft] = useState(displayTitle);
   const [renamePending, setRenamePending] = useState(false);
   const [renameFailed, setRenameFailed] = useState(false);
-  const hoverPreview = useHoverPreview(editingTitle || drawer, { interactive: true });
+  const hoverPreview = useHoverPreview(!showHoverPreview || editingTitle || drawer, { interactive: true });
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
   const beginRename = useCallback(() => {
     setRenameDraft(displayTitle);
@@ -1040,7 +1046,7 @@ function ConversationRow({
   };
   return (<>
     <div
-      {...hoverPreview.triggerProps}
+      {...(showHoverPreview ? hoverPreview.triggerProps : undefined)}
       className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}${remote ? ' remote-conversation' : ''}${quickActionsAvailable ? '' : ' without-quick-actions'}`}
       data-recent-session={drawer ? conversation.id : undefined}
       draggable={!remote && !editingTitle}
@@ -1189,7 +1195,7 @@ function ConversationRow({
         <Archive/>
       </button>}
     </div>
-    <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running && attention?.kind === 'completed' ? undefined : attention} onRename={beginRename} />
+    {showHoverPreview && <ConversationHoverPreview preview={hoverPreview} conversation={conversation} projectLabel={projectLabel} hostLabel={hostLabel} remote={remote} language={language} attention={running && attention?.kind === 'completed' ? undefined : attention} onRename={beginRename} />}
   </>);
 }
 
@@ -1590,8 +1596,9 @@ export function ConversationChangeDialog({
                   </p>
                 ) : (
                   <ReviewCommentsScope language={language} path={selectedItem.file.path} turnId={selectedTurnId}
-                    lines={selectedItem.file.lines} state={reviewComments} onChange={onReviewCommentsChange}>
-                    <ToolFileChangeView file={selectedItem.file} language={language} />
+                    revision={commentRevision} lines={selectedItem.file.lines} state={reviewComments} onChange={onReviewCommentsChange}>
+                    <ToolFileChangeView key={JSON.stringify([conversation.id, selectedTurnId, selectedItem.file.path])}
+                      file={selectedItem.file} language={language} review />
                   </ReviewCommentsScope>
                 )}
               </DeferredResizePreview>

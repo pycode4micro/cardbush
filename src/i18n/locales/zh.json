@@ -501,7 +501,6 @@
     "assistantView.connectSshManageHosts": "连接 SSH / 管理主机",
     "assistantView.remoteComputer": "云端电脑",
     "assistantView.replying": "正在回复",
-    "assistantView.inCallContinuesInTheBackground": "通话中 · 切换页面仍可继续",
     "assistantView.retryReply": "重试回复",
     "assistantView.preparingMessage": "准备消息中…",
     "assistantView.sendingMessage": "发送中…",

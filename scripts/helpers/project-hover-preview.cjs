@@ -50,9 +50,27 @@ module.exports = async function testProjectHoverPreview({ run, until, pause, win
       showProjectFixture();
     `);
     await until("!!projectRow('hover-project')", 'project fixture mounted');
-    const hoverProject = async (id = 'hover-project') => {
+    const moveOutsideList = async () => {
       window.webContents.sendInputEvent({ type: 'mouseMove', x: 700, y: 12 });
       await pause(160);
+    };
+    await run("projectRow('hover-project').click()");
+    await until("!!document.querySelector('.workspace-project-list .conversation-row')", 'project conversations expanded');
+    await moveOutsideList();
+    const chatRow = "document.querySelector('.workspace-project-list .conversation-row')";
+    const chatPoint = await run(`(() => {
+      const rect = ${chatRow}.getBoundingClientRect();
+      return { x: Math.round(rect.left + 60), y: Math.round(rect.top + rect.height / 2) };
+    })()`);
+    window.webContents.sendInputEvent({ type: 'mouseMove', ...chatPoint });
+    await until(`${chatRow}.matches('.conversation-row:hover')`, 'pointer enters a Projects page conversation');
+    await pause(350);
+    assert.equal(await run("!!document.querySelector('.conversation-hover-preview')"), false, 'Projects page conversations do not open metadata cards');
+    assert.deepEqual(await run(`Array.from(${chatRow}.querySelectorAll('.conversation-pin, .conversation-archive'),
+      button => getComputedStyle(button).opacity)`), ['1', '1'], 'pin and archive stay available on hover');
+    await run("projectRow('hover-project').click()");
+    const hoverProject = async (id = 'hover-project') => {
+      await moveOutsideList();
       const point = await run(`(() => { const r = projectRow('${id}').getBoundingClientRect(); return {x: Math.round(r.left + 50), y: Math.round(r.top + r.height / 2)}; })()`);
       window.webContents.sendInputEvent({ type: 'mouseMove', ...point });
       await until("!!document.querySelector('.project-hover-preview:popover-open')", 'project hover card');

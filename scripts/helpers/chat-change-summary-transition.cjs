@@ -111,9 +111,20 @@ module.exports = async ({ run, until, pause, window, root }) => {
       pointer('mouseUp', targets.row);
       await until("changeTransitionReview?.[0] === 'src/next-turn.ts' && !document.querySelector('.turn-change-preview')", 'clicking the file opens its changes and closes the list');
       assert.equal(await run('changeTransitionReview[1]'), 'next-turn', 'file review stays scoped to its owning turn');
-      await run("document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse'}));document.querySelector('.turn-change-review').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));void 0");
-      await until("!!document.querySelector('.turn-change-preview')", 'file list reopens after review');
-      await run("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0");
+      await run(`(() => {
+        window.changeTransitionEscapeSent = false;
+        const openPreview = new MutationObserver(() => {
+          if (!document.querySelector('.turn-change-preview:popover-open')) return;
+          openPreview.disconnect();
+          changeTransitionEscapeSent = true;
+          document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        });
+        openPreview.observe(document.querySelector('.app'),{subtree:true,childList:true});
+        const trigger = document.querySelector('.turn-change-review');
+        trigger.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse'}));
+        trigger.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));
+      })()`);
+      await until('changeTransitionEscapeSent', 'file list reopens after review and receives Escape immediately');
       await until("!document.querySelector('.turn-change-preview')", 'Escape dismisses the file hover');
       await run(`
         window.changeHoverReports = chatProps.changeReports;

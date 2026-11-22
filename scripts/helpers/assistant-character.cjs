@@ -1,12 +1,13 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 module.exports = async ({read,until,fill,click,pause,win,directory}) => {
-    const characters = '.sidebar-footer .assistant-character, .assistant-view .topbar .assistant-character';
-    const assertAnimatedCharacters = async state => {
-      await until(`Array.from(document.querySelectorAll('${characters}')).length===2 && Array.from(document.querySelectorAll('${characters}')).every(n=>n.matches('.assistant-sprite[data-state=${state}]')&&n.querySelector('img')?.naturalWidth>0)`);
-      assert.equal(await read(`Array.from(document.querySelectorAll('${characters} img')).some(n=>n.src===fixture.legacyAvatar)`), false, 'saved static images never replace the skin');
+    const stage = '[data-nav-section=assistant] .assistant-stage';
+    const character = `${stage} .assistant-character`;
+    const assertAnimatedCharacter = async state => {
+      await until(`document.querySelector('${character}.assistant-sprite[data-state=${state}] img')?.naturalWidth>0`);
+      assert.notEqual(await read(`document.querySelector('${character} img').src`), await read('fixture.legacyAvatar'), 'saved static images never replace the skin');
     };
     await read('document.documentElement.dataset.motionPreference="off";fixture.busy=false;delete fixture.activity;void 0');
-    await assertAnimatedCharacters('idle');
+    await assertAnimatedCharacter('idle');
     assert.equal(await read('localStorage.cardbush_personal_assistant_avatar_v1===fixture.legacyAvatar'), true, 'exercise an existing, valid saved avatar from first mount');
     const openSettings = async () => { await click('.profile-trigger'); await click('[data-profile-action=assistant]'); }, dialog = '.assistant-settings-dialog';
     const bounds = await read('document.querySelector(".composer-surface").getBoundingClientRect().toJSON()');
@@ -37,7 +38,7 @@ module.exports = async ({read,until,fill,click,pause,win,directory}) => {
     win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
     await until('!document.querySelector(".assistant-settings-dialog")');
     assert.equal(await read('document.activeElement.title'), '个人资料', 'closing returns focus to the profile trigger');
-    assert.equal(await read('document.querySelector(".assistant-view .topbar h1").textContent'), 'assistant');
+    assert.equal(await read('document.querySelector(".assistant-view").getAttribute("aria-label")'), 'assistant');
     await openSettings(); await until('document.querySelector(".assistant-settings-heading .assistant-sprite img")?.naturalWidth>0');
     await fill(dialog+' input[name="assistant-name"]', 'Lumi'); await fill(dialog+' textarea', '温和、可靠');
     win.webContents.invalidate(); await pause(250);
@@ -45,7 +46,7 @@ module.exports = async ({read,until,fill,click,pause,win,directory}) => {
     await read('fixture.theme("bright");void 0'); win.webContents.invalidate(); await pause(250);
     fs.writeFileSync(path.join(directory, 'assistant-settings-light.png'), (await win.webContents.capturePage()).toPNG());
     await read('fixture.theme("dark");void 0'); await click(dialog+' button[type=submit]');
-    await until('document.querySelector(".assistant-view .topbar h1").textContent==="Lumi"');
+    await until('document.querySelector(".assistant-view").getAttribute("aria-label")==="Lumi"');
     assert.equal(await read('document.querySelectorAll(".assistant-avatar").length'), 0, 'saving settings never revives the old static avatar');
     assert.equal(await read('localStorage.cardbush_personal_assistant_avatar_v1===fixture.legacyAvatar'), true, 'saving preferences leaves legacy user data untouched');
     assert.equal(await read('JSON.stringify(JSON.parse(localStorage.cardbush_personal_assistant_v1)).includes("data:image")'), false, 'images stay out of the inference profile');
@@ -63,32 +64,31 @@ module.exports = async ({read,until,fill,click,pause,win,directory}) => {
     assert.equal(await read('!!document.querySelector(".assistant-view button[aria-label=员工管理]")'), false, 'the Assistant does not offer team administration');
     await read('fixture.hide();void 0'); await until('document.querySelector(".assistant-view").hidden');
     await read('fixture.show();fixture.busy=true;void 0'); await until('document.querySelector(".assistant-character[data-state=thinking]")');
-    const stage = '.sidebar-footer .assistant-stage';
     const stageCue = cue => until(`document.querySelector('${stage} [data-cue=${cue}]')`);
     const checkAction = async (state, row) => {
-      await assertAnimatedCharacters(state);
-      assert.deepEqual(await read(`Array.from(document.querySelectorAll('${characters}')).map(n=>{
+      await assertAnimatedCharacter(state);
+      assert.deepEqual(await read(`(() => {
+        const n=document.querySelector('${character}');
         const image=n.querySelector('img'),animation=image.getAnimations().find(a=>a.animationName==='assistant-sprite-frames');
         if(!animation)return null;
         animation.pause();animation.currentTime=0;const first=getComputedStyle(image).translate;
         animation.currentTime=animation.effect.getTiming().duration/2;
         return [n.style.getPropertyValue('--clip-y'),getComputedStyle(image).imageRendering,first!==getComputedStyle(image).translate];
-      })`), [[`${-10*row}%`,'pixelated',true],[`${-10*row}%`,'pixelated',true]], state+' selects and advances its animation in both entry points');
+      })()`), [`${-10*row}%`,'pixelated',true], state+' selects and advances its animation in the sidebar');
     };
     for (const [row,state] of ['idle','thinking','working','waiting','retrying','error'].entries()) {
       await read(`fixture.activity=${JSON.stringify(state)};void 0`);
       await checkAction(state, row);
     }
-    await read('fixture.activity="working";void 0'); await assertAnimatedCharacters('working');
+    await read('fixture.activity="working";void 0'); await assertAnimatedCharacter('working');
     for (const [offset,state] of ['connecting','listening','speaking','muted'].entries()) {
       await read(`fixture.callPhase(${JSON.stringify(state)});void 0`);
       await checkAction(state, offset+6);
     }
-    await read('fixture.callPhase(null);void 0'); await assertAnimatedCharacters('working');
+    await read('fixture.callPhase(null);void 0'); await assertAnimatedCharacter('working');
     for (const [mood,gesture] of [['happy','nod'],['curious','glance'],['caring','soften'],['surprised','lift']]) {
       await read(`fixture.expression={mood:'${mood}',replyId:'expression-${mood}',expiresAt:Date.now()+10000};void 0`);
       await until(`document.querySelectorAll('${stage} .robot-expression[data-expression=${mood}][data-gesture=${gesture}] path').length>0`);
-      assert.ok(await read(`document.querySelector('.assistant-view .topbar .robot-expression[data-expression=${mood}] path')`), 'the reply expression also reaches the header');
     }
     for (const [tool,prop,gesture] of [
       ['read_file','page','scan'],['edit_file','pencil','write'],['search_plugins','lens','scan'],['terminal_exec','terminal','type'],
@@ -99,10 +99,9 @@ module.exports = async ({read,until,fill,click,pause,win,directory}) => {
       await read(`fixture.toolName='${tool}';void 0`);
       await until(`document.querySelector('${stage} .assistant-tool-prop[data-gesture=${gesture}] [data-tool-prop=${prop}] path')`);
       assert.equal(await read(`document.querySelectorAll('${stage} .assistant-tool-prop').length`), 1, 'switching tools replaces the prop');
-      assert.ok(await read(`document.querySelector('.assistant-view .topbar [data-tool-prop=${prop}]')`), tool+' also updates the header');
     }
     await read('fixture.activity="thinking";fixture.toolName="search_plugins";delete fixture.expression;void 0');
-    await assertAnimatedCharacters('thinking');
+    await assertAnimatedCharacter('thinking');
     await until(`document.querySelector('${stage} [data-tool-prop=lens]') && !document.querySelector('${stage} [data-cue=thought]')`);
     await read('delete fixture.toolName;void 0');
     await stageCue('thought');

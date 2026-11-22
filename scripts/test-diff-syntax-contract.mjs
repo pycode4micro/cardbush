@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
-const { diffLanguageForPath, diffLineNumbers, diffLinePrefix, diffLineSource } = await loadChatTranscript({
+const { diffBlocks, diffLanguageForPath, diffLineNumbers, diffLinePrefix, diffLineSource, shouldVirtualizeDiff } = await loadChatTranscript({
   source: `export * from ${JSON.stringify(path.resolve('src/features/tools/diffSyntax.ts'))};`,
 });
 
@@ -34,12 +34,27 @@ assert.deepEqual(
   ],
 );
 
+const codeLine = { kind: 'addition', text: '+.selector { display: block; }' };
+const largeDiff = [...Array(3_392).fill(codeLine), { ...codeLine, text: '+' + 'x'.repeat(8_000) }, codeLine];
+assert.equal(shouldVirtualizeDiff([codeLine]), false);
+assert.equal(shouldVirtualizeDiff(largeDiff), true);
+assert.equal(shouldVirtualizeDiff(largeDiff.slice(-2)), true);
+const blocks = diffBlocks(largeDiff);
+assert.equal(blocks[0].start, 0);
+assert.equal(blocks.at(-1).end, largeDiff.length);
+for (const [index, block] of blocks.entries()) {
+  if (index > 0) assert.equal(block.start, blocks[index - 1].end);
+  assert.ok(block.end - block.start <= 24);
+  if (block.highlight) assert.ok(largeDiff.slice(block.start, block.end).reduce((size, line) => size + line.text.length + 1, 0) <= 12_000);
+}
+assert.deepEqual({ ...blocks.at(-2) }, { start: 3_392, end: 3_393, highlight: false });
+
 const renderer = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolChangeBlock.tsx'),
   'utf8',
 );
 assert.match(renderer, /\(\) => import\('\.\/DiffSyntaxLines'\)/);
-assert.match(renderer, /<Suspense fallback=\{<PlainDiffLines/);
+assert.match(renderer, /<Suspense fallback=\{<DiffRows/);
 
 const highlightedDiff = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'tools', 'DiffSyntaxLines.tsx'),
@@ -49,8 +64,10 @@ const highlightedSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'tools', 'SourceSyntaxLines.tsx'),
   'utf8',
 );
-assert.match(highlightedDiff, /className="diff-line-number old"/);
-assert.match(highlightedDiff, /className="diff-line-number new"/);
+const diffRows = fs.readFileSync(path.join(process.cwd(), 'src', 'features', 'tools', 'DiffRows.tsx'), 'utf8');
+assert.match(highlightedDiff, /<DiffRows \{\.\.\.rows\}/);
+assert.match(diffRows, /className="diff-line-number old"/);
+assert.match(diffRows, /className="diff-line-number new"/);
 assert.match(highlightedSource, /className="source-line-number"/);
 assert.match(highlightedSource, /diffLanguageForPath\(path\)/);
 

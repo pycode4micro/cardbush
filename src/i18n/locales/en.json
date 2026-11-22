@@ -502,7 +502,6 @@
     "assistantView.connectSshManageHosts": "Connect SSH / manage hosts",
     "assistantView.remoteComputer": "Remote computer",
     "assistantView.replying": "Replying",
-    "assistantView.inCallContinuesInTheBackground": "In call · continues in the background",
     "assistantView.retryReply": "Retry reply",
     "assistantView.preparingMessage": "Preparing message…",
     "assistantView.sendingMessage": "Sending…",

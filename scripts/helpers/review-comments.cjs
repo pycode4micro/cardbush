@@ -107,4 +107,36 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await until("!document.querySelector('.deferred-resize-preview[data-resizing]')", 'comment preview settles after the width change');
   assert.equal(await run("(()=>{const editor=document.querySelector('.review-comment-editor'),pane=document.querySelector('.change-review-dialog');return editor.getBoundingClientRect().right<=pane.getBoundingClientRect().right})()"), true, 'comment editor fits a narrow panel');
   console.log('Review comments: themed menu, disabled revert, line ranges, editing, session/turn isolation, compose and 3 themes passed.');
+
+  await run(`
+    commentWidth = 720;
+    commentStates['session-a'] = views.emptyReviewComments;
+    const cssLines = [{kind:'hunk',text:'@@ -26 +500,3390 @@'},
+      {kind:'deletion',text:'-.before { display: none; }'},
+      ...Array.from({length:3390}, (_, index) => ({kind:'addition',text:'+ .rule-' + index + ' { display: grid; gap: 8px; }'}))];
+    const css = {path:'C:/fixture/style.css',additions:3390,deletions:1,diff:'',lines:cssLines};
+    commentReports = [{id:'large',turnId:'turn-2',messageId:'large',fileCount:1,additions:3390,deletions:1,files:[css]}];
+    commentClosed = true; showComments();
+  `);
+  await until("!document.querySelector('.change-review-dialog')", 'close previous review');
+  await run('commentClosed=false;showComments()');
+  await until("!!document.querySelector('.diff-lines[data-render-mode=virtual] .syntax-highlighted .diff-line[data-diff-line-index=\"0\"]')", 'virtual diff highlights its first block');
+  const rowCount = () => run("document.querySelectorAll('.change-review-diff-pane .diff-line').length");
+  assert.ok(await rowCount() < 120, 'initial DOM size depends on viewport, not the number of changed lines');
+  assert.equal(await run("document.querySelector('.diff-line.deletion .diff-line-number.old').textContent"), '26', 'original line number follows the hunk');
+  await run("clickLine('R',500)");
+  await until("!!document.querySelector('.review-comment-editor textarea')", 'begin comment at the first hunk');
+  await run("commentInput('Keep this draft while scrolling')");
+  await until("commentStates['session-a']?.draft?.text === 'Keep this draft while scrolling'", 'draft saved in review state');
+  await run("const diffPane = document.querySelector('.change-review-diff-pane .tool-file-change'); diffPane.scrollTop = diffPane.scrollHeight");
+  await until("document.querySelector('.diff-line[data-diff-line-index=\"3391\"] code')?.textContent.includes('.rule-3389')", 'the last changed line remains reachable');
+  assert.ok(await rowCount() < 120, 'scrolling swaps blocks instead of retaining them');
+  assert.equal(await run("!!document.querySelector('.review-comment-editor textarea')"), false, 'the offscreen draft row is unmounted');
+  assert.equal(await run("document.querySelector('.diff-line[data-diff-line-index=\"3391\"] .diff-line-number.new').textContent"), '3889');
+  await run("clickLine('R',3889)");
+  await until("document.activeElement?.matches('.review-comment-editor textarea') && document.activeElement.value === 'Keep this draft while scrolling'", 'return to the offscreen draft without overwriting it');
+  await run("document.querySelector('.review-comment-save').click()");
+  await until("commentStates['session-a']?.comments.length === 1", 'save the restored draft');
+  assert.equal(await run("commentStates['session-a'].comments[0].startLine"), 500);
+  console.log('Large review: bounded mounting, syntax, complete scroll range, hunk line numbers and draft navigation passed.');
 };

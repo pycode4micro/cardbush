@@ -1,22 +1,23 @@
 import { uiText } from '../../i18n';
 import { ChevronDown, LoaderCircle, RefreshCw, RotateCcw, RotateCw } from 'lucide-react';
-import { Suspense, useCallback, useContext, useRef, useState } from 'react';
+import { memo, Suspense, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 import type { AppLanguage } from '../../types';
-import type { DiffLine, ToolChangeReport, ToolFileChange } from './toolChangeReports';
+import type { ToolChangeReport, ToolFileChange } from './toolChangeReports';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { ToolLogo } from './ToolLogo';
-import { diffLineNumbers, diffLinePrefix, diffLineSource } from './diffSyntax';
+import { diffBlocks, diffLineNumbers, shouldVirtualizeDiff } from './diffSyntax';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 import { WorkspaceChangeStateContext, workspaceChangeReverted } from './WorkspaceChangeStateContext';
-import { ReviewDiffLine } from '../sidebar/ReviewComments';
+import { DiffRows, type DiffRowsProps } from './DiffRows';
 
-const DiffSyntaxLines = recoverableLazy<{ lines: DiffLine[]; path: string; language: AppLanguage }>(
+const DiffSyntaxLines = recoverableLazy<DiffRowsProps & { path: string }>(
   'diff-syntax',
   () => import('./DiffSyntaxLines'),
   (props) => <>
     <DeferredModuleNotice language={props.language} basicPreview />
-    <PlainDiffLines lines={props.lines} />
+    <DiffRows {...props} />
   </>,
 );
 
@@ -186,13 +187,18 @@ function toolChangeTitle({
   return compactPath ? `${verb} ${compactPath}` : verb;
 }
 
-export function ToolFileChangeView({
+export const ToolFileChangeView = memo(function ToolFileChangeView({
   file,
   language,
+  review = false,
 }: {
   file: ToolFileChange;
   language: AppLanguage;
+  review?: boolean;
 }) {
+  const numbers = useMemo(() => diffLineNumbers(file.lines), [file.lines]);
+  const largeReview = useMemo(() => review && shouldVirtualizeDiff(file.lines), [review, file.lines]);
+  const rows = { lines: file.lines, numbers, language, path: file.path };
   return (
     <section className="tool-file-change">
       <header>
@@ -204,51 +210,55 @@ export function ToolFileChangeView({
       </header>
       {file.lines.length === 0 ? (
         <p>{uiText(language)('toolChangeBlock.noDiffDetailsAvailable')}</p>
-      ) : (
-        <Suspense fallback={<PlainDiffLines lines={file.lines} />}>
-          <DiffSyntaxLines lines={file.lines} path={file.path} language={language} />
-        </Suspense>
-      )}
+      ) : largeReview ? <VirtualDiffLines {...rows} /> : <div className="diff-lines"><HighlightedDiffRows {...rows} /></div>}
     </section>
   );
+});
+
+function HighlightedDiffRows(props: DiffRowsProps & { path: string }) {
+  return <Suspense fallback={<DiffRows {...props} />}>
+    <DiffSyntaxLines {...props} />
+  </Suspense>;
 }
 
-function PlainDiffLines({ lines }: { lines: DiffLine[] }) {
-  const lineNumbers = diffLineNumbers(lines);
-  return (
-    <div className="diff-lines">
-      {lines.map((line, index) => (
-        <DiffLineView
-          // eslint-disable-next-line react/no-array-index-key
-          key={index}
-          line={line}
-          index={index}
-          oldLine={lineNumbers[index]?.oldLine ?? null}
-          newLine={lineNumbers[index]?.newLine ?? null}
-        />
-      ))}
-    </div>
-  );
-}
+const diffOverscan = { top: 240, bottom: 320 };
 
-function DiffLineView({
-  line,
-  index,
-  oldLine,
-  newLine,
-}: {
-  line: DiffLine;
-  index: number;
-  oldLine: number | null;
-  newLine: number | null;
-}) {
-  return (
-    <ReviewDiffLine index={index} kind={line.kind} oldLine={oldLine} newLine={newLine}>
-      <span className="diff-marker" />
-      <span className="diff-line-number old">{oldLine ?? ''}</span>
-      <span className="diff-line-number new">{newLine ?? ''}</span>
-      <span className="diff-prefix" aria-hidden="true">{diffLinePrefix(line)}</span>
-      <code>{diffLineSource(line) || ' '}</code>
-    </ReviewDiffLine>
-  );
+function VirtualDiffLines(rows: DiffRowsProps & { path: string }) {
+  const root = useRef<HTMLDivElement>(null);
+  const list = useRef<VirtuosoHandle>(null);
+  const [scrollParent, setScrollParent] = useState<HTMLElement>();
+  const blocks = useMemo(() => diffBlocks(rows.lines), [rows.lines]);
+  const pendingReveal = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const parent = root.current?.closest<HTMLElement>('.tool-file-change');
+    if (parent) setScrollParent(parent);
+  }, []);
+  const revealMountedRow = useCallback(() => {
+    const index = pendingReveal.current;
+    if (index === null) return;
+    const row = root.current?.querySelector(`[data-diff-line-index="${index}"]`);
+    const editor = row?.nextElementSibling?.querySelector<HTMLTextAreaElement>('textarea');
+    if (!editor) return;
+    pendingReveal.current = null;
+    editor.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    editor.focus({ preventScroll: true });
+  }, []);
+  const revealRow = useCallback((index: number) => {
+    pendingReveal.current = index;
+    revealMountedRow();
+    if (pendingReveal.current === null) return;
+    // The inline editor remounts only after its virtual block enters the viewport.
+    const block = blocks.findIndex(({ start, end }) => index >= start && index < end);
+    if (block >= 0) list.current?.scrollToIndex({ index: block, align: 'start' });
+  }, [blocks, revealMountedRow]);
+
+  return <div ref={root} className="diff-lines" data-render-mode="virtual">
+    {scrollParent && <Virtuoso ref={list} customScrollParent={scrollParent} data={blocks}
+      initialItemCount={1} increaseViewportBy={diffOverscan}
+      itemsRendered={() => { if (pendingReveal.current !== null) requestAnimationFrame(revealMountedRow); }}
+      itemContent={(_index, { start, end, highlight }) => {
+        const block = { ...rows, start, end, onRevealRow: revealRow };
+        return highlight ? <HighlightedDiffRows {...block} /> : <DiffRows {...block} />;
+      }} />}
+  </div>;
 }

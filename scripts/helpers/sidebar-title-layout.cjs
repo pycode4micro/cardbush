@@ -29,12 +29,13 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
       changeReportsByConversation: {}, onSectionChange: sidebarNoop,
       onConversationChange: id => sidebarSelections.push(id),
       onCreateConversation: sidebarNoop, onAddProject: sidebarNoop, onProjectAction: sidebarNoop,
+      showQuickSections: true, quickNavigation: inline => inline?.content,
       onDeleteConversation: sidebarNoop, onRenameConversation: async () => true,
       onOpenConversationChanges: sidebarNoop, onOpenSettings: sidebarNoop,
     };
     window.showSidebarFixture = patch => {
       Object.assign(sidebarFixtureProps, patch);
-      renderView(h(WorkspaceListFixture, sidebarFixtureProps));
+      renderView(h(views.ChatSidebar, sidebarFixtureProps));
     };
     showSidebarFixture({});
     window.sidebarRow = index => [...document.querySelectorAll('.conversation-row')]
@@ -60,6 +61,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     };
     undefined;
   `);
+  await until("document.querySelectorAll('.sidebar [data-workspace-drop=fixture-project] .conversation-row').length === 4", 'sidebar project conversations expanded');
   await until("document.querySelectorAll('.conversation-row .conversation-title').length === 5", 'sidebar fixture rows');
   const moveAway = async () => {
     window.webContents.sendInputEvent({ type: 'mouseMove', x: 450, y: 10 });

@@ -16,9 +16,8 @@ export function TopBar({
   onToggleInspector,
   workspaceControl,
   actionsTarget,
-  titleIcon,
 }: {
-  title: string;
+  title?: string;
   language: AppLanguage;
   conversationContentAvailable?: boolean;
   workSummaryVisible?: boolean;
@@ -28,7 +27,6 @@ export function TopBar({
   onToggleInspector?: () => void;
   workspaceControl?: ReactNode;
   actionsTarget?: HTMLElement | null;
-  titleIcon?: ReactNode;
 }) {
   const actions = (
     <>
@@ -61,10 +59,9 @@ export function TopBar({
     </>
   );
   if (actionsTarget !== undefined) return actionsTarget ? createPortal(actions, actionsTarget) : null;
-  const displayTitle = conversationDisplayTitle(title);
-  return <div className="topbar">
-    {titleIcon}
-    <h1 title={displayTitle}>{displayTitle}</h1>
+  const displayTitle = title === undefined ? undefined : conversationDisplayTitle(title);
+  return <div className="topbar" data-titleless={displayTitle === undefined || undefined}>
+    {displayTitle !== undefined && <h1 title={displayTitle}>{displayTitle}</h1>}
     {actions}
   </div>;
 }

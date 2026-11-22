@@ -69,10 +69,27 @@ async function verify() {
   assert.equal(await js("!!document.querySelector('[data-nav-section=explore]')"), false);
   const visitAssistant = async () => {
     await click('[data-nav-section=assistant]');
-    await wait("document.querySelector('.assistant-view:not([hidden]) > .topbar h1')?.checkVisibility()");
+    await wait("document.querySelector('.assistant-view:not([hidden]) > .topbar')?.checkVisibility()");
   };
   win.setMinimumSize(550,380); win.setSize(1000,500);
   await wait('innerHeight < 600');
+  const drawer = '.desktop-shell[data-sidebar-layout=drawer]';
+  const clickDrawerNavigation = async section => {
+    if (await js(`!!document.querySelector('${drawer}.sidebar-is-collapsed')`)) {
+      await click('.window-sidebar-toggle');
+      await wait(`!!document.querySelector('${drawer}:not(.sidebar-is-collapsed)')`);
+    }
+    await click(`[data-nav-section=${section}]`);
+  };
+  await wait(`!!document.querySelector('${drawer}.sidebar-is-collapsed')`);
+  await clickDrawerNavigation('projects'); await active('projects');
+  await clickDrawerNavigation('chat');
+  await wait("!!document.querySelector('.desktop-shell[data-page=chat] .chat-panel')");
+  await clickDrawerNavigation('home');
+  await wait("!!document.querySelector('.desktop-shell[data-page=home] .desktop-library[data-page-visible=true]')");
+  assert.equal(await js("document.querySelector('.desktop-library[data-page-visible=true]').dataset.desktopPage"), 'overview',
+    'Home from a conversation does not restore the Projects page');
+  assert.equal(await js("document.querySelector('.sidebar [aria-current=page]')?.dataset.navSection"), 'home');
   const scroller = "document.querySelector('.desktop-library:not([data-page-visible=\"false\"])')";
   const scrollTo = async value => {
     const position = await js(`(()=>{const el=${scroller};el.scrollTop=${value};return el.scrollTop})()`);
@@ -229,6 +246,11 @@ async function verify() {
   await js("document.querySelector('.workspace-project-list .project-row').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:160}));void 0");
   await js("Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='项目详情' && b.checkVisibility()).click()");
   await active('project');
+  await visitAssistant();
+  await click('[data-nav-section=home]'); await active('overview');
+  await click('[data-history-action=back]');
+  await wait("!!document.querySelector('.desktop-shell[data-page=assistant]')");
+  await click('[data-history-action=back]'); await active('project');
   await click('[data-nav-section=home]'); await active('overview');
   await js("localStorage.setItem('cardbush_theme_mode','dark');localStorage.setItem('cardbush_language_mode','en')");
   await reload(); await wait("document.querySelector('.theme-dark .desktop-library h1')?.textContent==='Home'");

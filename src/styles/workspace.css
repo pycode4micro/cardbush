@@ -46,6 +46,10 @@
   border-bottom: 1px solid var(--border);
 }
 
+.topbar[data-titleless] {
+  justify-content: flex-end;
+}
+
 .topbar h1 {
   flex: 1;
   min-width: 0;
