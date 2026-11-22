@@ -8,7 +8,7 @@ const normalized = (path: string) => path.replaceAll('\\', '/');
 
 /** Dependency trees and generated state are not live package source. */
 export function ignoredCapabilityPath(path: string) {
-  return /(^|\/)(node_modules|\.git|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|logs|cache|\.cache|tmp|temp|output|outputs)(\/|$)/i.test(normalized(path));
+  return /(^|\/)(node_modules|\.cardbush-dependencies|\.git|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|logs|cache|\.cache|tmp|temp|output|outputs)(\/|$)/i.test(normalized(path));
 }
 
 /** Shared by the watcher and fingerprint scan so a source-only edit is noticed. */

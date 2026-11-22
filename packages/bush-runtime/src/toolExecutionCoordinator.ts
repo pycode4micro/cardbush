@@ -328,7 +328,8 @@ export class ToolExecutionCoordinator {
         );
       }
       if (admission.kind === "ask") {
-        const fullControl = turn?.request.permissionMode === "all_free";
+        const humanRequired = admission.request.requiresHuman === true;
+        const fullControl = !humanRequired && turn?.request.permissionMode === "all_free";
         const capabilitySessionId = this.#capabilitySessionId ?? identity.sessionId;
         const grantKeys = permissionGrantKeys(admission.request);
         if (fullControl) {
@@ -342,7 +343,7 @@ export class ToolExecutionCoordinator {
             const hookPermission = await hooks?.permission?.({ toolCall, input: parsedArguments, reason: admission.request.reason, signal });
             if (hookPermission) hookResult.messages.push(...hookPermission.messages);
             if (hookPermission?.permissionDecision === 'deny') return failedResult('plugin_hook_permission_rejected', hookPermission.blocked ?? 'Permission denied by a trusted hook.', actionManifest, {}, 'permission');
-            answer = hookPermission?.permissionDecision === 'allow'
+            answer = !humanRequired && hookPermission?.permissionDecision === 'allow'
               ? { decision: 'allow_once', grantedCapabilityIds: [...admission.request.capabilityIds] }
               : await requestPermission(admission.request);
           } catch (error) {
@@ -590,7 +591,7 @@ function permissionGrantKeys(request: ToolPermissionRequest): string[] {
     JSON.stringify([target.kind, target.value.trim()]),
   ))].sort();
   return request.capabilityIds.map((id) => `permission:${createHash("sha256")
-    .update(JSON.stringify([id.trim(), actions, targets]))
+    .update(JSON.stringify([id.trim(), actions, targets, ...(request.requiresHuman ? ['human'] : [])]))
     .digest("hex")}`);
 }
 

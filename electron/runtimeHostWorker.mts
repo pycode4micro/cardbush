@@ -555,6 +555,7 @@ function withBundledAppsServer(input: unknown, appsConfig: ReturnType<typeof rea
         preview_home_component: { permission: 'allow', parallelSafe: false, visibleToChild: true },
         list_plugin_connections: { permission: 'allow', parallelSafe: true, visibleToChild: true },
         list_plugin_marketplaces: { permission: 'allow', parallelSafe: true, visibleToChild: true },
+        inspect_plugin: { permission: 'allow', parallelSafe: true, visibleToChild: true },
       },
     });
   }

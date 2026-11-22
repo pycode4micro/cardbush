@@ -26,7 +26,7 @@ import {
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { ElectronRuntimeTransport } from '@cardbush/bush-runtime-electron';
 import { loadProductPluginCatalog, removeProductPlugin, withProductPluginLifecycle, type ProductPluginInstallOptions } from './productPlugins.js';
-import { installLocalProductPlugin } from './localPluginInstall.js';
+import { inspectLocalProductPlugin, installLocalProductPlugin } from './localPluginInstall.js';
 import { PluginConnectionManager } from './pluginConnectionManagement.mjs';
 import type { McpCredentialStore } from '@cardbush/bush-mcp-client';
 import type { ClientCredentialsPrompt, ClientCredentialsAnswer } from './pluginConnectionManagement.mjs';
@@ -281,17 +281,25 @@ export class ElectronProductHostController {
     return { snapshot, removed, pending };
   }
 
-  pluginInstallOptions(pluginId: string, signal: AbortSignal): ProductPluginInstallOptions {
-    return { expectedId: pluginId, signal, checkNewPackage: async id => {
+  pluginInstallOptions(pluginId: string, signal: AbortSignal, update?: { installedVersion: string; candidateVersion: string }): ProductPluginInstallOptions {
+    return { expectedId: pluginId, signal, expectedVersion: update?.candidateVersion, checkNewPackage: async id => {
       const plugin = (await this.#apps.read()).plugins.find(item => item.id === id);
       if (plugin?.removalPending) throw new Error('Finish uninstalling this plugin before reinstalling it.');
+      if (update) {
+        if (!plugin?.installed || plugin.source !== 'user' || plugin.version !== update.installedVersion) throw new Error('The installed package changed or cannot be replaced. Inspect it again.');
+        return true;
+      }
       if (plugin?.installed) throw Object.assign(new Error('The plugin is already installed.'), { code: 'plugin_already_installed' });
       if (plugin) throw new Error('This plugin is already managed by CardBush. Use the product plugin page to change its state.');
     } };
   }
 
   installLocalPlugin(sourcePath: string, options: ProductPluginInstallOptions) {
-    return installLocalProductPlugin(sourcePath, this.#userPluginRoot, undefined, options);
+    return installLocalProductPlugin(sourcePath, this.#userPluginRoot, (id, replace) => this.replacePlugin(id, replace), options);
+  }
+
+  inspectLocalPlugin(sourcePath: string) {
+    return inspectLocalProductPlugin(sourcePath, this.#userPluginRoot);
   }
 
   async pluginInstallation(pluginId: string) {

@@ -2,19 +2,15 @@ import { uiText } from '../../i18n';
 import { Eye, FileImage, LoaderCircle } from 'lucide-react';
 import { useCallback, useContext, useEffect, useState } from 'react';
 
-import { basename, isLocalFileResource, mediaResourceUrl, resourceTargetKind } from '../../shared/localPaths';
+import { basename, isLocalFileResource, resourceTargetKind } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { localImageUnavailable, recoverLocalImage, retryLocalImage } from '../../shared/localImageRecovery';
 import type { AppLanguage, ChatToolArtifact } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages/ImagePreviewDialog';
+import { ImageGalleryContext } from '../chatMessages/ImageGalleryContext';
+import { toolGalleryImage, type ImagePreviewSource } from '../chatMessages/imageGallery';
 import { ConversationHostContext } from '../conversationHost';
 import { useConversationFileSource } from '../conversationFileSource';
-
-type ToolImagePreview = {
-  name: string;
-  path: string;
-  src: string;
-};
 
 export function ToolImageArtifactViewer({
   artifacts,
@@ -27,25 +23,26 @@ export function ToolImageArtifactViewer({
 }) {
   const images = (artifacts ?? []).filter((artifact) => artifact.type === 'image');
   const host = useContext(ConversationHostContext);
+  const gallery = useContext(ImageGalleryContext);
   const [loadingPath, setLoadingPath] = useState('');
-  const [preview, setPreview] = useState<ToolImagePreview | null>(null);
+  const [preview, setPreview] = useState<ImagePreviewSource | null>(null);
   const [failedPaths, setFailedPaths] = useState<Set<string>>(() => new Set());
 
   const openImage = useCallback(async (artifact: ChatToolArtifact) => {
-    const pathValue = artifact.path.trim();
+    const pathValue = (host ? artifact.path : artifact.snapshotPath ?? artifact.path).trim();
     if (!pathValue || resourceTargetKind(pathValue) === 'unsupported') {
       setFailedPaths(current => new Set(current).add(pathValue));
       return;
     }
-    const name = artifact.name || basename(pathValue);
+    const image = toolGalleryImage(artifact);
     if (host) {
       // The shared dialog reads the selected host and owns the remote blob lifetime.
-      setPreview({ name, path: pathValue, src: '' });
+      setPreview(image);
       return;
     }
     setLoadingPath(pathValue);
     try {
-      let src = mediaResourceUrl(pathValue);
+      let src = image.src;
       if (
         isLocalFileResource(pathValue) &&
         window.cardbushDesktop?.readImageDataUrl
@@ -61,13 +58,13 @@ export function ToolImageArtifactViewer({
         next.delete(pathValue);
         return next;
       });
-      setPreview({ name, path: pathValue, src });
+      setPreview({ ...image, src });
     } catch {
       setFailedPaths((current) => new Set(current).add(pathValue));
     } finally {
       setLoadingPath('');
     }
-  }, [host]);
+  }, [host, language]);
 
   if (images.length === 0) return null;
 
@@ -76,8 +73,9 @@ export function ToolImageArtifactViewer({
       <div className={`tool-image-artifacts${variant === 'thumbnail' ? ' tool-image-thumbnails' : ''}`}>
         {images.map((artifact) => {
           const pathValue = artifact.path.trim();
-          const loading = loadingPath === pathValue;
-          const failed = failedPaths.has(pathValue);
+          const imagePath = host ? pathValue : artifact.snapshotPath ?? pathValue;
+          const loading = loadingPath === imagePath;
+          const failed = failedPaths.has(imagePath);
           const name = artifact.name || basename(pathValue);
           return (
             <button
@@ -92,7 +90,8 @@ export function ToolImageArtifactViewer({
               onContextMenu={host ? undefined : event => openFileContextMenu(event, pathValue, { language })}
             >
               {variant === 'thumbnail' ? <>
-                <ToolImageThumbnail key={pathValue} path={pathValue} name={name} language={language} />
+                <ToolImageThumbnail key={artifact.snapshotPath ?? imagePath} path={imagePath} name={name} language={language}
+                  snapshotId={artifact.snapshotPath ? artifact.id : undefined} />
                 {(loading || failed) && <span className="tool-image-thumbnail-overlay" aria-hidden="true">
                   {loading ? <LoaderCircle size={16} className="spin" /> : <span>{uiText(language)('toolImageArtifactViewer.retry')}</span>}
                 </span>}
@@ -115,6 +114,8 @@ export function ToolImageArtifactViewer({
       {preview && (
         <ImagePreviewDialog
           image={preview}
+          images={images.map(toolGalleryImage)}
+          initialScope={gallery ? 'session' : 'attachments'}
           language={language}
           onClose={() => setPreview(null)}
         />
@@ -123,9 +124,9 @@ export function ToolImageArtifactViewer({
   );
 }
 
-function ToolImageThumbnail({ path, name, language }: { path: string; name: string; language: AppLanguage }) {
+function ToolImageThumbnail({ path, name, language, snapshotId }: { path: string; name: string; language: AppLanguage; snapshotId?: string }) {
   const host = useContext(ConversationHostContext);
-  const { source, error } = useConversationFileSource(path);
+  const { source, error } = useConversationFileSource(path, true, { snapshotId });
   const [failed, setFailed] = useState(() => !host && localImageUnavailable(path));
   const [fallback, setFallback] = useState('');
   const [fallbackFailed, setFallbackFailed] = useState(false);

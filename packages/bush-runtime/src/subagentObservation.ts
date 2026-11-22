@@ -34,7 +34,7 @@ export function projectSubagentObservation(
         const p = event.payload;
         pending.set(p.permissionId, { kind: 'permission', contextId: identity.contextId, taskId: identity.taskId, interactionId: p.permissionId,
           text: p.reason, actionDigest: permissionDigest(p), operations: p.actions, resources: p.targets.map(({ kind, value }) => ({ kind, value })),
-          authority: typeof authority === 'function' ? authority(event) : authority,
+          authority: p.permissionRouting === 'user' ? 'human_required' : typeof authority === 'function' ? authority(event) : authority,
           ...(p.permissionEscalationReason ? { escalationReason: p.permissionEscalationReason } : {}),
           decisions: ['allow_once', 'deny'], createdAt: event.createdAt });
         break;

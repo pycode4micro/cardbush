@@ -67,6 +67,12 @@ window.cardbushDesktop={
   inspectLocalReference:async path=>({path,name:path.split(/[\\\\/]/).pop(),kind:'file'}),
 };
 const artifact={id:'tool-image',type:'image',path:files.third,name:'3.svg'};
+const snapshots=[files.first,files.second,files.third,files.external].map((snapshotPath,index)=>({
+  id:'snapshot-'+index,type:'image',path:index===2?files.first:snapshotPath,name:'Snapshot '+(index+1),snapshotPath
+}));
+const childGalleryMessages=[0,2].map(index=>({id:'child-'+index,role:'assistant',content:'',
+  toolExecutions:[{id:'view-'+index,name:'inject_image_input',metadata:{},artifacts:snapshots.slice(index,index+2)}]
+}));
 const original=[{id:'old',role:'user',content:'',attachments:[{id:'a',type:'image',path:files.first,name:'图片 #1.svg'}]},
  {id:'new',role:'assistant',content:'![第二张](<'+files.second.replaceAll('\\\\','/')+'>)\\n[外部图片](<'+files.external.replaceAll('\\\\','/')+'>)',
  loopHistory:[{id:'loop',role:'assistant',content:'',toolExecutions:[{id:'tool',name:'inject_image_input',state:'completed',summary:'image',output:'',success:true,durationMs:0,createdAt:'2026-09-16T00:00:00Z',contentOffset:0,metadata:{},artifacts:[artifact]}]}]}];
@@ -78,6 +84,9 @@ return <div className={'app '+theme}><ImageGalleryProvider sessionId={session} m
 {mode==='chat'?<><ToolImageArtifactViewer artifacts={[artifact]} language="zh"/><MessageBubble {...messageProps} message={messages[1]}/></>
 :mode==='inline'?<MessageBubble {...messageProps} message={{id:'inline',role:'assistant',content:inlineContent}}/>
 :mode==='document'?<MarkdownContent content={inlineContent} language="zh" compactImages={false}/>
+:mode==='child'?<ImageGalleryProvider sessionId="child" messages={childGalleryMessages} language="zh">
+  {[0,2].map(index=><ToolImageArtifactViewer key={index} artifacts={snapshots.slice(index,index+2)} language="zh" variant="thumbnail"/>)}
+</ImageGalleryProvider>
 :mode==='inspector'?<MediaInspectorPreview kind="image" source={galleryImage(files.second).src} path={files.second} language="zh" onLoadingChange={no}/>
 :<button id="open-attachments" onClick={()=>setOpen(true)}>附件</button>}
 {open&&<ImagePreviewDialog language="zh" image={galleryImage(files.first)} images={[galleryImage(files.first),galleryImage(files.external)]} initialScope="attachments" onClose={()=>setOpen(false)}/>}

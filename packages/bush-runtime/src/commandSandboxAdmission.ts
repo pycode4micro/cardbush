@@ -8,7 +8,7 @@ import { commandSandboxPolicy, type CommandSandboxConfiguration } from './comman
 import { canonicalSandboxRoots, canonicalSandboxFiles, sandboxError, windowsInterpreterRoots, type ExecutionSandboxPolicy } from './executionSandbox.js';
 import { commandPermission } from './commandPermission.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
-import { allowedRoots, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, workspaceRoot } from './workspaceAccessPolicy.js';
+import { allowedRoots, isParentApprovedChild, isWithin, normalizeIdentity, permissionBoundaryMode, resolveToolPath, workspaceRoot } from './workspaceAccessPolicy.js';
 
 export interface AdditionalCommandPermissions {
   readRoots: string[];
@@ -122,6 +122,7 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
     reason: `Additional sandbox access for this command and its child processes only. Isolation remains enabled.${context.input.justification ? ` Reason: ${context.input.justification}` : ''}`,
     actions: ['execute', ...[...extraRead, ...extraReadFiles].map(() => 'read'), ...[...extraWrite, ...extraWriteFiles].map(() => 'write'), ...(network ? ['network'] : [])],
     targets, capabilityIds: [requiredGrant], scope: { mode: 'task_free', roots: writableRoots },
+    ...((extraWrite.length || extraWriteFiles.length) && isParentApprovedChild(context) ? { requiresHuman: true } : {}),
   } } };
 }
 

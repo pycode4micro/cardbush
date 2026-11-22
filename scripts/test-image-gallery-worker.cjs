@@ -145,6 +145,18 @@ app.whenReady().then(async()=>{
       const rectangle=await run(`(()=>{const r=document.querySelector('.message-image-gallery').getBoundingClientRect();return {x:Math.round(r.x),y:Math.round(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height)}})()`);
       await writeFile(resolve('tmp/message-image-gallery-repro.png'),(await window.webContents.capturePage(rectangle)).toPNG());
     }
+    await run('galleryControls.setMode("child")');
+    await until('document.querySelectorAll(".tool-image-thumbnail").length===4','child tool snapshots');
+    await run('document.querySelectorAll(".tool-image-thumbnail")[2].click()');
+    await ready();
+    assert.equal(await run('document.querySelector(".image-preview-position").textContent'),'3 / 4');
+    assert.equal(await run('document.querySelector(".image-preview-stage img").naturalWidth'),1800,'the same original path retains its revised pixels');
+    await scope('attachments'); await ready();
+    assert.equal(await run('document.querySelector(".image-preview-position").textContent'),'1 / 2');
+    await scope('session'); await key('Left'); await key('Left'); await ready();
+    assert.equal(await run('document.querySelector(".image-preview-position").textContent'),'1 / 4');
+    assert.equal(await run('document.querySelector(".image-preview-stage img").naturalWidth'),900,'the original observation is still browsable');
+    await close();
     assert.equal(errors.filter(message=>/React error|Uncaught|Maximum update/.test(message)).length,0,errors.join('\n'));
     console.log('Image gallery UI passed: cross-turn and loop images, native keyboard navigation, zoom reset, external images, stable append, scope switching, session isolation, attachment batch, inspector directory, Markdown/link entry points and narrow layouts.');
   } finally {await scanner.close(window.webContents.id);window.destroy();}

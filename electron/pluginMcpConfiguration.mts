@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { MissingPluginEnvironmentError, pluginHostEnvironment } from './pluginEnvironment.js';
+import { installedPluginDependencyRuntime } from './pluginDependencies.mjs';
 import { mcpOAuthFromConfig, OPENAI_HOSTED_PROTOCOL, usesOpenAiHostedConnection } from '@cardbush/bush-protocol';
 type Json = Record<string, unknown>;
 const record = (value: unknown): Json => value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {};
@@ -61,11 +62,18 @@ export function pluginMcpServer(pluginId: string, name: string, root: string, de
     ...(item.enabled === false || item.approval_mode === 'deny' ? { enabled: false } : {}),
     parallelSafe: item.parallel_safe === true, visibleToChild: item.visible_to_child !== false });
   const env = { ...stringMap(server.env), ...hostEnv };
+  const command = kind === 'stdio' ? expand(server.command) : '';
+  let runtime;
+  try { runtime = command ? installedPluginDependencyRuntime(root, command) : undefined; }
+  catch (error) {
+    if ((error as { code?: string }).code !== 'plugin_dependency_runtime_unavailable') throw error;
+    throw new MissingPluginEnvironmentError(pluginId, name, new Set(), (policy.required ?? server.required) === true, (error as Error).message);
+  }
   const result = {
     id: `plugin_${pluginId.replaceAll('.', '_')}_${name}`,
     ...(['auto', 'legacy', 'modern'].includes(String(server.versionMode)) ? { versionMode: server.versionMode } : {}),
     pluginId,
-    transport: kind === 'stdio' ? { kind, command: expand(server.command), args: (strings(server.args) ?? []).map(expand), cwd: server.cwd ? resolve(root, expand(server.cwd)) : root, env }
+    transport: kind === 'stdio' ? { kind, command: runtime?.executable ?? command, args: (strings(server.args) ?? []).map(expand), cwd: server.cwd ? resolve(root, expand(server.cwd)) : root, env: { ...env, ...runtime?.env } }
       : { kind: kind === 'sse' ? 'sse' : 'streamable_http', url: expand(server.url), headers,
         ...(helper ? { headersHelper: { command: expand(typeof helper === 'string' ? helper : helperOptions.command), cwd: helperOptions.cwd ? resolve(root, expand(helperOptions.cwd)) : root, env: { ...env, ...stringMap(helperOptions.env), ...hostEnv } } } : {}),
         auth: server.auth === 'none' ? 'none' : 'oauth', oauth },

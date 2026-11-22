@@ -131,7 +131,6 @@
     "recentBar.sessions": "Recent chats",
     "recentBar.navigator": "Quick access",
     "recentBar.quickHint": "Open the most recent chat. Hover or press Down Arrow to browse chats and messages.",
-    "recentBar.quickSections": "Quick access list",
     "recentBar.notifications": "Inbox",
     "recentBar.navigatorUnread": "Quick access · {count} unread",
     "recentBar.noNotifications": "No unread messages",

@@ -46,7 +46,8 @@ module.exports = async function testSidebarQuickSections({ run, until, window })
     showQuickSectionsFixture(true);
   `);
   await until(query(toggle) + "?.getAttribute('aria-expanded') === 'true'", 'Quick sections are expanded by default');
-  assert.ok(await run(query('button.recent-inline-toggle[aria-label="快速列表"]') + ' !== null'));
+  assert.ok(await run(query('button.recent-inline-toggle[aria-label="快速"]:not([title],[interestfor],[aria-haspopup]) .recent-inline-chevron') + ' !== null'));
+  assert.equal(await run('document.querySelectorAll(".recent-bar-list").length'), 1);
   assert.equal(await run('document.getElementById(' + query(toggle) + ".getAttribute('aria-controls')) === " + query(list)), true);
   assert.deepEqual(await titles(pinned + ' h3, ' + projects + ' h3, ' + recent + ' h3'), ['置顶', '项目', '最近会话']);
   assert.deepEqual(await titles(pinned + ' .project-title, ' + pinned + ' .conversation-title-text'), ['Pinned project', 'Pinned chat']);
@@ -73,11 +74,16 @@ module.exports = async function testSidebarQuickSections({ run, until, window })
   await until('!' + query(toggle) + ' && !!' + query('.sidebar-is-collapsed .recent-bar-list'), 'the compact rail keeps Quick access');
   assert.ok(await run("document.activeElement === originalQuickButton"), 'Quick access keeps keyboard focus across layouts');
   await run("showQuickSectionsFixture(true, 'en'); void 0");
-  await until(query(toggle) + "?.getAttribute('aria-label') === 'Quick access list'", 'the disclosure updates with the language');
+  await until(query(toggle) + "?.getAttribute('aria-label') === 'Quick access'", 'the disclosure updates with the language');
   assert.equal(await run(query(toggle) + ".getAttribute('aria-expanded')"), 'false', 'collapsing the rail preserves the disclosure choice');
   await click(toggle);
   await until(query(pinned + ' .conversation-row') + '?.checkVisibility()', 'pinned conversations return after reopening');
   assert.deepEqual(await titles(pinned + ' h3, ' + projects + ' h3'), ['Pinned', 'Projects']);
+  await run(query(toggle + ' .recent-inline-chevron') + '.dispatchEvent(new MouseEvent("click", {bubbles:true})); void 0');
+  await until(query(list) + '?.hidden', 'the chevron is part of the same disclosure button');
+  assert.deepEqual(await run('quickOpened'), ['project-chat', 'pinned-chat']);
+  await run("showQuickSectionsFixture(false, 'en'); void 0");
+  await until(query('.recent-bar-list[interestfor]') + ' !== null', 'compact Quick retains its native hover target');
   await click('.recent-bar-list');
   assert.deepEqual(await run('quickOpened'), ['project-chat', 'pinned-chat', 'pinned-chat']);
   console.log('Sidebar Quick sections passed: default expanded, pinned and project navigation, scrolling, collapse, compact rail, and language switching.');

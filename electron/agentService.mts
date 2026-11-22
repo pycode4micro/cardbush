@@ -571,7 +571,7 @@ export class AgentService {
         if (operation === 'files.list') return readWorkspaceDirectory({ rootPath: workspace.workspaceDir, directoryPath: z.string().optional().parse(data.directoryPath), offset: z.number().int().nonnegative().optional().parse(data.offset) });
         return operation === 'files.read' ? agentFileRead(workspace.workspaceDir, data, {
           roots: [join(this.root, 'runtime-state', 'captures'), join(this.root, 'desktop-bridge', 'captures'), join(this.root, 'browser-connector', 'artifacts')],
-          resolveReceipt: async path => await this.#command(RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, { sessionId: sessionId(), path }) as RuntimeFileReceipt | null,
+          resolveReceipt: async (path, snapshotId) => await this.#command(RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, { sessionId: sessionId(), path, snapshotId }) as RuntimeFileReceipt | null,
           readImageSnapshot: path => this.#modelImages.readSnapshot(path, readSignal),
         }) : agentFileUpload(workspace.workspaceDir, data);
       }

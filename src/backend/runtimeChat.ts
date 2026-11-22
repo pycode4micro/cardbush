@@ -832,7 +832,8 @@ function toolRecord(
   const mcpServerId = configuredMcpServerId(record.toolCall);
   const activity = agentToolActivity(record);
   const artifacts = returned
-    ? toolArtifactsFromPayload({ result: record.result })
+    ? toolArtifactsFromPayload({ result: record.result }, record.toolCall.name === 'inject_image_input' &&
+      record.actionManifest?.owner === 'runtime' && record.actionManifest.operation === 'image.inject')
     : [];
   return {
     ...toolLifecycle(event),

@@ -86,6 +86,7 @@ export class RuntimeToolLoop {
   readonly #modelImages: ModelImageStore;
   readonly #permissionEventIdentity: RuntimeEventIdentity;
   readonly #permissionSource?: RuntimeToolLoopOptions["permissionSource"];
+  readonly #humanPermissions = new Set<string>();
   readonly #nestedExecutingCalls = new Map<string, ToolCall>();
   readonly #activeToolControllers = new Map<
     string,
@@ -114,15 +115,21 @@ export class RuntimeToolLoop {
             requestedCapabilityIds: permission.capabilityIds,
             scope: permission.scope,
             ...this.#permissionSource,
+            ...(permission.requiresHuman ? { permissionRouting: 'user' as const } : {}),
           },
         });
+        if (permission.requiresHuman) this.#humanPermissions.add(permission.permissionId);
       },
-      onAnswered: (answer) => this.#appendPermissionAnswer(answer),
+      onAnswered: (answer) => {
+        this.#appendPermissionAnswer(answer);
+        this.#humanPermissions.delete(answer.permissionId);
+      },
       onCancelled: (permission) => {
         this.#eventLog.append(this.#permissionEventIdentity, {
           kind: "permission_cancelled",
-          payload: { ...permission, ...this.#permissionSource },
+          payload: { ...permission, ...this.#permissionEventSource(permission.permissionId) },
         });
+        this.#humanPermissions.delete(permission.permissionId);
       },
     });
     this.#coordinator = new ToolExecutionCoordinator({
@@ -467,6 +474,7 @@ export class RuntimeToolLoop {
   #appendPermissionAnswer(
     answer: RuntimePermissionAnswer & { toolCallId: string },
   ): RuntimeEvent {
+    const source = this.#permissionEventSource(answer.permissionId);
     if (answer.decision === "deny") {
       return this.#eventLog.append(this.#permissionEventIdentity, {
         kind: "permission_rejected",
@@ -474,7 +482,7 @@ export class RuntimeToolLoop {
           permissionId: answer.permissionId,
           toolCallId: answer.toolCallId,
           reason: "user_rejected",
-          ...this.#permissionSource,
+          ...source,
         },
       });
     }
@@ -485,7 +493,7 @@ export class RuntimeToolLoop {
           permissionId: answer.permissionId,
           toolCallId: answer.toolCallId,
           reason: "user_cancelled",
-          ...this.#permissionSource,
+          ...source,
         },
       });
     }
@@ -496,9 +504,14 @@ export class RuntimeToolLoop {
         toolCallId: answer.toolCallId,
         answerId: answer.answerId,
         grantedCapabilityIds: answer.grantedCapabilityIds,
-        ...this.#permissionSource,
+        ...source,
       },
     });
+  }
+
+  #permissionEventSource(permissionId: string) {
+    return this.#humanPermissions.has(permissionId)
+      ? { ...this.#permissionSource, permissionRouting: 'user' as const } : this.#permissionSource;
   }
 
   #appendToolOutcome(

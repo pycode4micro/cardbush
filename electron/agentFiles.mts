@@ -9,7 +9,7 @@ const chunkSize = transferChunkSize;
 const maxSize = transferLimit;
 interface FileReceiptAccess {
   roots: string[];
-  resolveReceipt(path: string): Promise<RuntimeFileReceipt | null | undefined>;
+  resolveReceipt(path: string, snapshotId?: string): Promise<RuntimeFileReceipt | null | undefined>;
   readImageSnapshot(path: string): Promise<{ content: Buffer }>;
 }
 function isInside(root: string, path: string) {
@@ -21,10 +21,12 @@ function inside(root: string, path: string) {
   return path;
 }
 export async function agentFileRead(root: string, input: Record<string, unknown>, access?: FileReceiptAccess) {
-  const value = z.object({ path: z.string().min(1), offset: z.number().int().nonnegative().default(0), version: z.string().optional() }).parse(input);
+  const value = z.object({ path: z.string().min(1), offset: z.number().int().nonnegative().default(0), version: z.string().optional(),
+    snapshotId: z.string().min(1).max(160).optional() }).parse(input);
   const canonical = await realpath(root);
   const requested = resolve(isAbsolute(value.path) ? value.path : join(canonical, value.path));
-  const receipt = await access?.resolveReceipt(requested);
+  const receipt = await access?.resolveReceipt(requested, value.snapshotId);
+  if (value.snapshotId && receipt?.kind !== 'model_image') throw new Error('The image snapshot does not belong to this conversation file.');
   // Resolve before touching the source: it may have been removed or changed
   // after injection. Never fall back to that mutable external file on failure.
   if (receipt?.kind === 'model_image') {
@@ -33,7 +35,8 @@ export async function agentFileRead(root: string, input: Record<string, unknown>
     const bytes = content.subarray(value.offset, value.offset + chunkSize);
     const version = createHash('sha256').update(content).digest('hex');
     if (value.version && value.version !== version) throw new Error('file_transfer_source_changed');
-    return { name, size: content.length, version, offset: value.offset, content: bytes.toString('base64'), done: value.offset + bytes.length >= content.length };
+    return { name, size: content.length, version, snapshotId: value.snapshotId, offset: value.offset,
+      content: bytes.toString('base64'), done: value.offset + bytes.length >= content.length };
   }
   const path = await realpath(requested);
   const external = !isInside(canonical, path);

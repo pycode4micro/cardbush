@@ -73,7 +73,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
   const tasks = useLoopSubagentTasks(sessionId, agents.length > 0, active);
 
-  const imagesByPath = new Map<string, ChatToolArtifact>();
+  const imagesBySource = new Map<string, ChatToolArtifact>();
   const imageStates: ReactNode[] = [];
   const agentRows = new Map<string, ReactNode>();
   const employeeRows = new Map<string, ReactNode>();
@@ -95,7 +95,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       failedImages += Number(failed);
       viewedImages &&= imageTools.has(execution.name) && execution.state === 'completed' && !failed;
       for (const artifact of images) if (artifact.type === 'image') {
-        imagesByPath.set(mediaPresentationKey(artifact.path), artifact);
+        imagesBySource.set(mediaPresentationKey(artifact.snapshotPath ?? artifact.path), artifact);
       }
       if (!images.some(artifact => artifact.type === 'image')) imageStates.push(
         <span key={execution.id} className="loop-image-status" data-execution-id={execution.id}>
@@ -142,7 +142,7 @@ export function LoopExecutionPreviews({ executions, message, language, active }:
       </button>);
     }
   }
-  const images = [...imagesByPath.values()];
+  const images = [...imagesBySource.values()];
   const registrations = hydrated.some(execution => isDefinitionActivity(toolAgentActivity(execution)));
   if (!registrations && !agentRows.size && !employeeRows.size && !images.length && !imageStates.length && !detailsFailed) return null;
   const statusLabel = (running: number, failed: number) => [

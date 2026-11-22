@@ -14,7 +14,8 @@ export function runtimeHistoryToolExecution(
   const activity = 'agentActivity' in record ? record.agentActivity : agentToolActivity(record);
   const mcpServerId = configuredMcpServerId(record.toolCall);
   const artifacts = record.outcome === 'returned' && hasNativeResult
-    ? toolArtifactsFromPayload({ result: record.result })
+    ? toolArtifactsFromPayload({ result: record.result }, record.toolCall.name === 'inject_image_input' &&
+      record.actionManifest?.owner === 'runtime' && record.actionManifest.operation === 'image.inject')
     : [];
   const output = hasNativeResult
     ? typeof record.result === 'string'

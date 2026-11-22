@@ -76,7 +76,7 @@ export function ImagePreviewDialog({
   const gallery = useImageGallery(initialImage, { images, initialScope, onClose });
   const { image } = gallery;
   const host = useContext(ConversationHostContext);
-  const remoteSource = useConversationFileSource(host ? image.path || image.src : image.src);
+  const remoteSource = useConversationFileSource(host ? image.path || image.src : image.src, true, { snapshotId: image.snapshotId });
   const imageKey = galleryImageKey(image);
   const dialogRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -379,8 +379,9 @@ export function ImagePreviewDialog({
               decoding="sync"
               onError={() => {
                 const read = host ? undefined : window.cardbushDesktop?.readImageDataUrl;
-                if (read && image.path && isLocalFileResource(image.path) && !source?.startsWith('data:')) {
-                  void read(image.path).then(src => {
+                const path = image.snapshotPath ?? image.path;
+                if (read && path && isLocalFileResource(path) && !source?.startsWith('data:')) {
+                  void read(path).then(src => {
                     if (currentKey.current !== imageKey) return;
                     if (src.startsWith('data:image/')) setFallback({ key: imageKey, src });
                     else setFailed(true);

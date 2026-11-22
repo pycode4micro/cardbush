@@ -175,9 +175,11 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   const status = subagentTaskPresentation({ status: displayedStatus }, language);
   const selectedModel = models.find(model => model.id === chat.selectedModel);
   const refreshAll = async () => { await refresh(); await chat.refreshActiveSession({ silent: true }); };
+  const workspaceRoot = chat.activeConversation ? conversationWorkspaceRoot(chat.activeConversation) : undefined;
   return <ConversationHostContext.Provider value={host}>
     <ConversationMessageTargetContext.Provider value={`${backend.scope}:${sessionId}`}>
     <WorkspaceChangeStateContext.Provider value={{ states: emptyStates, busy: busy || !!reverting }}>
+    <ImageGalleryProvider sessionId={host?.id ?? sessionId} messages={messages} workspaceRoot={workspaceRoot} language={language}>
     <section className="subagent-conversation" aria-label={isEmployeeTask(task) ? (uiText(language)('subagentConversation.employeeConversation')) : (uiText(language)('subagentConversation.subagentConversation'))}>
       <header className="subagent-conversation-heading">
         <span className={`subagent-inspector-state ${status.tone}`}>
@@ -188,7 +190,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
       </header>
       <ChatPanel embedded welcomeEnabled={false} workSummaryAvailable={false}
         language={language} theme={theme} title={employeeTaskTitle(task, language)} sidebarCollapsed windowMaximized={false} inspectorOpen={false} onToggleInspector={() => openReview()}
-        activeConversationId={host?.id ?? sessionId} activeProjectDir={chat.activeConversation ? conversationWorkspaceRoot(chat.activeConversation) : undefined}
+        activeConversationId={host?.id ?? sessionId} activeProjectDir={workspaceRoot}
         projectPathAliases={[]} selectedProjectDir="" availableProjects={[]} onWelcomeProjectChange={nothingAsync}
         messages={messages} changeReports={reports} activeTurnId={chat.activeTurnId}
         loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
@@ -220,6 +222,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         revertedChangeIds={new Set(reports.filter(item => item.reverted).map(item => item.id))} revertAvailable={!busy}
         onClose={() => inspector.close(reviewId)} onRevert={revert}/>, inspector.outlets.get(reviewId)!)}
     </section>
+    </ImageGalleryProvider>
     </WorkspaceChangeStateContext.Provider>
     </ConversationMessageTargetContext.Provider>
   </ConversationHostContext.Provider>;
@@ -281,3 +284,4 @@ export function childConversationMessages(messages: ChatMessage[], task: Subagen
   }
   return result;
 }
+import { ImageGalleryProvider } from '../chatMessages/ImageGalleryContext';

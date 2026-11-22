@@ -266,6 +266,12 @@ export class PluginMarketplaceService {
     return value ? { ...value } : null;
   }
 
+  async discardPreview(token: string) {
+    const prepared = this.prepared.get(token);
+    this.prepared.delete(token);
+    if (prepared?.stage) await this.cleanStage(prepared.stage);
+  }
+
   cancelInstall(token: string): boolean {
     const task = this.installs.get(token);
     if (!task?.promise || !task.progress.cancellable) return false;

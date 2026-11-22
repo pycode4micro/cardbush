@@ -23,7 +23,7 @@ export interface ConversationHost {
   downloadFiles?(paths: string[], progress: (completed: number, total: number) => void): Promise<void>;
   turnArtifacts?(message: ChatMessage): { items: ChatToolArtifact[]; load?: () => Promise<ChatToolArtifact[]> };
   openExtract?(id: string): void;
-  readFile?(path: string): Promise<{ name: string; blob: Blob }>;
+  readFile?(path: string, snapshotId?: string): Promise<{ name: string; blob: Blob }>;
   previewFile?(path: string): Promise<{ source: string; dispose(): void }>;
   /** Restricted web hosts own every media source, including URLs and inline data. */
   resolveFileSource?(path: string, options: { preview?: boolean }): Promise<{ source: string; dispose(): void }>;

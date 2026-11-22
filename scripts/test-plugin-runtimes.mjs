@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { activePluginRuntime, pluginRuntimeExecutable } from '@cardbush/platform';
 import { managePluginRuntime } from '../dist-electron/pluginRuntimeManager.mjs';
 import { resolveRuntimeBuild } from '../dist-electron/pluginRuntimeCatalog.mjs';
+import { installedPluginDependencyRuntime, pluginDependencyDirectory, preparePluginDependencies } from '../dist-electron/pluginDependencies.mjs';
 
 const arch = process.arch, platform = process.platform;
 const nodeFile = platform === 'win32' ? `win-${arch}-zip` : platform === 'darwin' ? `osx-${arch}-tar` : `linux-${arch}`;
@@ -22,6 +23,63 @@ async function seed(kind, version, root) {
   await writeFile(executable, 'fixture');
 }
 const offline = () => { throw Error('Unexpected network access'); };
+
+test('plugin dependency staging installs and launches with the same managed runtime', async t => {
+  const root = await fixture(t), plugin = join(root, 'plugin');
+  await mkdir(plugin);
+  await writeFile(join(plugin, 'pyproject.toml'), '[project]\nname = "plugin-test"\nversion = "1.0.0"\n');
+  const servers = { main: { command: 'python', args: ['-m', 'plugin_test'] } };
+  await assert.rejects(preparePluginDependencies(plugin, servers, undefined, () => undefined, offline), /CardBush-managed python/);
+  assert.equal(installedPluginDependencyRuntime(plugin, 'python', root), undefined);
+  const staged = join(root, 'staged');
+  await mkdir(staged);
+  await writeFile(join(staged, 'pyproject.toml'), await readFile(join(plugin, 'pyproject.toml')));
+  await seed('python', '3.12.1', root);
+  const executable = pluginRuntimeExecutable('python', '3.12.1', root);
+  const userBase = join(staged, pluginDependencyDirectory, 'python');
+  const site = join(userBase, 'site-layout-from-interpreter', 'site-packages');
+  const invocations = [];
+  await preparePluginDependencies(staged, servers, undefined, kind => {
+    assert.equal(kind, 'python'); return { executable, version: '3.12.1' };
+  }, async invocation => {
+    assert.equal(invocation.executable, executable);
+    assert.equal(invocation.cwd, staged);
+    invocations.push(invocation);
+    if (invocation.args[1] === '-S') {
+      assert.equal(invocation.env.PYTHONUSERBASE, userBase);
+      assert.deepEqual(invocation.args, ['-I', '-S', '-c', 'import site; print(site.getusersitepackages())']);
+      return { exitCode: 0, stdout: site + '\n', stderr: '', outputTruncated: false };
+    }
+    assert.deepEqual(invocation.args.slice(0, 5), ['-I', '-m', 'pip', '--isolated', 'install']);
+    assert.equal(invocation.args.at(-2), site);
+    return { exitCode: 0, stdout: '', stderr: '', outputTruncated: false };
+  });
+  assert.equal(invocations.length, 2);
+  assert.deepEqual(installedPluginDependencyRuntime(staged, 'python', root), {
+    executable, env: { PYTHONUSERBASE: userBase, PYTHONPATH: '', PYTHONNOUSERSITE: '' },
+  });
+  assert.equal(installedPluginDependencyRuntime(staged, process.execPath, root), undefined);
+});
+
+test('Node packages with a lock file stage production dependencies under managed npm', async t => {
+  const root = await fixture(t), plugin = join(root, 'plugin');
+  await mkdir(plugin);
+  await writeFile(join(plugin, 'package.json'), '{}');
+  await writeFile(join(plugin, 'package-lock.json'), '{}');
+  await seed('node', '24.2.0', root);
+  const executable = pluginRuntimeExecutable('node', '24.2.0', root);
+  const npm = join(dirname(executable), ...(platform === 'win32' ? [] : ['..', 'lib']), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  await mkdir(dirname(npm), { recursive: true });
+  await writeFile(npm, 'fixture');
+  await preparePluginDependencies(plugin, { main: { command: 'node', args: ['index.js'] } }, undefined,
+    kind => { assert.equal(kind, 'node'); return { executable, version: '24.2.0' }; }, async invocation => {
+      assert.equal(invocation.executable, executable);
+      assert.deepEqual(invocation.args, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund']);
+      assert.equal(invocation.cwd, plugin);
+      return { exitCode: 0, stdout: '', stderr: '', outputTruncated: false };
+    });
+  assert.deepEqual(installedPluginDependencyRuntime(plugin, 'node', root), { executable, env: {} });
+});
 
 test('opening settings is offline, activation validates installed versions and rollback survives restart', async t => {
   const root = await fixture(t);

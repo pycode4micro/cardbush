@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type { ToolAdmissionContext } from './toolRegistry.js';
+import type { ToolAdmissionContext, ToolPermissionRequest } from './toolRegistry.js';
 
 interface PathInput { path: string }
 
@@ -22,16 +22,7 @@ export async function pathAdmission(
   | { kind: "allow" }
   | {
       kind: "ask";
-      request: {
-        reason: string;
-        actions: string[];
-        targets: Array<{ kind: "filesystem_path"; value: string }>;
-        capabilityIds: string[];
-        scope: {
-          mode: "task_free" | "user_free";
-          roots: string[];
-        };
-      };
+      request: ToolPermissionRequest;
     }
 > {
   const mode = permissionBoundaryMode(context);
@@ -46,8 +37,14 @@ export async function pathAdmission(
       targets: [{ kind: "filesystem_path", value: path }],
       capabilityIds: [capabilityId],
       scope: { mode, roots },
+      ...(action === 'write' && isParentApprovedChild(context) ? { requiresHuman: true } : {}),
     },
   };
+}
+
+export function isParentApprovedChild(context: ToolAdmissionContext<unknown>) {
+  const metadata = context.turn?.request.metadata;
+  return metadata?.agentRole === 'child' && metadata.permissionRouting === 'parent';
 }
 
 export function permissionBoundaryMode(context: ToolAdmissionContext<unknown>): "task_free" | "user_free" {

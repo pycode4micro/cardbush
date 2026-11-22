@@ -48,6 +48,7 @@ export * from "./toolExecutionCoordinator.js";
 export { withToolFailureFacts } from './toolFailureFacts.js';
 export * from "./toolExecutionStore.js";
 export * from "./toolRegistry.js";
+export { isParentApprovedChild, pathAdmission, resolveToolPath } from './workspaceAccessPolicy.js';
 export * from './pluginCommandTools.js';
 export * from './pluginSkills.js';
 export * from './mcpToolDiscovery.js';

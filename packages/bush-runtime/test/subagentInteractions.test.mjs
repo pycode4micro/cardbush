@@ -132,11 +132,12 @@ const parentRequest = registry => ({ protocol: 'bush.session_turn_request.v1', r
   prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Work' } }], tools: registry.definitions(), permissionMode: 'task_free',
   metadata: { individuation: { habits: false, predictions: false } } });
 
-for (const routing of ['parent', 'user']) test(`local ${routing} permission authority is enforced through the real broker`, { timeout: 15000 }, async t => {
+for (const [routing, requiresHuman] of [['parent', false], ['user', false], ['parent', true]]) test(`local ${routing} permission authority (requires human: ${requiresHuman}) is enforced through the real broker`, { timeout: 15000 }, async t => {
+  const delegated = routing === 'parent' && !requiresHuman;
   const tasks = new SubagentTaskStore(), registry = new ToolRegistry(); let parentRound = 0, childRound = 0, effects = 0, deniedHuman = false;
   registry.register({ definition: { name: 'protected_action', inputSchema: { type: 'object' } }, decodeInput: input => input, visibleToChild: true,
     manifest: { effect_kind: 'observation', operation: 'fixture.read', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false },
-    authorize: () => ({ kind: 'ask', request: { reason: 'Read one protected item', actions: ['read'], targets: [{ kind: 'opaque', value: 'fixture://item' }], capabilityIds: ['fixture:item'] } }),
+    authorize: () => ({ kind: 'ask', request: { reason: 'Read one protected item', actions: ['read'], targets: [{ kind: 'opaque', value: 'fixture://item' }], capabilityIds: ['fixture:item'], requiresHuman } }),
     execute: () => { effects++; return { read: true }; } });
   const provider = { async *stream(request) {
     if (request.metadata.agentRole === 'child') { yield* respond(request, ++childRound === 1 ? 'protected_action' : undefined, {}); return; }
@@ -144,10 +145,10 @@ for (const routing of ['parent', 'user']) test(`local ${routing} permission auth
     if (parentRound === 2) { yield* respond(request, 'await', { mode: 'all' }); return; }
     const task = tasks.list('parent')[0], permission = task.observation?.interactions.find(item => item.kind === 'permission');
     if (parentRound === 3) {
-      assert.equal(permission.authority, routing === 'parent' ? 'parent_delegate' : 'human_required');
+      assert.equal(permission.authority, delegated ? 'parent_delegate' : 'human_required');
       yield* respond(request, 'subagent', { task_id: task.taskId, response: { kind: 'permission', interactionId: permission.interactionId, actionDigest: permission.actionDigest, decision: 'allow_once' } }); return;
     }
-    if (routing === 'user' && parentRound === 4) {
+    if (!delegated && parentRound === 4) {
       assert.equal(effects, 0); assert.match(request.messages.filter(m => m.role === 'tool').at(-1).content, /human_authority_required/); deniedHuman = true;
       yield* respond(request, 'subagent', { task_id: task.taskId, response: { kind: 'permission', interactionId: permission.interactionId, actionDigest: permission.actionDigest, decision: 'deny' } }); return;
     }
@@ -160,12 +161,12 @@ for (const routing of ['parent', 'user']) test(`local ${routing} permission auth
   request.metadata.subagentPermissionRouting = routing;
   const terminal = await host.runSessionTurn(request, { signal: AbortSignal.timeout(12000) });
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
-  assert.equal(effects, routing === 'parent' ? 1 : 0);
-  assert.equal(deniedHuman, routing === 'user');
+  assert.equal(effects, delegated ? 1 : 0);
+  assert.equal(deniedHuman, !delegated);
   const task = tasks.list('parent')[0];
-  const answered = [...host.events('parent', 'parent-turn'), ...host.events(task.childSessionId, task.childTurnId)].filter(event => event.kind === (routing === 'parent' ? 'permission_answered' : 'permission_rejected'));
+  const answered = [...host.events('parent', 'parent-turn'), ...host.events(task.childSessionId, task.childTurnId)].filter(event => event.kind === (delegated ? 'permission_answered' : 'permission_rejected'));
   assert.equal(answered.length, 1);
-  if (routing === 'parent') assert.deepEqual(answered[0].payload.grantedCapabilityIds, ['fixture:item']);
+  if (delegated) assert.deepEqual(answered[0].payload.grantedCapabilityIds, ['fixture:item']);
   else assert.equal(answered[0].payload.reason, 'user_rejected');
 });
 

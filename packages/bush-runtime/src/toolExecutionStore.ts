@@ -171,7 +171,7 @@ export class ToolExecutionStore {
   /** Reuse host-issued observations, never model text or a plugin's claimed
    * model_input_url. The file transport must still verify the stored bytes or
    * canonical path/version; a receipt cannot authorize its parent directory. */
-  fileReceipt(sessionId: string, path: string): RuntimeFileReceipt | undefined {
+  fileReceipt(sessionId: string, path: string, snapshotId?: string): RuntimeFileReceipt | undefined {
     if (!isAbsolute(path)) return;
     const key = imagePathKey(path);
     const records = this.#load(sessionId);
@@ -185,13 +185,13 @@ export class ToolExecutionStore {
         for (const value of result.artifacts) {
           const artifact = artifactObject(value), metadata = artifactObject(artifact.metadata);
           if (artifact.type === 'image' && typeof artifact.path === 'string' && isAbsolute(artifact.path) &&
-              imagePathKey(artifact.path) === key && metadata.model_input === true &&
+              imagePathKey(artifact.path) === key && (!snapshotId || artifact.artifact_id === snapshotId) && metadata.model_input === true &&
               typeof metadata.model_input_url === 'string' && isAbsolute(metadata.model_input_url)) {
             return { kind: 'model_image', path: metadata.model_input_url };
           }
         }
       }
-      if (record.toolCall.name === 'remember_file' && record.actionManifest.operation === 'file_memo') {
+      if (!snapshotId && record.toolCall.name === 'remember_file' && record.actionManifest.operation === 'file_memo') {
         const memo = fileMemoSchema.safeParse(record.result);
         if (memo.success && isAbsolute(memo.data.file.path) && imagePathKey(memo.data.file.path) === key) {
           const { path, size, mtimeMs } = memo.data.file;
@@ -199,7 +199,7 @@ export class ToolExecutionStore {
         }
       }
     }
-    if (this.hasImageArtifact(sessionId, path)) return { kind: 'capture' };
+    if (!snapshotId && this.hasImageArtifact(sessionId, path)) return { kind: 'capture' };
   }
 
   listTurn(sessionId: string, turnId: string): ToolExecutionRecord[] {

@@ -71,7 +71,7 @@ test('image lookup uses explicit native receipts without granting paths from tex
 
 test('file transport resolves only successful host image and file memo receipts in this session', t => {
   const root = temporaryRoot(t), path = join(root, 'reference.png'), snapshot = join(root, 'model-images', 'snapshot.png');
-  const imageResult = { artifacts: [{ type: 'image', path, metadata: { model_input: true, model_input_url: snapshot } }] };
+  const imageResult = { artifacts: [{ artifact_id: 'image-first', type: 'image', path, metadata: { model_input: true, model_input_url: snapshot } }] };
   const memoResult = { protocol: 'bush.file_memo.v1', id: 'file_1', reference: 'cardbush-memo:1',
     file: { path, name: 'reference.png', size: 123, mtimeMs: 456 }, note: { purpose: 'delivery', points: [] } };
   const imageManifest = { protocol: 'bush.tool.action_manifest.v1', manifest_id: 'image',
@@ -112,6 +112,9 @@ test('file transport resolves only successful host image and file memo receipts 
   const recoveredPersistence = new FileToolExecutionPersistence({ root: join(root, 'journal') });
   const recovered = new ToolExecutionStore({ persistence: recoveredPersistence });
   assert.deepEqual(recovered.fileReceipt('receipts_0', path), { kind: 'model_image', path: snapshot });
+  assert.deepEqual(recovered.fileReceipt('receipts_0', path, 'image-first'), { kind: 'model_image', path: snapshot });
+  assert.equal(recovered.fileReceipt('receipts_0', snapshot, 'image-first'), undefined);
+  assert.equal(recovered.fileReceipt('receipts_1', path, 'image-first'), undefined);
   recovered.fork('receipts_0', 'fork', new Set(['turn_1']));
   assert.deepEqual(recovered.fileReceipt('fork', path), { kind: 'model_image', path: snapshot });
   if (process.platform === 'win32') assert.deepEqual(recovered.fileReceipt('receipts_0', path.toUpperCase().replaceAll('\\', '/')), { kind: 'model_image', path: snapshot });

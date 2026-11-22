@@ -63,7 +63,7 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
     retain: ids => call<void>('files.pasted-text', { sessionId, action: 'retain', ids }),
     discard: id => call<void>('files.pasted-text', { sessionId, action: 'discard', id }),
   }), [call, sessionId, enabled]);
-  const readFile = useCallback(async (path: string) => {
+  const readFile = useCallback(async (path: string, snapshotId?: string) => {
       if (!enabled) throw new Error(uiText()('useAgentConversationHost.update_this_agent_service_to_preview_files'));
       if (path.startsWith('cardbush-extract://')) {
         const id = path.slice('cardbush-extract://'.length).replace(/\.md$/, '');
@@ -72,8 +72,8 @@ export function useAgentConversationHost(call: AgentCall, connectionId: string, 
       }
       const parts: Uint8Array<ArrayBuffer>[] = []; let offset = 0; let name = '';
       while (true) {
-        const part = await call<{ content: string; name: string; size: number; offset: number; done: boolean }>('files.read', { sessionId, path, offset });
-        if (part.size > maxSize || part.offset !== offset) throw new Error(uiText()('useAgentConversationHost.invalid_file_response'));
+        const part = await call<{ content: string; name: string; size: number; offset: number; done: boolean; snapshotId?: string }>('files.read', { sessionId, path, offset, snapshotId });
+        if (part.size > maxSize || part.offset !== offset || snapshotId && part.snapshotId !== snapshotId) throw new Error(uiText()('useAgentConversationHost.invalid_file_response'));
         const bytes = Uint8Array.from(atob(part.content), char => char.charCodeAt(0));
         parts.push(bytes); offset += bytes.length; name = part.name;
         if (offset > maxSize || (!part.done && !bytes.length)) throw new Error(uiText()('useAgentConversationHost.invalid_file_response'));

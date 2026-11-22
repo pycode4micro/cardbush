@@ -1,5 +1,5 @@
-import type { ChatMessage } from '../../types';
-import { fileUrl, isAbsoluteLocalPath, resourceBasename } from '../../shared/localPaths';
+import type { ChatMessage, ChatToolArtifact, ChatToolExecution } from '../../types';
+import { fileUrl, isAbsoluteLocalPath, mediaResourceUrl, resourceBasename } from '../../shared/localPaths';
 import { remapProjectPath, type ProjectPathAlias } from '../conversationScope';
 import { messageMediaReferences } from '../chat/workSummaryOutputs';
 import { markdownLocalFileReference } from './fileReferences';
@@ -9,6 +9,8 @@ export type ImagePreviewSource = {
   src: string;
   name: string;
   path?: string;
+  snapshotPath?: string;
+  snapshotId?: string;
   naturalWidth?: number;
   naturalHeight?: number;
 };
@@ -24,8 +26,14 @@ export function galleryImage(path: string, name = ''): ImagePreviewSource {
 }
 
 export function galleryImageKey(image: ImagePreviewSource) {
-  const path = localMediaPath(image.path || image.src).replaceAll('\\', '/');
+  const path = localMediaPath(image.snapshotPath || image.path || image.src).replaceAll('\\', '/');
   return /^[a-z]:\//i.test(path) || path.startsWith('//') ? path.toLowerCase() : path;
+}
+
+export function toolGalleryImage(artifact: ChatToolArtifact): ImagePreviewSource {
+  return { path: artifact.path, name: artifact.name || resourceBasename(artifact.path),
+    src: mediaResourceUrl(artifact.snapshotPath ?? artifact.path), snapshotPath: artifact.snapshotPath,
+    snapshotId: artifact.snapshotPath ? artifact.id : undefined };
 }
 
 /** Preserve the current order, including when later transcript snapshots arrive. */
@@ -40,7 +48,8 @@ export function appendGalleryImages(current: ImagePreviewSource[], incoming: Ima
   return added.length ? [...current, ...added] : current;
 }
 
-export function sessionGalleryImages(messages: ChatMessage[], workspaceRoot = '', aliases: ProjectPathAlias[] = []) {
+export function sessionGalleryImages(messages: ChatMessage[], workspaceRoot = '', aliases: ProjectPathAlias[] = [],
+  hydrated?: (execution: ChatToolExecution, message: ChatMessage) => ChatToolExecution | undefined) {
   const images: ImagePreviewSource[] = [];
   const add = (source: string | undefined, name = '') => {
     if (!source) return;
@@ -60,8 +69,10 @@ export function sessionGalleryImages(messages: ChatMessage[], workspaceRoot = ''
       if (reference.type === 'image' && !/\.html?$/i.test(resourceBasename(reference.path))) add(reference.path);
     }
     for (const execution of message.toolExecutions ?? []) {
-      for (const artifact of execution.artifacts ?? []) {
-        if (artifact.type === 'image') add(artifact.path, artifact.name);
+      for (const artifact of (hydrated?.(execution, message) ?? execution).artifacts ?? []) {
+        if (artifact.type !== 'image') continue;
+        if (artifact.snapshotPath) images.push(toolGalleryImage(artifact));
+        else add(artifact.path, artifact.name);
       }
     }
   };

@@ -131,7 +131,6 @@
     "recentBar.sessions": "最近会话",
     "recentBar.navigator": "快速",
     "recentBar.quickHint": "点击进入最近会话，悬停或按向下方向键可浏览会话和消息。",
-    "recentBar.quickSections": "快速列表",
     "recentBar.notifications": "消息",
     "recentBar.navigatorUnread": "快速，{count} 条未读消息",
     "recentBar.noNotifications": "没有未读消息",

@@ -22,13 +22,13 @@ export function activePluginRuntime(kind: PluginRuntime, root = pluginRuntimeRoo
 }
 
 /** Resolve for each new child. Explicit executable paths and the host's own Node remain independent. */
-export function pluginRuntimeCommand(command: string, args: string[]) {
+export function pluginRuntimeCommand(command: string, args: string[], selectedNode?: { executable: string }) {
   const alias = process.platform === 'win32' ? command.toLowerCase().replace(/\.(exe|cmd)$/, '') : command;
   if (alias === 'python' || alias === 'python3') {
     return {command: activePluginRuntime('python')?.executable ?? command, args};
   }
   if (alias === 'node' || alias === 'npm' || alias === 'npx') {
-    const runtime = activePluginRuntime('node');
+    const runtime = selectedNode ?? activePluginRuntime('node');
     if (runtime) {
       if (alias === 'node') return {command: runtime.executable, args};
       const bin = dirname(runtime.executable);

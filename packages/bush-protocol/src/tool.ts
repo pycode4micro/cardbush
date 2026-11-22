@@ -20,7 +20,7 @@ export const toolImageArtifactRequestSchema = z.object({
 });
 // Host file transport only; this is not a model-visible tool or a directory grant.
 export const RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND = "runtime.resolve_file_receipt" as const;
-export const runtimeFileReceiptRequestSchema = toolImageArtifactRequestSchema;
+export const runtimeFileReceiptRequestSchema = toolImageArtifactRequestSchema.extend({ snapshotId: z.string().min(1).max(160).optional() });
 export type RuntimeFileReceipt =
   | { kind: 'model_image'; path: string }
   | { kind: 'file_memo'; path: string; size: number; mtimeMs: number }

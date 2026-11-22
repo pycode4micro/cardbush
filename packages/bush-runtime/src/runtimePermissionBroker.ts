@@ -215,6 +215,7 @@ function normalizeRequest(
     actions,
     targets,
     capabilityIds,
+    ...(input.requiresHuman ? { requiresHuman: true } : {}),
     ...(input.scope ? {
       scope: {
         mode: input.scope.mode,
@@ -256,6 +257,7 @@ function permissionRequestKey(
       .map((target) => ({ ...target }))
       .sort((left, right) => `${left.kind}:${left.value}`.localeCompare(`${right.kind}:${right.value}`)),
     capabilityIds: [...request.capabilityIds].sort(),
+    requiresHuman: request.requiresHuman,
     scope: request.scope
       ? { mode: request.scope.mode, roots: [...request.scope.roots].sort() }
       : undefined,

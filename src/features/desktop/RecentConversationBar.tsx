@@ -26,6 +26,8 @@ export function RecentConversationBar({ actions, inline, language, assistantName
   const [tab, setTab] = useState<RecentTab>('sessions');
   const panel = useRef<HTMLElement>(null);
   const id = useId();
+  const inlineAccess = Boolean(inline);
+  useLayoutEffect(() => { if (inlineAccess) panel.current?.hidePopover(); }, [inlineAccess]);
   useEffect(() => {
     // The native popover handles clicks in this document. Guest pages and other
     // windows receive their own input, so also observe those focus changes.

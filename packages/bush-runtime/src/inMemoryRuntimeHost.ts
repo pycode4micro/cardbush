@@ -1701,7 +1701,7 @@ export class InMemoryRuntimeHost {
       case RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND: {
         const input = runtimeFileReceiptRequestSchema.parse(command.payload);
         if (!this.#sessions.hasSession(input.sessionId)) throw new Error('Conversation is unavailable.');
-        return this.#toolExecutions.fileReceipt(input.sessionId, input.path) ?? null;
+        return this.#toolExecutions.fileReceipt(input.sessionId, input.path, input.snapshotId) ?? null;
       }
       case GET_RUNTIME_TOOL_EXECUTION_COMMAND: {
         const identity = toolExecutionIdentitySchema.parse(command.payload);
@@ -2578,7 +2578,7 @@ export class InMemoryRuntimeHost {
       ...childPermission,
       ...(request.metadata.pluginBackground ? { externalPermissions: {
         // Explicit confirmations requested by a trusted hook are host prompts.
-        handles: permission => !modelApproval || permission.actions.includes('plugin_hook.confirm_tool'),
+        handles: permission => !modelApproval || permission.requiresHuman === true || permission.actions.includes('plugin_hook.confirm_tool'),
         request: async (permission, signal) => {
           if (!this.#requestBackgroundPermission) throw new Error('This host cannot display background Agent permissions.');
           const answer = await this.#requestBackgroundPermission({ ...permission, sessionId: request.sessionId, turnId: request.turnId }, signal);

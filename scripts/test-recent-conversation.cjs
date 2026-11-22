@@ -105,11 +105,23 @@ async function run() {
   await visible('[data-desktop-page="overview"]');
   const quick = '.recent-bar-list';
   const drawer = '.recent-turn-drawer:popover-open';
+  const compactQuick = async () => {
+    if (await read("!!document.querySelector('.recent-inline-toggle')")) {
+      await click('.window-sidebar-toggle');
+      await visible('.recent-bar-list[interestfor]');
+      return true;
+    }
+    return false;
+  };
   const showQuickPanel = async () => {
     if (!await read("!!document.querySelector('.recent-turn-drawer:popover-open')")) {
-      await read("document.querySelector('.recent-bar-list').focus({preventScroll:true})");
-      win.webContents.sendInputEvent({type:'keyDown', keyCode:'Down'});
-      win.webContents.sendInputEvent({type:'keyUp', keyCode:'Down'});
+      if (await read("!!document.querySelector('.recent-inline-toggle')")) {
+        await read("document.querySelector('.recent-turn-drawer').showPopover();void 0");
+      } else {
+        await read("document.querySelector('.recent-bar-list').focus({preventScroll:true})");
+        win.webContents.sendInputEvent({type:'keyDown', keyCode:'Down'});
+        win.webContents.sendInputEvent({type:'keyUp', keyCode:'Down'});
+      }
     }
     await visible(drawer);
     await wait(() => read("document.querySelector('.recent-turn-drawer:popover-open')?.getAnimations().length === 0"), 'Quick access has settled');
@@ -156,6 +168,7 @@ async function run() {
       await click('.sidebar-footer [data-nav-section=assistant]');
       await visible('[data-page=assistant]');
       if (viaList) { await showQuickPanel(); await click('[data-recent-tab=sessions]'); }
+      const switched = !viaList && await compactQuick();
       const entry = viaList ? '[data-recent-session=local-navigation-test]' : quick;
       const firstFrame = await read(`new Promise(resolve => {
         document.querySelector(${JSON.stringify(entry)}).click();
@@ -166,6 +179,7 @@ async function run() {
         }));
       })`);
       assert.deepEqual(firstFrame, {chat:true, width:splitWidth, samePage:true}, 'return paints chat and its existing PDF together');
+      if (switched) await click('.window-sidebar-toggle');
     }
     assert.equal(await read("!!document.querySelector('[data-message-id=\"turn-41-0\"]')"), false);
     await click('.conversation-history-paging button');
@@ -295,13 +309,21 @@ async function run() {
   })()`);
   assert.ok(await bounds(), 'Quick access follows Home in the navigation');
   await wait(() => read("document.querySelector('.sidebar').getAnimations().every(a=>a.playState !== 'running')"), 'sidebar has settled after the startup resize');
-  const point = await read("(()=>{const r=document.querySelector('.recent-bar-list').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
+  const quickCenter = () => read("(()=>{const r=document.querySelector('.recent-bar-list').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
   const away = {x:820,y:135};
   const move = p => win.webContents.sendInputEvent({type:'mouseMove', ...p});
   const isOpen = () => read("document.querySelector('.recent-turn-drawer').matches(':popover-open')");
   const contentWidth = () => read("document.querySelector('.desktop-shell').getBoundingClientRect().width");
   const originalWidth = await contentWidth();
   win.focus(); win.webContents.focus();
+  if (await read("!!document.querySelector('.recent-inline-toggle')")) {
+    move(await quickCenter()); await pause(500);
+    assert.equal(await isOpen(), false, 'expanded Quick has no hover preview');
+    move(away);
+  }
+  const startedExpanded = await compactQuick();
+  await wait(() => read("!document.querySelector('.sidebar').getAnimations().length"), 'compact Quick settles');
+  const point = await quickCenter();
   const rightEdge = await read("({x:innerWidth-16,y:Math.floor(innerHeight/2)})");
   move(rightEdge); await pause(550);
   assert.equal(await isOpen(), false, 'the right edge leaves the page alone');
@@ -309,13 +331,15 @@ async function run() {
   assert.equal(await isOpen(), false, 'moving past Quick does not interrupt navigation');
   move(point); await visible(drawer);
   await wait(()=>read("!document.querySelector('.recent-turn-drawer').getAnimations().length"),'Quick preview settles');
-  const popup = await read("(()=>{const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect(), b=(document.querySelector('.recent-bar-heading[data-inline]') ?? document.querySelector('.recent-bar-list')).getBoundingClientRect();return {x:Math.round(p.left+32), y:Math.round(p.top+40), beside:p.left>=b.right && p.left-b.right<16}})()");
+  const popup = await read("(()=>{const p=document.querySelector('.recent-turn-drawer').getBoundingClientRect(), b=document.querySelector('.recent-bar-list').getBoundingClientRect();return {x:Math.round(p.left+32), y:Math.round(p.top+40), beside:p.left>=b.right && p.left-b.right<16}})()");
   assert.ok(popup.beside, 'the flyout is anchored to the outside edge of Quick access');
   move({x:popup.x,y:popup.y}); await pause(480);
   assert.equal(await isOpen(),true,'the preview remains interactive as the pointer enters it');
   assert.equal(await contentWidth(), originalWidth, 'Quick does not resize the workspace');
   move(away); await wait(async()=>!await isOpen(),'leaving Quick closes the preview');
+  if (startedExpanded) await click('.window-sidebar-toggle');
   if (process.argv.includes('--quick-access')) {
+    if (!startedExpanded) await click('.window-sidebar-toggle');
     const quickSections = '.sidebar-nav .recent-inline-sessions';
     await visible(quickSections + ' .conversation-row');
     await click('.recent-inline-toggle');
@@ -579,6 +603,8 @@ async function run() {
   const latestTitle = await read("document.querySelector('.recent-turn-drawer [data-workspace-drop=recent] .recent-row-copy').textContent");
   assert.notEqual(latestTitle, 'Earlier conversation');
   await wait(() => read("innerWidth === 1400 && document.querySelector('.desktop-shell').dataset.sidebarLayout === 'docked' && !document.querySelector('.sidebar').getAnimations().length"), 'Quick hit target settled after resizing');
+  const switched = await compactQuick();
+  await wait(() => read("!document.querySelector('.sidebar').getAnimations().length"), 'compact Quick hit target settles');
   const quickPoint = await read("(()=>{const r=document.querySelector('.recent-bar-list').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()");
   move(quickPoint);
   for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type,button:'left',clickCount:1,...quickPoint});
@@ -586,6 +612,7 @@ async function run() {
     const hit = await read(`document.elementFromPoint(${quickPoint.x}, ${quickPoint.y})?.closest('button')?.className`);
     throw new Error(`${error.message} (expected ${latestTitle}, got ${await titleText()}, panel open ${await isOpen()}, hit ${hit})`);
   });
+  if (switched) await click('.window-sidebar-toggle');
   move(away);
   await showQuickPanel();
   await click('[data-recent-tab=sessions]');

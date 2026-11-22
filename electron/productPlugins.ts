@@ -34,7 +34,8 @@ export type ProductPluginReplacement = (pluginId: string,
 
 export interface ProductPluginInstallOptions {
   expectedId: string;
-  checkNewPackage: (pluginId: string) => Promise<void>;
+  expectedVersion?: string;
+  checkNewPackage: (pluginId: string) => Promise<boolean | void>;
   signal?: AbortSignal;
 }
 
@@ -235,14 +236,22 @@ export async function installProductPlugin(
 ): Promise<{ id: string; manifestPath: string }> {
   return withProductPluginLifecycle(async () => {
     options?.signal?.throwIfAborted();
-    const install = (expectedId?: string) => {
-      const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot, expectedId, options));
+    const install = (expectedId?: string, replacing = !options) => {
+      const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot, replacing, expectedId, options));
       pluginInstallQueue = result.then(() => undefined, () => undefined);
       return result;
     };
     if (options) {
       // Check while sharing the lock used by the installer and uninstaller.
-      await options.checkNewPackage(options.expectedId);
+      const replacing = await options.checkNewPackage(options.expectedId);
+      if (replacing) {
+        if (!replacePlugin || !await ownedDirectory(userPluginRoot, options.expectedId)) throw new Error('The installed plugin is unavailable for replacement.');
+        const manifest = await resolvePluginManifest(resolve(sourcePath));
+        if (manifest.manifest.name !== options.expectedId || manifest.manifest.version !== options.expectedVersion) throw new Error('The candidate package changed. Check the version again.');
+        await decodeManifest({ resolved: manifest, source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
+        validateRuntimeExtensions(manifest);
+        return replacePlugin(options.expectedId, () => install(options.expectedId, true));
+      }
       if (await ownedDirectory(userPluginRoot, options.expectedId)) throw new Error('A directory already exists for this plugin. Inspect the existing package before installing.');
       return install(options.expectedId);
     }
@@ -314,13 +323,14 @@ async function renamePluginDirectory(from: string, to: string) {
   }
 }
 
-async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string, expectedId?: string, options?: ProductPluginInstallOptions) {
+async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string, replacing: boolean, expectedId?: string, options?: ProductPluginInstallOptions) {
   options?.signal?.throwIfAborted();
   const source = resolve(sourcePath);
   const resolved = await resolvePluginManifest(source);
   const { manifest } = resolved;
   const id = requiredString(manifest.name, 'plugin.name');
   if (expectedId && id !== expectedId) throw new Error('Plugin manifest name changed during installation. Try again.');
+  if (options?.expectedVersion !== undefined && manifest.version !== options.expectedVersion) throw new Error('The candidate package version changed. Check the version again.');
   await decodeManifest({
     resolved,
     source: 'user',
@@ -342,17 +352,20 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
   const backup = join(work, 'previous');
   let preserveBackup = false;
   try {
+    const { pluginDependencyDirectory, preparePluginDependencies } = await import('./pluginDependencies.mjs');
     await mkdir(dirname(temporary), { recursive: true });
-    await cp(source, temporary, { recursive: true, errorOnExist: true });
+    await cp(source, temporary, { recursive: true, errorOnExist: true, filter: path => path !== join(source, pluginDependencyDirectory) });
     const staged = await resolvePluginManifest(temporary);
     await decodeManifest({ resolved: staged,
       source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
     validateRuntimeExtensions(staged);
     if (staged.manifest.name !== id) throw new Error('Plugin manifest name changed during installation. Try again.');
+    if (options?.expectedVersion !== undefined && staged.manifest.version !== options.expectedVersion) throw new Error('The candidate package version changed. Check the version again.');
+    await preparePluginDependencies(temporary, objectOrEmpty(staged.manifest.mcpServers), options?.signal);
     // Once replacement starts, finish the transaction or restore the backup.
     options?.signal?.throwIfAborted();
     let movedExisting = false;
-    if (!options) {
+    if (replacing) {
       try { await renamePluginDirectory(target, backup); movedExisting = true; }
       catch (error) {
         const code = (error as NodeJS.ErrnoException).code;

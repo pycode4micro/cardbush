@@ -11,13 +11,14 @@ import {
 // not infer files from arbitrary tool prose or recursively classify tool data.
 export function toolArtifactsFromPayload(
   payload: Record<string, unknown>,
+  nativeImageObservation = false,
 ): ChatToolArtifact[] {
   const native = asRecord(payload.result ?? payload);
   // The runtime dispatcher has an explicit envelope; arbitrary nested objects are not searched.
   const result = asRecord(native.mcp).name && native.result ? asRecord(native.result) : native;
   const structured = asRecord(result.structuredContent);
   const artifacts: ChatToolArtifact[] = [];
-  collectDeclaredArtifacts(result.artifacts, artifacts);
+  collectDeclaredArtifacts(result.artifacts, artifacts, nativeImageObservation && result === native);
   collectDeclaredArtifacts(structured.artifacts, artifacts);
   collectMcpContent(legacyComputerUseContent(native, result, structured), artifacts);
   return dedupeArtifacts(artifacts);
@@ -56,7 +57,7 @@ export function mergeToolArtifacts(
   return dedupeArtifacts([...(current ?? []), ...(incoming ?? [])]);
 }
 
-function collectDeclaredArtifacts(value: unknown, artifacts: ChatToolArtifact[]) {
+function collectDeclaredArtifacts(value: unknown, artifacts: ChatToolArtifact[], nativeImageObservation = false) {
   const values = Array.isArray(value) ? value : value == null ? [] : [value];
   for (const candidate of values) {
     if (typeof candidate === 'string') {
@@ -69,7 +70,14 @@ function collectDeclaredArtifacts(value: unknown, artifacts: ChatToolArtifact[])
       record.path ?? record.url ?? record.uri ?? record.image_url ?? record.imageUrl,
     );
     const artifact = artifactFromSource(source, record);
-    if (artifact) artifacts.push(artifact);
+    if (artifact) {
+      const metadata = asRecord(record.metadata);
+      const snapshot = stringValue(metadata.model_input_url);
+      if (nativeImageObservation && artifact.type === 'image' && metadata.model_input === true && isAbsoluteLocalPath(snapshot)) {
+        artifact.snapshotPath = snapshot;
+      }
+      artifacts.push(artifact);
+    }
   }
 }
 
@@ -154,7 +162,7 @@ function isRenderableSource(value: string) {
 function dedupeArtifacts(artifacts: ChatToolArtifact[]) {
   const bySource = new Map<string, ChatToolArtifact>();
   for (const artifact of artifacts) {
-    const key = artifact.path.trim().replaceAll('\\', '/').toLowerCase();
+    const key = (artifact.snapshotPath ?? artifact.path).trim().replaceAll('\\', '/').toLowerCase();
     if (!key) continue;
     const current = bySource.get(key);
     bySource.set(key, current ? { ...current, ...artifact, id: current.id } : artifact);

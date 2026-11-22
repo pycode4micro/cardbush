@@ -15,7 +15,7 @@ import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 
 const allowed = new Set<string>(ASSISTANT_MANAGEMENT_TOOLS);
 const disclosureNames = ['get_tool_schema', 'call_tool'] as const;
-const productPluginTools = new Set(['list_plugin_marketplaces', 'install_plugin', 'uninstall_plugin']);
+const productPluginTools = new Set(['list_plugin_marketplaces', 'inspect_plugin', 'install_plugin', 'uninstall_plugin']);
 
 /** Uses the ordinary validators, permission grants and receipts, without a child or a second scheduler. */
 export class AssistantManagement {

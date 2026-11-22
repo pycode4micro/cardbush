@@ -22,19 +22,16 @@ export function RecentConversationBarView({ actions, inline, language, panelId, 
   const listLabel = unread ? t('recentBar.navigatorUnread', { count: unread }) : t('recentBar.navigator');
   const inlineId = panelId + '-inline';
   return <div className="recent-bar">
-    <div className="recent-bar-heading" data-inline={inline ? '' : undefined}>
-      <button className="nav-row recent-bar-list" type="button" {...{ interestfor: panelId }}
-        aria-description={t('recentBar.quickHint')} aria-keyshortcuts="ArrowDown" onClick={onActivate}
-        onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); onBrowse(); } }}
-        data-unread={unread > 0 || undefined} aria-haspopup="dialog" aria-controls={panelId} aria-expanded={expanded} aria-label={listLabel}>
-        <span className="nav-row-icon" aria-hidden="true"><Zap/>{unread > 0 && <i className="recent-unread-dot"/>}</span>
-        <span>{t('recentBar.navigator')}</span>
-      </button>
-      {inline && <button className="recent-inline-toggle" type="button" aria-controls={inlineId} aria-expanded={inline.expanded}
-        aria-label={t('recentBar.quickSections')} title={t('recentBar.quickSections')} onClick={inline.onToggle}>
-        <ChevronRight aria-hidden="true"/>
-      </button>}
-    </div>
+    <button className={`nav-row recent-bar-list${inline ? ' recent-inline-toggle' : ''}`} type="button"
+      {...(!inline && { interestfor: panelId, 'aria-keyshortcuts': 'ArrowDown', 'aria-description': t('recentBar.quickHint') })}
+      data-unread={unread > 0 || undefined} aria-haspopup={inline ? undefined : 'dialog'}
+      aria-controls={inline ? inlineId : panelId} aria-expanded={inline?.expanded ?? expanded} aria-label={listLabel}
+      onClick={inline?.onToggle ?? onActivate}
+      onKeyDown={inline ? undefined : event => { if (event.key === 'ArrowDown') { event.preventDefault(); onBrowse(); } }}>
+      <span className="nav-row-icon" aria-hidden="true"><Zap/>{unread > 0 && <i className="recent-unread-dot"/>}</span>
+      <span>{t('recentBar.navigator')}</span>
+      {inline && <ChevronRight className="recent-inline-chevron" aria-hidden="true"/>}
+    </button>
     {inline && <div className="recent-inline-sessions" id={inlineId} hidden={!inline.expanded}>{inline.content}</div>}
     <aside className="recent-turn-drawer" ref={panelRef} id={panelId} popover="auto" role="dialog"
       aria-label={t('recentBar.navigator')} onToggle={event => {

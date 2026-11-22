@@ -242,7 +242,8 @@ export function registerWorkspaceTools(
         if (admission.kind === 'ask') requests.push(admission.request);
       }
       return requests.length ? { kind: 'ask' as const, request: { reason: 'Apply the related file changes.', actions: ['write'],
-        targets: requests.flatMap(request => request.targets), capabilityIds: requests.flatMap(request => request.capabilityIds) } } : { kind: 'allow' as const };
+        targets: requests.flatMap(request => request.targets), capabilityIds: requests.flatMap(request => request.capabilityIds),
+        requiresHuman: requests.some(request => request.requiresHuman) } } : { kind: 'allow' as const };
     },
     resources: async context => Promise.all(context.input.files.flatMap(file => [file.path, ...(file.moveTo ? [file.moveTo] : [])]).map(async path =>
       ({ key: `file:${normalizeIdentity(await resolveToolPath(context, path, true))}`, mode: 'write' as const }))),

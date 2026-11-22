@@ -44,6 +44,7 @@ async function run() {
   const markets = new PluginMarketplaceService({
     dataRoot: join(root, 'markets'), userPluginRoot: pluginRoot, bundledPluginRoot: join(root, 'plugins'),
     fetch: () => assert.fail('The marketplace test uses isolated local catalogs'),
+    replacePlugin: (id, replace) => host.replacePlugin(id, replace),
   });
   const endpoint = await startProductMcpManagement(() => host, undefined, undefined, { host: () => host, marketplace: () => markets });
   writeFileSync(appsConfig, JSON.stringify({ protocol: 'cardbush.apps_config.v1', revision: 1, serviceEnabled: false, plugins: [] }));
@@ -208,6 +209,15 @@ async function run() {
       assert.equal(readFileSync(join(pluginRoot, id, manifestPath), 'utf8'), sourceManifest);
       assert.ok((await packages()).packages.some(item => item.name === id && item.installed && item.enabled));
       assert.equal((await invoke('install_plugin', args)).status, 'already_installed');
+      writeFileSync(join(source, manifestPath), sourceManifest.replace('1.2.3', '1.3.0'));
+      const retained = await invoke('install_plugin', args);
+      assert.deepEqual([retained.status, retained.installed_version, retained.candidate_version], ['already_installed', '1.2.3', '1.3.0']);
+      const versions = await invoke('inspect_plugin', args);
+      assert.deepEqual([versions.installed_version, versions.candidate_version], ['1.2.3', '1.3.0']);
+      const stale = await client.callTool({ name: 'install_plugin', arguments: { ...args, update: { installed_version: '1.0.0', candidate_version: '1.3.0' } } });
+      assert.equal(stale.isError, true);
+      const updated = await invoke('install_plugin', { ...args, update: { installed_version: '1.2.3', candidate_version: '1.3.0' } });
+      assert.deepEqual([updated.status, updated.version, updated.enabled], ['updated', '1.3.0', true]);
       const serverId = `plugin_${id}_main`;
       assert.ok((await applied()).servers.some(server => server.id === serverId));
       await invoke('reconnect_mcp_server', { id: serverId });
@@ -233,6 +243,13 @@ async function run() {
     assert.equal(local.status, 'installed');
     assert.equal(local.format, 'claude');
     assert.deepEqual(local.mcp, []);
+    const localSource = { plugin_id: 'local-zip', source: { kind: 'local', path: archive } };
+    zip.file('.claude-plugin/plugin.json', JSON.stringify({ name: 'local-zip', version: '2.1.0', description: 'Updated ZIP fixture' }));
+    writeFileSync(archive, await zip.generateAsync({ type: 'nodebuffer' }));
+    const inspected = await invoke('inspect_plugin', localSource);
+    assert.deepEqual([inspected.installed_version, inspected.candidate_version], ['2.0.0', '2.1.0']);
+    const localUpdate = await invoke('install_plugin', { ...localSource, update: { installed_version: '2.0.0', candidate_version: '2.1.0' } });
+    assert.deepEqual([localUpdate.status, localUpdate.version], ['updated', '2.1.0']);
     assert.equal((await invoke('uninstall_plugin', { plugin_id: 'local-zip' })).status, 'uninstalled');
     console.log('Real Electron worker passed: management tools, targeted reconnect, unchanged saved config, source/version-only plugin replacement and new tool discovery without restarting the worker.');
   } finally {

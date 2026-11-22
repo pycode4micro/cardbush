@@ -36,8 +36,8 @@ export function missingPluginVariables(value: unknown): string[] {
 }
 
 export class MissingPluginEnvironmentError extends Error {
-  constructor(pluginId: string, name: string, variables: Set<string>, readonly required: boolean) {
-    super(`Plugin ${pluginId} / ${name}: configure environment variables before connecting: ${[...variables].join(', ')}`);
+  constructor(pluginId: string, name: string, variables: Set<string>, readonly required: boolean, detail?: string) {
+    super(`Plugin ${pluginId} / ${name}: ${detail ?? `configure environment variables before connecting: ${[...variables].join(', ')}`}`);
     this.name = 'MissingPluginEnvironmentError';
   }
 }

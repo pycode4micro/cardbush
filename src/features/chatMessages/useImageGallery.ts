@@ -1,5 +1,6 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { ChatMessage } from '../../types';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { ChatMessage, ChatToolExecution } from '../../types';
+import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { ImageGalleryContext } from './ImageGalleryContext';
 import { ConversationHostContext } from '../conversationHost';
 import { appendGalleryImages, galleryImage, galleryImageKey, imageDirectory, sessionGalleryImages,
@@ -25,11 +26,53 @@ export function useImageGallery(initial: ImagePreviewSource, options: {
   const defaultScope = (requestedScope === 'directory' && (!canScan || !directory)) || (requestedScope === 'workspace' && (!canScan || !workspace))
     ? 'session' : requestedScope;
   const [scope, setScope] = useState<ImageGalleryScope>(defaultScope);
+  const [details, setDetails] = useState<{ sessionId: string | undefined; turns: Map<string, ChatToolExecution[]> }>();
+  const detailTurns = details?.sessionId === sessionId ? details?.turns : undefined;
+  const toolDetails = host?.toolDetails ?? ((sessionId: string, turnId: string) => fetchRuntimeTurnToolExecutionDetails({ sessionId, turnId }));
+  const isToolGallery = options.initialScope === 'session' && Boolean(options.images);
+  const deferred = useMemo(() => {
+    if (!isToolGallery || scope !== 'session') return '';
+    const turns = new Set<string>();
+    const visit = (message: ChatMessage) => {
+      message.loopHistory?.forEach(visit);
+      if (!message.conversationId) return;
+      for (const execution of message.toolExecutions ?? []) {
+        const turnId = execution.turnId ?? message.turnId;
+        if (turnId && execution.metadata.nativeResultDeferred === true && ['inject_image_input', 'view_image'].includes(execution.name)) {
+          turns.add(JSON.stringify([message.conversationId, turnId]));
+        }
+      }
+    };
+    messages.forEach(visit);
+    return [...turns].join('\n');
+  }, [messages, isToolGallery, scope]);
+  const readDetails = useRef(toolDetails);
+  readDetails.current = toolDetails;
+  useEffect(() => {
+    if (!deferred) return;
+    let active = true;
+    const read = async () => {
+      const turns = new Map(detailTurns);
+      for (const key of deferred.split('\n')) {
+        if (!active) return;
+        if (turns.has(key)) continue;
+        const [conversationId, turnId] = JSON.parse(key) as [string, string];
+        try { turns.set(key, await readDetails.current(conversationId, turnId)); }
+        catch { /* Images already loaded in the transcript remain available. */ }
+      }
+      if (active) setDetails({ sessionId, turns });
+    };
+    void read();
+    return () => { active = false; };
+  }, [deferred, sessionId]);
+
   const knownImages = useCallback((target: ImageGalleryScope) => {
     const values = target === 'attachments' ? options.images ?? [] : target === 'session' && context
-      ? sessionGalleryImages(messages, workspace, context.pathAliases) : [];
+      ? [...sessionGalleryImages(messages, workspace, context.pathAliases, (execution, message) =>
+          detailTurns?.get(JSON.stringify([message.conversationId, execution.turnId ?? message.turnId]))?.find(record => record.id === execution.id)),
+        ...(isToolGallery ? options.images ?? [] : [])] : [];
     return appendGalleryImages([], [...values, initial]).map(image => galleryImageKey(image) === galleryImageKey(initial) ? initial : image);
-  }, [options.images, context, messages, workspace, initial]);
+  }, [options.images, context, messages, workspace, initial, detailTurns, isToolGallery]);
   const [images, setImages] = useState(() => knownImages(defaultScope));
   const [selected, setSelected] = useState(() => galleryImageKey(initial));
   const [loading, setLoading] = useState(false);
@@ -61,9 +104,10 @@ export function useImageGallery(initial: ImagePreviewSource, options: {
 
   useEffect(() => {
     if (scope === 'session' || scope === 'attachments') {
-      setImages(current => appendGalleryImages(current, knownImages(scope)));
+      const known = knownImages(scope);
+      setImages(current => isToolGallery && scope === 'session' ? appendGalleryImages(known, current) : appendGalleryImages(current, known));
     }
-  }, [scope, knownImages]);
+  }, [scope, knownImages, isToolGallery]);
 
   useEffect(() => {
     if (!canScan || (scope !== 'directory' && scope !== 'workspace')) return;
@@ -117,8 +161,10 @@ export function useImageGallery(initial: ImagePreviewSource, options: {
   const changeScope = (next: ImageGalleryScope) => {
     if (next === scope) return;
     const current = imageRef.current;
-    setImages(next === 'directory' || next === 'workspace' ? [current] : appendGalleryImages(knownRef.current(next), [current]));
-    setSelected(galleryImageKey(current));
+    const known = knownRef.current(next);
+    setImages(next === 'directory' || next === 'workspace' ? [current] : next === 'attachments' ? known : appendGalleryImages(known, [current]));
+    setSelected(next === 'attachments' && !known.some(image => galleryImageKey(image) === galleryImageKey(current))
+      ? galleryImageKey(initial) : galleryImageKey(current));
     setError(''); setSkipped(0); setMore(false); setLoading(false);
     setScope(next);
   };
@@ -128,7 +174,8 @@ export function useImageGallery(initial: ImagePreviewSource, options: {
       return galleryImageKey(images[Math.max(0, Math.min(images.length - 1, position + delta))] ?? initial);
     });
   }, [images, initial]);
-  const scopes: ImageGalleryScope[] = options.images ? ['attachments'] : context ? ['session'] : [];
+  const scopes: ImageGalleryScope[] = context && (!options.images || isToolGallery) ? ['session'] : [];
+  if (options.images) scopes.push('attachments');
   if (canScan && directory) scopes.push('directory');
   if (canScan && workspace) scopes.push('workspace');
   return { image, images, index, scope, scopes, changeScope, move, loading, error, skipped, more,

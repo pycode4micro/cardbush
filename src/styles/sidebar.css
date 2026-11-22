@@ -143,7 +143,7 @@ body.sidebar-resizing .right-inspector {
   margin-top: 0;
 }
 
-.sidebar-nav:has(.recent-bar-heading[data-inline]) {
+.sidebar-nav:has(.recent-inline-toggle) {
   min-height: 0;
   overflow: hidden auto;
   overscroll-behavior: contain;

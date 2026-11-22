@@ -356,6 +356,7 @@ export interface ChatAttachment {
 
 export interface ChatToolArtifact extends ChatAttachment {
   path: string;
+  snapshotPath?: string;
   mimeType?: string;
   display?: 'inline' | 'attachment';
   readOnly?: boolean;

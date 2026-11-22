@@ -32,6 +32,7 @@ export interface ToolPermissionRequest {
   targets: RuntimePermissionTarget[];
   capabilityIds: string[];
   scope?: RuntimePermissionScope;
+  requiresHuman?: boolean;
 }
 
 export type ToolAdmissionDecision =

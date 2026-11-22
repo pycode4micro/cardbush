@@ -6,18 +6,12 @@
 .recent-bar button { font:inherit; color:inherit; cursor:pointer; }
 .recent-bar-list { anchor-name:--quick-access; interest-delay:250ms 320ms; }
 .recent-bar-list .nav-row-icon { position:relative; }
-.recent-bar-list[aria-expanded="true"] { background:var(--chrome-control-hover,var(--hover)); }
-.recent-bar-heading { display:contents; }
-.recent-bar-heading[data-inline] { display:flex; align-items:center; anchor-name:--quick-access; }
-.recent-bar-heading[data-inline] .recent-bar-list { flex:1; min-width:0; anchor-name:none; }
-.recent-inline-toggle {
-  display:grid; place-items:center; flex:0 0 var(--bar-button-size); height:var(--bar-button-size);
-  padding:0; border:0; border-radius:6px; background:transparent;
+.recent-bar-list[aria-haspopup][aria-expanded="true"] { background:var(--chrome-control-hover,var(--hover)); }
+.recent-inline-toggle .recent-inline-chevron {
+  margin-inline-start:auto; color:var(--sidebar-text-mid, var(--text-mid));
+  width:14px; height:14px; flex:none;
 }
-.recent-bar .recent-inline-toggle { color:var(--sidebar-text-mid, var(--text-mid)); }
-.recent-inline-toggle:hover { background:var(--chrome-control-hover, var(--hover)); }
-.recent-inline-toggle svg { width:14px; height:14px; }
-.recent-inline-toggle[aria-expanded="true"] svg { rotate:90deg; }
+.recent-inline-toggle[aria-expanded="true"] .recent-inline-chevron { rotate:90deg; }
 .recent-inline-sessions { padding-inline-start:var(--sidebar-quick-indent, 10px); margin-block-end:8px; }
 .recent-inline-sessions .recent-session-rows h3 { margin-block-start:8px; }
 .recent-inline-sessions .recent-session-rows :is(.project-row, .conversation-row) { min-height:30px; }
