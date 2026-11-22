@@ -173,6 +173,37 @@ async function run() {
   assert.equal(consumed.fileSelectionVerified,false,'a page that consumes/reset files is not reported as safe to retry');
   const screenshot=await call('take_screenshot',{format:'png'});success(screenshot);
   assert.ok(screenshot.content.some(item=>item.type==='image'&&item.data.length>100));
+  // Reproduce the Gemini capture request against a narrower real WebView.
+  const nativeViewport=await guest.executeJavaScript('({ width: innerWidth, height: innerHeight })');
+  await guest.executeJavaScript(`for (const [at,color] of [['left','red'],['right','lime']]) {
+    const mark=document.createElement('div');mark.style.cssText='pointer-events:none;position:fixed;top:0;'+at+':0;width:24px;height:16px;z-index:9999;background:'+color;
+    document.body.append(mark);
+  } void 0`);
+  const requestedViewport={width:1280,height:900};
+  const wideCapture=await call('take_screenshot',{format:'png',viewport:requestedViewport});
+  const wideReceipt=success(wideCapture);
+  const sharp=require('sharp');
+  const {data:widePixels,info:wideInfo}=await sharp(Buffer.from(wideCapture.content.find(item=>item.type==='image').data,'base64')).removeAlpha().raw().toBuffer({resolveWithObject:true});
+  const pixel=(x,y)=>Array.from(widePixels.subarray((y*wideInfo.width+x)*3,(y*wideInfo.width+x)*3+3));
+  assert.deepEqual(wideReceipt.requestedViewport,requestedViewport);
+  assert.equal(wideReceipt.viewportSource,'embedded_panel');
+  assert.deepEqual({width:wideReceipt.viewport.width,height:wideReceipt.viewport.height},nativeViewport);
+  assert.deepEqual(pixel(wideInfo.width-18,5),[0,255,0],'capture contains the right edge instead of repeating the left surface');
+  assert.deepEqual(pixel(5,5),[255,0,0],'capture contains the left edge');
+  assert.deepEqual(await guest.executeJavaScript('({ width: innerWidth, height: innerHeight })'),nativeViewport,'capture leaves the embedded viewport in place');
+  failure(await call('resize_page',requestedViewport),'cardbush_viewport_managed');
+  await guest.executeJavaScript(`{
+    const mark=document.createElement('div');mark.id='capture-bottom';
+    mark.style.cssText='position:absolute;left:0;width:32px;height:24px;background:blue;top:'+document.documentElement.scrollHeight+'px';
+    document.body.append(mark);
+  } void 0`);
+  const fullCapture=await call('take_screenshot',{format:'png',fullPage:true});
+  const fullReceipt=success(fullCapture);
+  assert.ok(fullReceipt.viewport.height<fullReceipt.clip.height,'full-page capture covers the document below the viewport');
+  assert.ok(fullReceipt.clip.scale<1,'the complete region fits the native capture surface');
+  const {data:fullPixels,info:fullInfo}=await sharp(Buffer.from(fullCapture.content.find(item=>item.type==='image').data,'base64')).removeAlpha().raw().toBuffer({resolveWithObject:true});
+  const bottomOffset=((fullInfo.height-4)*fullInfo.width+5)*3;
+  assert.deepEqual(Array.from(fullPixels.subarray(bottomOffset,bottomOffset+3)),[0,0,255],'full-page capture contains the bottom of the document');
   assert.equal(externalCalls.length,externalBefore,'@ binding must not issue any further Chrome operation');
   const blockedCommand={scopeId:scope,tabId:pageId,command:'Runtime.evaluate',commandParams:{expression:'new Promise(()=>{})',awaitPromise:true}};
   const abort=new AbortController();

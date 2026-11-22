@@ -1882,6 +1882,12 @@ export class InMemoryRuntimeHost {
         const queue = this.#guidanceQueues.get(key) ?? [];
         let modelRequestInterrupted = false;
         if (!queue.some((entry) => entry.messageId === guidance.messageId)) {
+          if (guidance.metadata?.realtimeParent === true) {
+            const pending = this.#solutions.list(guidance.sessionId).find(request =>
+              request.turnId === guidance.turnId && request.blocking && !request.questions);
+            if (pending) return { protocol: guidance.protocol, sessionId: guidance.sessionId, turnId: guidance.turnId,
+              messageId: guidance.messageId, accepted: false, queueDepth: queue.length, pendingSolutionId: pending.selectionId };
+          }
           const child = this.#recovery.cacheRoots().find(item => item.request.sessionId === guidance.sessionId && item.request.turnId === guidance.turnId)?.request;
           if (child?.metadata.agentRole === 'child' || guidance.metadata?.realtimeParent === true) guidance.metadata = { ...guidance.metadata, subagentAuthor: guidance.metadata?.realtimeParent === true ? 'parent' : 'user' };
           queue.push({

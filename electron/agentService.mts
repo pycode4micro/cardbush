@@ -7,7 +7,7 @@ import { prepareWebhookParentModels } from './contextWebhookRuntime.mjs';
 import { applyWebhookTurnPolicy, assistantProfileSchema, PERSONAL_ASSISTANT_SESSION, runtimeSessionTurnRequestSchema, withoutReportDeliveryPreface, type ChildAgentConfiguration } from '@cardbush/bush-protocol';
 import type { WebhookBinding } from './contextWebhookTypes.js';
 import { EmbodiedHost, createHeadlessRealtimeVoice } from './embodiedHost.mjs';
-import { remoteControlSchema, validateRemoteResponse, SUBAGENT_INTERACTION_OPERATIONS, type RemoteControl } from '@cardbush/bush-protocol';
+import { remoteControlSchema, runtimeGuidanceReceiptSchema, validateRemoteResponse, SUBAGENT_INTERACTION_OPERATIONS, type RemoteControl } from '@cardbush/bush-protocol';
 import { workerObservation } from './remoteWorkerObservation.mjs';
 import { openHeadlessWorkers } from './headlessWorkerStore.mjs';
 import { openLocalWorkers } from './localWorkerStore.mjs';
@@ -1136,10 +1136,11 @@ export class AgentService {
       if (control.operation === 'message') {
         if (control.delivery === 'insert') {
           // The exact running turn is mandatory; the Runtime rejects a completed target.
-          result = await this.#command('runtime.enqueue_guidance', { protocol: 'bush.runtime_guidance.v1',
+          const receipt = runtimeGuidanceReceiptSchema.parse(await this.#command('runtime.enqueue_guidance', { protocol: 'bush.runtime_guidance.v1',
             sessionId: job.sessionId, turnId: job.turnId, messageId: control.messageId, content: control.text,
-            createdAt: new Date().toISOString(), mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent', realtimeParent: true } });
-          result = { accepted: true, applied: false, receipt: result };
+            createdAt: new Date().toISOString(), mode: 'interrupt_and_continue', metadata: { subagentAuthor: 'parent', realtimeParent: true } }));
+          result = { accepted: receipt.accepted, applied: false, receipt,
+            ...(receipt.pendingSolutionId ? { pendingSolutionId: receipt.pendingSolutionId } : {}) };
         } else {
           const taskId = `queued-${createHash('sha256').update(key).digest('hex').slice(0, 40)}`;
           result = await this.#call('delegation.submit', { taskId, turnId: `turn-${taskId}`, sessionId: job.sessionId,

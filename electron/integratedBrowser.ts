@@ -13,7 +13,7 @@ const pageCommands = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'DOM.resolveNode', 'DOM.describeNode', 'DOM.getContentQuads',
   'DOM.getFrameOwner', 'DOM.getNodeForLocation', 'DOM.setFileInputFiles', 'Runtime.evaluate', 'Runtime.callFunctionOn', 'Runtime.releaseObject',
   'Page.getFrameTree', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Input.insertText', 'Input.dispatchKeyEvent',
-  'Input.dispatchMouseEvent', 'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride',
+  'Input.dispatchMouseEvent',
 ]);
 
 function unavailable(message: string, code = 'cardbush_page_unavailable'): never {

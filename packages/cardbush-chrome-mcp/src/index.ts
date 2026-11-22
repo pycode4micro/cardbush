@@ -187,9 +187,10 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
     return { listed, selectedPageId, selectionState };
   };
 
-  const pageId = async (context: ToolContext): Promise<number> => {
-    const { selectedPageId, selectionState } = await pages(context);
-    if (selectionState !== 'selected' || selectedPageId == null) {
+  const selectedPage = async (context: ToolContext): Promise<BrowserPage> => {
+    const { listed, selectedPageId, selectionState } = await pages(context);
+    const page = listed.find(item => item.id === selectedPageId);
+    if (selectionState !== 'selected' || !page) {
       throw new BrowserConnectorError(
         'browser_page_missing',
         selectionState === 'missing'
@@ -198,8 +199,13 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
         { selectionState, ...(selectedPageId != null ? { unavailablePageId: selectedPageId } : {}) },
       );
     }
-    return selectedPageId;
+    return page;
   };
+  const pageId = async (context: ToolContext) => (await selectedPage(context)).id;
+  const captureViewport = (page: BrowserPage, command: ReturnType<typeof commandFor>, context: ToolContext,
+    viewport?: Viewport, autoViewport = true) => page.browser === 'cardbush'
+      ? prepareCapture(command, undefined, false)
+      : prepareCapture(command, viewport ?? requestedViewports.get(viewportKey(context, page.id)), autoViewport);
 
   server.registerTool('list_browsers', toolDefinition(
     'List Browser Use connections',
@@ -429,10 +435,13 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
 
   server.registerTool('resize_page', toolDefinition(
     'Set page viewport',
-    'Set this session tab’s virtual viewport without resizing the user’s browser window. It survives navigation and is cleared on release. Explicit small viewports are preserved for responsive tests.',
+    'Set this Chrome or Edge tab’s virtual viewport without resizing the user’s browser window. It survives navigation and is cleared on release. Explicit small viewports are preserved for responsive tests. CardBush embedded pages use their actual panel size.',
     viewportSchema, false,
   ), async (input, context) => withToolResult(async () => {
-    const target = await pageId(context);
+    const page = await selectedPage(context);
+    if (page.browser === 'cardbush') throw new BrowserConnectorError('cardbush_viewport_managed',
+      'This CardBush tab follows its visible panel size. Resize the existing panel to change the page viewport.');
+    const target = page.id;
     const viewport = await setViewport(commandFor(target, context), input);
     requestedViewports.set(viewportKey(context, target), input);
     return { text: `Page CSS viewport set to ${viewport.width} × ${viewport.height}.`, structured: { pageId: target, ...viewport, requested: input } };
@@ -440,7 +449,7 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
 
   server.registerTool('take_screenshot', toolDefinition(
     'Take page screenshot',
-    'Capture a page or CSS selector as an attached image and automatically saved artifact. Supply viewport for a specific layout. An accidental tiny viewport is repaired once unless autoViewport=false or resize_page explicitly set it. fullPage captures document bounds; it does not choose the layout width. Never download an image just to inspect it.',
+    'Capture a page or CSS selector as an attached image and automatically saved artifact. A CardBush tab uses its actual embedded viewport. For Chrome or Edge, supply viewport for a specific layout. An accidental tiny Chrome or Edge viewport is repaired unless autoViewport=false or resize_page explicitly set it. fullPage captures document bounds. Never download an image just to inspect it.',
     z.object({ format: z.enum(['png', 'jpeg']).default('png'), quality: z.number().int().min(1).max(100).optional(), fullPage: z.boolean().optional(),
       viewport: viewportSchema.optional(), autoViewport: z.boolean().default(true), selector: z.string().min(1).max(2000).optional() })
       .refine(input => !(input.fullPage && input.selector), 'Choose fullPage or selector, not both.'),
@@ -452,11 +461,13 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
     let pageSelectionMs: number | undefined;
     let connector: BrowserConnectorDiagnostics | undefined;
     try {
-      target = await pageId(context);
+      const page = await selectedPage(context);
+      target = page.id;
       pageSelectionMs = Date.now() - startedAt;
       const command = commandFor(target, context);
-      const viewport = await prepareCapture(command, input.viewport ?? requestedViewports.get(viewportKey(context, target)), input.autoViewport !== false);
-      const region = await captureClip(command, input.fullPage, input.selector, viewport.deviceScaleFactor);
+      const viewport = await captureViewport(page, command, context, input.viewport, input.autoViewport !== false);
+      const region = await captureClip(command, input.fullPage, input.selector, viewport.deviceScaleFactor,
+        page.browser === 'cardbush' ? viewport : undefined);
       const clip = region?.cssClip;
       const result = record(await request('debugger.command', {
         tabId: target,
@@ -475,6 +486,7 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
       screenshotFailures.delete(JSON.stringify([scope.id, 'page_selection']));
       return imageResult(context, { data, mimeType: input.format === 'jpeg' ? 'image/jpeg' : 'image/png' }, {
         pageId: target, format: input.format, viewport, ...(clip ? { clip } : {}),
+        ...(page.browser === 'cardbush' && input.viewport ? { requestedViewport: input.viewport, viewportSource: 'embedded_panel' } : {}),
         ...(clip && clip.scale < 1 ? { notice: 'Large page scaled for capture. Use selector to inspect details at full resolution.' } : {}),
         timings: { elapsedMs: Date.now() - startedAt, pageSelectionMs, connector },
       });
@@ -508,19 +520,22 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
       format: z.enum(['png', 'jpeg', 'webp']).default('png'), quality: z.number().int().min(1).max(100).optional(), viewport: viewportSchema.optional() })
       .refine(input => !!input.selector !== !!input.expression, 'Supply exactly one of selector or expression.'), false,
   ), async (input, context) => withToolResult(async () => {
-    const target = await pageId(context), command = commandFor(target, context);
-    const viewport = await prepareCapture(command, input.viewport ?? requestedViewports.get(viewportKey(context, target)));
-    let image;
+    const page = await selectedPage(context), target = page.id, command = commandFor(target, context);
+    const viewport = await captureViewport(page, command, context, input.viewport);
+    let image, clip;
     if (input.expression) image = exportedImage(await evaluate(command, input.expression));
     else if (await evaluate(command, `document.querySelector(${JSON.stringify(input.selector)}) instanceof HTMLCanvasElement`)) {
       image = exportedImage(await evaluate(command, canvasExportExpression(input.selector!, input.format, input.quality)));
     } else {
-      const region = await captureClip(command, false, input.selector, viewport.deviceScaleFactor);
+      const region = await captureClip(command, false, input.selector, viewport.deviceScaleFactor,
+        page.browser === 'cardbush' ? viewport : undefined);
+      clip = region?.cssClip;
       const result = record(await command('Page.captureScreenshot', { format: input.format, clip: region?.deviceClip, captureBeyondViewport: true, fromSurface: true,
         ...(input.format === 'jpeg' && input.quality ? { quality: input.quality } : {}) }));
       image = { data: string(result.data), mimeType: `image/${input.format}` };
     }
-    return imageResult(context, image, { pageId: target, viewport });
+    return imageResult(context, image, { pageId: target, viewport, ...(clip ? { clip } : {}),
+      ...(page.browser === 'cardbush' && input.viewport ? { requestedViewport: input.viewport, viewportSource: 'embedded_panel' } : {}) });
   }));
 
   server.registerTool('evaluate_script', toolDefinition(

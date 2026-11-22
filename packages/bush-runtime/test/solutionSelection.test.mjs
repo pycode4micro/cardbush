@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { solutionSelectionInputSchema, runtimeSolutionAnswerSchema, DEFAULT_CHILD_AGENT_DISABLED_TOOLS,
   ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND, LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
-  BUSH_SESSION_TURN_REQUEST_PROTOCOL, BUSH_MODEL_EVENT_PROTOCOL } from '@cardbush/bush-protocol';
-import { InMemoryRuntimeHost, InMemoryRuntimeEventLog } from '../dist/index.js';
+  BUSH_SESSION_TURN_REQUEST_PROTOCOL, BUSH_MODEL_EVENT_PROTOCOL, PERSONAL_ASSISTANT_SESSION, assistantProfileSchema } from '@cardbush/bush-protocol';
+import { InMemoryRuntimeHost, InMemoryRuntimeEventLog, SessionStore, SubagentTaskStore, ToolRegistry } from '../dist/index.js';
 import { RuntimeSolutionBroker } from '../dist/runtimeSolutionBroker.js';
 
 const input = { prompt: '数据冲突如何处理', options: ['保留现有数据（推荐）', '使用新数据', '分别保留两份'] };
@@ -196,4 +196,116 @@ for (const mode of ['parent', 'batch', 'child', 'noninteractive', 'stop']) test(
       assert.equal(log.replay(identity.sessionId, identity.turnId).some(event => event.kind === 'solution_selection_requested'), false);
     }
   } finally { controller.abort(); await rm(dataRoot, { recursive: true, force: true }); }
+});
+
+for (const assistant of [true, false]) test(`${assistant ? 'Assistant' : 'ordinary chat'} answers the waiting Gemini child before switching to Chrome`, async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'cardbush-gemini-solution-'));
+  const sessionId = assistant ? PERSONAL_ASSISTANT_SESSION : 'gemini-parent';
+  const log = new InMemoryRuntimeEventLog(), tasks = new SubagentTaskStore(), registry = new ToolRegistry();
+  const sessions = new SessionStore();
+  sessions.ensureSession(sessionId);
+  const correction = '我建议是直接走 Chrome 吧';
+  let started = false, pendingId, guidanceReceipt, answerReceipt, childAnswer, switches = 0, childRequests = 0;
+  let confirmationCount = 0, completionCount = 0;
+  const resultOf = (request, id) => {
+    const message = request.messages.findLast(item => item.role === 'tool' && item.toolCallId === id);
+    const value = message && JSON.parse(message.content);
+    return value?.result?.value ?? value;
+  };
+  registry.register({
+    definition: { name: 'switch_browser_fixture', description: 'Select the test Chrome connection', inputSchema: { type: 'object', properties: {} } },
+    manifest: { effect_kind: 'observation', operation: 'fixture.select_browser', risk: 'low', owner: 'test', dispatch_scope: 'session', mutating: false },
+    visibleToChild: true, decodeInput: value => value, execute: () => { switches++; return { browser: 'chrome' }; },
+  });
+  const host = new InMemoryRuntimeHost({ dataRoot, eventLog: log, sessionStore: sessions, subagentTaskStore: tasks, toolRegistry: registry,
+    provider: { async *stream(request) {
+      const base = { protocol: BUSH_MODEL_EVENT_PROTOCOL, requestId: request.requestId, createdAt: new Date().toISOString() };
+      const hasCompletion = request.metadata.agentRole !== 'child' && request.messages.some(message =>
+        message.name === (assistant ? 'background_task_result' : 'subagent_result'));
+      if (hasCompletion) completionCount++;
+      let call, reply;
+      if (request.metadata.agentRole === 'child') {
+        childRequests++;
+        if (childRequests === 1) call = { id: 'gemini-question', name: 'ask_parent', args: { text: 'Gemini is hidden in CardBush. Which browser should I use?' } };
+        else if (childRequests === 2) {
+          childAnswer = resultOf(request, 'gemini-question');
+          call = { id: 'chrome-switch', name: 'switch_browser_fixture', args: {} };
+        } else reply = '已在测试浏览器里切换到 Chrome。';
+      } else if (!started) {
+        started = true;
+        call = { id: 'delegate-gemini', name: 'subagent', args: { prompt: 'Use Gemini to discuss the proof.', ...(!assistant ? { run_in_background: true } : {}) } };
+      } else if (!confirmationCount && request.messages.some(message => message.role === 'user' && message.content === correction)) {
+        const taskId = tasks.list(sessionId)[0].taskId;
+        const response = resultOf(request, 'answer-chrome');
+        const guidance = resultOf(request, 'guide-chrome');
+        if (response) {
+          answerReceipt = response;
+          if (response.selectionId === pendingId && response.kind === 'text') {
+            confirmationCount++;
+            reply = '已把 Chrome 方案发给子 Agent。';
+          }
+        } else if (guidance) {
+          guidanceReceipt = guidance;
+          if (guidance.status === 'awaiting_solution') call = { id: 'answer-chrome', name: 'subagent',
+            args: { task_id: taskId, response: { kind: 'answer', interactionId: guidance.interactionId, text: correction } } };
+        } else call = { id: 'guide-chrome', name: 'subagent', args: { task_id: taskId, prompt: correction } };
+      } else if (hasCompletion) reply = '子任务已完成。';
+      else if (!assistant) reply = '已派出 Gemini 子任务。';
+      if (call) yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: call.id, nameDelta: call.name, argumentsDelta: JSON.stringify(call.args) };
+      else if (reply) yield { ...base, sequence: 0, kind: 'text_delta', delta: reply };
+      yield { ...base, sequence: 1, kind: 'response_completed', finishReason: call ? 'tool_calls' : 'stop' };
+    } },
+  });
+  const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId, ...payload } });
+  async function until(check, label) {
+    const expires = Date.now() + 4000;
+    while (!await check()) {
+      assert.ok(Date.now() < expires, label);
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  async function submit(id, text) {
+    const createdAt = new Date().toISOString();
+    const parent = { protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL, requestId: id, sessionId, turnId: id, model: 'fixture',
+      prefixMessages: [], inputMessages: [{ messageId: id, message: { role: 'user', content: text } }],
+      tools: registry.definitions(), requestCapabilities: { interactiveRequests: true }, metadata: {}, permissionMode: 'task_free' };
+    if (!assistant) {
+      const terminal = await host.runSessionTurn(parent);
+      assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
+      return;
+    }
+    await command({ action: 'turn', entry: { id, role: 'user', source: 'text', visibility: 'conversation', content: text, createdAt },
+      parent, profile: assistantProfileSchema.parse({}) });
+    await until(async () => !(await command({ action: 'read' })).busy, 'Assistant turn settles');
+  }
+  try {
+    await submit('gemini-assignment', '用内置浏览器里的 Gemini 讨论这份证明');
+    const [child] = tasks.list(sessionId);
+    assert.ok(child);
+    await until(() => {
+      pendingId = log.replay(child.childSessionId, child.childTurnId).find(event => event.kind === 'solution_selection_requested')?.payload.selectionId;
+      return pendingId;
+    }, 'the child reaches its blocking question');
+    assert.equal(switches, 0);
+    await submit('gemini-chrome', correction);
+    assert.equal(guidanceReceipt?.status, 'awaiting_solution');
+    assert.equal(guidanceReceipt.interactionId, pendingId);
+    assert.equal(answerReceipt?.selectionId, pendingId);
+    assert.equal(confirmationCount, 1);
+    await until(() => tasks.get(sessionId, child.taskId)?.status === 'completed', 'the same child completes after the answer');
+    if (assistant) {
+      await until(() => completionCount > 0, 'Assistant receives the original child completion');
+      assert.equal(completionCount, 1);
+    }
+    assert.deepEqual(childAnswer, { status: 'selected', source: 'text', text: correction });
+    assert.equal(switches, 1);
+    assert.equal(childRequests, 3);
+    assert.equal(tasks.list(sessionId).length, 1);
+    const events = log.replay(child.childSessionId, child.childTurnId);
+    assert.equal(events.filter(event => event.kind === 'solution_selection_answered').length, 1);
+    assert.equal(events.some(event => ['guidance_queued', 'guidance_applied'].includes(event.kind)), false);
+  } finally {
+    await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    await rm(dataRoot, { recursive: true, force: true });
+  }
 });

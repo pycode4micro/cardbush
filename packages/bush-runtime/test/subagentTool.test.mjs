@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { createProductAgentTurnRequest } from '@cardbush/bush-product-agent';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
-import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
+import { OUTCOME_VERIFICATION_INSTRUCTIONS, PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
 import {
   SubagentTaskStore,
@@ -132,11 +132,15 @@ test("forks the exact pre-dispatch context and tool declarations and returns the
   );
 
   assert.equal(outcome.kind, "returned", JSON.stringify(outcome.result));
-  assert.deepEqual(childRequest.prefixMessages.map((message) => message.content), [
-    "root delegation instructions",
-    "original objective",
-    "evidence",
+  assert.deepEqual(childRequest.prefixMessages, [
+    { role: "system", content: "root delegation instructions" },
+    { role: "user", content: "original objective" },
+    { role: "assistant", content: "evidence", toolCalls: [] },
+    { role: "developer", name: "outcome_verification", content: OUTCOME_VERIFICATION_INSTRUCTIONS },
   ]);
+  const childMessages = [...childRequest.prefixMessages, ...childRequest.inputMessages.map(item => item.message)];
+  assert.equal(childMessages.filter(message => message.content.includes(OUTCOME_VERIFICATION_INSTRUCTIONS)).length, 1,
+    "fork injects the outcome verification instructions exactly once");
   assert.deepEqual(childRequest.inputMessages.filter(item => item.message.visibility !== 'internal').map((item) => item.message.content), [
     "You are currently a child Agent.\n\nbounded assignment",
   ]);

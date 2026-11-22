@@ -28,6 +28,7 @@ export const runtimeGuidanceReceiptSchema = z.object({
   accepted: z.boolean(),
   queueDepth: z.number().int().nonnegative(),
   modelRequestInterrupted: z.boolean().optional(),
+  pendingSolutionId: z.string().min(1).optional(),
 });
 
 export type RuntimeGuidanceRequest = z.infer<typeof runtimeGuidanceRequestSchema>;

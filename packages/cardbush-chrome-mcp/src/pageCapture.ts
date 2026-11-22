@@ -64,7 +64,8 @@ export async function prepareCapture(command: PageCommand, viewport?: Viewport, 
     deviceScaleFactor: dimensions.deviceScaleFactor as number, adjusted };
 }
 
-export async function captureClip(command: PageCommand, fullPage?: boolean, selector?: string, deviceScaleFactor = 1) {
+export async function captureClip(command: PageCommand, fullPage?: boolean, selector?: string, deviceScaleFactor = 1,
+  surface?: Pick<Viewport, 'width' | 'height'>) {
   if (!fullPage && !selector) return undefined;
   const metrics = object(await command('Page.getLayoutMetrics'));
   let bounds: Record<string, unknown> | undefined;
@@ -78,7 +79,10 @@ export async function captureClip(command: PageCommand, fullPage?: boolean, sele
   if (!bounds) return undefined;
   const width = Number(bounds.width), height = Number(bounds.height);
   if (!(width > 0 && height > 0 && Number.isFinite(width * height))) throw new BrowserConnectorError('screenshot_region_empty', 'The screenshot region is empty.');
-  const scale = Math.min(1, 8192 / (Math.max(width, height) * deviceScaleFactor), Math.sqrt(16_000_000 / (width * height * deviceScaleFactor ** 2)));
+  // An embedded WebView cannot supply more output pixels than its compositor
+  // surface. Scale the whole region to fit so Chromium paints every part once.
+  const surfaceScale = surface ? Math.min(surface.width / width, surface.height / height) : 1;
+  const scale = Math.min(1, surfaceScale, 8192 / (Math.max(width, height) * deviceScaleFactor), Math.sqrt(16_000_000 / (width * height * deviceScaleFactor ** 2)));
   const cssClip = { x: Math.max(0, Number(bounds.x) || 0), y: Math.max(0, Number(bounds.y) || 0), width, height, scale };
   const zoom = pageZoom(metrics);
   // DOM bounds and public receipts use CSS pixels; CDP clips use DIPs. Convert

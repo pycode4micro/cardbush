@@ -221,7 +221,13 @@ for (const remote of [false, true]) test(`unified child lifecycle through ${remo
         await pause(80);
         assert.equal(remote ? f.model.calls.length : childCalls.length, 1, 'later queue entry cannot overtake a canceled predecessor');
         yield* response(request, 'subagent', { task_id: initial.taskId, prompt: 'Keep the layout stable', delivery: 'insert' }); return;
-      case 7: yield* response(request, 'subagent', { task_id: initial.taskId, response: { kind: 'answer', interactionId: question.interactionId, text: 'October 30' } }); return;
+      case 7: {
+        const receipt = JSON.parse(request.messages.findLast(message => message.role === 'tool').content);
+        assert.equal(receipt.status, 'awaiting_solution');
+        assert.equal(receipt.interactionId, question.interactionId);
+        yield* response(request, 'subagent', { task_id: initial.taskId, response: { kind: 'answer', interactionId: receipt.interactionId, text: 'October 30' } });
+        return;
+      }
       default:
         assert.ok(stage < 14, 'no model polling loop');
         if (tasks.list('parent').some(task => task.status === 'running')) yield* response(request, 'await', { mode: 'all' });
@@ -244,7 +250,7 @@ for (const remote of [false, true]) test(`unified child lifecycle through ${remo
     const calls = remote ? f.model.calls : childCalls;
     assert.equal(calls.length, 3);
     assert.match(JSON.stringify(calls[1]), /October 30/);
-    assert.match(JSON.stringify(calls[1]), /Keep the layout stable/);
+    assert.doesNotMatch(JSON.stringify(calls[1]), /Keep the layout stable/, 'rejected guidance never reaches the child');
     const events = host.events('parent', 'parent-turn');
     assert.deepEqual(events.filter(event => event.kind === 'tool_failed').map(event => event.payload.error), []);
   } finally { if (manager) await manager.close(); if (http) await http.close(); if (f) await f.service.close(); }
@@ -276,6 +282,11 @@ test('worker interaction asks the parent in words, resumes the same run and dedu
     assert.match(JSON.stringify(f.model.calls[0]), /Review release readiness/);
     await assert.rejects(workerControl(f.service, request, { operation: 'observe' }, 'another-parent'), /another parent/);
     await assert.rejects(workerControl(f.service, { ...request, taskId: 'unsubmitted-task' }, { operation: 'observe' }), /task was not found/);
+    const guidance = await workerControl(f.service, request, { operation: 'message', delivery: 'insert', messageId: 'guide-1', text: 'Use October 30.' });
+    assert.equal(guidance.accepted, false);
+    assert.equal(guidance.pendingSolutionId, waiting.interactions[0].interactionId);
+    assert.equal(guidance.receipt.queueDepth, 0);
+    assert.equal(f.model.calls.length, 1, 'guidance does not wake a blocking solution');
     const answer = { operation: 'respond', messageId: 'answer-1', response: { kind: 'answer', interactionId: waiting.interactions[0].interactionId, text: 'Use October 30.' } };
     const receipt = await workerControl(f.service, request, answer);
     assert.deepEqual(await workerControl(f.service, request, answer), receipt);
