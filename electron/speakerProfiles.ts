@@ -1,3 +1,4 @@
+import { NativeVoiceError } from './voiceUiError';
 import { normalizeSpeakerVector, speakerSimilarity } from './speakerEmbedding';
 import { speakerVersion } from './speakerManifest';
 import type { SpeakerSampleInfo, SpeakerProfileInfo } from './voiceTypes';
@@ -14,17 +15,17 @@ export function speakerProfileInfo(profile: SpeakerProfile): SpeakerProfileInfo 
     samples: profile.samples.map(({ id, prompt, voicedSeconds, recordedAt }) => ({ id, prompt, voicedSeconds, recordedAt })) };
 }
 export function speakerName(value: unknown) {
-  if (typeof value !== 'string' || !value.trim() || value.trim().length > 40 || /[\u0000-\u001f]/.test(value)) throw Error('请输入 1–40 个字符的人员名称。');
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > 40 || /[\u0000-\u001f]/.test(value)) throw new NativeVoiceError('voiceNative.speakerNameInvalid');
   return value.trim();
 }
 export function requireSpeakerProfile(library: SpeakerLibrary, id: unknown) {
   const profile = library.profiles.find(item => item.id === id);
-  if (!profile) throw Error('声纹档案不存在，请重新选择人员。');
+  if (!profile) throw new NativeVoiceError('voiceNative.speakerProfileMissing');
   return profile;
 }
 export function checkSpeakerConsistency(samples: SpeakerSample[]) {
   if (samples.some((sample, i) => samples.slice(i + 1).some(other => speakerSimilarity(sample.vector, other.vector) < .6))) {
-    throw Error('本段与该人员的其他声纹不一致。请确认录入人员，或在安静环境重录这一段。');
+    throw new NativeVoiceError('voiceNative.speakerSamplesMismatch');
   }
 }
 /** Read old single-person profiles without rewriting or discarding them. */

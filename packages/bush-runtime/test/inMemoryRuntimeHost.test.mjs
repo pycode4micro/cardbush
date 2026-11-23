@@ -9,6 +9,7 @@ import {
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
+  RUN_MODEL_TURN_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
   STOP_RUNTIME_TURN_COMMAND,
@@ -175,15 +176,26 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
   }
 });
 
-test("projects explicit cancellation as a stopped terminal fact", async () => {
-  const controller = new AbortController();
-  controller.abort();
-  const host = hostWithAttempts([]);
-
-  const terminal = await host.runModelTurn(request, { signal: controller.signal });
-  assert.equal(terminal.payload.status, "stopped");
-  assert.equal(terminal.payload.reason, "turn_stop_requested");
-});
+for (const entry of ["direct", "command"]) {
+  test(`projects cancellation before model admission as a stopped terminal fact (${entry})`, async () => {
+    const host = new InMemoryRuntimeHost({
+      provider: { async *stream() { assert.fail("A cancelled turn must not reach the provider."); } },
+      eventLogOptions: deterministicEventLogOptions(),
+    });
+    const signal = AbortSignal.abort();
+    const identity = { sessionId: request.sessionId, turnId: request.turnId };
+    const terminal = await (entry === "direct" ? host.runModelTurn(request, { signal })
+      : host.sendCommand({ kind: RUN_MODEL_TURN_COMMAND, payload: request }, signal));
+    assert.equal(terminal.kind, "turn_terminal");
+    assert.equal(terminal.payload.status, "stopped");
+    assert.equal(terminal.payload.reason, "turn_stop_requested");
+    assert.deepEqual(host.events(identity.sessionId, identity.turnId), [terminal]);
+    assert.deepEqual(await collect(host.openEventStream(identity)), [terminal]);
+    assert.equal((await host.readEnvironment(identity.sessionId)).sections.agents.self.status, "stopped");
+    assert.equal(host.hasActiveWork(), false);
+    await assert.rejects(host.runModelTurn(request), /already terminal/);
+  });
+}
 
 test("accepts Stop independently and keeps the stream authoritative until terminal", async () => {
   const host = new InMemoryRuntimeHost({

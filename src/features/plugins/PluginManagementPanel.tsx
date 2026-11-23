@@ -885,7 +885,7 @@ function PluginStatus({ plugin, language, serviceEnabled, connections }: {
   const states = new Map(own.map(item => [item.state, item]));
   return <span className="plugin-status-row">
     <span className="plugin-config-status">{t(plugin.removalPending ? 'pluginManagementPanel.removalPending' : !plugin.installed ? 'pluginManagementPanel.notInstalledStatus'
-      : !plugin.enabled ? 'pluginManagementPanel.disabled' : !serviceEnabled ? 'pluginManagementPanel.serviceDisabledStatus' : 'featureContentPanel.enabled')}</span>
+      : !plugin.enabled ? 'pluginManagementPanel.disabled' : !serviceEnabled ? 'pluginManagementPanel.serviceDisabledStatus' : 'common.enabled')}</span>
     {enabled && [...states.values()].map(item => <McpConnectionBadge key={item.state} item={item} language={language} showToolCount={own.length === 1}/>)}
   </span>;
 }
@@ -998,7 +998,7 @@ function SkillDetailPage({ language, skill, loading, error, enabled, onToggle }:
       {skill.invocationMode && <p>{(({ manual: uiText(language)('pluginManagementPanel.manualInvocationOnly'), model: uiText(language)('pluginManagementPanel.modelInvocationOnly'), both: uiText(language)('pluginManagementPanel.manualAndModelInvocation'), disabled: uiText(language)('pluginManagementPanel.invocationDisabled') }))[skill.invocationMode]}{['manual', 'both'].includes(skill.invocationMode) && <> · <code>{`@${skill.name}`}</code></>}</p>}
       {skill.defaultPrompt && <section className="plugin-detail-section"><h3>{uiText(language)('pluginManagementPanel.suggestedPrompt')}</h3><p>{skill.defaultPrompt}</p></section>}
       <section className="plugin-detail-section plugin-info"><h3>{uiText(language)('pluginManagementPanel.information')}</h3>{'version' in skill && <Info label={uiText(language)('pluginManagementPanel.version')} value={skill.version || '—'} />}<Info label={uiText(language)('pluginManagementPanel.source')} value={skillSourceText(language, skill) || '—'} /><Info label={uiText(language)('pluginManagementPanel.location')} value={skill.path} /></section>
-      {'content' in skill && <section className="plugin-detail-section"><h3>{uiText(language)('featureContentPanel.skill_md')}</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}
+      {'content' in skill && <section className="plugin-detail-section"><h3>{uiText(language)('skills.manifest')}</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}
     </> : null}
   </div>;
 }

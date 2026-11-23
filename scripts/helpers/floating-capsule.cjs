@@ -310,7 +310,7 @@ async function checkDelivery({ current, read, click, visible, wait, type, edit, 
       await click(voice);
       const controls = '.floating-capsule[data-surface=voice] .voice-composer-call';
       await visible(controls);
-      const workPhase = () => workspace.webContents.executeJavaScript("document.querySelector('.sidebar-footer .assistant-stage')?.dataset.state");
+      const workPhase = () => workspace.webContents.executeJavaScript("document.querySelector('[data-nav-section=assistant] .assistant-stage')?.dataset.state");
       await wait(async()=>await workPhase()==='connecting', 'the workspace character sees the capsule connecting');
       assert.ok(await read(`(() => { const row=document.querySelector('.floating-capsule').getBoundingClientRect();return !document.querySelector('.voice-call-undocked,[data-action=workspace]') && [...document.querySelectorAll('.voice-composer-call button')].every(b=>{const r=b.getBoundingClientRect();return r.left>=row.left && r.right<=row.right && r.top>=row.top && r.bottom<=row.bottom && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}); })()`),'the capsule hosts one unclipped row of call controls');
       const mic = controls + ' .voice-audio-toggle';

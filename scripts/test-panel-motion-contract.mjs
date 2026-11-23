@@ -23,7 +23,7 @@ const chatHook = read('src', 'hooks', 'useCardbushChat.ts');
 const queueOrdering = read('src', 'features', 'composer', 'queueOrdering.ts');
 const queueDrag = read('src', 'features', 'composer', 'useQueueReorder.ts');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
-const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.tsx');
+const featureContent = read('src', 'features', 'panels', 'FeaturePanel.tsx');
 const theme = read('src', 'styles', 'theme.css');
 
 assert.match(messageBubble, /message-row assistant\$\{isActiveAssistantTurn \? ' streaming' : ''\}/);
@@ -59,7 +59,7 @@ assert.doesNotMatch(
 );
 assert.match(
   css,
-  /calc\(100cqw - 2px - var\(--layout-sidebar-space\)\)/,
+  /--shell-content-width: calc\(100cqw - 2 \* var\(--shell-border-width\)\);[\s\S]*?--inspector-available-width: calc\(var\(--shell-content-width\) - var\(--layout-sidebar-space\)\)/,
   'The inspector can continuously shrink the conversation toward cover without switching positioning modes',
 );
 assert.match(

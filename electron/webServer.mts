@@ -1,5 +1,5 @@
 import { FILE_TRANSFER_LIMIT } from '@cardbush/bush-protocol';
-import { webFileResponse } from './webFileResponse.mjs';
+import { describeWebFile, webFileResponse } from './webFileResponse.mjs';
 import { uiText as transferText } from '@cardbush/platform/i18n';
 import { webToolAllowed, normalizeWebImage } from '@cardbush/bush-runtime/web-policy';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -354,7 +354,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         const input = messageSchema.parse(await readJson(request));
         if (!config.models.some(model => model.id === input.modelId)) throw new WebError(400, '模型未启用。');
         throttle(`message:${user.id}`, 100);
-        const attachments = await Promise.all(input.attachments.map(id => agent.call('web.files', { action: 'describe', id }) as Promise<{ path: string; textPath?: string; mime: string; name: string; size: number }>));
+        const attachments = await Promise.all(input.attachments.map(id => describeWebFile(agent, { id })));
         if (attachments.filter(item => item.mime.startsWith('image/')).length > 4 || attachments.reduce((sum, item) => sum + item.size, 0) > FILE_TRANSFER_LIMIT) throw new WebError(400, transferText()('web.transferMessageLimit'));
         const { attachments: _ids, ...message } = input;
         // Vision is a turn capability, independent of this message's attachments:
@@ -393,7 +393,8 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
       const status = error instanceof WebError ? error.status : error instanceof z.ZodError ? 400 : 503;
       const message = error instanceof WebError ? error.message : error instanceof z.ZodError ? '输入内容不符合要求。' : '会话服务暂不可用，请稍后重试。';
       if (!(error instanceof WebError) && !(error instanceof z.ZodError)) console.error('Web request failed:', error instanceof Error ? error.name : 'UnknownError');
-      json(response, status, { error: message }); request.resume();
+      const code = error instanceof WebError ? error.code : undefined;
+      json(response, status, { error: message, ...(code ? { code } : {}) }); request.resume();
     });
   });
   server.requestTimeout = 30_000; server.headersTimeout = 10_000;

@@ -5,7 +5,8 @@ import { attachHomeWebsite, configureHomeWebsite } from './homeWebsiteGuest';
 const installed = new WeakSet<WebContents>();
 
 /** Ordinary links open in inspector tabs; popup workflows retain their opener. */
-export function installInspectorWindowOpen(owner: WebContents, onPopupEvent?: (event: BrowserPopupEvent) => void): void {
+export function installInspectorWindowOpen(owner: WebContents, onPopupEvent?: (event: BrowserPopupEvent) => void,
+  text?: Parameters<typeof installBrowserPopupHandler>[4]): void {
   if (installed.has(owner)) return;
   installed.add(owner);
   owner.on('will-attach-webview', (event, preferences, params) => {
@@ -49,7 +50,7 @@ export function installInspectorWindowOpen(owner: WebContents, onPopupEvent?: (e
         const target = inspectorWindowTarget(url, guest.getURL());
         if (target) owner.send('inspector:open-link', { guestWebContentsId: guest.id, target });
       }
-    }, onPopupEvent);
+    }, onPopupEvent, text);
   });
 }
 

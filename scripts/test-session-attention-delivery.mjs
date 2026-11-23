@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { uiText } from '@cardbush/platform/i18n';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const compile = text => ts.transpileModule(text, {
@@ -13,7 +14,7 @@ const compile = text => ts.transpileModule(text, {
 const routing = {};
 vm.runInNewContext(compile(readFileSync('electron/sessionAttentionRouting.ts', 'utf8')), { exports: routing });
 const source = ts.createSourceFile('main.ts', readFileSync('electron/main.ts', 'utf8'), ts.ScriptTarget.Latest, true);
-const names = ['sanitizeSessionAttentionPayload', 'showSessionAttentionNotification', 'sessionAttentionToastXml', 'escapeXmlAttribute', 'escapeXmlText'];
+const names = ['showSessionAttentionNotification', 'sessionAttentionToastXml', 'escapeXmlAttribute', 'escapeXmlText'];
 const code = compile(names.map(name => source.statements.find(node => ts.isFunctionDeclaration(node)
   && node.name?.text === name).getText(source)).join('\n') + '\nexports.show = showSessionAttentionNotification;');
 const nativeVisibility = {};
@@ -41,13 +42,23 @@ function fixture(initial = {}) {
     assistantPageVisible: !!initial.assistantPageVisible, assistantSurface: initial.surface ?? 'capsule',
     assistantWindow: initial.surface ? { ...window, isFocused: () => true } : null,
     mainWindow: initial.noWindow ? null : window, Notification, activeSessionAttentionNotifications: active,
-    randomUUID: () => String(notices.length), loadCardbushIcon: () => undefined,
+    randomUUID: () => String(notices.length), loadCardbushIcon: () => undefined, nativeText: () => uiText(initial.language),
     activateSessionAttention: id => opened.push(id), appendDebugLog: (...args) => logs.push(args),
   };
   vm.runInNewContext(code, context);
   return { state, notices, opened, logs, active, flashes: () => flashes, show: context.exports.show };
 }
 const attention = { sessionId: 'chat', turnId: 'turn', kind: 'completed', title: 'Task', body: 'Done' };
+
+test('native notification fallbacks use the App language and preserve supplied message text', () => {
+  for (const language of ['en', 'zh']) {
+    const f = fixture({ language });
+    assert.equal(f.show({ ...attention, body: '' }).shown, true);
+    assert.ok(f.notices[0].options.toastXml.includes(uiText(language)('desktopAttention.completed')));
+    assert.equal(f.show({ ...attention, turnId: 'custom', body: 'agent <message>' }).shown, true);
+    assert.match(f.notices[1].options.toastXml, /agent &lt;message&gt;/);
+  }
+});
 
 test('Assistant replies reach the current workspace or capsule unless the reply surface is being read', () => {
   const reply = {...attention, sessionId:'personal-assistant', interactionId:'reply#1'};

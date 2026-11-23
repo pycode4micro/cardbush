@@ -87,7 +87,6 @@ async function buildViews() {
       'src/features/inspector/ConversationInspector.tsx',
       'src/features/inspector/useInspectorBrowserActions.ts', 'src/hooks/useSoftPanelPresence.ts',
     ] : []),
-    'src/features/panels/FeatureContentPanel.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'html-lifecycle' ? ['src/shared/windowVisibility.ts'] : []),
@@ -325,9 +324,12 @@ app.whenReady().then(async () => {
       for (const name of ['localStorage', 'sessionStorage']) {
         const values = new Map();
         Object.defineProperty(window, name, { value: {
+          get length() { return values.size; },
+          key: index => [...values.keys()][index] ?? null,
           getItem: key => values.get(key) ?? null,
           setItem: (key, value) => values.set(key, String(value)),
           removeItem: key => values.delete(key),
+          clear: () => values.clear(),
         }});
       }
       const nativeFetch = window.fetch.bind(window);
@@ -792,6 +794,13 @@ app.whenReady().then(async () => {
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'model-reasoning') {
       await require('./helpers/model-reasoning.cjs')({ run, until, pause });
+    }
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'local-model-catalog') {
+      await require('./helpers/local-model-catalog.cjs')({ run, until, pause });
+      if (process.env.CARDBUSH_APP_VIEWS_CASE) {
+        assert.deepEqual(await run('failures'), [], 'no local catalogue renderer errors');
+        assert.deepEqual(errors, []); return;
+      }
     }
     if (!process.env.CARDBUSH_APP_VIEWS_CASE || ['model-reasoning', 'conversation-models'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
       await require('./helpers/conversation-models.cjs')({ run, until, pause });

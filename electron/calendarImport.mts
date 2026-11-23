@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import ICAL from 'ical.js';
 import { CALENDAR_ENTRY_LIMIT, calendarDatasetSchema, type CalendarDataset, type CalendarEntry } from '@cardbush/bush-protocol';
+import { uiText } from '@cardbush/platform/i18n';
+import { CalendarError } from './calendarError.mjs';
 
 type Time = InstanceType<typeof ICAL.Time>;
 const dateKey = (year: number, month: number, day: number) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -15,14 +17,14 @@ function wallTime(time: Time, zone: string): Date {
     if (shown === wanted) return new Date(guess);
     guess += wanted - shown;
   }
-  throw Error(`无法确定 ${time.toString()} 在 ${zone} 的时间，请转换为带 UTC 偏移的时间。`);
+  throw new CalendarError('calendarError.wallTime', { time: time.toString(), zone });
 }
 
-export function parseCalendarImport(text: string, fileName: string, now = new Date()): CalendarDataset {
+export function parseCalendarImport(text: string, fileName: string, now = new Date(), language = 'en'): CalendarDataset {
   if (!/\.ics$/i.test(fileName)) return calendarDatasetSchema.parse(JSON.parse(text.replace(/^\uFEFF/, '')));
   const root = new ICAL.Component(ICAL.parse(text.replace(/^\uFEFF/, '')));
-  if (root.name !== 'vcalendar') throw Error('文件不是有效的 ICS 日历。');
-  if (root.getFirstPropertyValue('calscale') && String(root.getFirstPropertyValue('calscale')).toUpperCase() !== 'GREGORIAN') throw Error('ICS 日期需先转换成公历；可使用 cardbush-docs 日历转换协议。');
+  if (root.name !== 'vcalendar') throw new CalendarError('calendarError.invalidIcs');
+  if (root.getFirstPropertyValue('calscale') && String(root.getFirstPropertyValue('calscale')).toUpperCase() !== 'GREGORIAN') throw new CalendarError('calendarError.gregorianRequired');
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const sourceZone = String(root.getFirstPropertyValue('x-wr-timezone') || zone);
   const name = String(root.getFirstPropertyValue('x-wr-calname') || fileName.replace(/\.ics$/i, '')).slice(0, 120);
@@ -37,10 +39,10 @@ export function parseCalendarImport(text: string, fileName: string, now = new Da
   for (const component of components) {
     if (component.hasProperty('recurrence-id')) continue;
     const uid = String(component.getFirstPropertyValue('uid') || '');
-    if (!uid || known.has(uid)) throw Error('ICS 事件需要唯一的 UID；请先整理重复或缺失的记录。');
+    if (!uid || known.has(uid)) throw new CalendarError('calendarError.uniqueUidRequired');
     known.add(uid);
     const event = new ICAL.Event(component, { exceptions: exceptions.filter(item => item.uid === uid) });
-    if (!component.hasProperty('dtstart')) throw Error(`ICS 事件 ${uid} 缺少 DTSTART。`);
+    if (!component.hasProperty('dtstart')) throw new CalendarError('calendarError.startRequired', { uid });
     const asDate = (time: Time, item: InstanceType<typeof ICAL.Event>, property = 'dtstart') => {
       if (time.isDate) return new Date(`${dateKey(time.year, time.month, time.day)}T00:00:00`);
       if (time.zone && !['floating', 'local'].includes(time.zone.tzid)) return time.toJSDate();
@@ -50,7 +52,7 @@ export function parseCalendarImport(text: string, fileName: string, now = new Da
     const add = (item: InstanceType<typeof ICAL.Event>, start: Time, end: Time, occurrence: string) => {
       if (String(item.component.getFirstPropertyValue('status')).toUpperCase() === 'CANCELLED') return;
       const first = asDate(start, item), last = asDate(end, item, 'dtend');
-      if (last < first) throw Error(`ICS 事件 ${uid} 的结束时间早于开始时间。`);
+      if (last < first) throw new CalendarError('calendarError.endBeforeStart', { uid });
       const parts = Object.fromEntries(civil.formatToParts(first).map(part => [part.type, part.value]));
       const date = start.isDate ? dateKey(start.year, start.month, start.day) : `${parts.year}-${parts.month}-${parts.day}`;
       const lastParts = Object.fromEntries(civil.formatToParts(new Date(Math.max(first.getTime(), last.getTime() - 1))).map(part => [part.type, part.value]));
@@ -60,9 +62,9 @@ export function parseCalendarImport(text: string, fileName: string, now = new Da
       const exclusiveKey = dateKey(exclusive.getFullYear(), exclusive.getMonth() + 1, exclusive.getDate());
       entries.push({ id: hash(`${uid}:${occurrence}`), date,
         ...(lastKey > date ? { endDate: exclusiveKey } : {}),
-        title: item.summary || '未命名日程', description: [item.description, item.location].filter(Boolean).join('\n').slice(0, 2000),
+        title: item.summary || uiText(language)('calendarError.untitledEvent'), description: [item.description, item.location].filter(Boolean).join('\n').slice(0, 2000),
         ...(!start.isDate ? { time: `${parts.hour}:${parts.minute}` } : {}), kind: 'event' });
-      if (entries.length > CALENDAR_ENTRY_LIMIT) throw Error('日历条目超过 50,000 条，请分段导入。');
+      if (entries.length > CALENDAR_ENTRY_LIMIT) throw new CalendarError('calendarError.entryLimit');
     };
     if (!event.isRecurring()) { add(event, event.startDate, event.endDate, event.startDate.toString()); continue; }
     // Without VTIMEZONE, ICAL treats IANA wall times as floating. Cross-zone
@@ -71,19 +73,19 @@ export function parseCalendarImport(text: string, fileName: string, now = new Da
     for (const item of [event, ...exceptions.filter(item => item.uid === uid)]) {
       const startZone = String(item.component.getFirstProperty('dtstart')?.getParameter('tzid') || item.startDate.zone?.tzid || sourceZone);
       const endZone = String(item.component.getFirstProperty('dtend')?.getParameter('tzid') || item.endDate.zone?.tzid || sourceZone);
-      if (item.component.hasProperty('dtend') && startZone !== endZone && [item.startDate, item.endDate].some(time => ['floating', 'local'].includes(time.zone?.tzid))) throw Error('跨时区重复事件需包含 VTIMEZONE，或先转换为 JSON 日期明细。');
+      if (item.component.hasProperty('dtend') && startZone !== endZone && [item.startDate, item.endDate].some(time => ['floating', 'local'].includes(time.zone?.tzid))) throw new CalendarError('calendarError.crossZoneRecurrence');
     }
     recurring = true;
     const iterator = event.iterator();
     for (let occurrence = iterator.next(); occurrence; occurrence = iterator.next()) {
-      if (++iterations > 100_000) throw Error('重复规则展开过多，请缩小日期范围并转换为 JSON 明细后导入。');
+      if (++iterations > 100_000) throw new CalendarError('calendarError.recurrenceLimit');
       const details = event.getOccurrenceDetails(occurrence), at = asDate(details.startDate, details.item).getTime();
       if (asDate(occurrence, event).getTime() >= endBound) break;
       if (at >= startBound && at < endBound) add(details.item, details.startDate, details.endDate, occurrence.toString());
     }
   }
-  if (exceptions.some(item => !known.has(item.uid))) throw Error('ICS 包含缺少主事件的重复例外，请先转换为完整日期明细。');
-  if (!entries.length) throw Error(`文件中没有可显示的日程。重复事件当前只展开 ${from} 至 ${to}（结束日不含）。`);
+  if (exceptions.some(item => !known.has(item.uid))) throw new CalendarError('calendarError.orphanRecurrence');
+  if (!entries.length) throw new CalendarError('calendarError.noEvents', { from, to });
   return calendarDatasetSchema.parse({ protocol: 'cardbush.calendar.v1', id: `ics-${hash(String(root.getFirstPropertyValue('uid') || name))}`, name, source: fileName, timeZone: zone,
     ...(recurring ? { recurrenceWindow: { from, to } } : {}), entries });
 }

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { agentToolActivity, resolveSubagentName } from '@cardbush/bush-protocol';
+import { agentToolActivity, resolveSubagentName, OUTCOME_VERIFICATION_MESSAGE } from '@cardbush/bush-protocol';
 import { FileSubagentTaskPersistence, SubagentTaskStore, ToolExecutionCoordinator, ToolRegistry, registerSubagentTool } from '../dist/index.js';
 import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import { summarizeExecution } from '../dist/executionHistory.js';
@@ -54,7 +54,8 @@ test('a named ad-hoc fork retains its exact inherited prefix, name and identity 
   assert.equal(first.kind, 'returned');
   assert.equal(first.result.agentName, '接口审查');
   assert.equal(first.result.agentProfileId, undefined, 'a label does not register an employee');
-  assert.deepEqual(f.requests[0].prefixMessages, f.prefix);
+  const expectedPrefix = [...f.prefix, OUTCOME_VERIFICATION_MESSAGE];
+  assert.deepEqual(f.requests[0].prefixMessages, expectedPrefix);
   assert.equal(f.requests[0].metadata.subagentName, '接口审查');
   const second = await f.invoke({ task_id: first.result.taskId, prompt: 'Review the next change' });
   assert.equal(second.result.childSessionId, first.result.childSessionId);
@@ -62,7 +63,7 @@ test('a named ad-hoc fork retains its exact inherited prefix, name and identity 
   assert.equal(f.tasks.list('parent').length, 2);
   assert.ok(f.tasks.list('parent').every(task => task.agentName === '接口审查'));
   assert.equal(f.requests[1].metadata.subagentName, '接口审查');
-  assert.deepEqual(f.requests[1].prefixMessages, f.prefix);
+  assert.deepEqual(f.requests[1].prefixMessages, expectedPrefix);
   const invalid = await f.invoke({ task_id: first.result.taskId, prompt: 'next', name: '偷偷改名' });
   assert.equal(invalid.kind, 'failed');
   assert.equal(f.tasks.list('parent').length, 2);
@@ -81,7 +82,7 @@ test('unsupported memory fails before dispatch and a corrected named clean call 
   assert.equal(accepted.kind, 'returned');
   assert.equal(accepted.result.agentName, '视觉设计');
   assert.equal(f.tasks.list('parent').length, 1);
-  assert.deepEqual(f.requests[0].prefixMessages, [{ role: 'system', content: args.system_prompt }]);
+  assert.deepEqual(f.requests[0].prefixMessages, [{ role: 'system', content: args.system_prompt }, OUTCOME_VERIFICATION_MESSAGE]);
   assert.deepEqual(f.requests[0].tools, []);
   assert.equal(f.requests[0].metadata.registeredAgent, undefined);
 });

@@ -15,6 +15,7 @@ let csrf = '';
 let identityEpoch = 0;
 let accountId = '';
 export class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
+export const errorText = (error: unknown) => error instanceof Error ? error.message : uiText()('web.theOperationCannotBeCompletedRightNow');
 /** getRandomValues is available on the existing LAN HTTP site as well as HTTPS. */
 export function requestId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
@@ -33,7 +34,7 @@ export async function api<T>(path: string, method = 'GET', data?: unknown, signa
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     if (response.status === 401 && !path.endsWith('/login') && epoch === identityEpoch) window.dispatchEvent(new Event('cardbush:logged-out'));
-    throw new ApiError(sessionServiceError(body?.error) || uiText()("web.connectionFailedPleaseTryAgainLater"), response.status);
+    throw new ApiError(sessionServiceError(body?.error, undefined, body?.code) || uiText()("web.connectionFailedPleaseTryAgainLater"), response.status);
   }
   return body as T;
 }

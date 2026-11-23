@@ -20,11 +20,13 @@ const messages: Record<string, MessageKey> = {
   SESSION_AGENT_POLICY_NOT_READY: 'web.sessionPolicyNotReady',
   SESSION_HISTORY_CHANGED: 'web.sessionHistoryChanged',
   SESSION_HISTORY_TOO_LARGE: 'web.sessionHistoryTooLarge',
+  web_file_unavailable: 'web.transferFileUnavailable',
 };
-export function sessionServiceError(value: unknown, language?: string) {
+export function sessionServiceError(value: unknown, language?: string, code?: unknown) {
   if (value instanceof Error && value.name === 'TimeoutError') return uiText(language)('web.sessionStartupTimeout');
   const message = value instanceof Error ? value.message : String(value ?? '');
-  return messages[message] ? uiText(language)(messages[message]) : message;
+  const key = typeof code === 'string' && Object.hasOwn(messages, code) ? code : message;
+  return Object.hasOwn(messages, key) ? uiText(language)(messages[key]) : message;
 }
 export function isSessionServiceFailure(error: unknown) {
   const status: unknown = error instanceof Error ? Reflect.get(error, 'status') : undefined;

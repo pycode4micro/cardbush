@@ -293,14 +293,6 @@ declare global {
       >;
       runtimePluginRenderers: () => Promise<Array<{ id: string; name: string; source?: string; hash?: string; error?: string }>>;
       runtimePluginFile: (input: { pluginId: string; action: 'import' | 'export' | 'reveal'; text?: string; name?: string; yaml?: string }) => Promise<unknown>;
-      saveTeamWorkflow: (input: {
-        projectDir?: string;
-        workflowId: string;
-        yaml: string;
-      }) => Promise<{
-        path: string;
-        scope: 'project' | 'global';
-      }>;
       gitInfo: (
         rootPath: string,
       ) => Promise<{
@@ -349,35 +341,6 @@ declare global {
       ) => Promise<{
         restoredFiles: number;
         output: string;
-      }>;
-      terminalCreate: (
-        cwd?: string,
-        runtime?: import('../types').TerminalRuntime,
-      ) => Promise<{
-        id: string;
-        cwd: string;
-        shell: string;
-      }>;
-      terminalWrite: (id: string, data: string) => void;
-      terminalResize: (id: string, cols: number, rows: number) => void;
-      terminalClose: (id: string) => Promise<void>;
-      onTerminalData: (
-        callback: (payload: { id: string; data: string }) => void,
-      ) => () => void;
-      onTerminalExit: (
-        callback: (payload: { id: string; exitCode: number | null }) => void,
-      ) => () => void;
-      terminalRun: (
-        command: string,
-        cwd?: string,
-        runtime?: import('../types').TerminalRuntime,
-      ) => Promise<{
-        command: string;
-        cwd: string;
-        exitCode: number | null;
-        stdout: string;
-        stderr: string;
-        outputTruncated?: boolean;
       }>;
       pastedTextAttachments: import('../../electron/pastedTextAttachments.mjs').PastedTextAttachmentApi;
       assembleHomeComponent?: (files: {name: string; text: string}[]) => Promise<string>;

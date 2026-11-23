@@ -1,4 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { BrowserUiError } from './browserUiError';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,7 +35,7 @@ export function parseBrowserBookmarks(text: string): BookmarkImportResult {
   const source = text.replace(/^\uFEFF/, '').trim();
   if (source.startsWith('{') || source.startsWith('[')) {
     const data = JSON.parse(source);
-    if (!data?.roots || typeof data.roots !== 'object') throw Error('请选择 Chrome / Edge 的 Bookmarks 文件或导出的 HTML 收藏夹。Select a Bookmarks or exported HTML file.');
+    if (!data?.roots || typeof data.roots !== 'object') throw new BrowserUiError('browserNative.bookmarksInvalidFormat');
     const pending: Array<{ node: any; folders: string[] }> = Object.values(data.roots).reverse().map(node => ({ node, folders: [] }));
     while (pending.length) {
       const { node, folders } = pending.pop()!;
@@ -46,7 +47,7 @@ export function parseBrowserBookmarks(text: string): BookmarkImportResult {
       }
     }
   } else {
-    if (!/NETSCAPE-Bookmark-file|<DL\b/i.test(source)) throw Error('无法识别收藏夹文件。Unrecognized bookmark file.');
+    if (!/NETSCAPE-Bookmark-file|<DL\b/i.test(source)) throw new BrowserUiError('browserNative.bookmarksUnrecognized');
     const folders: string[] = [];
     let pendingFolder = '';
     for (const match of source.matchAll(/<DL\b[^>]*>|<\/DL\s*>|<H3\b[^>]*>([\s\S]*?)<\/H3\s*>|<A\b([^>]*?)>([\s\S]*?)<\/A\s*>/gi)) {
@@ -64,7 +65,7 @@ export function parseBrowserBookmarks(text: string): BookmarkImportResult {
 
 async function readExport(file: string) {
   const info = await stat(file);
-  if (!info.isFile() || info.size > 40 * 1024 * 1024) throw Error('收藏夹文件必须小于 40 MB。Bookmark files must be smaller than 40 MB.');
+  if (!info.isFile() || info.size > 40 * 1024 * 1024) throw new BrowserUiError('browserNative.bookmarksTooLarge');
   return readFile(file, 'utf8');
 }
 
@@ -91,7 +92,7 @@ export class BrowserBookmarkImporter {
   }
   async profile(id: string) {
     const match = /^(chrome|edge):(Default|Profile \d+)$/.exec(id);
-    if (!match) throw Error('Invalid browser profile.');
+    if (!match) throw new BrowserUiError('browserNative.invalidProfile');
     return this.file(join(this.roots[match[1] as 'chrome' | 'edge'], match[2], 'Bookmarks'));
   }
   async file(path: string) { return parseBrowserBookmarks(await readExport(path)); }

@@ -1,3 +1,4 @@
+import { NativeVoiceError } from './voiceUiError';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CUSTOM_SPEECH_TIMEOUT_MS, defaultVoiceSettings, type VoiceSettings, type VoiceSettingsInput, type VoiceAudioChunk } from './voiceTypes';
@@ -19,7 +20,7 @@ interface Dependencies {
 }
 const MAX_AUDIO = 12 * 1024 * 1024;
 const textField = (value: unknown, max = 200): string => {
-  if (typeof value !== 'string' || !value.trim() || value.length > max || /[\r\n\x00]/.test(value)) throw Error('Invalid voice configuration.');
+  if (typeof value !== 'string' || !value.trim() || value.length > max || /[\r\n\x00]/.test(value)) throw new NativeVoiceError('voiceNative.invalidConfig');
   return value.trim();
 };
 export function validateVoiceSettings(input: VoiceSettingsInput): Omit<VoiceSettings, 'hasApiKey'> {
@@ -27,19 +28,19 @@ export function validateVoiceSettings(input: VoiceSettingsInput): Omit<VoiceSett
   const recognitionEngine = input.recognitionEngine ?? (engine === 'kokoro' || engine === 'custom' || engine === 'qwen' ? 'system' : engine), recognitionLanguage = input.recognitionLanguage ?? 'auto';
   const recognitionFormatting = input.recognitionFormatting ?? 'verbatim';
   const turnEndPause = input.turnEndPause ?? 'normal';
-  if (!['normal', 'patient'].includes(turnEndPause)) throw Error('Invalid voice turn wait setting.');
-  if (!['verbatim', 'formatted'].includes(recognitionFormatting)) throw Error('Invalid recognition formatting.');
-  if (!['system', 'sensevoice', 'cloud'].includes(recognitionEngine) || !['auto', 'zh', 'en'].includes(recognitionLanguage)) throw Error('Invalid recognition settings.');
-  if (!['system', 'qwen', 'kokoro', 'custom', 'cloud'].includes(engine) || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)) throw Error('Invalid voice engine or language.');
+  if (!['normal', 'patient'].includes(turnEndPause)) throw new NativeVoiceError('voiceNative.invalidTurnWait');
+  if (!['verbatim', 'formatted'].includes(recognitionFormatting)) throw new NativeVoiceError('voiceNative.invalidRecognitionFormatting');
+  if (!['system', 'sensevoice', 'cloud'].includes(recognitionEngine) || !['auto', 'zh', 'en'].includes(recognitionLanguage)) throw new NativeVoiceError('voiceNative.invalidRecognitionSettings');
+  if (!['system', 'qwen', 'kokoro', 'custom', 'cloud'].includes(engine) || !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)) throw new NativeVoiceError('voiceNative.invalidEngine');
   const baseUrl = textField(input.baseUrl, 2048).replace(/\/+$/, ''), url = new URL(baseUrl);
   if (url.username || url.password || url.search || url.hash ||
     !(url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
-    throw Error('语音服务需要 HTTPS 地址，本机服务可使用 HTTP。');
+    throw new NativeVoiceError('voiceNative.httpsRequired');
   }
-  if (!['female', 'male'].includes(input.voice) || !Number.isFinite(input.speed) || input.speed < .5 || input.speed > 2) throw Error('Invalid voice selection or speed.');
+  if (!['female', 'male'].includes(input.voice) || !Number.isFinite(input.speed) || input.speed < .5 || input.speed > 2) throw new NativeVoiceError('voiceNative.invalidVoiceSelection');
   const kokoroFemaleVoice = input.kokoroFemaleVoice ?? 3, kokoroMaleVoice = input.kokoroMaleVoice ?? 58, kokoroStyle = input.kokoroStyle ?? 'warm';
   if (!Number.isInteger(kokoroFemaleVoice) || kokoroFemaleVoice < 3 || kokoroFemaleVoice > 57 ||
-      !Number.isInteger(kokoroMaleVoice) || kokoroMaleVoice < 58 || kokoroMaleVoice > 102 || !['warm', 'neutral'].includes(kokoroStyle)) throw Error('Invalid local voice preset.');
+      !Number.isInteger(kokoroMaleVoice) || kokoroMaleVoice < 58 || kokoroMaleVoice > 102 || !['warm', 'neutral'].includes(kokoroStyle)) throw new NativeVoiceError('voiceNative.invalidLocalPreset');
   return { engine, recognitionEngine, recognitionLanguage, recognitionFormatting, turnEndPause, microphoneId: input.microphoneId ? textField(input.microphoneId, 512) : '', language, systemFemaleVoice: input.systemFemaleVoice ? textField(input.systemFemaleVoice) : '',
     systemMaleVoice: input.systemMaleVoice ? textField(input.systemMaleVoice) : '', baseUrl, transcriptionModel: textField(input.transcriptionModel), speechModel: textField(input.speechModel),
     femaleVoice: textField(input.femaleVoice), maleVoice: textField(input.maleVoice), voice: input.voice, speed: engine === 'qwen' ? 1 : input.speed, kokoroFemaleVoice, kokoroMaleVoice, kokoroStyle,
@@ -57,36 +58,36 @@ export class VoiceService {
     return { settings: { ...validateVoiceSettings({ ...saved, engine: saved.engine ?? (saved.secret ? 'cloud' : 'system') }), hasApiKey: Boolean(saved.secret) }, secret: saved.secret || '' };
   }
   settings(): VoiceSettings { return { ...this.read().settings, ...(this.deps.speaker ? { speakerLockEnabled: this.deps.speaker.enabled() } : {}) }; }
-  speakerStatus() { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.status(); }
-  configureSpeaker(input: { enabled: boolean; mode: SpeakerLockMode }) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.configure(input); }
-  removeSpeaker(profileId?: string) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.remove(profileId); }
-  saveSpeakerProfile(input: { profileId?: string; name: string }) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.saveProfile(input); }
-  selectSpeakerProfile(profileId: string) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.selectProfile(profileId); }
-  removeSpeakerSample(input: { profileId: string; sampleId: string }) { if (!this.deps.speaker) throw Error('声纹组件不可用。'); return this.deps.speaker.removeSample(input); }
+  speakerStatus() { if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable'); return this.deps.speaker.status(); }
+  configureSpeaker(input: { enabled: boolean; mode: SpeakerLockMode }) { if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable'); return this.deps.speaker.configure(input); }
+  removeSpeaker(profileId?: string) { if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable'); return this.deps.speaker.remove(profileId); }
+  saveSpeakerProfile(input: { profileId?: string; name: string }) { if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable'); return this.deps.speaker.saveProfile(input); }
+  selectSpeakerProfile(profileId: string) { if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable'); return this.deps.speaker.selectProfile(profileId); }
+  removeSpeakerSample(input: { profileId: string; sampleId: string }) { if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable'); return this.deps.speaker.removeSample(input); }
   saveSpeakerSample(owner: number, input: SpeakerSampleInput) {
     return this.request(owner, input?.id, 'speaker', async (_config, _key, signal) => {
-      if (!this.deps.speaker) throw Error('声纹组件不可用。');
+      if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable');
       return this.deps.speaker.saveSample(input, signal);
     });
   }
   enrollSpeaker(owner: number, input: { id: string; clips: ArrayBuffer[] }) {
     return this.request(owner, input.id, 'speaker', async (_config, _key, signal) => {
-      if (!this.deps.speaker) throw Error('声纹组件不可用。');
+      if (!this.deps.speaker) throw new NativeVoiceError('voiceNative.speakerUnavailable');
       return this.deps.speaker.enroll(input.clips, signal);
     });
   }
-  async capabilities() {
-    if (!this.deps.local) return { available: false, voices: [], recognizers: [], error: '本地语音组件不可用。' };
-    return this.deps.local.capabilities(AbortSignal.timeout(15_000));
+  async capabilities(language = 'en') {
+    if (!this.deps.local) return { available: false, voices: [], recognizers: [], error: new NativeVoiceError('voiceNative.localUnavailable').describe(language) };
+    return this.deps.local.capabilities(AbortSignal.timeout(15_000), language);
   }
   save(input: VoiceSettingsInput): VoiceSettings {
     const next = validateVoiceSettings(input), old = this.read();
     if (next.engine === 'custom' || next.engine === 'qwen') {
-      if (!this.deps.customSpeech) throw Error('自定义本地语音组件不可用。');
+      if (!this.deps.customSpeech) throw new NativeVoiceError('voiceNative.customUnavailable');
       this.deps.customSpeech.validate({ ...next, hasApiKey: false });
     }
     // A retained key must never follow a changed destination silently.
-    if (next.baseUrl !== old.settings.baseUrl && input.apiKey === undefined && old.secret) throw Error('更换语音服务地址时，请重新填写 API Key。');
+    if (next.baseUrl !== old.settings.baseUrl && input.apiKey === undefined && old.secret) throw new NativeVoiceError('voiceNative.replaceApiKey');
     const secret = input.apiKey === undefined ? old.secret : input.apiKey.trim() ? this.deps.encrypt(textField(input.apiKey, 4096)) : '';
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = this.file + '.tmp';
@@ -97,16 +98,16 @@ export class VoiceService {
   cancel(owner: number, id: string) { this.jobs.get(`${owner}:${id}`)?.abort('voice-cancelled'); }
   cancelOwner(owner: number) { for (const [key, job] of this.jobs) if (key.startsWith(`${owner}:`)) job.abort('voice-cancelled'); }
   private async request<T>(owner: number, id: string, operation: 'transcribe' | 'speak' | 'speaker', run: (settings: VoiceSettings, key: string, signal: AbortSignal) => Promise<T>): Promise<T> {
-    if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) throw Error('Invalid audio request ID.');
+    if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) throw new NativeVoiceError('voiceNative.invalidAudioRequest');
     const jobId = `${owner}:${id}`;
-    if (this.jobs.has(jobId) || [...this.jobs.keys()].filter(key => key.startsWith(`${owner}:`)).length >= 4) throw Error('语音请求过多，请稍后重试。');
+    if (this.jobs.has(jobId) || [...this.jobs.keys()].filter(key => key.startsWith(`${owner}:`)).length >= 4) throw new NativeVoiceError('voiceNative.tooManyRequests');
     const saved = this.read();
     const engine = operation === 'speaker' ? 'speaker' : operation === 'transcribe' ? saved.settings.recognitionEngine : saved.settings.engine;
-    if (engine === 'cloud' && !saved.secret) throw Error('请先在「设置 → 语音」配置云端 API Key，或选择本地语音。');
-    if (engine === 'system' && !this.deps.local) throw Error('本地语音组件不可用。');
-    if (engine === 'sensevoice' && !this.deps.recognition) throw Error('请先安装本地识别模型。');
-    if (engine === 'kokoro' && !this.deps.speech) throw Error('请先安装本地自然音色。');
-    if ((engine === 'custom' || engine === 'qwen') && !this.deps.customSpeech) throw Error('自定义本地语音组件不可用。');
+    if (engine === 'cloud' && !saved.secret) throw new NativeVoiceError('voiceNative.cloudKeyRequired');
+    if (engine === 'system' && !this.deps.local) throw new NativeVoiceError('voiceNative.localUnavailable');
+    if (engine === 'sensevoice' && !this.deps.recognition) throw new NativeVoiceError('voiceNative.installRecognition');
+    if (engine === 'kokoro' && !this.deps.speech) throw new NativeVoiceError('voiceNative.installSpeech');
+    if ((engine === 'custom' || engine === 'qwen') && !this.deps.customSpeech) throw new NativeVoiceError('voiceNative.customUnavailable');
     const controller = new AbortController(); this.jobs.set(jobId, controller);
     // Allow cold local-model startup, then let its owned process finish cleanup
     // before the outer request deadline. ASR and ordinary engines keep their limit.
@@ -114,7 +115,7 @@ export class VoiceService {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try { return await run(saved.settings, engine === 'cloud' ? this.deps.decrypt(saved.secret) : '', controller.signal); }
     catch (error) {
-      if (controller.signal.aborted && controller.signal.reason === 'voice-cancelled') throw Object.assign(Error('语音请求已取消。'), { name: 'VoiceCancelledError' });
+      if (controller.signal.aborted && controller.signal.reason === 'voice-cancelled') throw Object.assign(new NativeVoiceError('voiceNative.cancelled'), { name: 'VoiceCancelledError' });
       throw error;
     }
     finally { clearTimeout(timer); this.jobs.delete(jobId); }
@@ -122,7 +123,7 @@ export class VoiceService {
   async transcribe(owner: number, input: { id: string; audio: ArrayBuffer; mimeType: string; language?: string }) {
     const mime = input.mimeType.split(';')[0];
     const extension = ({ 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav' } as Record<string, string>)[mime];
-    if (!extension || !(input.audio instanceof ArrayBuffer) || !input.audio.byteLength || input.audio.byteLength > MAX_AUDIO) throw Error('录音格式不支持或超过 12 MB，请缩短录音。');
+    if (!extension || !(input.audio instanceof ArrayBuffer) || !input.audio.byteLength || input.audio.byteLength > MAX_AUDIO) throw new NativeVoiceError('voiceNative.invalidRecording');
     return this.request(owner, input.id, 'transcribe', async (config, key, signal) => {
       // Enforce identity at the host boundary, before ANY local/cloud transcription.
       // Returning no text keeps other voices out of retries, review and Agent input.
@@ -131,7 +132,7 @@ export class VoiceService {
       const finish = (text: string) => decision && !this.deps.speaker!.current(decision)
         ? { text: '', speaker: 'rejected' as const } : { text: text.trim(), ...(decision?.verified ? { speakerVerified: true } : {}) };
       if (config.recognitionEngine !== 'cloud') {
-        if (mime !== 'audio/wav') throw Error('本地语音识别需要 WAV 录音，请重新开始录音。');
+        if (mime !== 'audio/wav') throw new NativeVoiceError('voiceNative.wavRequired');
         const result = await (config.recognitionEngine === 'sensevoice' ? this.deps.recognition! : this.deps.local!).transcribe(input.audio, config, signal);
         return finish(result.text);
       }
@@ -145,12 +146,12 @@ export class VoiceService {
       await checkResponse(response);
       const bytes = await boundedBody(response, 256 * 1024);
       const result = JSON.parse(Buffer.from(bytes).toString('utf8'));
-      if (typeof result.text !== 'string') throw Error('语音服务未返回转写文本。');
+      if (typeof result.text !== 'string') throw new NativeVoiceError('voiceNative.missingTranscript');
       return finish(result.text);
     });
   }
   async speak(owner: number, input: { id: string; text: string; voice?: 'female' | 'male' }, emit: (chunk: VoiceAudioChunk) => void) {
-    if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 3000 || input.voice && !['female', 'male'].includes(input.voice)) throw Error('Invalid speech request.');
+    if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 3000 || input.voice && !['female', 'male'].includes(input.voice)) throw new NativeVoiceError('voiceNative.invalidSpeechRequest');
     return this.request(owner, input.id, 'speak', async (config, key, signal) => {
       if (config.engine === 'custom' || config.engine === 'qwen') return this.deps.customSpeech!.speak(input, config, signal, emit);
       if (config.engine === 'kokoro') return this.deps.speech!.speak(input, config, signal, emit);
@@ -161,16 +162,16 @@ export class VoiceService {
         body: JSON.stringify({ model: config.speechModel, input: input.text, voice, speed: config.speed, response_format: 'pcm' }),
       });
       await checkResponse(response);
-      if (!response.body || /json|text\/|html/.test(response.headers.get('content-type') ?? '')) throw Error('语音服务没有返回 PCM 音频。');
+      if (!response.body || /json|text\/|html/.test(response.headers.get('content-type') ?? '')) throw new NativeVoiceError('voiceNative.missingPcm');
       const reader = response.body.getReader(); let size = 0;
       try {
         for (;;) {
           const { done, value } = await reader.read(); if (done) break;
           signal.throwIfAborted(); size += value.byteLength;
-          if (size > MAX_AUDIO) throw Error('语音回复过长。');
+          if (size > MAX_AUDIO) throw new NativeVoiceError('voiceNative.replyTooLong');
           emit({ id: input.id, pcm: Buffer.from(value).toString('base64'), sampleRate: 24_000 });
         }
-        if (!size) throw Error('语音服务返回了空音频。');
+        if (!size) throw new NativeVoiceError('voiceNative.emptyAudio');
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
     });
   }
@@ -179,13 +180,14 @@ async function checkResponse(response: Response) {
   if (response.ok) return;
   await response.body?.cancel();
   // Do not forward provider bodies, URLs, or credentials into renderer errors/logs.
-  throw Error(response.status === 401 || response.status === 403 ? '语音服务授权失败，请检查 API Key 和模型权限。' :
-    response.status === 429 ? '语音服务额度不足或请求过于频繁。' : `语音服务请求失败（HTTP ${response.status}）。`);
+  if (response.status === 401 || response.status === 403) throw new NativeVoiceError('voiceNative.cloudUnauthorized');
+  if (response.status === 429) throw new NativeVoiceError('voiceNative.cloudRateLimited');
+  throw new NativeVoiceError('voiceNative.cloudHttp', { status: response.status });
 }
 async function boundedBody(response: Response, limit: number) {
-  if (!response.body) throw Error('语音服务返回为空。');
+  if (!response.body) throw new NativeVoiceError('voiceNative.emptyResponse');
   const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
-  try { for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > limit) throw Error('转写返回过大。'); chunks.push(value); } }
+  try { for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > limit) throw new NativeVoiceError('voiceNative.transcriptTooLarge'); chunks.push(value); } }
   finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
   return Buffer.concat(chunks);
 }

@@ -1,9 +1,10 @@
+import { NativeVoiceError, windowsVoiceError } from './voiceUiError';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import type { VoiceCapabilities, VoiceSettings, VoiceAudioChunk } from './voiceTypes';
 
 export interface LocalVoiceBackend {
-  capabilities(signal: AbortSignal): Promise<VoiceCapabilities>;
+  capabilities(signal: AbortSignal, language?: string): Promise<VoiceCapabilities>;
   transcribe(audio: ArrayBuffer, config: VoiceSettings, signal: AbortSignal): Promise<{ text: string }>;
   speak(input: { id: string; text: string; voice?: 'female' | 'male' }, config: VoiceSettings, signal: AbortSignal, emit: (chunk: VoiceAudioChunk) => void): Promise<void>;
 }
@@ -11,9 +12,9 @@ export interface LocalVoiceBackend {
 /** Native helpers have no microphone access, network transport, or files containing audio. */
 export class WindowsVoice implements LocalVoiceBackend {
   constructor(private executable: string, private platform = process.platform) {}
-  async capabilities(signal: AbortSignal): Promise<VoiceCapabilities> {
-    if (this.platform !== 'win32') return { available: false, voices: [], recognizers: [], error: '当前平台尚未接入系统语音，可手动选择云端接口。' };
-    if (!fs.existsSync(this.executable)) return { available: false, voices: [], recognizers: [], error: '本地语音组件缺失，请重新构建或安装 CardBush。' };
+  async capabilities(signal: AbortSignal, language = 'en'): Promise<VoiceCapabilities> {
+    if (this.platform !== 'win32') return { available: false, voices: [], recognizers: [], error: new NativeVoiceError('voiceNative.systemUnsupported').describe(language) };
+    if (!fs.existsSync(this.executable)) return { available: false, voices: [], recognizers: [], error: new NativeVoiceError('voiceNative.systemMissing').describe(language) };
     return this.run({ action: 'capabilities' }, signal) as Promise<VoiceCapabilities>;
   }
   transcribe(audio: ArrayBuffer, config: VoiceSettings, signal: AbortSignal) {
@@ -26,25 +27,25 @@ export class WindowsVoice implements LocalVoiceBackend {
       (pcm, sampleRate) => emit({ id: input.id, pcm, sampleRate }));
   }
   private run(input: object, signal: AbortSignal, audio?: (pcm: string, sampleRate: number) => void): Promise<unknown> {
-    if (this.platform !== 'win32') return Promise.reject(Error('系统语音目前仅支持 Windows。'));
+    if (this.platform !== 'win32') return Promise.reject(new NativeVoiceError('voiceNative.windowsOnly'));
     return new Promise((resolve, reject) => {
-      if (signal.aborted) { reject(Error('语音请求已取消。')); return; }
+      if (signal.aborted) { reject(new NativeVoiceError('voiceNative.cancelled')); return; }
       const child = spawn(this.executable, [], { windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
       let pending = '', total = 0, result: unknown, failure: Error | undefined, settled = false;
-      const timer = setTimeout(() => stop(Error('Windows 语音引擎响应超时，请重试。')), 90_000);
+      const timer = setTimeout(() => stop(new NativeVoiceError('voiceNative.windowsTimedOut')), 90_000);
       const stop = (error: Error) => { failure = error; child.kill(); };
-      const abort = () => stop(Error('语音请求已取消。'));
+      const abort = () => stop(new NativeVoiceError('voiceNative.cancelled'));
       signal.addEventListener('abort', abort, { once: true });
       const finish = (error?: Error) => {
         if (settled) return; settled = true; clearTimeout(timer); signal.removeEventListener('abort', abort);
-        if (error || failure) reject(error || failure); else if (!result) reject(Error('Windows 语音组件未返回结果。')); else resolve(result);
+        if (error || failure) reject(error || failure); else if (!result) reject(new NativeVoiceError('voiceNative.windowsNoResult')); else resolve(result);
       };
-      child.on('error', () => finish(Error('无法启动 Windows 本地语音组件，请重新构建或安装 CardBush。')));
+      child.on('error', () => finish(new NativeVoiceError('voiceNative.windowsStartFailed')));
       child.stdin.on('error', () => { /* Process exit reports the useful error. */ });
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
         if (failure) return;
-        total += chunk.length; if (total > 18 * 1024 * 1024) { stop(Error('本地语音返回过大。')); return; }
+        total += chunk.length; if (total > 18 * 1024 * 1024) { stop(new NativeVoiceError('voiceNative.localOutputTooLarge')); return; }
         pending += chunk;
         for (;;) {
           const end = pending.indexOf('\n'); if (end < 0) break;
@@ -53,11 +54,11 @@ export class WindowsVoice implements LocalVoiceBackend {
             const event = JSON.parse(line);
             if (event.type === 'audio' && typeof event.pcm === 'string' && Number.isInteger(event.sampleRate) && event.sampleRate >= 8000 && event.sampleRate <= 48000) audio?.(event.pcm, event.sampleRate);
             else if (event.type === 'result') result = event;
-            else if (event.type === 'error') stop(Error(event.message || 'Windows 本地语音执行失败。'));
-          } catch { stop(Error('Windows 本地语音返回格式无效。')); }
+            else if (event.type === 'error') stop(windowsVoiceError(event.code, event.message));
+          } catch { stop(new NativeVoiceError('voiceNative.windowsInvalidResponse')); }
         }
       });
-      child.on('close', code => finish(code && !failure ? Error('Windows 本地语音组件异常退出。') : undefined));
+      child.on('close', code => finish(code && !failure ? new NativeVoiceError('voiceNative.windowsStopped') : undefined));
       child.stdin.end(JSON.stringify(input));
     });
   }

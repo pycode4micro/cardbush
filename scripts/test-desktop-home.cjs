@@ -69,7 +69,7 @@ async function verify() {
   assert.equal(await js("!!document.querySelector('[data-nav-section=explore]')"), false);
   const visitAssistant = async () => {
     await click('[data-nav-section=assistant]');
-    await wait("document.querySelector('.assistant-view:not([hidden]) > .topbar')?.checkVisibility()");
+    await wait("document.querySelector('[data-conversation-titlebar=assistant] .window-conversation-name')?.checkVisibility()");
   };
   win.setMinimumSize(550,380); win.setSize(1000,500);
   await wait('innerHeight < 600');

@@ -46,7 +46,7 @@ test('ICS all-day, midnight, UTC and IANA civil dates are normalized with exclus
   assert.equal(floating.endDate, '2026-09-27');
   const crossZone = parse(ics(event(['UID:flight', 'DTSTART;TZID=Asia/Shanghai:20260925T230000', 'DTEND;TZID=America/New_York:20260925T120000', 'SUMMARY:航班']))).entries[0];
   assert.equal(crossZone.date, '2026-09-25'); assert.equal(crossZone.endDate, undefined);
-  assert.throws(() => parse(ics(event(['UID:flight-series', 'DTSTART;TZID=Asia/Shanghai:20260925T230000', 'DTEND;TZID=America/New_York:20260925T120000', 'RRULE:FREQ=DAILY;COUNT=2', 'SUMMARY:航班']))), /跨时区重复/);
+  assert.throws(() => parse(ics(event(['UID:flight-series', 'DTSTART;TZID=Asia/Shanghai:20260925T230000', 'DTEND;TZID=America/New_York:20260925T120000', 'RRULE:FREQ=DAILY;COUNT=2', 'SUMMARY:航班']))), /calendarError.crossZoneRecurrence/);
   assert.throws(() => parse(ics(event(['UID:bad-tz', 'DTSTART;TZID=Missing/Zone:20260925T120000', 'SUMMARY:错误时区']))));
 });
 
@@ -72,12 +72,26 @@ test('ICS RRULE, RDATE, EXDATE and moved/cancelled instances retain correct iden
 
 test('ICS rejects malformed/ambiguous records and excessive recurrence without partial output', () => {
   assert.throws(() => parse('not a calendar'));
-  assert.throws(() => parse(ics('CALSCALE:CHINESE', event(['UID:a', 'DTSTART;VALUE=DATE:20260925']))), /公历/);
-  assert.throws(() => parse(ics(event(['UID:a', 'DTSTART;VALUE=DATE:20260925']), event(['UID:a', 'DTSTART;VALUE=DATE:20260926']))), /UID/);
-  assert.throws(() => parse(ics(event(['UID:a', 'RECURRENCE-ID;VALUE=DATE:20260925', 'DTSTART;VALUE=DATE:20260926']))), /主事件/);
-  assert.throws(() => parse(ics(event(['UID:a', 'SUMMARY:没有日期']))), /DTSTART/);
-  assert.throws(() => parse(ics(event(['UID:huge', 'DTSTART:20250101T000000Z', 'RRULE:FREQ=SECONDLY', 'SUMMARY:太多']))), /50,000|展开过多/);
+  assert.throws(() => parse(ics('CALSCALE:CHINESE', event(['UID:a', 'DTSTART;VALUE=DATE:20260925']))), /calendarError.gregorianRequired/);
+  assert.throws(() => parse(ics(event(['UID:a', 'DTSTART;VALUE=DATE:20260925']), event(['UID:a', 'DTSTART;VALUE=DATE:20260926']))), /calendarError.uniqueUidRequired/);
+  assert.throws(() => parse(ics(event(['UID:a', 'RECURRENCE-ID;VALUE=DATE:20260925', 'DTSTART;VALUE=DATE:20260926']))), /calendarError.orphanRecurrence/);
+  assert.throws(() => parse(ics(event(['UID:a', 'SUMMARY:没有日期']))), /calendarError.startRequired/);
+  assert.throws(() => parse(ics(event(['UID:huge', 'DTSTART:20250101T000000Z', 'RRULE:FREQ=SECONDLY', 'SUMMARY:太多']))), /calendarError.(entryLimit|recurrenceLimit)/);
 });
+
+test('calendar worker carries validation facts and localizes only at the desktop boundary', async () => fixture(async root => {
+  const file = join(root, 'invalid.ics');
+  await writeFile(file, ics(event(['UID:event-32', 'SUMMARY:未改动的标题'])));
+  await assert.rejects(importCalendarFile(file), error => {
+    assert.deepEqual(error.failure.variables, { uid: 'event-32' });
+    assert.match(error.describe('en'), /ICS event event-32 is missing DTSTART/);
+    assert.match(error.describe('zh-CN'), /ICS 事件 event-32 缺少 DTSTART/);
+    return true;
+  });
+  await writeFile(file, ics(event(['UID:untitled', 'DTSTART;VALUE=DATE:20260925'])));
+  assert.equal((await importCalendarFile(file, 'en')).entries[0].title, 'Untitled event');
+  assert.equal((await importCalendarFile(file, 'zh')).entries[0].title, '未命名日程');
+}));
 
 test('store import/replacement, cancellation, concurrent changes and reload are atomic', async () => fixture(async root => {
   const file = join(root, 'input.json'), storePath = join(root, 'storage/calendars.json');
@@ -94,7 +108,7 @@ test('store import/replacement, cancellation, concurrent changes and reload are 
   const before = await readFile(storePath, 'utf8');
   await writeFile(file, '{not json'); await assert.rejects(store.command({ action: 'import' }, choose));
   assert.equal(await readFile(storePath, 'utf8'), before);
-  await writeFile(file, Buffer.alloc(CALENDAR_FILE_BYTES + 1)); await assert.rejects(importCalendarFile(file), /8 MiB/);
+  await writeFile(file, Buffer.alloc(CALENDAR_FILE_BYTES + 1)); await assert.rejects(importCalendarFile(file), /calendarError.fileTooLarge/);
   assert.equal(await readFile(storePath, 'utf8'), before);
   result = await new CalendarStore(storePath).command({ action: 'list' }, choose);
   assert.equal(result.state.datasets.find(item => item.calendar.id === 'test').enabled, false);
@@ -114,9 +128,9 @@ test('bundled calendars are offline, disabled by default and enabled independent
   await store.command({action:'enabled',id:'cardbush.us',enabled:true},choose);
   result=await store.command({action:'enabled',id:'cardbush.chinese',enabled:false},choose);
   assert.equal(result.state.chineseLunar,false);assert.equal(result.state.datasets[1].enabled,true);
-  await assert.rejects(store.command({action:'remove',id:'cardbush.chinese'},choose),/内置/);
+  await assert.rejects(store.command({action:'remove',id:'cardbush.chinese'},choose),/calendarError.builtinRemove/);
   const file=join(root,'overwrite.json');await writeFile(file,JSON.stringify({...dataset,id:'cardbush.us'}));
-  await assert.rejects(store.command({action:'import'},async()=>file),/内置/);
+  await assert.rejects(store.command({action:'import'},async()=>file),/calendarError.builtinOverwrite/);
   await writeFile(storePath,JSON.stringify({version:1,chineseLunar:true,datasets:[{calendar:dataset,enabled:true}]}));
   result=await new CalendarStore(storePath).command({action:'list'},choose);
   assert.equal(result.state.chineseLunar,false,'legacy implicit lunar default does not enable a bundled calendar');

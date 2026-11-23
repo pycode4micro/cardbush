@@ -1,3 +1,5 @@
+import { uiText } from '@cardbush/platform/i18n';
+import { NativeVoiceError } from './voiceUiError';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -13,19 +15,19 @@ export interface SpeakerDecision { allowed: boolean; revision: number; verified?
 export class SpeakerLock {
   private revision = 0;
   private enrolling = false;
-  constructor(private file: string, private backend: SpeakerEmbeddingBackend, private crypto: { encrypt(value: string): string; decrypt(value: string): string }, private installed: () => boolean) {}
+  constructor(private file: string, private backend: SpeakerEmbeddingBackend, private crypto: { encrypt(value: string): string; decrypt(value: string): string }, private installed: () => boolean, private uiLanguage?: () => string) {}
   private read(): Saved {
     if (!fs.existsSync(this.file)) return { enabled: false, mode: 'strict' };
     try {
       const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       if (typeof saved.enabled !== 'boolean' || !['standard', 'strict'].includes(saved.mode) || saved.profile !== undefined && typeof saved.profile !== 'string') throw Error();
       return saved;
-    } catch { throw Error('声纹配置损坏，请清除后重新录入；验证不会自动关闭。'); }
+    } catch { throw new NativeVoiceError('voiceNative.speakerConfigUnreadable'); }
   }
   private library(saved: Saved): SpeakerLibrary {
     if (!saved.profile) return emptySpeakerLibrary();
     try { return decodeSpeakerLibrary(JSON.parse(this.crypto.decrypt(saved.profile))); }
-    catch { throw Error('声纹无法读取或模型不匹配，请清除后重新录入。'); }
+    catch { throw new NativeVoiceError('voiceNative.speakerProfileUnreadable'); }
   }
   status(): SpeakerLockStatus {
     const saved = this.read(), library = this.library(saved);
@@ -46,12 +48,12 @@ export class SpeakerLock {
     return this.status();
   }
   configure(input: { enabled: boolean; mode: SpeakerLockMode }) {
-    if (typeof input?.enabled !== 'boolean' || !['standard', 'strict'].includes(input.mode)) throw Error('无效的声纹设置。');
+    if (typeof input?.enabled !== 'boolean' || !['standard', 'strict'].includes(input.mode)) throw new NativeVoiceError('voiceNative.speakerSettingsInvalid');
     const saved = this.read();
     if (input.enabled) {
       const library = this.library(saved), active = requireSpeakerProfile(library, library.activeProfileId);
-      if (!speakerProfileReady(active)) throw Error('当前人员还需录满三段有效语音。');
-      if (!this.installed()) throw Error('请先安装声纹模型。');
+      if (!speakerProfileReady(active)) throw new NativeVoiceError('voiceNative.speakerActiveNeedsSamples');
+      if (!this.installed()) throw new NativeVoiceError('voiceNative.speakerInstallRequired');
     }
     return this.write({ ...saved, ...input });
   }
@@ -59,7 +61,7 @@ export class SpeakerLock {
     const name = speakerName(input?.name), saved = this.read(), library = this.library(saved);
     if (input.profileId !== undefined) requireSpeakerProfile(library, input.profileId).name = name;
     else {
-      if (library.profiles.length >= speakerLimits.profiles) throw Error('最多保存八位人员的声纹。');
+      if (library.profiles.length >= speakerLimits.profiles) throw new NativeVoiceError('voiceNative.speakerProfilesLimit');
       const id = randomUUID();
       library.profiles.push({ id, name, model: speakerVersion, samples: [] });
       library.activeProfileId ??= id;
@@ -68,7 +70,7 @@ export class SpeakerLock {
   }
   selectProfile(profileId: string) {
     const saved = this.read(), library = this.library(saved), profile = requireSpeakerProfile(library, profileId);
-    if (!speakerProfileReady(profile)) throw Error('请先为这位人员录满三段有效语音。');
+    if (!speakerProfileReady(profile)) throw new NativeVoiceError('voiceNative.speakerProfileNeedsSamples');
     library.activeProfileId = profile.id;
     return this.write(saved, library);
   }
@@ -86,34 +88,34 @@ export class SpeakerLock {
   }
   removeSample(input: { profileId: string; sampleId: string }) {
     const saved = this.read(), library = this.library(saved), profile = requireSpeakerProfile(library, input?.profileId);
-    if (!profile.samples.some(sample => sample.id === input.sampleId)) throw Error('该段录音已不存在。');
-    if (saved.enabled && library.activeProfileId === profile.id && profile.samples.length <= speakerLimits.required) throw Error('锁定中的人员至少需要三段语音，请先关闭锁定，或直接重录替换这一段。');
+    if (!profile.samples.some(sample => sample.id === input.sampleId)) throw new NativeVoiceError('voiceNative.speakerSampleMissing');
+    if (saved.enabled && library.activeProfileId === profile.id && profile.samples.length <= speakerLimits.required) throw new NativeVoiceError('voiceNative.speakerActiveSampleRequired');
     profile.samples = profile.samples.filter(sample => sample.id !== input.sampleId);
     return this.write(saved, library);
   }
   private async sample(audio: ArrayBuffer, prompt: string, signal: AbortSignal): Promise<SpeakerSample> {
-    if (!(audio instanceof ArrayBuffer) || audio.byteLength < 44 || audio.byteLength > 640044) throw Error('每段录音不得超过 20 秒。');
-    if (typeof prompt !== 'string' || prompt.length > 500) throw Error('朗读文字请控制在 500 个字符内。');
+    if (!(audio instanceof ArrayBuffer) || audio.byteLength < 44 || audio.byteLength > 640044) throw new NativeVoiceError('voiceNative.speakerSampleLength');
+    if (typeof prompt !== 'string' || prompt.length > 500) throw new NativeVoiceError('voiceNative.speakerPromptLimit');
     signal.throwIfAborted();
     const result = await this.backend.extract(audio, signal);
-    if (result.voicedSeconds < 3 || !result.vectors.length) throw Error('有效人声不足三秒，请说完整语句后重录这一段。');
+    if (result.voicedSeconds < 3 || !result.vectors.length) throw new NativeVoiceError('voiceNative.speakerVoicedAudioRequired');
     const normalized = result.vectors.map(normalizeSpeakerVector), center = speakerMean(normalized);
-    if (normalized.some(vector => speakerSimilarity(vector, center) < .6)) throw Error('本段声纹不一致，请避开其他人声后重录。');
+    if (normalized.some(vector => speakerSimilarity(vector, center) < .6)) throw new NativeVoiceError('voiceNative.speakerSampleInconsistent');
     return { id: randomUUID(), prompt: prompt.trim(), recordedAt: new Date().toISOString(), voicedSeconds: result.voicedSeconds, vector: center,
       fingerprint: createHash('sha256').update(Buffer.from(audio)).digest('hex') };
   }
   async saveSample(input: SpeakerSampleInput, signal: AbortSignal) {
-    if (this.enrolling) throw Error('正在验证声纹，请稍后再试。');
+    if (this.enrolling) throw new NativeVoiceError('voiceNative.speakerVerificationBusy');
     const revision = this.revision, saved = this.read(), library = this.library(saved), profile = requireSpeakerProfile(library, input?.profileId);
-    if (input.sampleId !== undefined && !profile.samples.some(sample => sample.id === input.sampleId)) throw Error('要替换的段落已不存在。');
-    if (!input.sampleId && profile.samples.length >= speakerLimits.samples) throw Error('每位人员最多保存八段语音。');
+    if (input.sampleId !== undefined && !profile.samples.some(sample => sample.id === input.sampleId)) throw new NativeVoiceError('voiceNative.speakerReplacementMissing');
+    if (!input.sampleId && profile.samples.length >= speakerLimits.samples) throw new NativeVoiceError('voiceNative.speakerSamplesLimit');
     this.enrolling = true;
     try {
       const sample = await this.sample(input.audio, input.prompt, signal);
       const remaining = profile.samples.filter(item => item.id !== input.sampleId);
-      if (remaining.some(item => item.fingerprint === sample.fingerprint)) throw Error('这段音频已保存，请录制一段不同的语音。');
+      if (remaining.some(item => item.fingerprint === sample.fingerprint)) throw new NativeVoiceError('voiceNative.speakerSampleDuplicate');
       checkSpeakerConsistency([...remaining, sample]); signal.throwIfAborted();
-      if (revision !== this.revision) throw Error('声纹设置已变化，本段未保存，请重试。');
+      if (revision !== this.revision) throw new NativeVoiceError('voiceNative.speakerSampleSettingsChanged');
       if (input.sampleId) profile.samples = profile.samples.map(item => item.id === input.sampleId ? { ...sample, id: item.id } : item);
       else profile.samples.push(sample);
       return this.write(saved, library);
@@ -121,19 +123,19 @@ export class SpeakerLock {
   }
   /** Compatibility for the first version's atomic three-clip enrollment API. */
   async enroll(clips: ArrayBuffer[], signal: AbortSignal) {
-    if (this.enrolling) throw Error('正在录入声纹，请稍后重试。');
-    if (!Array.isArray(clips) || clips.length !== 3 || clips.some(clip => !(clip instanceof ArrayBuffer) || clip.byteLength < 44 || clip.byteLength > 640044)) throw Error('请录入三段不超过 20 秒的语音。');
-    if (new Set(clips.map(clip => createHash('sha256').update(Buffer.from(clip)).digest('hex'))).size !== 3) throw Error('请分别录制三段不同的语音。');
+    if (this.enrolling) throw new NativeVoiceError('voiceNative.speakerEnrollmentBusy');
+    if (!Array.isArray(clips) || clips.length !== 3 || clips.some(clip => !(clip instanceof ArrayBuffer) || clip.byteLength < 44 || clip.byteLength > 640044)) throw new NativeVoiceError('voiceNative.speakerEnrollmentSampleLength');
+    if (new Set(clips.map(clip => createHash('sha256').update(Buffer.from(clip)).digest('hex'))).size !== 3) throw new NativeVoiceError('voiceNative.speakerEnrollmentSamplesDistinct');
     const revision = this.revision, saved = this.read(), library = this.library(saved); this.enrolling = true;
     try {
       const samples: SpeakerSample[] = [];
       for (const clip of clips) samples.push(await this.sample(clip, '', signal));
       checkSpeakerConsistency(samples); signal.throwIfAborted();
-      if (revision !== this.revision) throw Error('声纹设置已变化，本次录入未保存。');
+      if (revision !== this.revision) throw new NativeVoiceError('voiceNative.speakerEnrollmentSettingsChanged');
       let active = library.profiles.find(profile => profile.id === library.activeProfileId);
       if (!active) {
-        if (library.profiles.length >= speakerLimits.profiles) throw Error('最多保存八位人员的声纹。');
-        active = { id: randomUUID(), name: '我的声纹', model: speakerVersion, samples: [] };
+        if (library.profiles.length >= speakerLimits.profiles) throw new NativeVoiceError('voiceNative.speakerProfilesLimit');
+        active = { id: randomUUID(), name: uiText(this.uiLanguage?.())('voiceNative.speakerDefaultProfile'), model: speakerVersion, samples: [] };
         library.profiles.push(active); library.activeProfileId = active.id;
       }
       active.samples = samples;
@@ -145,7 +147,7 @@ export class SpeakerLock {
     const saved = this.read(), revision = this.revision;
     if (!saved.enabled) return { allowed: true, revision };
     const library = this.library(saved), profile = requireSpeakerProfile(library, library.activeProfileId);
-    if (!speakerProfileReady(profile)) throw Error('当前人员的声纹尚未录入完整。');
+    if (!speakerProfileReady(profile)) throw new NativeVoiceError('voiceNative.speakerEnrollmentIncomplete');
     const vectors = profile.samples.map(sample => sample.vector), threshold = saved.mode === 'strict' ? .68 : .6;
     try {
       const result = await this.backend.extract(audio, signal); signal.throwIfAborted();

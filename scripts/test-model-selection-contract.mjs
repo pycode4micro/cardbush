@@ -7,7 +7,7 @@ import vm from 'node:vm';
 
 import ts from 'typescript';
 
-const hookPath = path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts');
+const hookPath = path.join(process.cwd(), 'src', 'features', 'settings', 'agentRequestPreferences.ts');
 const hookSource = readSourceFile(hookPath, 'utf8');
 const transpiled = ts.transpileModule(hookSource, {
   compilerOptions: {
@@ -87,7 +87,7 @@ assert.match(
   /JSON\.stringify\(settings\.managedModelConfigs\.map\(\(config\) => \(\{[\s\S]*?apiKey: ''/,
   'Renderer persistence must strip provider secrets',
 );
-assert.match(appSource, /mergeLegacyModelCredentials\(remoteModels, legacyModels\)/);
+assert.match(appSource, /mergeLegacyModelCredentials\(normalizeManagedModelConfigs\(snapshot\.models\), legacy\)/);
 assert.match(
   appSource,
   /migrated\.changed[\s\S]*?saveModelConfigs\([\s\S]*?models: migrated\.models/,

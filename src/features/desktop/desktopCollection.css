@@ -1,5 +1,6 @@
 /* Native caption hit targets stay above the workspace. The rail paints continuously behind them. */
 .app[data-desktop-workspace] {
+  --window-frame-height: max(32px, env(titlebar-area-height, 44px));
   --rail-divider: color-mix(in srgb,var(--text) 11%,transparent);
   --workspace-bar-height: var(--window-frame-height);
   --header-rail-width: var(--sidebar-width);
@@ -37,10 +38,14 @@
   background:var(--surface);
   box-shadow:inset 0 -1px var(--chrome-edge);
 }
-html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-window-material-preference="solid"]) > .window-frame::before { background:transparent; }
+html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-window-material-preference="solid"], [data-conversation-titlebar]) > .window-frame::before { background:transparent; }
 /* Keep artwork under the header readable using the existing glass material. */
 html .app[data-desktop-workspace]:has(> .desktop-shell:not([data-settings-visible]) > .main-stage > .desktop-library[data-header-underlap]:not([data-page-visible="false"])) > .window-frame::before {
   background:var(--chrome-grain) repeat var(--header-glass); backdrop-filter:var(--chrome-glass-filter);
+}
+html .app[data-desktop-workspace][data-conversation-titlebar] > .window-frame::before {
+  background:var(--surface);
+  backdrop-filter:none;
 }
 html[data-window-material="mica"] .app[data-desktop-workspace]:not([data-translucent-sidebar="false"]) .desktop-shell[data-sidebar-layout="drawer"]:not(.sidebar-is-collapsed) > .sidebar::before {
   content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;

@@ -7,9 +7,9 @@ export interface VoiceModelArchive extends VoiceDownload { files: VoiceModelFile
 export const voiceModelVersion = 'sensevoice-2024-07-17-sherpa-1.13.8';
 export const voiceModelSources = [
   { title: 'SenseVoice · FunAudioLLM / Alibaba', url: 'https://github.com/QwenAudio/SenseVoice' },
-  { title: 'sherpa-onnx · 官方运行库与模型转换', url: 'https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8' },
-  { title: '模型许可证', url: 'https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE' },
-];
+  { titleKey: 'voiceNative.senseVoiceModelSource', url: 'https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8' },
+  { titleKey: 'voiceNative.modelLicenseSource', url: 'https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE' },
+] as const;
 // The 2025-09-09 package is a Cantonese fine-tune, not the bilingual base model.
 const modelRoot = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17';
 const model: VoiceModelArchive = {

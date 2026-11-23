@@ -407,8 +407,7 @@ body.sidebar-resizing .right-inspector {
 }
 
 .project-title small,
-.conversation-row small,
-.result-card small {
+.conversation-row small {
   overflow: hidden;
   color: var(--sidebar-text-muted, color-mix(in srgb, var(--text-soft) 84%, transparent));
   font-size: calc(11.5px * var(--ui-font-scale, 1));

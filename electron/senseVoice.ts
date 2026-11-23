@@ -1,3 +1,4 @@
+import { NativeVoiceError } from './voiceUiError';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,18 +9,18 @@ import type { VoiceModelStore } from './voiceModelStore';
 /** Bound attention/memory for long recordings; split near quiet audio, not every fixed syllable. */
 export function splitVoiceWave(input: ArrayBuffer): Buffer[] {
   const wav = Buffer.from(input);
-  if (wav.length < 44 || wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') throw Error('本地识别需要 PCM WAV 录音。');
+  if (wav.length < 44 || wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') throw new NativeVoiceError('voiceNative.senseVoiceWavRequired');
   let rate = 0, pcm: Buffer | undefined;
   for (let offset = 12; offset + 8 <= wav.length;) {
     const kind = wav.toString('ascii', offset, offset + 4), length = wav.readUInt32LE(offset + 4), start = offset + 8;
-    if (start + length > wav.length) throw Error('录音文件不完整。');
+    if (start + length > wav.length) throw new NativeVoiceError('voiceNative.recordingIncomplete');
     if (kind === 'fmt ') {
-      if (length < 16 || wav.readUInt16LE(start) !== 1 || wav.readUInt16LE(start + 2) !== 1 || wav.readUInt16LE(start + 14) !== 16) throw Error('本地识别需要单声道 16 位录音。');
+      if (length < 16 || wav.readUInt16LE(start) !== 1 || wav.readUInt16LE(start + 2) !== 1 || wav.readUInt16LE(start + 14) !== 16) throw new NativeVoiceError('voiceNative.senseVoiceMonoRequired');
       rate = wav.readUInt32LE(start + 4);
     } else if (kind === 'data') pcm = wav.subarray(start, start + length);
     offset = start + length + length % 2;
   }
-  if (!pcm?.length || pcm.length % 2 || rate < 8000 || rate > 48000 || pcm.length / (rate * 2) > 121) throw Error('录音长度或采样率无效。');
+  if (!pcm?.length || pcm.length % 2 || rate < 8000 || rate > 48000 || pcm.length / (rate * 2) > 121) throw new NativeVoiceError('voiceNative.invalidRecordingLength');
   const chunks: Buffer[] = [];
   for (let start = 0; start < pcm.length;) {
     let end = Math.min(pcm.length, start + rate * 2 * 25);
@@ -72,12 +73,12 @@ export class SenseVoice {
           text += chunk;
           if (text.length > 1024 * 1024) { failed = true; child.kill(); }
         });
-        child.once('error', () => reject(Error(signal.aborted ? '语音识别已取消。' : '本地识别引擎无法启动，请重新安装模型。')));
-        child.once('close', code => code === 0 && !failed ? resolve(text) : reject(Error(signal.aborted ? '语音识别已取消。' : '本地语音识别失败或超时。')));
+        child.once('error', () => reject(new NativeVoiceError(signal.aborted ? 'voiceNative.recognitionCancelled' : 'voiceNative.recognitionStartFailed')));
+        child.once('close', code => code === 0 && !failed ? resolve(text) : reject(new NativeVoiceError(signal.aborted ? 'voiceNative.recognitionCancelled' : 'voiceNative.recognitionFailed')));
       });
       signal.throwIfAborted();
       const results = output.trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
-      if (results.length !== clips.length || results.some(item => typeof item.text !== 'string')) throw Error('本地识别未返回完整结果。');
+      if (results.length !== clips.length || results.some(item => typeof item.text !== 'string')) throw new NativeVoiceError('voiceNative.recognitionIncomplete');
       const text = results.map(item => item.text.replace(/<\|[^|]*\|>/g, '').trim()).filter(Boolean).join(' ');
       return { text };
     } finally {

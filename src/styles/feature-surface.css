@@ -1,0 +1,19 @@
+.feature-content {
+  flex: 1;
+  overflow: auto;
+  scrollbar-width: thin;
+  padding: 22px 24px 24px;
+}
+
+.feature-loading {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.feature-loading svg {
+  animation: cardbush-spin 900ms linear infinite;
+}

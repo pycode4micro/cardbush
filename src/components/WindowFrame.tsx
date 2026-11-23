@@ -13,6 +13,7 @@ import type { HistoryDirection } from '../../electron/shortcutBinding';
 type Props = {
   language: AppLanguage; sidebarCollapsed: boolean;
   children?: React.ReactNode;
+  actions?: React.ReactNode;
   menus: WindowMenuItem[]; onBack?: () => void; onForward?: () => void;
   onInspectorHistory?: (direction: HistoryDirection, tabId?: string) => void;
   onError: (error: unknown) => void;
@@ -151,6 +152,7 @@ export function WindowFrame(props: Props) {
       shortcutLabel={shortcuts.label} onRun={run} onClose={close} onDismiss={close}/>}
     {props.children}
     <div className="window-spacer window-drag" aria-hidden="true" />
+    {props.actions}
     {!nativeControls && <>
       <WindowButton label={uiText(language)('windowFrame.minimize')} glyph="minimize" onClick={() => window.cardbushDesktop?.minimize()} />
       <WindowButton label={maximized ? (uiText(language)('windowFrame.restore')) : (uiText(language)('windowFrame.maximize'))}

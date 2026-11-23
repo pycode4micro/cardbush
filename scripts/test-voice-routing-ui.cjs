@@ -25,7 +25,7 @@ app.whenReady().then(async()=>{
       import ${file('src/styles/theme.css')};import ${file('src/styles/app.css')};
       window.fixture={sent:[],dictated:[],tracks:[],started:[],closed:[],frames:0,spoken:0};
       const settings=${JSON.stringify({...defaultVoiceSettings,engine:'cloud',recognitionEngine:'cloud',hasApiKey:true,speakerLockEnabled:false})};
-      window.cardbushDesktop={voice:{settings:async()=>{await new Promise(r=>setTimeout(r,60));return settings;},
+      window.cardbushDesktop={isMaximized:async()=>false,voice:{settings:async()=>{await new Promise(r=>setTimeout(r,60));return settings;},
         setCallActive:async()=>{},cancel:async()=>{},
         transcribe:async()=>{if(fixture.holdTranscription)await new Promise(r=>fixture.releaseTranscription=r);return{text:'这是录音测试',speakerVerified:true};},
         speak:async()=>fixture.spoken++,onAudio:()=>()=>{},
@@ -67,9 +67,16 @@ app.whenReady().then(async()=>{
   win.webContents.session.setPermissionRequestHandler((_,permission,callback)=>callback(permission==='media'));
   win.webContents.session.webRequest.onBeforeRequest((details,callback)=>callback({cancel:/^https?:/.test(details.url)}));
   const errors=[];win.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
-  const read=code=>win.webContents.executeJavaScript(code);
+  const read=async code=>{
+    try { return await win.webContents.executeJavaScript(code); }
+    catch (error) { throw Error(code+'\n'+errors.join('\n'), {cause:error}); }
+  };
   const until=async code=>{for(let i=0;i<160;i++){if(await read(code))return;await pause(25);}throw Error('Timed out: '+code+'\n'+await read('JSON.stringify(fixture.state())')+'\n'+errors.join('\n'));};
-  const click=label=>read(`Array.from(document.querySelectorAll('button')).find(button=>button.getAttribute('aria-label')===${JSON.stringify(label)}).click();void 0`);
+  const click=async label=>{
+    const target=`Array.from(document.querySelectorAll('button')).find(button=>button.getAttribute('aria-label')===${JSON.stringify(label)} && button.getClientRects().length)`;
+    await until(`Boolean(${target})`);
+    await read(`${target}.click();void 0`);
+  };
   const pointer=async(view,hold=0)=>{const point=await read(`(()=>{const rect=document.querySelector('[data-view="${view}"] ${hold?'.voice-call-trigger':'.voice-dictation-button'}').getBoundingClientRect();return{x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)};})()`);
     win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});if(hold){await pause(hold);await until('fixture.state().mode==="call"');}win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});};
   const navigate=async view=>{await read(`fixture.navigate(${JSON.stringify(view)});void 0`);await until(`!document.querySelector('[data-view="${view}"]').hidden`);};

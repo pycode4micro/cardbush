@@ -2270,9 +2270,9 @@ export function kokoroDefinition(platform = process.platform, arch = process.arc
   return { version: 'kokoro-v1.1-int8-sherpa-1.13.8', model: 'Kokoro v1.1 (INT8)',
     sources: [
       {title:'Kokoro · hexgrad',url:'https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh'},
-      {title:'sherpa-onnx · 官方转换与音色示例',url:'https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html'},
-      {title:'运行库与源代码',url:'https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8'},
-      {title:'eSpeak NG · 源代码与许可证',url:'https://github.com/espeak-ng/espeak-ng'}
+      {titleKey:'voiceNative.kokoroModelSource',url:'https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html'},
+      {titleKey:'voiceNative.speechRuntimeSource',url:'https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8'},
+      {titleKey:'voiceNative.espeakLicenseSource',url:'https://github.com/espeak-ng/espeak-ng'}
     ],
     attribution:'Kokoro by hexgrad. ONNX model conversion and runtime by sherpa-onnx. ONNX Runtime by Microsoft. eSpeak NG phonemizer and data.\n',
     licenses: { ...Object.fromEntries(Object.entries(voiceModelLicenses).filter(([name]) => !name.startsWith('FunASR'))), ...kokoroLicenses },

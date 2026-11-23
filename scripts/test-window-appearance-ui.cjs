@@ -83,7 +83,7 @@ app.whenReady().then(async () => {
   };
   const until = async (condition, label) => {
     for (let i = 0; i < 100; i++) { if (await run(condition)) return; await pause(30); }
-    throw Error(`Timed out: ${label}`);
+    throw Error(`Timed out: ${label}\nRenderer: ${JSON.stringify(await run('window.failures ?? []'))}`);
   };
   win.webContents.session.webRequest.onBeforeRequest((details, done) => {
     if (/^https?:/.test(details.url)) errors.push(`Unexpected network: ${details.url}`);
@@ -143,7 +143,7 @@ app.whenReady().then(async () => {
         h('main', { className:'desktop-shell' + (collapsed ? ' sidebar-is-collapsed' : ''), 'data-sidebar-layout':'docked','data-settings-visible':settings || undefined },
           h(views.WindowSidebarToggle, {language:'zh',collapsed,onToggle:() => setCollapsed(!collapsed)}),
           h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
-            quickNavigation:h(views.RecentConversationBar, {language:'zh', assistantName:'assistant', selectedId:'fixture', notices:[],openNotice:noop,onRecentList:noop,open:noop}),
+            quickNavigation:() => h(views.RecentConversationBar, {language:'zh', assistantName:'assistant', selectedId:'fixture', notices:[],openNotice:noop,onRecentList:noop,open:noop}),
             assistantEntry:h(views.AssistantStageButton,{language:'zh',active:false,onOpen:noop}),
             workspaceNavigation:h(views.WorkspaceChatNavigation,{language:'zh', projectsActive:false, onProjects:noop, onNewChat:noop}),
             railCollapsed:collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,

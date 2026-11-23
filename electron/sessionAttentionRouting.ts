@@ -1,3 +1,5 @@
+import type { uiText } from '@cardbush/platform/i18n';
+
 export const sessionAttentionIntentTtlMs = 10 * 60 * 1000;
 export const sessionAttentionIntentLimit = 20;
 export const sessionAttentionDuplicateWindowMs = 2_000;
@@ -100,4 +102,28 @@ export function decodeSessionAttentionActivation(value: string): Pick<SessionAtt
   } catch {
     return;
   }
+}
+
+
+const noticeBody = {
+  completed: 'desktopAttention.completed',
+  interaction: 'desktopAttention.interaction',
+  error: 'desktopAttention.error',
+} as const;
+
+export function normalizeSessionAttentionPayload(value: unknown, text: ReturnType<typeof uiText>) {
+  const payload = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const kind = String(payload.kind ?? '').trim().toLowerCase();
+  const sessionId = String(payload.sessionId ?? '').trim();
+  const interactionId = String(payload.interactionId ?? '').trim();
+  if (!sessionId || (kind !== 'completed' && kind !== 'interaction' && kind !== 'error')
+      || (kind === 'interaction' && !interactionId)) return null;
+  return {
+    sessionId,
+    title: String(payload.title ?? '').trim().slice(0, 120) || 'CardBush',
+    body: String(payload.body ?? '').trim().slice(0, 500) || text(noticeBody[kind]),
+    kind,
+    turnId: String(payload.turnId ?? '').trim(),
+    interactionId,
+  };
 }

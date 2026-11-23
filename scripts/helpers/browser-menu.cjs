@@ -111,8 +111,8 @@ module.exports = async ({ window, original, origin, directory, read, waitFor, ac
     assert.equal(await read(`JSON.parse(localStorage.getItem('cardbush.browser_bookmarks.v1')).length`), 165);
     await closeDialog();
 
-    await assert.rejects(uiService.page(window.webContents, window.webContents.id, { action: 'status' }), /unavailable/);
-    await assert.rejects(uiService.clear(window.webContents, { history: false, downloads: false, cache: false, site: true, guestId: original.id, origin: 'https://wrong.example' }), /changed/);
+    await assert.rejects(uiService.page(window.webContents, window.webContents.id, { action: 'status' }), { key: 'browserNative.tabUnavailable' });
+    await assert.rejects(uiService.clear(window.webContents, { history: false, downloads: false, cache: false, site: true, guestId: original.id, origin: 'https://wrong.example' }), { key: 'browserNative.siteChanged' });
     const firstTabId = await read('browserFixture.activeId');
     await read(`browserFixture.open({target:${JSON.stringify(origin + '/browser-tools')},newTab:true}); void 0`); await activeReady();
     const secondId = await read(`document.querySelector('.right-inspector-tab-page.active webview').getWebContentsId()`);

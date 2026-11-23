@@ -75,9 +75,9 @@ test('realtime settings are independent, encrypted, redacted and explicit; no cr
   assert.ok(!fs.readFileSync(f.file,'utf8').includes('fixture-not-a-real-credential'));
   assert.equal(Object.hasOwn(f.service.settings(),'secret'),false);
   f.service.save({...f.service.settings(),mode:'chained'});assert.equal(f.service.settings().hasApiKey,true);
-  await assert.rejects(f.service.start(1,{id:'test',voice:'female',context:[]},()=>{}),/实时语音通话模式/);
+  await assert.rejects(f.service.start(1,{id:'test',voice:'female',context:[]},()=>{}),{key: 'voiceNative.realtimeModeRequired'});
   f.service.save({...f.service.settings(),mode:'realtime',apiKey:''});assert.equal(f.service.settings().hasApiKey,false);
-  await assert.rejects(f.service.start(1,{id:'test',voice:'female',context:[]},()=>{}),/API Key/);
+  await assert.rejects(f.service.start(1,{id:'test',voice:'female',context:[]},()=>{}),{key:'voiceNative.realtimeKeyRequired'});
   assert.throws(()=>f.service.save({...defaults,provider:'arbitrary'}));
 });
 test('Seeduplex handshake, PCM formats, delegation tools, mute controls and graceful close follow the protocol',async t=>{

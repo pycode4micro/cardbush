@@ -55,7 +55,7 @@ export function AgentDefinitionInspector({ detail, language, active = true }: { 
     {value && <>
       <p>{value.record.definition.description || uiText(language)('agentDefinitionInspector.noDescriptionProvided')}</p>
       <dl><dt>{uiText(language)('agentDefinitionInspector.id')}</dt><dd>{value.record.definition.id}</dd><dt>{uiText(language)('agentDefinitionInspector.currentRevision')}</dt><dd>{value.record.revision}</dd>
-        {employee && <><dt>{uiText(language)('agentDefinitionInspector.status')}</dt><dd>{employee.enabled ? uiText(language)('featureContentPanel.enabled') : uiText(language)('pluginManagementPanel.disabled')}</dd></>}
+        {employee && <><dt>{uiText(language)('agentDefinitionInspector.status')}</dt><dd>{employee.enabled ? uiText(language)('common.enabled') : uiText(language)('pluginManagementPanel.disabled')}</dd></>}
         {team && <><dt>{uiText(language)('agentDefinitionInspector.maximumParallelNodes')}</dt><dd>{team.max_parallel}</dd></>}
       </dl>
       {employee && <>

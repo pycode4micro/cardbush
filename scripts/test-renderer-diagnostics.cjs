@@ -66,6 +66,7 @@ async function verify() {
     assert.equal(file, path.join(root,'logs','realtime-voice.log'));
     assert.ok(fs.readFileSync(file,'utf8').trim().split('\n').some(line => JSON.parse(line).payload.event === event));
   }
+  assert.equal(await write(capsule, 'assistant-send', 'request-dispatched'), path.join(root, 'logs', 'assistant-send.log'));
   trayMenu.items[0].click();
   const main = await windowFor(null);
   assert.equal(await write(main,'renderer-lifecycle','workspace'),path.join(root,'logs','renderer-lifecycle.log'));
@@ -73,11 +74,22 @@ async function verify() {
   assert.equal(await write(main,'window-scroll','workspace'),scrollConfig.logPath);
   await main.webContents.executeJavaScript("window.cardbushDesktop.openShadowWindow({sessionId:'diagnostics',modelConfig:{id:'fixture'}})");
   const shadow = await windowFor('shadow');
+  assert.throws(() => append({sender:shadow.webContents, senderFrame:shadow.webContents.mainFrame}, 'assistant-send', {}), /invalid_renderer_log_scope/);
   assert.equal(await write(shadow,'renderer-lifecycle','shadow'),path.join(root,'logs','renderer-lifecycle.log'));
   assert.equal(await write(shadow,'window-scroll','isolated'),undefined);
   assert.equal(await capsule.webContents.executeJavaScript('window.cardbushDesktop.windowScrollDiagnosticConfig()'),undefined);
 
   const sender = capsule.webContents;
+  const getPath = app.getPath;
+  app.getPath = function(name) {
+    if (name === 'music') throw Error('Missing known folder in fixture');
+    return getPath.call(this, name);
+  };
+  try {
+    const directories = await sender.executeJavaScript('window.cardbushDesktop.filesystemLocations()');
+    assert.ok(directories.some(item => item.id === 'home'));
+    assert.ok(!directories.some(item => item.id === 'music'));
+  } finally { app.getPath = getPath; }
   await sender.executeJavaScript("new Promise(resolve=>{const frame=document.createElement('iframe');frame.onload=()=>resolve(true);frame.src='about:blank';document.body.append(frame)})");
   assert.ok(sender.mainFrame.frames.length);
   assert.throws(() => append({sender, senderFrame:sender.mainFrame.frames[0]},'realtime-voice',{}), /invalid_window_sender/);

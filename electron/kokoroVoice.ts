@@ -1,3 +1,4 @@
+import { NativeVoiceError } from './voiceUiError';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,17 +9,17 @@ import { kokoroModelFile } from './customSpeechModel';
 
 /** Decode only the bounded mono PCM format emitted by the pinned native engine. */
 export function kokoroPcm(wav: Buffer) {
-  if (wav.length > 12 * 1024 * 1024 || wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') throw Error('本地语音输出格式无效。');
+  if (wav.length > 12 * 1024 * 1024 || wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') throw new NativeVoiceError('voiceNative.kokoroAudioInvalid');
   let valid = false, pcm: Buffer | undefined;
   for (let at = 12; at + 8 <= wav.length;) {
     const size = wav.readUInt32LE(at + 4), start = at + 8;
-    if (start + size > wav.length) throw Error('本地语音输出不完整。');
+    if (start + size > wav.length) throw new NativeVoiceError('voiceNative.kokoroAudioIncomplete');
     const kind = wav.toString('ascii', at, at + 4);
     if (kind === 'fmt ') valid = size >= 16 && wav.readUInt16LE(start) === 1 && wav.readUInt16LE(start + 2) === 1 && wav.readUInt32LE(start + 4) === 24000 && wav.readUInt16LE(start + 14) === 16;
     if (kind === 'data') pcm = wav.subarray(start, start + size);
     at = start + size + size % 2;
   }
-  if (!valid || !pcm?.length || pcm.length % 2) throw Error('本地语音输出需要 24 kHz 单声道 PCM。');
+  if (!valid || !pcm?.length || pcm.length % 2) throw new NativeVoiceError('voiceNative.kokoroPcmRequired');
   return pcm;
 }
 
@@ -60,11 +61,11 @@ export class KokoroVoice {
         const child = spawn(path.join(lease.directory, 'sherpa-onnx-offline-tts.exe'), args, { windowsHide: true, shell: false,
           cwd: lease.directory, signal, timeout: 85_000, stdio: 'ignore' });
         let failure: Error | undefined;
-        child.once('error', () => { failure = Error(signal.aborted ? '语音合成已取消。' : '本地自然音色无法启动，请重新安装。'); });
-        child.once('close', code => failure ? reject(failure) : code === 0 ? resolve() : reject(Error(signal.aborted ? '语音合成已取消。' : '本地自然音色合成失败或超时。')));
+        child.once('error', () => { failure = new NativeVoiceError(signal.aborted ? 'voiceNative.synthesisCancelled' : 'voiceNative.kokoroStartFailed'); });
+        child.once('close', code => failure ? reject(failure) : code === 0 ? resolve() : reject(new NativeVoiceError(signal.aborted ? 'voiceNative.synthesisCancelled' : 'voiceNative.kokoroSynthesisFailed')));
       });
       signal.throwIfAborted();
-      if ((await fs.promises.stat(output)).size > 12 * 1024 * 1024) throw Error('本地语音回复过长。');
+      if ((await fs.promises.stat(output)).size > 12 * 1024 * 1024) throw new NativeVoiceError('voiceNative.replyTooLong');
       const pcm = kokoroPcm(await fs.promises.readFile(output));
       for (let at = 0; at < pcm.length; at += 48000) {
         signal.throwIfAborted(); emit({ id: input.id, pcm: pcm.subarray(at, at + 48000).toString('base64'), sampleRate: 24000 });

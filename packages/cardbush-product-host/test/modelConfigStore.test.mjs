@@ -4,7 +4,41 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ProductModelConfigStore } from "../dist/index.js";
+import { ProductHost, PRODUCT_HOST_IPC_PROTOCOL, ProductModelConfigStore } from "../dist/index.js";
+
+test('revision-aware Product Host clients cannot replace a newer catalogue or reasoning patch', async () => {
+  const path = join(await mkdtemp(join(tmpdir(), 'cardbush-model-revisions-')), 'models.json');
+  await writeFile(path, JSON.stringify({ version: 1, defaultModelId: 'a', models: [{ id: 'a', provider: 'custom', model: 'original', apiKey: '' }] }));
+  const connect = () => {
+    const store = new ProductModelConfigStore(path);
+    const host = new ProductHost({
+      get: async () => store.publicPayload(await store.read()),
+      update: async config => store.publicPayload(await store.write(config)),
+      resolve: async () => ({}),
+      updateReasoning: async (modelId, effort) => store.publicPayload(await store.updateReasoning(modelId, effort)),
+    });
+    return command => host.execute({ protocol: PRODUCT_HOST_IPC_PROTOCOL, ...command });
+  };
+  const first = connect(), second = connect();
+  const [a, b] = await Promise.all([first({ kind: 'models.get' }), second({ kind: 'models.get' })]).then(results => results.map(result => result.value));
+  assert.equal(a.revision, b.revision);
+  const outcomes = await Promise.all([
+    first({ kind: 'models.update', config: { ...a, expectedRevision: a.revision, models: [{ ...a.models[0], modelName: 'first update' }] } }),
+    second({ kind: 'models.update', config: { ...b, expectedRevision: b.revision, models: [{ ...b.models[0], modelName: 'second update' }] } }),
+  ]);
+  assert.equal(outcomes.filter(result => result.ok).length, 1);
+  const winner = outcomes.find(result => result.ok);
+  const stale = outcomes.find(result => !result.ok);
+  assert.notEqual(winner.value.revision, a.revision);
+  assert.equal(stale.error.code, 'model_config_revision_conflict');
+  const latest = await first({ kind: 'model.reasoning.update', modelId: 'a', reasoningEffort: 'high' });
+  const staleAfterPatch = await second({ kind: 'models.update', config: { ...winner.value, expectedRevision: winner.value.revision } });
+  assert.equal(staleAfterPatch.error.code, 'model_config_revision_conflict');
+  const reloaded = await connect()({ kind: 'models.get' });
+  assert.equal(reloaded.value.revision, latest.value.revision);
+  assert.equal(reloaded.value.models[0].reasoningEffort, 'high');
+  assert.equal(reloaded.value.models[0].modelName, winner.value.models[0].modelName);
+});
 
 test('reasoning belongs to each configuration, survives restart, and clears explicitly to provider default', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-model-reasoning-'));

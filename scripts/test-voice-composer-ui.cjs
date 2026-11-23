@@ -46,7 +46,7 @@ app.whenReady().then(async()=>{
         const [viewingConversation,setViewingConversation]=useState(false);fixture.viewingConversation=setViewingConversation;
         fixture.sending=setSending;fixture.draft=setDraft;fixture.style=setStyle;fixture.view=setView;fixture.theme=setTheme;fixture.portal=setPortal;fixture.language=value=>{document.documentElement.lang=value;setLanguage(value);};
         const target={environment:'local',sessionId:view,messages:[],sending,...(view==='assistant'?{assistant:{name:'assistant',persona:''}}:{}),send:async text=>{if(fixture.failSend){fixture.failSend=false;throw Error('fixture send failed');}fixture.sent.push(text);return true;}};
-        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost><VoiceStageFixture language={language} running={sending} viewingConversation={viewingConversation} open={(id,call)=>{fixture.opened=id;if(call)setView(id);}}/>
+        return <div className={'app theme-'+theme} style={{minHeight:'100vh',padding:'90px 20px'}}><ApplicationVoiceHost><VoiceStageFixture language={language} running={sending} activeView={viewingConversation ? (view === 'assistant' ? 'assistant' : 'chat') : undefined} open={(id,call)=>{fixture.opened=id;if(call)setView(id);}}/>
           <div style={{width:'min(704px,100%)',margin:'0 auto'}}><VoiceConversation target={target} active={view!=='hidden'}>
             <ComposerPresentationContext.Provider value={{style,preservePermissions:true}}><ComposerPortalContext.Provider value={portal?portalTarget:null}>
               <Composer {...controls} compact language={language} draft={draft} onDraftChange={setDraft} sending={sending} referencePlanAvailable={false} onSend={target.send} onCancel={async()=>{fixture.cancelled++;}}/>
@@ -85,9 +85,10 @@ app.whenReady().then(async()=>{
     await until('document.querySelector(".window-frame .recent-chat-copy strong")?.textContent==="Fixture chat" && document.querySelector(".recent-chat-copy small")?.textContent==="Working"');
     await click('.recent-bar-chat');await until('fixture.opened==="chat"&&!document.querySelector(".recent-turn-drawer:popover-open")');
     await read('fixture.viewingConversation(true);fixture.sending(false);fixture.activity("working");void 0');
-    await until('document.querySelector(".recent-chat-copy strong")?.textContent==="Fixture chat" && !document.querySelector(".recent-chat-copy small")');
-    await read('fixture.opened=null;void 0');await click('.recent-bar-chat');await until('fixture.opened==="chat"');
-    await read('fixture.viewingConversation(false);void 0');
+    await until('document.querySelector(".window-conversation-name")?.textContent==="Fixture chat" && !document.querySelector(".window-conversation-status > span,.recent-bar-chat")');
+    await read('fixture.view("assistant");void 0');
+    await until('document.querySelector(".window-conversation-name")?.textContent==="Assistant" && document.querySelector(".window-conversation-status > span")');
+    await read('fixture.view("chat");fixture.viewingConversation(false);void 0');
     await until('document.querySelector(".recent-chat-copy strong")?.textContent==="Assistant"');
     await read('fixture.activity("idle");void 0');await until('!document.querySelector(".recent-bar-chat")');
     await click('.recent-bar-list');await until('document.querySelector(".recent-turn-drawer:popover-open")');

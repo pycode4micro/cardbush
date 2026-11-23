@@ -3,12 +3,12 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { build } from 'vite';
 
-// Inspect the production chunks, not just source imports: manual chunk groups
-// can introduce dependencies that do not exist in the source module graph.
-test('production renderers load only the code needed by their window', async t => {
+async function productionChunks(configFile) {
   const warnings = [];
   const built = await build({
-    root: fileURLToPath(new URL('../', import.meta.url)),
+    ...(configFile ? { configFile: fileURLToPath(new URL(configFile, import.meta.url)) } : {
+      root: fileURLToPath(new URL('../', import.meta.url)),
+    }),
     logLevel: 'silent',
     build: {
       write: false,
@@ -43,6 +43,29 @@ test('production renderers load only the code needed by their window', async t =
     roots.forEach(visit);
     return [...seen];
   };
+  return { warnings, chunks, entry, owner, closure, moduleNames };
+}
+const assertExcluded = (name, group, moduleNames, forbidden) => {
+  assert.deepEqual(group.flatMap(moduleNames).filter(id => forbidden.test(id)), [],
+    `${name} must not download or initialize unrelated state owners`);
+};
+function assertChunkBudget(chunks, warnings) {
+  assert.equal(warnings.some(log => log.code === 'INEFFECTIVE_DYNAMIC_IMPORT'), false,
+    'a module must not be both eagerly imported and presented as a deferred boundary');
+  // Match Vite's existing 500 kB warning budget.
+  assert.deepEqual(chunks.filter(chunk => Buffer.byteLength(chunk.code) > 500_000).map(chunk => chunk.name), [],
+    'oversized production chunks need an explicit feature/library boundary');
+}
+function reportSizes(t, entries) {
+  for (const [name, group] of Object.entries(entries)) {
+    const bytes = group.reduce((total, chunk) => total + Buffer.byteLength(chunk.code), 0);
+    t.diagnostic(`${name}: ${(bytes / 1024).toFixed(1)} KiB JS in ${group.length} static chunks (minified, before compression)`);
+  }
+}
+
+// Manual chunk groups can create dependencies absent from the source graph.
+test('production renderers load only the code needed by their window', async t => {
+  const { warnings, chunks, entry, owner, closure, moduleNames } = await productionChunks();
   const main = entry('main');
   const boot = closure(main);
   const app = closure(main, owner('/src/App.tsx'));
@@ -51,10 +74,7 @@ test('production renderers load only the code needed by their window', async t =
   const model = closure(entry('modelPreview'));
   const history = closure(owner('/src/features/chat/TurnHistoryInspector.tsx'));
   const scene = closure(owner('/src/features/modelPreview/sceneView.ts'));
-  const excludes = (name, group, forbidden) => {
-    assert.deepEqual(group.flatMap(moduleNames).filter(id => forbidden.test(id)), [],
-      `${name} must not download or initialize unrelated state owners`);
-  };
+  const excludes = (name, group, forbidden) => assertExcluded(name, group, moduleNames, forbidden);
   excludes('bootstrap', boot, /\/src\/(?:App\.tsx|CardlingWindow\.tsx|ShadowWindow\.tsx|backend\/|hooks\/)/);
   excludes('shadow', shadow, /\/src\/(?:App\.tsx|CardlingWindow\.tsx|hooks\/useCardbushChat\.ts)/);
   excludes('Office preview', office, /\/src\/(?:App\.tsx|backend\/|hooks\/|runtime-client\/)|\/node_modules\/(?:react|react-dom|zod)\//);
@@ -70,14 +90,20 @@ test('production renderers load only the code needed by their window', async t =
   excludes('Office loading shell', office, /\/node_modules\/(?:styled-exceljs|@file-viewer\/renderer-(?:spreadsheet|pptx|ppt))\/[^?]+$/);
   excludes('retired Cardling', chunks, /\/src\/(?:CardlingWindow\.tsx|features\/cardling\/)/);
   excludes('browser dependencies', chunks, /\/node_modules\/zod\/.*\.cjs$/);
-  assert.equal(warnings.some(log => log.code === 'INEFFECTIVE_DYNAMIC_IMPORT'), false,
-    'a module must not be both eagerly imported and presented as a deferred boundary');
-  // Match Vite's existing 500 kB warning budget. Guard real production output
-  // without raising the warning threshold or partitioning by arbitrary size.
-  assert.deepEqual(chunks.filter(chunk => Buffer.byteLength(chunk.code) > 500_000).map(chunk => chunk.name), [],
-    'oversized production chunks need an explicit feature/library boundary');
-  for (const [name, group] of Object.entries({ bootstrap: boot, workspace: app, shadow, office, model, history, scene })) {
-    const bytes = group.reduce((total, chunk) => total + Buffer.byteLength(chunk.code), 0);
-    t.diagnostic(`${name}: ${(bytes / 1024).toFixed(1)} KiB JS in ${group.length} static chunks (minified, before compression)`);
-  }
+  assertChunkBudget(chunks, warnings);
+  reportSizes(t, { bootstrap: boot, workspace: app, shadow, office, model, history, scene });
+});
+
+test('production Web loads authenticated and administrative pages on demand', async t => {
+  const { warnings, chunks, entry, owner, closure, moduleNames } = await productionChunks('../vite.web.config.mts');
+  const loginEntry = entry('index'), workspaceEntry = owner('/web/Workspace.tsx'), adminEntry = owner('/web/OrganizationAdmin.tsx');
+  const login = closure(loginEntry);
+  const workspace = closure(loginEntry, workspaceEntry);
+  const admin = closure(loginEntry, workspaceEntry, adminEntry);
+  assert.ok(loginEntry.dynamicImports.includes(workspaceEntry.fileName));
+  assert.ok(workspaceEntry.dynamicImports.includes(adminEntry.fileName));
+  assertExcluded('Web login', login, moduleNames, /\/web\/(?:Workspace|OrganizationAdmin|NativeTranscript)\.tsx$|\/node_modules\/react-virtuoso\//);
+  assertExcluded('Web workspace', workspace, moduleNames, /\/web\/OrganizationAdmin\.tsx$/);
+  assertChunkBudget(chunks, warnings);
+  reportSizes(t, { login, workspace, admin });
 });

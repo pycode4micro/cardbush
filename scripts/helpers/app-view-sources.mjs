@@ -9,6 +9,8 @@ export const appViewFiles = [
   'src/features/settings/appSettingsStore.ts',
   'src/features/settings/localPreferences.ts',
   'src/features/settings/modelPreferences.ts',
+  'src/features/settings/useAppSettings.ts',
+  'src/features/settings/useLocalModelCatalog.ts',
   'src/features/sidebar/projectStore.ts',
   'src/features/sidebar/ProjectRenameDialog.tsx',
   'src/features/panels/FeaturePanel.tsx',

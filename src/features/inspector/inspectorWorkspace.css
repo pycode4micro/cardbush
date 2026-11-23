@@ -103,7 +103,7 @@ body.inspector-cover-pointer-active :is(webview, iframe) { pointer-events: none 
 .quick-input-transcript .message-list-item { width: 100%; margin: 0; padding: 0; content-visibility: visible; }
 .quick-input-transcript .assistant-message { margin-bottom: 12px; }
 .quick-input-transcript .assistant-message > div { padding: 9px 12px; border-radius: 15px; }
-.quick-input-transcript .assistant-task-bubble { margin-bottom: 12px; padding: 9px 12px; }
+.quick-input-transcript .assistant-task-strip { --assistant-task-size:56px; margin-bottom:12px; }
 .quick-input-transcript .markdown-content { font-size: 13px; }
 .quick-input-transcript :is(pre, table) { max-width: 100%; overflow-x: auto; }
 .quick-input-transcript .interaction-card { margin: 8px 0 0; }

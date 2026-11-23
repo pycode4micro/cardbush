@@ -53,7 +53,7 @@ function DesktopHome(props: Props & {execution: ReturnType<typeof useEventExecut
   }
   function openEventMenu(trigger: SidebarMenuEvent, event: FriendsWorkEvent) {
     if (pending.current) { trigger.preventDefault(); return; }
-    const items: SidebarContextMenuItem[] = [{ key: 'details', icon: <FileText/>, label: t('featureContentPanel.details'),
+    const items: SidebarContextMenuItem[] = [{ key: 'details', icon: <FileText/>, label: t('common.details'),
       onClick: () => props.onPage({ kind: 'event', id: event.id }) }];
     const add = (action: EventAction, icon: SidebarContextMenuItem['icon']) => items.push({
       key: action, icon, label: t(eventActionLabels[action]),

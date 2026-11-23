@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { BrowserConfiguration, ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 import type { AgentInstructionDocument } from '@cardbush/bush-product-agent' with { 'resolution-mode': 'import' };
 import type { readTextPreviewResult } from './textPreview';
-import type { TerminalRuntime } from '@cardbush/platform' with { 'resolution-mode': 'import' };
 
 type SessionAttentionPayload = {
   sessionId: string;
@@ -458,11 +457,6 @@ const desktopApi = {
     ipcRenderer.invoke('project:search-files', rootPath, query) as Promise<
       Array<{ name: string; path: string; relativePath: string; kind: 'file' | 'folder' }>
     >,
-  saveTeamWorkflow: (input: { projectDir?: string; workflowId: string; yaml: string }) =>
-    ipcRenderer.invoke('team-workflow:save', input) as Promise<{
-      path: string;
-      scope: 'project' | 'global';
-    }>,
   runtimePluginRenderers: () => ipcRenderer.invoke('plugins:runtime-renderers'),
   runtimePluginFile: (input: { pluginId: string; action: 'import' | 'export' | 'reveal'; text?: string; name?: string; yaml?: string }) => ipcRenderer.invoke('plugins:extension-file', input),
   gitInfo: (rootPath: string) =>
@@ -508,51 +502,6 @@ const desktopApi = {
     ipcRenderer.invoke('project:restore-file-changes', rootPath, files) as Promise<{
       restoredFiles: number;
       output: string;
-    }>,
-  terminalCreate: (
-    cwd?: string,
-    runtime?: TerminalRuntime,
-  ) =>
-    ipcRenderer.invoke('terminal:create', cwd, runtime) as Promise<{
-      id: string;
-      cwd: string;
-      shell: string;
-    }>,
-  terminalWrite: (id: string, data: string) => ipcRenderer.send('terminal:write', id, data),
-  terminalResize: (id: string, cols: number, rows: number) =>
-    ipcRenderer.send('terminal:resize', id, cols, rows),
-  terminalClose: (id: string) => ipcRenderer.invoke('terminal:close', id) as Promise<void>,
-  onTerminalData: (callback: (payload: { id: string; data: string }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: { id: string; data: string }) => {
-      callback(payload);
-    };
-    ipcRenderer.on('terminal:data', listener);
-    return () => ipcRenderer.removeListener('terminal:data', listener);
-  },
-  onTerminalExit: (
-    callback: (payload: { id: string; exitCode: number | null }) => void,
-  ) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      payload: { id: string; exitCode: number | null },
-    ) => {
-      callback(payload);
-    };
-    ipcRenderer.on('terminal:exit', listener);
-    return () => ipcRenderer.removeListener('terminal:exit', listener);
-  },
-  terminalRun: (
-    command: string,
-    cwd?: string,
-    runtime?: TerminalRuntime,
-  ) =>
-    ipcRenderer.invoke('terminal:run', command, cwd, runtime) as Promise<{
-      command: string;
-      cwd: string;
-      exitCode: number | null;
-      stdout: string;
-      stderr: string;
-      outputTruncated?: boolean;
     }>,
   assembleHomeComponent: (files: {name: string; text: string}[]) => ipcRenderer.invoke('home-components:assemble', files),
   managePluginRuntime: (action: string, kind?: string, version?: string) => ipcRenderer.invoke('plugin-runtimes:manage', action, kind, version),

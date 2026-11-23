@@ -60,14 +60,16 @@ test('background task discovery omits large answers; selected read and wait pres
       prompt: 'PRIVATE TASK PROMPT', inheritContext: false, inheritedMessageCount: 0, background: true });
     tasks.finish({ parentSessionId: session, taskId, status: 'completed', finalResponse: answer, errorMessage: '', usage: {} });
   }
-  const page = await call(registry, 'tasks', { action: 'list' });
+  const active = await call(registry, 'tasks', { action: 'list' });
+  assert.equal(active.total, 0, 'finished tasks do not appear in the default active view');
+  const page = await call(registry, 'tasks', { action: 'list', scope: 'all' });
   assert.equal(page.total, 34);
   assert.equal(page.tasks.length, 20);
   assert.equal(page.next_offset, 20);
   assert.ok(JSON.stringify(page).length < 6500);
   assert.doesNotMatch(JSON.stringify(page), /COMPLETE TASK ANSWER|PRIVATE TASK PROMPT/);
   assert.ok(page.tasks.every(task => !('result' in task)));
-  const second = await call(registry, 'tasks', { action: 'list', offset: page.next_offset });
+  const second = await call(registry, 'tasks', { action: 'list', scope: 'all', offset: page.next_offset });
   assert.equal(second.tasks.length, 14);
   assert.equal(second.next_offset, null);
   for (const [tool, input] of [['tasks', { action: 'inspect' }], ['await', {}]]) {

@@ -33,7 +33,7 @@ test('large binary files transfer both ways with SHA-256, retries and no whole-f
   const back = await transferFile('return', (offset, version) => agentFileRead(f.destination, { path: first.path, offset, version }), value => web.call({ action: 'import', ...value }));
   assert.equal(back.sha256, hash); assert.equal((await web.describe(back.path)).mime, 'video/mp4');
   assert.equal((await stat(back.path)).size, bytes.length);
-  await assert.rejects(web.describe(path), /outside personal files/);
+  await assert.rejects(web.describe(path), { code: 'web_file_unavailable' });
 });
 
 test('version changes, corrupted acknowledgements and traversal cannot deliver a file', async t => {

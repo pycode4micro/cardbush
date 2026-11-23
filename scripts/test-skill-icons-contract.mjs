@@ -100,7 +100,7 @@ const composerSource = readSourceFile(
   'utf8',
 );
 const panelSource = readSourceFile(
-  path.join(process.cwd(), 'src', 'features', 'panels', 'FeatureContentPanel.tsx'),
+  path.join(process.cwd(), 'src', 'features', 'plugins', 'PluginManagementPanel.tsx'),
   'utf8',
 );
 const styles = readSourceFile(
@@ -129,7 +129,7 @@ for (const kind of [
 }
 assert.match(composerSource, /<SkillIcon skill=\{skill\} compact \/>/);
 assert.match(panelSource, /<SkillIcon skill=\{skill\} \/>/);
-assert.match(panelSource, /<SkillIcon skill=\{detail\} compact \/>/);
+assert.match(panelSource, /className="plugin-detail-hero"><SkillIcon skill=\{skill\} \/>/);
 assert.match(styles, /\.skill-icon-spreadsheet\s*\{/);
 assert.match(styles, /\.skill-icon-presentation\s*\{/);
 assert.match(styles, /\.skill-icon-pdf\s*\{/);

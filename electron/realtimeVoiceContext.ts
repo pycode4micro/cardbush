@@ -1,3 +1,4 @@
+import { type NativeVoiceMessage } from './voiceUiError';
 import { randomUUID } from 'node:crypto';
 import type { RealtimeContextJob, RealtimeContextResult } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 import { RealtimeVoiceHistory, type VoiceContextMessage } from './realtimeVoiceHistory';
@@ -10,7 +11,7 @@ interface ContextHooks {
   send(event: object): string;
   create(items: VoiceContextMessage[]): object;
   request(job: RealtimeContextJob): void;
-  status(message: string): void;
+  status(message: NativeVoiceMessage | ''): void;
   idle(): boolean;
   restart(): Promise<void>;
   diagnostic?(event: string, detail: { reason?: string; estimatedTokens?: number; threshold?: number; contextItems?: number }): void;
@@ -72,7 +73,7 @@ export class RealtimeVoiceContext {
       pairs.shift(); messages=this.history.messages(pairs);
     }
     if (Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>maxBytes) throw Error('Voice memory cannot fit the initial context.');
-    if (pairs.length<this.history.pairs.length) this.hooks.status('正在整理较早的对话，当前先保留摘要和最近交流。');
+    if (pairs.length<this.history.pairs.length) this.hooks.status('voiceNative.preparingHistory');
     this.remoteIds.clear(); this.seenRemoteIds.clear();
     for (const message of messages) if (message.id) { this.remoteIds.set(message.id,message.id); this.seenRemoteIds.add(message.id); }
     return messages;
@@ -115,7 +116,7 @@ export class RealtimeVoiceContext {
         pairs:selected.map(({user,assistant})=>({user,assistant})) };
       this.jobTimer=setTimeout(()=>this.complete(this.job!.jobId),65_000);
       this.hooks.diagnostic?.('context_compaction',{estimatedTokens:Math.ceil(tokens),threshold:trigger,contextItems:pairs.length*2});
-      this.hooks.status('正在后台整理通话记忆，可继续交谈。');
+      this.hooks.status('voiceNative.compactingHistory');
       this.hooks.request(structuredClone(this.job));
     }
     if (this.restore && !this.job) {
@@ -139,7 +140,7 @@ export class RealtimeVoiceContext {
         if(this.fits(this.restore.bytes))this.tick();
         else {const waiting=this.restore;this.restore=undefined;waiting.reject(Error('Voice context summary unavailable; originals retained.'));}
       }
-      this.hooks.status('通话记忆整理暂未完成，原始记录已保留；稍后自动重试。'); return;
+      this.hooks.status('voiceNative.compactingHistoryRetry'); return;
     }
     const prefix=this.history.messages(this.history.pairs.filter(pair=>pair.sequence<=job.through));
     const old=this.pendingOld ? [...this.pendingOld,...prefix.slice(this.history.summaryMessages().length)] : prefix;
@@ -149,7 +150,7 @@ export class RealtimeVoiceContext {
     const messages=this.history.messages();
     if (messages.length>this.maxRestoreItems || Buffer.byteLength(JSON.stringify(this.hooks.create(messages)))>Math.max(3000,this.maxInputBytes-this.fixedTokens*2)) {
       this.pendingOld=old;
-      if (++this.catchups>=3) {this.retryAfter=Date.now()+30_000;this.catchups=0;this.hooks.status('新增对话较多，继续保留原始上下文，稍后再整理。');}
+      if (++this.catchups>=3) {this.retryAfter=Date.now()+30_000;this.catchups=0;this.hooks.status('voiceNative.compactingHistoryCatchup');}
       this.tick();return;
     }
     this.pendingOld=undefined;this.catchups=0;
@@ -159,9 +160,9 @@ export class RealtimeVoiceContext {
   private advance() {
     const work=this.replacement; if (!work || work.eventId || this.closed) return;
     if (work.stage==='restart') {
-      work.eventId='restarting'; this.hooks.status('正在衔接下一段通话，历史摘要和后台任务会保留。');
+      work.eventId='restarting'; this.hooks.status('voiceNative.historyHandoff');
       void this.hooks.restart().then(()=>this.applied(true),()=>{
-        if (!this.closed) { this.replacement=undefined; this.hooks.status('通话衔接失败，历史已保存，请重新开始通话。'); }
+        if (!this.closed) { this.replacement=undefined; this.hooks.status('voiceNative.historyHandoffFailed'); }
       }); return;
     }
     try {

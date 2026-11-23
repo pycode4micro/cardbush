@@ -10,11 +10,11 @@ export function speakerDefinition(platform = process.platform, arch = process.ar
   const root = 'sherpa-onnx-v1.13.8-win-x64-shared-MT-Release-no-tts';
   const weights = { entry: 'campplus.onnx', name: 'campplus.onnx', bytes: 28281138, sha256: 'f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11' };
   return {
-    version: speakerVersion, model: 'CAMPPlus · 声纹验证',
+    version: speakerVersion, model: 'CAMPPlus',
     sources: [
       { title: 'CAMPPlus · 3D-Speaker', url: 'https://github.com/modelscope/3D-Speaker' },
-      { title: 'sherpa-onnx 官方声纹模型', url: 'https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models' },
-      { title: '模型来源与许可', url: 'https://modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common' },
+      { titleKey: 'voiceNative.speakerModelSource', url: 'https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models' },
+      { titleKey: 'voiceNative.speakerLicenseSource', url: 'https://modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common' },
     ],
     archives: platform !== 'win32' || arch !== 'x64' ? [] : [
       { ...runtime, files: [

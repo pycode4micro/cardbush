@@ -13,8 +13,21 @@ async function fixture(t) {
   let taskSequence = 0;
   const children = registerSubagentTool(registry, store, async request => {
     executions.push(request);
+    const messages = [];
+    if (request.metadata.teamRunId) {
+      const submission = { status: 'submitted', summary: 'Fixture checked.' };
+      const tool = registry.resolve('team_submit');
+      const receipt = await tool.execute({
+        input: tool.decodeInput(submission), sessionId: request.sessionId, turnId: request.turnId, turn: { request },
+      });
+      messages.push(
+        { message: { role: 'assistant', content: '', toolCalls: [{ id: 'submit', name: tool.definition.name, argumentsText: JSON.stringify(submission) }] } },
+        { message: { role: 'tool', toolCallId: 'submit', content: JSON.stringify(receipt) } },
+      );
+    }
+    messages.push({ messageId: 'answer', message: { role: 'assistant', content: 'Fixture checked.' } });
     return { terminal: { kind: 'turn_terminal', payload: { status: 'completed', finalMessageId: 'answer' } },
-      session: { turns: [{ turnId: request.turnId, messages: [{ messageId: 'answer', message: { role: 'assistant', content: 'Fixture checked.' } }] }] } };
+      session: { sessionId: request.sessionId, turns: [{ turnId: request.turnId, messages }] } };
   }, { agents, createTaskId: () => `child-task-${++taskSequence}`,
     saveChildRequest: async request => saved.set(request.sessionId, structuredClone(request)),
     loadChildRequest: async id => saved.get(id), guideChild: async message => guidance.push(message) });

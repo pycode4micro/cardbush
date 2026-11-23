@@ -1,2 +1,0 @@
-export { FeatureContentPanel } from './FeatureContentPanel';
-

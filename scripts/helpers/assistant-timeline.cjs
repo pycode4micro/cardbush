@@ -30,5 +30,37 @@ module.exports = async ({ read, until, click, pause, win, directory }) => {
   await until('!!document.querySelector(".quick-input-transcript .assistant-time-separator")');
   assert.equal(await read('document.querySelectorAll(".quick-input-transcript .assistant-time-separator").length'),1);
   assert.equal(await read('document.querySelector(".quick-input-transcript .assistant-time-separator time").dateTime'),await read('fixture.entries[8].createdAt'),'the truncated transcript still identifies the first visible group');
+
+  await read(`{
+    const lastMessage = Date.parse(fixture.entries.at(-1).createdAt);
+    const task = { origin: 'subagent', parentSessionId: 'personal-assistant', parentTurnId: 'batch', requestPrompt: 'Private assignment', status: 'running', terminal: false };
+    fixture.tasks = Array.from({length: 10}, (_, i) => ({
+      ...task, taskId: 'task-' + i, childSessionId: 'child-0000000' + i,
+      agentName: i === 1 ? 'VeryLongUnbrokenSubagentName' : i === 2 ? '' : 'A' + i,
+      createdAt: new Date(lastMessage - 50_000 + i).toISOString(),
+    }));
+    fixture.tasks.push({ ...task, taskId: 'after-message', childSessionId: 'last-child', agentName: 'B', createdAt: new Date(lastMessage + 1000).toISOString() });
+    window.dispatchEvent(new Event('fixture-tasks'));
+  }void 0`);
+  await until('document.querySelectorAll(".assistant-messages .assistant-task-strip").length === 2 && !!document.querySelector(".quick-input-transcript .assistant-task-strip")');
+  assert.deepEqual(await read(`Array.from(document.querySelectorAll('.assistant-messages .assistant-task-strip')).map(row => row.children.length)`), [10, 1]);
+  assert.deepEqual(await read(`Array.from(document.querySelectorAll('.assistant-messages .assistant-task-strip')[0].children).slice(0, 3).map(card => card.textContent)`),
+    ['A0', 'VeryLongUnbrokenSubagentName', '子 Agent 00000002'], 'cards show stored names or the localized legacy identifier');
+  for (const surface of ['.assistant-messages', '.quick-input-transcript']) {
+    assert.ok(await read(`(() => {
+      const row = document.querySelector('${surface} .assistant-task-strip'), tiles = Array.from(row.children);
+      const rects = tiles.map(tile => tile.getBoundingClientRect());
+      return rects.every((r, i) => Math.abs(r.width - r.height) < 1 && r.top === rects[0].top
+        && (!i || r.left > rects[i - 1].right) && parseFloat(getComputedStyle(tiles[i]).borderRadius) > 0);
+    })()`), 'the strip uses one line of rounded squares');
+  }
+  assert.ok(await read(`(() => {
+    const row = document.querySelector('.assistant-messages .assistant-task-strip');
+    row.scrollLeft = row.scrollWidth;
+    return row.scrollLeft > 0 && row.lastElementChild.getBoundingClientRect().right <= row.getBoundingClientRect().right + 1
+      && document.documentElement.scrollWidth <= innerWidth;
+  })()`), 'a narrow window scrolls the strip to its last card');
+  await read('fixture.language("en");void 0');
+  await until('document.querySelector("[data-message-id=task-2]").getAttribute("aria-label").includes("View execution for Subagent 00000002")');
   console.log('Assistant timeline passed: no per-message timestamps, long-gap/midnight separators, centered responsive themes and quick transcript grouping. Screenshots: '+directory);
 };

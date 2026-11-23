@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ReasoningEffort } from '@cardbush/bush-protocol';
 
 export class WebError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
+  constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
 }
 export const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 export const tenantKey = (userId: string) => digest(`cardbush-web-tenant:${userId}`);

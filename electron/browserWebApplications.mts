@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron';
+import { BrowserUiError } from './browserUiError.js';
 import { websiteApplication, type WebApplicationInfo } from '@cardbush/bush-protocol';
 
 // This function runs in an isolated guest world. It reads metadata with the
@@ -29,14 +30,14 @@ const readManifest = `(async () => {
 
 export async function readWebsiteApplication(guest: WebContents, expectedUrl: string): Promise<WebApplicationInfo> {
   const url = guest.getURL(), title = guest.getTitle(), fallback = websiteApplication(url, title);
-  if (!fallback || url !== expectedUrl) throw Error('网页已变化，请重新选择安装。Page changed; choose Install again.');
+  if (!fallback || url !== expectedUrl) throw new BrowserUiError('browserNative.installPageChanged');
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const metadata = await Promise.race([
       guest.executeJavaScriptInIsolatedWorld(1012, [{ code: readManifest }]).catch(() => ({})),
       new Promise<unknown>(resolve => { timer = setTimeout(() => resolve({}), 3500); }),
     ]);
-    if (guest.isDestroyed() || guest.getURL() !== url) throw Error('网页已变化，请重新选择安装。Page changed; choose Install again.');
+    if (guest.isDestroyed() || guest.getURL() !== url) throw new BrowserUiError('browserNative.installPageChanged');
     return websiteApplication(url, title, metadata) ?? fallback;
   } finally { clearTimeout(timer); }
 }

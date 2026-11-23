@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { readProtectedJson, writeProtectedJson } from '@cardbush/platform/credentials';
 import { modelApiProtocolSchema, modelHeadersSchema, publicModelHeaders, restoreModelHeaders, modelApiBaseURL, anthropicThinkingModeSchema, reasoningEffortSchema, protocolReasoningEffort, type ModelApiProtocol, type ReasoningEffort } from '@cardbush/bush-protocol';
 
@@ -22,6 +23,7 @@ export interface ProductModelConfig {
 
 export interface ProductModelConfigSnapshot {
   version: 1;
+  revision: string;
   defaultModelId: string;
   models: ProductModelConfig[];
 }
@@ -57,7 +59,11 @@ export class ProductModelConfigStore {
   }
   async #write(input: unknown): Promise<ProductModelConfigSnapshot> {
     const existing = await this.#read();
-    const snapshot = decodeUpdate(input, existing);
+    const value = record(input, "Model configuration update must be an object.");
+    if (Object.hasOwn(value, 'expectedRevision') && value.expectedRevision !== existing.revision) {
+      throw Object.assign(new Error('Model configuration changed since it was read.'), { code: 'model_config_revision_conflict' });
+    }
+    const snapshot = decodeUpdate(value, existing);
     await this.#writeSnapshot(snapshot);
     return snapshot;
   }
@@ -72,6 +78,7 @@ export class ProductModelConfigStore {
       const config = snapshot.models.find(model => model.id === modelId);
       if (!config) throw new Error(`Model configuration not found: ${modelId}`);
       config.reasoningEffort = decodeReasoning(effort, config.apiProtocol);
+      snapshot.revision = randomUUID();
       await this.#writeSnapshot(snapshot);
       return snapshot;
     });
@@ -88,7 +95,7 @@ export class ProductModelConfigStore {
       return { ...config, apiKey: credential.apiKey };
     });
     if (imported === 0) return 0;
-    await this.#writeSnapshot({ ...existing, models });
+    await this.#writeSnapshot({ ...existing, models, revision: randomUUID() });
     return imported;
   }
 
@@ -99,6 +106,7 @@ export class ProductModelConfigStore {
   publicPayload(snapshot: ProductModelConfigSnapshot): Record<string, unknown> {
     return {
       version: snapshot.version,
+      revision: snapshot.revision,
       defaultModelId: snapshot.defaultModelId,
       models: snapshot.models.map((config) => ({
         id: config.id,
@@ -174,10 +182,9 @@ function normalizedEndpoint(value: string): string {
 }
 
 function decodeUpdate(
-  input: unknown,
+  value: Record<string, unknown>,
   existing: ProductModelConfigSnapshot,
 ): ProductModelConfigSnapshot {
-  const value = record(input, "Model configuration update must be an object.");
   if (!Array.isArray(value.models)) throw new Error("models must be an array.");
   const prior = new Map(existing.models.map((config) => [config.id, config]));
   const models = value.models.map((candidate) => {
@@ -218,13 +225,16 @@ function decodeUpdate(
   }
   const requestedDefault = optionalString(value.defaultModelId ?? value.default_model_id) ?? "";
   const defaultModelId = ids.has(requestedDefault) ? requestedDefault : models[0]?.id ?? "";
-  return { version: 1, defaultModelId, models };
+  return { version: 1, revision: randomUUID(), defaultModelId, models };
 }
 
 function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
   const value = record(input, "Stored model configuration must be an object.");
   if (value.version !== 1 || !Array.isArray(value.models)) {
     throw new Error("Stored model configuration has an unsupported schema.");
+  }
+  if (value.revision !== undefined && (typeof value.revision !== 'string' || !value.revision)) {
+    throw new Error("Stored model configuration has an invalid revision.");
   }
   const models = value.models.map((candidate) => {
     const config = record(candidate, "Stored model configuration must be an object.");
@@ -251,6 +261,7 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
   for (const config of models) validateAuthentication(config);
   return {
     version: 1,
+    revision: typeof value.revision === 'string' ? value.revision : 'unversioned',
     defaultModelId: models.some((config) => config.id === defaultModelId)
       ? defaultModelId
       : models[0]?.id ?? "",
@@ -259,7 +270,7 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
 }
 
 function emptySnapshot(): ProductModelConfigSnapshot {
-  return { version: 1, defaultModelId: "", models: [] };
+  return { version: 1, revision: 'unversioned', defaultModelId: "", models: [] };
 }
 
 function validateAuthentication(config: ProductModelConfig) {

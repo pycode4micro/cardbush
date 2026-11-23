@@ -114,7 +114,9 @@ app.whenReady().then(async () => {
   const integrated = new IntegratedBrowser({ getContents: id => webContents.fromId(id), defaultOwner: () => window.webContents,
     action: (ownerId, action) => webContents.fromId(ownerId)?.send('inspector:browser-action', action) });
   const uiService = new BrowserUiService(path.join(directory, 'browser-library'), new BrowserBookmarkImporter({ chrome: path.join(directory, 'chrome'), edge: path.join(directory, 'edge') }));
-  const ui = registerBrowserUiIpc(id => assert.equal(id, window.webContents.id), () => uiService);
+  const { uiText } = require('@cardbush/platform/i18n');
+  let appLanguage = 'en';
+  const ui = registerBrowserUiIpc(id => assert.equal(id, window.webContents.id), () => uiService, undefined, () => uiText(appLanguage));
   ui.attach(window.webContents);
   ipcMain.handle('inspector:browser-register', (event, input) => { integrated.register(event.sender, input); ui.track(event.sender, input.guestWebContentsId); });
   ipcMain.handle('inspector:browser-unregister', (event, input) => integrated.unregister(event.sender.id, input));
@@ -155,6 +157,14 @@ app.whenReady().then(async () => {
   try {
     await window.loadFile(path.join(directory, 'index.html'));
     await waitFor('Boolean(window.browserFixture)');
+    if (process.argv.includes('--browser-ui')) {
+      for (appLanguage of ['en', 'zh']) {
+        const message = await read(`window.cardbushDesktop.browser.importBookmarks('invalid-profile')
+          .then(() => '', error => error.message)`);
+        assert.ok(message.includes(uiText(appLanguage)('browserNative.invalidProfile')), message);
+      }
+      appLanguage = 'en';
+    }
     assert.equal(await read('document.querySelector(".right-inspector")'), null, 'retained pane still mounts lazily');
     await read(`browserFixture.open({target:${JSON.stringify(searchUrl)}}); void 0`);
     await activeReady();

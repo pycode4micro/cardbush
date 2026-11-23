@@ -95,9 +95,14 @@ async function run() {
   const ipc=electron.ipcMain, handle=ipc.handle;
   let audioGate;
   let floatingLibraryReads = 0;
+  let floatingIconReads = 0;
   ipc.handle=function(channel,listener) {
     if (channel === 'home-components:library') return handle.call(this,channel,(event,...args) => {
       if (event.sender.getURL().includes('window=assistant')) floatingLibraryReads++;
+      return listener(event,...args);
+    });
+    if (channel === 'browser:icon') return handle.call(this,channel,(event,...args) => {
+      if (event.sender.getURL().includes('window=assistant')) floatingIconReads++;
       return listener(event,...args);
     });
     if (channel !== 'voice:settings') return handle.call(this,channel,listener);
@@ -246,6 +251,7 @@ async function run() {
     if (process.platform === 'win32') await wait(() => badgeByWindow.get(win.id)?.pixels === undefined, 'reading Assistant removes the taskbar overlay');
   }
   assert.equal(floatingLibraryReads, 0, 'the floating window never requests the full home component library');
+  assert.equal(floatingIconReads, 0, 'the floating window never requests the workspace browser icon cache');
   fs.writeFileSync(path.join(root, 'metrics.json'), JSON.stringify(stats, null, 2));
   menu.items.at(-1).click();
 }

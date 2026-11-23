@@ -30,7 +30,10 @@ async function run() {
   const journal = new FileSessionEventPersistence({ root: path.join(root, 'runtime-state', 'sessions') });
   const store = new SessionStore({ persistence: journal });
   const { ConversationJournal } = await import('../packages/bush-runtime/dist/conversationJournal.js');
-  const { PERSONAL_ASSISTANT_SESSION } = await import('@cardbush/bush-protocol');
+  const { ASSISTANT_CONVERSATION_COMMAND, PERSONAL_ASSISTANT_SESSION } = await import('@cardbush/bush-protocol');
+  const titlebarTest = process.argv.includes('--conversation-titlebars');
+  const scrollInputTest = process.argv.includes('--scroll-input');
+  let assistantActivity = 'idle';
   const assistantJournal = new ConversationJournal(path.join(root, 'runtime-state', 'conversation-journal'));
   for (const [id, role, source, visibility] of [
     ['assistant-question', 'user', 'page', 'conversation'],
@@ -88,7 +91,13 @@ async function run() {
     return register.call(this, channel, async (...args) => {
       requested = true;
       await dataGate;
-      return handler(...args);
+      const result = await handler(...args);
+      const command = args[1]?.command;
+      if (titlebarTest && command?.kind === ASSISTANT_CONVERSATION_COMMAND && result?.ok &&
+          ['read', 'activity'].includes(command.payload?.action)) {
+        return { ...result, result: { ...result.result, activity: assistantActivity } };
+      }
+      return result;
     });
   };
   require(path.join(project, 'dist-electron/bootstrap.js'));
@@ -150,6 +159,179 @@ async function run() {
   // native caption and rail breakpoint, independently of runtime hydration.
   win.setContentSize(1400, 800);
   await visible('.desktop-shell[data-sidebar-layout=docked]');
+  if (scrollInputTest) {
+    const devtools = win.webContents.debugger;
+    devtools.attach('1.3');
+    try {
+      const assertNativeScroll = async selector => {
+        const target = JSON.stringify(selector);
+        await wait(() => read(`(() => {
+          const scroller = document.querySelector(${target});
+          return scroller?.scrollHeight - scroller?.clientHeight > 80;
+        })()`), 'scrollable ' + selector);
+        const { result, exceptionDetails } = await devtools.sendCommand('Runtime.evaluate', {
+          expression: `(() => {
+            const blockers = [window, document].filter(target => getEventListeners(target).wheel?.some(listener => !listener.passive));
+            for (let node = document.querySelector(${target}); node; node = node.parentElement) {
+              if (getEventListeners(node).wheel?.some(listener => !listener.passive)) blockers.push(node);
+            }
+            return blockers.map(node => node.nodeName ?? 'window');
+          })()`,
+          includeCommandLineAPI: true, returnByValue: true,
+        });
+        assert.equal(exceptionDetails, undefined, 'read native wheel listeners for ' + selector);
+        assert.deepEqual(result.value, [], `${selector} must allow compositor wheel scrolling`);
+        const point = await read(`(() => {
+          const scroller = document.querySelector(${target});
+          scroller.scrollTop = 0;
+          window.testWheel = null;
+          window.addEventListener('wheel', event => {
+            window.testWheel = { trusted: event.isTrusted, prevented: event.defaultPrevented };
+          }, { passive: true, once: true });
+          const rect = scroller.getBoundingClientRect();
+          return { x: Math.round(rect.left + 12), y: Math.round(rect.top + rect.height * 0.4) };
+        })()`);
+        win.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+        win.webContents.sendInputEvent({ type: 'mouseWheel', ...point, deltaX: 0, deltaY: -100 });
+        await wait(() => read(`window.testWheel && document.querySelector(${target}).scrollTop > 40`), 'native wheel moves ' + selector);
+        assert.deepEqual(await read('window.testWheel'), { trusted: true, prevented: false }, selector);
+      };
+      await click('[data-nav-section=assistant]');
+      await visible('.assistant-messages');
+      await assertNativeScroll('.assistant-messages');
+      await enterChatFromList(sessionId);
+      await visible('[data-message-id="turn-45-0"]');
+      await assertNativeScroll('.chat-panel:has([data-message-id="turn-45-0"]) .message-list');
+      await click('[data-nav-section=home]');
+      win.setContentSize(1400, 580);
+      await visible('[data-desktop-page=overview]');
+      await assertNativeScroll('[data-desktop-page=overview]');
+      console.log('Desktop wheel defaults retained in Assistant, regular conversation and Home.');
+    } finally { devtools.detach(); }
+    app.exit(0);
+    return;
+  }
+  const summary = '.window-conversation-actions [data-work-summary-toggle]';
+  const inspector = '.window-conversation-actions [data-inspector-toggle]';
+  const titlebarFits = () => read(`(() => {
+    const frame = document.querySelector('.window-frame');
+    const name = frame.querySelector('.window-conversation-name')?.getBoundingClientRect();
+    const summary = frame.querySelector('[data-work-summary-toggle]')?.getBoundingClientRect();
+    const inspector = frame.querySelector('[data-inspector-toggle]')?.getBoundingClientRect();
+    if (!name || !summary || !inspector) return false;
+    const native = frame.dataset.nativeControls === 'true';
+    const area = native ? navigator.windowControlsOverlay?.getTitlebarAreaRect() : frame.getBoundingClientRect();
+    const center = rect => rect.y + rect.height / 2;
+    return !!area?.width && name.width > 0 && summary.width >= 24 && name.right <= summary.left &&
+      summary.right <= inspector.left && inspector.right <= area.right &&
+      Math.abs(center(summary) - center(area)) <= 2 && Math.abs(center(inspector) - center(area)) <= 2 &&
+      (!native || !frame.querySelector('.window-button'));
+  })()`);
+  if (titlebarTest) {
+    const chrome = () => read(`(() => {
+      const bar = document.querySelector('.window-frame');
+      const area = bar.dataset.nativeControls === 'true' ? navigator.windowControlsOverlay.getTitlebarAreaRect() : bar.getBoundingClientRect();
+      const button = selector => {
+        const rect = document.querySelector(selector)?.getBoundingClientRect();
+        return rect ? [rect.x, rect.y + rect.height / 2] : [];
+      };
+      return {
+        nativeArea: [area.x, area.y, area.width, area.height],
+        frameBottom: [bar.getBoundingClientRect().bottom],
+        back: button('[data-history-action=back]'),
+        brand: button('.window-brand'),
+        menu: button('.desktop-menu-toggle'),
+        sidebarToggle: button('.window-sidebar-toggle'),
+      };
+    })()`);
+    const dockedChrome = async () => {
+      await wait(() => read(`Math.abs(innerWidth - 1400) <= 2 &&
+        ['.window-navigation', '.sidebar'].every(selector => document.querySelector(selector)?.getAnimations()
+          .every(animation => animation.playState !== 'running'))`), 'docked title bar settled');
+      return chrome();
+    };
+    const expectSameChrome = async (home, page) => {
+      const current = await dockedChrome();
+      for (const [part, position] of Object.entries(home)) {
+        assert.ok(position.length === current[part].length && position.every((value, index) => Math.abs(value - current[part][index]) <= 1),
+          `${page} ${part} shifted from ${position} to ${current[part]}`);
+      }
+    };
+    const restoreHomeWidth = async () => {
+      win.setContentSize(1400, 800);
+      await wait(() => read('Math.abs(innerWidth - 1400) <= 2'), 'workspace width restored');
+    };
+    const homeChrome = await dockedChrome();
+    await click('[data-nav-section=assistant]');
+    await visible('.window-frame h1.window-conversation-name');
+    await visible(summary); await visible(inspector);
+    await wait(async () => Math.abs((await chrome()).nativeArea[3] - 44) <= 1, 'Assistant caption height');
+    await expectSameChrome(homeChrome, 'Assistant');
+    assert.equal(await read("!!document.querySelector('.assistant-view > .topbar')"), false);
+    assert.equal(await read("document.querySelector('.window-conversation-status').textContent"), '');
+    const sameSurface = () => read(`(() => {
+      const bar = document.querySelector('.window-frame');
+      const view = document.querySelector('.assistant-view');
+      return getComputedStyle(bar, '::before').backgroundColor === getComputedStyle(view).backgroundColor &&
+        Math.abs(bar.getBoundingClientRect().bottom - view.getBoundingClientRect().top) <= 1;
+    })()`);
+    await wait(sameSurface, 'the title uses the conversation surface and meets the transcript');
+    for (const [activity, label] of [['working', /执行中|Working/], ['waiting', /等待确认|Confirmation pending/]]) {
+      assistantActivity = activity;
+      const status = '.window-conversation-status[data-activity=' + activity + ']';
+      await visible(status);
+      assert.match(await read(`document.querySelector('${status}').textContent`), label);
+    }
+    const checkActions = async panel => {
+      await click(summary);
+      await visible(panel + ' .conversation-work-summary.soft-panel-visible');
+      await click(summary);
+      await wait(() => read(`!document.querySelector('${panel} .conversation-work-summary')`), 'summary closed');
+      await click(inspector);
+      await visible('.right-inspector');
+      await visible(inspector + '[aria-expanded=true]');
+      await click(inspector);
+    };
+    const checkWidths = async () => {
+      for (const width of [1400, 480]) {
+        win.webContents.setZoomFactor(1);
+        win.setContentSize(width, 720);
+        await wait(() => read(`Math.abs(innerWidth - ${width}) <= 2`), 'conversation width ' + width);
+        for (const zoom of [1, 1.25]) {
+          win.webContents.setZoomFactor(zoom);
+          await wait(titlebarFits, 'caption and action spacing at ' + width + ' / ' + zoom);
+        }
+      }
+      win.webContents.setZoomFactor(1);
+      win.setContentSize(1120, 720);
+      await wait(titlebarFits, 'the restored conversation viewport fits');
+    };
+    await checkActions('.assistant-view');
+    await checkWidths();
+    fs.writeFileSync(path.join(root, 'assistant-titlebar.png'), (await win.webContents.capturePage()).toPNG());
+    assistantActivity = 'idle';
+    await wait(() => read("document.querySelector('.window-conversation-status').textContent === ''"), 'idle caption clears the status');
+    await restoreHomeWidth();
+    await enterChatFromList(sessionId);
+    await visible('[data-conversation-titlebar=chat] .window-conversation-name');
+    await visible('[data-message-id="turn-45-0"]');
+    assert.equal(await read("document.querySelector('.window-conversation-name').textContent"), '设计评审记录');
+    assert.equal(await read("document.querySelector('.window-conversation-status').textContent"), '');
+    assert.equal(await read("!!document.querySelector('.main-stage > .chat-panel > .topbar')"), false);
+    await wait(async () => Math.abs((await chrome()).nativeArea[3] - 44) <= 1, 'ordinary conversation caption height');
+    await expectSameChrome(homeChrome, 'Conversation');
+    await checkActions('.main-stage > .chat-panel');
+    await checkWidths();
+    fs.writeFileSync(path.join(root, 'conversation-titlebar.png'), (await win.webContents.capturePage()).toPNG());
+    await restoreHomeWidth();
+    await click('[data-nav-section=home]');
+    await visible('[data-desktop-page="overview"]');
+    await expectSameChrome(homeChrome, 'Home');
+    assert.equal(await read("!!document.querySelector('.window-conversation-identity,.window-conversation-actions')"), false);
+    console.log('Conversation titlebars passed: shared native caption, live Assistant states, ordinary chat title, actions, narrow width, zoom and workspace restoration.');
+    app.quit();
+    return;
+  }
   if (process.argv.includes('--pdf-navigation')) {
     win.setContentSize(1184, 756);
     const pdf = await require('pdf-lib').PDFDocument.create();
@@ -454,19 +636,9 @@ async function run() {
   await visible('[data-message-id="' + targetId + '"]');
   await wait(() => read("!document.querySelector('.recent-turn-drawer:popover-open')"), 'one click enters the chat');
   await visible('.main-stage .chat-panel[role=region]');
-  const header = '.main-stage > .chat-panel:not([hidden]) > .topbar';
-  await visible(header);
-  const summary = header + ' [data-work-summary-toggle]', inspector = header + ' [data-inspector-toggle]';
+  await visible('[data-conversation-titlebar=chat] .window-conversation-name');
   const toggleTool = click;
-  const toolbarFits = () => read(`(() => {
-      const controls = document.querySelector(${JSON.stringify(header)});
-      const title = controls.querySelector('h1').getBoundingClientRect();
-      const summary = controls.querySelector('[data-work-summary-toggle]').getBoundingClientRect();
-      const inspector = controls.querySelector('[data-inspector-toggle]').getBoundingClientRect();
-      const panel = controls.getBoundingClientRect();
-      return summary.width >= 24 && title.right <= summary.left && inspector.right <= panel.right &&
-        Math.abs(summary.top - inspector.top) <= 1 && summary.right <= inspector.left;
-    })()`);
+  const toolbarFits = titlebarFits;
   assert.ok(await toolbarFits(), 'summary and inspector are grouped at the right of the conversation title');
   const summaryPoint = await read(`(() => {const r=document.querySelector('${summary}').getBoundingClientRect();
     return {x:Math.round(r.x+r.width/2), y:Math.round(r.y+r.height/2)};})()`);
@@ -535,13 +707,13 @@ async function run() {
   await click('[data-nav-section=assistant]');
   await visible('.assistant-view:not([hidden]) [data-message-id=assistant-question]');
   assert.equal(await read("document.querySelector('.sidebar-nav [data-nav-section=assistant]').getAttribute('aria-current')"), 'page');
-  const titleText = () => read("document.querySelector('.main-stage > .chat-panel:not([hidden]) > .topbar h1')?.textContent ?? null");
-  const titleStatus = () => read("document.querySelector('.recent-chat-copy small')?.textContent ?? null");
+  const titleText = () => read("document.querySelector('.window-conversation-name')?.textContent ?? null");
+  const titleStatus = () => read("document.querySelector('.window-conversation-status > span,.recent-chat-copy small')?.textContent ?? null");
   const sidebarName = () => read("document.querySelector('.sidebar-assistant-name').textContent");
   assert.equal(await titleText(), await sidebarName());
   assert.equal(await titleStatus(), null, 'an idle Assistant only shows its name');
   await visible(summary);
-  assert.deepEqual(await read("Array.from(document.querySelectorAll('.assistant-view > .topbar button'), button => [button.hasAttribute('data-work-summary-toggle'),button.hasAttribute('data-inspector-toggle')])"),
+  assert.deepEqual(await read("Array.from(document.querySelectorAll('.window-conversation-actions button'), button => [button.hasAttribute('data-work-summary-toggle'),button.hasAttribute('data-inspector-toggle')])"),
     [[true,false],[false,true]], 'Assistant toolbar offers work summary and inspector only');
   await toggleTool(summary); await visible('.assistant-view .conversation-work-summary');
   await toggleTool(summary);
@@ -555,7 +727,7 @@ async function run() {
   await wait(async () => await sidebarName() === customName, 'rename updates the Assistant identity immediately and preserves the full name');
   assert.equal(await titleText(), customName);
   win.setContentSize(480, 720);
-  await wait(toolbarFits, 'Assistant title actions fit in a narrow window');
+  await wait(titlebarFits, 'Assistant title actions fit in a narrow window');
   await visible('.assistant-view:not([hidden])');
   await showQuickPanel(); await click('[data-recent-tab=sessions]');
   await click('[data-recent-session=personal-assistant]');
@@ -651,7 +823,7 @@ async function run() {
   await pause(300);
   await read("window.pageEntrances=[];document.addEventListener('animationstart',event=>{if(event.animationName==='workspace-page-entrance') pageEntrances.push(event.target.className)});void 0");
   await click('[data-nav-section=assistant]');
-  await visible('.assistant-view:not([hidden]) > .topbar');
+  await visible('.window-frame .window-conversation-name');
   await wait(()=>read("pageEntrances.includes('main-stage')"),'Assistant enters with the Windows page transition');
   assert.equal(await read("!!document.querySelector('[data-nav-section=explore]')"), false);
   assert.equal(await read("!!document.querySelector('.desktop-menu-toggle')"),false);

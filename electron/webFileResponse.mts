@@ -2,6 +2,18 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import type { WebAgent } from './webAgentPool.mjs';
 import type { FileChunk } from './agentFileTransfer.mjs';
+import type { WebFileDescription } from './agentWebFiles.mjs';
+import { isAgentWebFileUnavailable } from './agentErrors.mjs';
+import { uiText } from '@cardbush/platform/i18n';
+import { WebError } from './webCommon.mjs';
+
+export async function describeWebFile(agent: WebAgent, reference: { path: string } | { id: string }): Promise<WebFileDescription> {
+  try { return await agent.call('web.files', { action: 'describe', ...reference }) as WebFileDescription; }
+  catch (error) {
+    if (isAgentWebFileUnavailable(error)) throw new WebError(404, uiText()('web.transferFileUnavailable'), error.code);
+    throw error;
+  }
+}
 
 export function fileRange(header: string | undefined, size: number): { start: number; end: number; partial: boolean } | null {
   if (!header) return { start: 0, end: size - 1, partial: false };
@@ -14,7 +26,7 @@ export function fileRange(header: string | undefined, size: number): { start: nu
 }
 
 export async function webFileResponse(request: IncomingMessage, response: ServerResponse, agent: WebAgent, path: string, download: boolean, signal: AbortSignal) {
-  const file = await agent.call('web.files', { action: 'describe', path }) as { name: string; size: number; mime: string };
+  const file = await describeWebFile(agent, { path });
   const range = fileRange(request.headers.range, file.size);
   if (!range) { response.writeHead(416, { 'Content-Range': `bytes */${file.size}`, 'Accept-Ranges': 'bytes' }); response.end(); return; }
   const inline = !download && /^(image|audio|video)\//.test(file.mime);

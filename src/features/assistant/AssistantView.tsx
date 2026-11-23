@@ -32,6 +32,7 @@ import { useLoopSubagentTasks } from '../subagents/useLoopSubagentTasks';
 import { AssistantTaskBubble } from './AssistantTaskBubble';
 import { childConversationSummaries } from '../subagents/subagentTaskPresentation';
 import { PromptReferenceFallback } from '../composer/PromptReferenceLink';
+import type { SubagentTaskSnapshot } from '../../types';
 import { usePublishRegionConversation } from '../inspector/RegionConversationContext';
 import { localInspectorWorkspace } from '../inspector/inspectorSessions';
 import { assistantInputEntry, assistantTimeLabel, assistantTimeSeparators } from './assistantTimeline';
@@ -41,14 +42,16 @@ import { copyText } from '../messageFeedback';
 
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'preparing' | 'sending' | 'accepted' | 'failed' };
+type TimelineRow = { key: string; at: string } & ({ entry: ConversationEntry } | { tasks: SubagentTaskSnapshot[] });
 export function AssistantView({ active, language, floating, prepare, observeActivity, ownsConfiguration = true, composerControls,
-  workSummaryAvailable = true, transcriptFooter, inspectorOpen = false, onToggleInspector, noticeTarget, onNoticeLocated, transcriptVisible = active,
+  workSummaryAvailable = true, transcriptFooter, headerActionsTarget, inspectorOpen = false, onToggleInspector, noticeTarget, onNoticeLocated, transcriptVisible = active,
   browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
   active: boolean; language: string; observeActivity?: boolean; floating?: { retainDraft?(value: boolean): void };
   prepare(): Promise<ChatStreamRequest>; ownsConfiguration?: boolean;
   composerControls?: AssistantComposerControls;
   noticeTarget?: { id: string }; onNoticeLocated?(): void; transcriptVisible?: boolean;
   transcriptFooter?: ReactNode;
+  headerActionsTarget?: HTMLElement | null;
   workSummaryAvailable?: boolean;
   inspectorOpen?: boolean; onToggleInspector?(): void; browserTabs?: BrowserPromptReference[];
   composerPortalTarget?: HTMLElement | null; windowMaximized?: boolean; subagentObservabilityAvailable?: boolean;
@@ -297,7 +300,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     return true;
   }, [composerPortalTarget, scrollToMessage]);
   useEffect(() => {
-    if (noticeTarget && jumpToMessage(noticeTarget.id)) onNoticeLocated?.();
+    if (noticeTarget && jumpToMessage(noticeTarget.id, true)) onNoticeLocated?.();
   }, [noticeTarget, pageEntries, jumpToMessage, onNoticeLocated]);
   const reactToMessage = async (id: string, reaction: AssistantReaction | null) => {
     if (reactionPending.current) return;
@@ -327,9 +330,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     send: text => voice.snapshot().mode === 'call' ? submit(text, true) : send(text) };
   target.refresh = () => ({ ...target, contextGeneration: generation.current, ...voiceMessagesRef.current, sending: busyRef.current });
   const [eventsOpen, setEventsOpen] = useState(false);
-  const renderTimelineItem = (item: typeof timeline[number], quick: boolean) => {
-    if ('task' in item) return <AssistantTaskBubble key={item.key} task={item.task} language={language}/>;
-    const { entry } = item;
+  const renderTimelineMessage = (entry: ConversationEntry, quick: boolean) => {
     const pending = submitted.find(item => item.entry.id === entry.id);
     const openMenu = (trigger: HTMLElement, x: number, y: number) => {
       const selection = window.getSelection();
@@ -370,9 +371,25 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   };
   const renderTimeline = (items: typeof timeline, quick = false) => {
     const separators = assistantTimeSeparators(items);
-    return items.map(item => <Fragment key={item.key}>
-      {separators.has(item.key) && <div className="assistant-time-separator"><time dateTime={item.at}>{assistantTimeLabel(item.at, language)}</time></div>}
-      {renderTimelineItem(item, quick)}
+    const rows: TimelineRow[] = [];
+    for (const item of items) {
+      if ('entry' in item) {
+        rows.push(item);
+        continue;
+      }
+      const row = rows.at(-1);
+      if (row && 'tasks' in row && !separators.has(item.key)) row.tasks.push(item.task);
+      else rows.push({ key: item.key, at: item.at, tasks: [item.task] });
+    }
+    return rows.map(row => <Fragment key={row.key}>
+      {separators.has(row.key) && <div className="assistant-time-separator"><time dateTime={row.at}>{assistantTimeLabel(row.at, language)}</time></div>}
+      {'tasks' in row
+        ? <div className="message-list-item assistant-message-row">
+          <div className="assistant-task-strip">
+            {row.tasks.map(task => <AssistantTaskBubble key={task.taskId} task={task} language={language}/>)}
+          </div>
+        </div>
+        : renderTimelineMessage(row.entry, quick)}
     </Fragment>);
   };
   const typingBubble = replying && <div className="message-list-item assistant-message-row assistant-activity-row" data-message-role="status">
@@ -396,6 +413,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     hidden={!active} aria-label={profile.name}>
     {floatingView}
     <TopBar language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
+      actionsTarget={headerActionsTarget} showActionTooltips={Boolean(headerActionsTarget)}
       conversationContentAvailable={workSummaryAvailable && timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {eventsOpen && active && <AssistantEventsDialog language={language} close={() => setEventsOpen(false)}/>}

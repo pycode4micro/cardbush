@@ -56,6 +56,8 @@ body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) *
   will-change: opacity, transform;
 }
 
+.app[data-conversation-titlebar] .window-spacer { min-width:8px; }
+
 .soft-panel-hidden {
   pointer-events: none !important;
 }

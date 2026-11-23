@@ -354,15 +354,14 @@ app.whenReady().then(async () => {
     assert.equal(await read('fixture.sent.at(-1).spoken'),false);
     await read('fixture.portal(false);void 0');await until('document.querySelector(".assistant-composer-dock textarea")');
     assert.equal(await read('document.querySelector(".assistant-composer-dock textarea").value'),'');
-    await read(`fixture.tasks=[{taskId:'task-visible',origin:'subagent',parentSessionId:'personal-assistant',childSessionId:'child-execution',parentTurnId:'voice_turn_fixture',requestPrompt:'整理桌面应用清单',status:'running',terminal:false,createdAt:new Date().toISOString(),remote:{agentId:'ssh-1',taskId:'remote-task'}}];window.addEventListener('cardbush:open-work-summary-inspector',e=>fixture.taskDetail=e.detail);window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await read(`fixture.tasks=[{taskId:'task-visible',origin:'subagent',parentSessionId:'personal-assistant',childSessionId:'child-execution',parentTurnId:'voice_turn_fixture',agentName:'桌面整理',requestPrompt:'整理桌面应用清单',status:'running',terminal:false,createdAt:new Date().toISOString(),remote:{agentId:'ssh-1',taskId:'remote-task'}}];window.addEventListener('cardbush:open-work-summary-inspector',e=>fixture.taskDetail=e.detail);window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=running]")');
-    await require('./helpers/subagent-activity-motion.cjs')({ read, pause, window:win,
-      selector:'.assistant-task-bubble .subagent-activity-spinner',
-      rerender:"fixture.tasks=[{...fixture.tasks[0],updatedAt:new Date().toISOString()}];window.dispatchEvent(new Event('fixture-tasks'))" });
-    assert.match(await read('document.querySelector(".assistant-task-bubble").textContent'),/整理桌面应用清单/);
+    assert.equal(await read('document.querySelector(".assistant-task-bubble").textContent'),'桌面整理');
+    assert.match(await read('document.querySelector(".assistant-task-bubble").getAttribute("aria-label")'),/运行中/);
     await click('.assistant-task-bubble');
     assert.equal(await read('fixture.taskDetail.kind'),'subagent-task');
     assert.equal(await read('fixture.taskDetail.task.childSessionId'),'child-execution');
+    assert.equal(await read('fixture.taskDetail.title'),'整理桌面应用清单','the execution inspector retains the assignment title');
     assert.equal(await read('fixture.taskDetail.task.remote.agentId'),'ssh-1','execution inspector receives remote routing unchanged');
     for (const theme of ['dark','bright']) {
       await read(`fixture.theme('${theme}');void 0`);await pause(100);
@@ -374,14 +373,14 @@ app.whenReady().then(async () => {
     await pause(100);
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),1,'queued continuations share the original child conversation entry');
     assert.equal(await read('document.querySelector(".assistant-task-bubble")===fixture.taskBubble'),true,'the entry does not move or remount on a follow-up');
-    assert.match(await read('document.querySelector(".assistant-task-bubble").textContent'),/整理桌面应用清单/,'retain the original assignment title');
+    assert.equal(await read('document.querySelector(".assistant-task-bubble").textContent'),'桌面整理','retain the original child name');
     await read(`fixture.tasks[0]={...fixture.tasks[0],status:'completed',terminal:true};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
-    await until('document.querySelector(".assistant-task-bubble").textContent.includes("本轮结束后执行")');
+    await until('document.querySelector(".assistant-task-bubble").getAttribute("aria-label").includes("本轮结束后执行")');
     await read(`fixture.tasks[1]={...fixture.tasks[1],raw:{...fixture.tasks[1].raw,executionStartedAt:new Date().toISOString()}};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
-    await until('!document.querySelector(".assistant-task-bubble").textContent.includes("本轮结束后执行")');
+    await until('!document.querySelector(".assistant-task-bubble").getAttribute("aria-label").includes("本轮结束后执行")');
     await read(`fixture.tasks=fixture.tasks.map(task=>({...task,status:'completed',terminal:true}));window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=completed]")');
-    assert.equal(await read('document.querySelectorAll(".assistant-task-bubble .subagent-activity-spinner").length'), 0, 'completed tasks stop rotating');
+    assert.match(await read('document.querySelector(".assistant-task-bubble").getAttribute("aria-label")'),/已完成/);
     await menu();await choose('重置上下文');await until('document.querySelector(".confirm-action-dialog[open]")');
     await click('.confirm-action-dialog .danger');await until('document.querySelectorAll(".assistant-message,.assistant-task-bubble").length===0');
     await read(`fixture.entries.push({id:'after-task-reset',role:'user',content:'重新开始',source:'text',visibility:'conversation',createdAt:new Date().toISOString()});void 0`);

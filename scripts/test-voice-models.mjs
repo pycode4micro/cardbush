@@ -30,37 +30,37 @@ test('downloads enforce trusted HTTPS redirects, size and SHA-256 before accepti
   }, signal(), () => {});
   assert.deepEqual(hosts, ['github.com', 'release-assets.githubusercontent.com']);assert.deepEqual(fs.readFileSync(destination), data);
   for (const body of [Buffer.from('modified bytes'), data.subarray(0, 2), Buffer.concat([data, data])]) {
-    await assert.rejects(downloadVoiceFile(asset, path.join(temporary(), 'bad'), async () => new Response(body), signal(), () => {}), /大小|SHA-256/);
+    await assert.rejects(downloadVoiceFile(asset, path.join(temporary(), 'bad'), async () => new Response(body), signal(), () => {}), error => ['voiceNative.modelChecksum', 'voiceNative.modelFileTooLarge'].includes(error.key));
   }
   for (const redirect of ['https://evil.invalid/model', 'http://github.com/file', 'https://user:password@github.com/file']) {
     let calls = 0;
-    await assert.rejects(downloadVoiceFile(asset, path.join(temporary(), 'bad'), async () => { calls++; return new Response(null, { status: 302, headers: { location: redirect } }); }, signal(), () => {}), /来源不受信任/);
+    await assert.rejects(downloadVoiceFile(asset, path.join(temporary(), 'bad'), async () => { calls++; return new Response(null, { status: 302, headers: { location: redirect } }); }, signal(), () => {}), {key: 'voiceNative.downloadUntrusted'});
     assert.equal(calls, 1);
   }
 });
 test('download failures keep proxy credentials private, preserve cancellation and bound redirect loops', async () => {
   const asset = { url, bytes: 5, sha256: digest(Buffer.from('model')) }, destination = path.join(temporary(), 'model');
   await assert.rejects(downloadVoiceFile(asset, destination, async () => { throw Error('proxy https://name:secret@proxy.invalid'); }, signal(), () => {}),
-    error => /设置 → 网络/.test(error.message) && !/secret|name|proxy.invalid/.test(error.message));
+    error => error.key === 'voiceNative.downloadNetwork' && /设置 → 网络/.test(error.describe('zh')) && !/secret|name|proxy.invalid/.test(error.describe('en')));
   await assert.rejects(downloadVoiceFile(asset, destination, async () => new Response('credential from upstream', { status: 407 }), signal(), () => {}),
-    error => /HTTP 407/.test(error.message) && !error.message.includes('credential'));
+    error => error.key === 'voiceNative.downloadHttp' && error.variables.status === 407 && /HTTP 407/.test(error.describe('en')) && !error.describe('en').includes('credential'));
   let hops = 0;
   await assert.rejects(downloadVoiceFile(asset, destination, async (_url, options) => {
     assert.equal(options.redirect, 'manual'); assert.equal(options.credentials, 'omit'); hops++;
     return new Response(null, { status: 302, headers: { location: url } });
-  }, signal(), () => {}), /重定向次数/);
+  }, signal(), () => {}), {key: 'voiceNative.downloadRedirectLimit'});
   assert.equal(hops, 6);
   const cancelled = new AbortController(); cancelled.abort();
   await assert.rejects(downloadVoiceFile(asset, destination, async () => { throw Error('network'); }, cancelled.signal, () => {}), { name: 'AbortError' });
 });
 
-function fixture() {
+function fixture(language) {
   const root = temporary(), bytes = Buffer.from('recognizer fixture');
   fs.writeFileSync(path.join(root, 'model.bin'), bytes);
   const archive = path.join(root, 'archive.tar');
   const result = spawnSync('tar', ['-cf', archive, '-C', root, 'model.bin'], { windowsHide: true }); assert.equal(result.status, 0);
   const payload = fs.readFileSync(archive);
-  const store = new VoiceModelStore(path.join(root, 'models'), async () => new Response(payload));
+  const store = new VoiceModelStore(path.join(root, 'models'), async () => new Response(payload), undefined, language);
   // Supply a tiny pinned fixture archive; use the real downloader, extractor and lifecycle.
   store.archives = [{ url, bytes: payload.length, sha256: digest(payload), files: [{ name: 'model.bin', entry: 'model.bin', bytes: bytes.length, sha256: digest(bytes) }] }];
   return { store, root, payload };
@@ -70,14 +70,20 @@ test('installation is atomic, checks executable contents and blocks removal duri
   const installing = store.install(); assert.equal(store.install(), installing);
   assert.equal((await installing).state, 'installed');
   assert.ok(fs.existsSync(path.join(store.directory, 'FunASR-MODEL-LICENSE.txt')));
-  const lease = await store.acquire(); await assert.rejects(store.remove(), /正在使用/); lease.release();
+  const lease = await store.acquire(); await assert.rejects(store.remove(), {key: 'voiceNative.modelBusyRemove'}); lease.release();
   fs.writeFileSync(path.join(store.directory, 'model.bin'), 'tampered fixture!!');
-  await assert.rejects(store.acquire(), /完整|校验|不可用/);
+  await assert.rejects(store.acquire(), {key: 'voiceNative.modelIntegrityFailed'});
   assert.equal((await store.remove()).state, 'not-installed');
 });
 test('failed or cancelled installation removes partial downloads without marking installed', async () => {
-  const failed = fixture(); failed.store.archives[0].sha256 = '0'.repeat(64);
-  assert.equal((await failed.store.install()).state, 'error'); assert.equal(fs.existsSync(failed.store.directory), false);
+  let language = 'en';
+  const failed = fixture(() => language); failed.store.archives[0].sha256 = '0'.repeat(64);
+  const status = await failed.store.install();
+  assert.equal(status.state, 'error');
+  assert.match(status.error, /SHA-256/);
+  language = 'zh';
+  assert.equal(failed.store.status().state, 'error');
+  assert.match(failed.store.status().error, /校验/); assert.equal(fs.existsSync(failed.store.directory), false);
   assert.deepEqual(fs.readdirSync(path.join(failed.root, 'models')), []);
   const cancelled = fixture(); let entered;
   const started = new Promise(resolve => { entered = resolve; });
@@ -90,8 +96,8 @@ test('failed or cancelled installation removes partial downloads without marking
 test('uninstall excludes new recognition and installation until removal completes', async () => {
   const { store } = fixture(); await store.install();
   const remove = store.remove(); assert.equal(store.remove(), remove);
-  await assert.rejects(store.acquire(), /不可用/);
-  await assert.rejects(store.install(), /正在卸载/);
+  await assert.rejects(store.acquire(), {key: 'voiceNative.modelUnavailable'});
+  await assert.rejects(store.install(), {key: 'voiceNative.modelRemoving'});
   assert.equal((await remove).state, 'not-installed');
   const reinstalled = await store.install(); assert.equal(reinstalled.state, 'installed', reinstalled.error);
   await store.remove();
@@ -109,7 +115,7 @@ test('recognition selection is independent of system/cloud speech and never sile
   assert.equal(recognized, 1); assert.equal(spoken, 1); assert.equal(network, 0); assert.equal(decrypted, 0);
   const missing = new VoiceService(path.join(temporary(), 'voice.json'), { fetch: async () => { network++; throw Error(); }, encrypt: String, decrypt: String });
   missing.save({ ...defaultVoiceSettings, recognitionEngine: 'sensevoice' });
-  await assert.rejects(missing.transcribe(1, { id: 'missing', audio: new ArrayBuffer(44), mimeType: 'audio/wav' }), /安装本地识别/); assert.equal(network, 0);
+  await assert.rejects(missing.transcribe(1, { id: 'missing', audio: new ArrayBuffer(44), mimeType: 'audio/wav' }), {key: 'voiceNative.installRecognition'}); assert.equal(network, 0);
 });
 test('long audio is bounded and split without losing or duplicating samples', () => {
   const rate = 16000, pcm = Buffer.alloc(rate * 2 * 65);
@@ -121,7 +127,7 @@ test('long audio is bounded and split without losing or duplicating samples', ()
   assert.deepEqual(Buffer.concat(clips.map(clip => clip.subarray(44))), pcm);
   awaitInvalid(wave);
 });
-function awaitInvalid(wave) { const invalid = Buffer.from(wave); invalid.writeUInt16LE(2, 22); assert.throws(() => splitVoiceWave(invalid.buffer.slice(invalid.byteOffset, invalid.byteOffset + invalid.length)), /单声道/); }
+function awaitInvalid(wave) { const invalid = Buffer.from(wave); invalid.writeUInt16LE(2, 22); assert.throws(() => splitVoiceWave(invalid.buffer.slice(invalid.byteOffset, invalid.byteOffset + invalid.length)), {key: 'voiceNative.senseVoiceMonoRequired'}); }
 import {extractVoiceFiles} from '../dist-electron/voiceModelDownload.js';
 import {kokoroDefinition} from '../dist-electron/kokoroManifest.js';
 import {kokoroPcm} from '../dist-electron/kokoroVoice.js';
@@ -134,8 +140,8 @@ test('pinned multi-file extraction verifies every byte in one pass, no archive p
   const out=path.join(root,'verified');await extractVoiceFiles(archive,out,files,signal());
   assert.equal(fs.readFileSync(path.join(out,'data/Mr serious'),'utf8'),'world');assert.equal(fs.existsSync(path.join(out,'nested')),false);
   for(const name of ['../escape','../','/outside','C:/outside','a/../escape','a./file'])await assert.rejects(extractVoiceFiles(archive,path.join(root,'bad'),[{...files[0],name}],signal()),/Invalid/);
-  await assert.rejects(extractVoiceFiles(archive,path.join(root,'corrupt'),[{...files[0],sha256:'0'.repeat(64)},...files.slice(1)],signal()),/SHA-256/);
-  await assert.rejects(extractVoiceFiles(archive,path.join(root,'truncated'),files.slice(0,1),signal()),/超出/);
+  await assert.rejects(extractVoiceFiles(archive,path.join(root,'corrupt'),[{...files[0],sha256:'0'.repeat(64)},...files.slice(1)],signal()),{key: 'voiceNative.modelChecksum'});
+  await assert.rejects(extractVoiceFiles(archive,path.join(root,'truncated'),files.slice(0,1),signal()),{key: 'voiceNative.modelArchiveTooLarge'});
   const cancelled=new AbortController();cancelled.abort();await assert.rejects(extractVoiceFiles(archive,path.join(root,'cancelled'),files,cancelled.signal));
 });
 test('neural voice manifest is separately optional and WAV format is validated', () => {
@@ -144,5 +150,5 @@ test('neural voice manifest is separately optional and WAV format is validated',
   const store=new VoiceModelStore(root,async()=>{network++;throw Error('no');},definition);
   assert.equal(store.status().model,'Kokoro v1.1 (INT8)');assert.equal(store.status().state,'not-installed');assert.equal(network,0);assert.equal(fs.existsSync(root),false);
   const wav=Buffer.alloc(48);wav.write('RIFF');wav.writeUInt32LE(40,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(24000,24);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(4,40);
-  assert.equal(kokoroPcm(wav).length,4);wav.writeUInt16LE(2,22);assert.throws(()=>kokoroPcm(wav),/PCM/);assert.throws(()=>kokoroPcm(Buffer.from('bad')),/格式/);
+  assert.equal(kokoroPcm(wav).length,4);wav.writeUInt16LE(2,22);assert.throws(()=>kokoroPcm(wav),{key: 'voiceNative.kokoroPcmRequired'});assert.throws(()=>kokoroPcm(Buffer.from('bad')),{key: 'voiceNative.kokoroAudioInvalid'});
 });

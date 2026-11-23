@@ -1,5 +1,6 @@
 import type { AppSection } from '../../types';
 import type { SettingsPage } from '../settings/settingsNavigation';
+export type FeatureSection = Exclude<AppSection, 'home' | 'assistant' | 'chat'>;
 export type HomePage = { kind: 'overview'; editing?: true } | { kind: 'events' | 'projects' | 'recent' } |
   { kind: 'project' | 'component'; id: string } | { kind: 'event'; id: string; page?: string };
 

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ThemeMode, ThemePreference } from '../../types';
 import type { WindowAppearanceState, WindowMaterialPreference } from '../../../electron/windowAppearance';
 import { themeBackgroundColor } from './themeRuntime';
@@ -34,18 +34,22 @@ export function useWindowAppearance(
   customTheme = false,
   customBackground?: string,
 ) {
+  const latestAppearance = useRef<WindowAppearanceState | undefined>(undefined);
   useEffect(() => {
     let disposed = false;
-    let material: 'mica' | 'none' = 'none';
-    let revision = -1;
+    const matches = (state: WindowAppearanceState | undefined): state is WindowAppearanceState =>
+      state?.theme === theme && state.preference === preference && state.customTheme === customTheme;
+    const previous = latestAppearance.current;
+    let material = matches(previous) ? previous.material : 'none';
+    let revision = matches(previous) ? previous.revision : -1;
     const desktop = window.cardbushDesktop;
     const refresh = () => applyDocumentBackdrop(theme, material, customBackground);
     const receive = (state: WindowAppearanceState | undefined) => {
-      if (disposed || !state || state.theme !== theme ||
-          state.preference !== preference || state.customTheme !== customTheme ||
+      if (disposed || !matches(state) ||
           !Number.isSafeInteger(state.revision) || state.revision <= revision) return;
       revision = state.revision;
       material = state.material === 'mica' ? 'mica' : 'none';
+      latestAppearance.current = state;
       refresh();
     };
     // Keep a themed backing until the native host has confirmed the material.

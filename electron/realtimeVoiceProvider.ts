@@ -34,7 +34,7 @@ export interface RealtimeVoiceProvider {
   control(action: 'mute' | 'unmute' | 'interrupt' | 'commit' | 'close'): object;
   results(results: RealtimeToolResult[]): object;
   speak(text: string): object;
-  parse(event: Record<string, unknown>): ProviderEvent[];
+  parse(event: Record<string, unknown>, language?: string): ProviderEvent[];
 }
 const hangUp = { type: 'function', name: 'hang_up', description: 'End this voice call when the user asks to hang up or clearly says goodbye. Say a brief goodbye before calling. Does not stop background Agent tasks.',
   parameters: { type: 'object', additionalProperties: false, properties: {} } };

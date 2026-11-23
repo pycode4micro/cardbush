@@ -1,52 +1,39 @@
 import { uiText } from '../../i18n';
 import { LoaderCircle } from 'lucide-react';
-import { Suspense } from 'react';
+import { Suspense, type ComponentProps, type ReactNode } from 'react';
 import { TopBar } from '../../components/TopBar';
 import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
-import { type AppLanguage, type AppSection, type BackendCapabilities, type SkillDetail, type SkillSummary } from '../../types';
+import type { AppLanguage, BackendCapabilities, SkillDetail, SkillSummary } from '../../types';
 import { sectionLabels } from '../appSections';
 import type { CreationChatOptions } from '../mdPresentation/CreationConversation';
+import type { FeatureSection } from '../navigation/appPage';
 
-const LazyFeatureContentPanel = recoverableLazy('feature-panel', async () => {
-  const module = await import('./index');
-  return { default: module.FeatureContentPanel };
-}, (props, retry) => <DeferredModuleNotice language={props.language} retry={retry} />);
+const retryFeature = ({ language }: { language: AppLanguage }, retry: () => void) =>
+  <DeferredModuleNotice language={language} retry={retry} />;
+const Components = recoverableLazy<ComponentProps<typeof import('../components/ComponentsApp').ComponentsApp>>('components', () =>
+  import('../components/ComponentsApp').then(({ ComponentsApp }) => ({ default: ComponentsApp })), retryFeature);
+const Creation = recoverableLazy<ComponentProps<typeof import('../creationCanvas/CreationCanvasApp').CreationCanvasApp>>('creation-canvas', () =>
+  import('../creationCanvas/CreationCanvasApp').then(({ CreationCanvasApp }) => ({ default: CreationCanvasApp })), retryFeature);
+const Plugins = recoverableLazy<ComponentProps<typeof import('../plugins/PluginWorkspace').PluginWorkspace>>('plugin-workspace', () =>
+  import('../plugins/PluginWorkspace').then(({ PluginWorkspace }) => ({ default: PluginWorkspace })), retryFeature);
+const Team = recoverableLazy<ComponentProps<typeof import('../team/TeamWorkspace').TeamWorkspace>>('team-workspace', () =>
+  import('../team/TeamWorkspace').then(({ TeamWorkspace }) => ({ default: TeamWorkspace })), retryFeature);
 
-export function FeaturePanelLoading({ language }: { language: AppLanguage }) {
+function FeaturePanelLoading({ language }: { language: AppLanguage }) {
   return (
     <div className="feature-content feature-loading">
       <LoaderCircle size={18} />
-      <span>{uiText(language)('featureContentPanel.loading')}</span>
+      <span>{uiText(language)('common.loading')}</span>
     </div>
   );
 }
 
-export function FeaturePanel({
-  language,
-  backendCapabilities,
-  onOpenPluginPrompt,
-  onEditHomeLayout,
-  section,
-  activeProjectDir,
-  workflowValidationAvailable,
-  inspectorOpen,
-  onToggleInspector,
-  headerActionsTarget,
-  skills,
-  disabledSkillNames,
-  onToggleSkill,
-  onReloadSkills,
-  onLoadSkillDetail,
-  onOpenConversation,
-  creationChatOptions,
-}: {
+type FeaturePanelProps = {
   language: AppLanguage;
   backendCapabilities: BackendCapabilities;
   onOpenPluginPrompt: (prompt: string) => void;
   onEditHomeLayout: () => void;
-  section: AppSection;
-  activeProjectDir?: string;
-  workflowValidationAvailable: boolean;
+  section: FeatureSection;
   inspectorOpen: boolean;
   onToggleInspector: () => void;
   headerActionsTarget: HTMLElement | null;
@@ -57,7 +44,22 @@ export function FeaturePanel({
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onOpenConversation: (conversationId: string) => void;
   creationChatOptions?: CreationChatOptions;
-}) {
+};
+
+const content: Record<FeatureSection, (props: FeaturePanelProps) => ReactNode> = {
+  components: ({ language, onOpenPluginPrompt, onEditHomeLayout }) =>
+    <Components language={language} onCreate={onOpenPluginPrompt} onEditHomeLayout={onEditHomeLayout} />,
+  'md-presentation': ({ language, creationChatOptions }) => <Creation {...creationChatOptions} language={language} />,
+  team: ({ language, creationChatOptions, onOpenConversation }) =>
+    <Team language={language} chatOptions={creationChatOptions} onOpenConversation={onOpenConversation} />,
+  plugins: ({ language, backendCapabilities, skills, disabledSkillNames, onToggleSkill, onReloadSkills, onLoadSkillDetail, onOpenPluginPrompt }) =>
+    <Plugins language={language} capabilities={backendCapabilities}
+      skills={skills} disabledSkillNames={disabledSkillNames} onToggleSkill={onToggleSkill}
+      onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail} onOpenPrompt={onOpenPluginPrompt} />,
+};
+
+export function FeaturePanel(props: FeaturePanelProps) {
+  const { language, section, headerActionsTarget, inspectorOpen, onToggleInspector } = props;
   const label = uiText(language)(sectionLabels[section]);
   return (
     <section className="feature-panel" aria-label={label}>
@@ -69,22 +71,7 @@ export function FeaturePanel({
         onToggleInspector={onToggleInspector}
       />
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <LazyFeatureContentPanel
-          creationChatOptions={creationChatOptions}
-          language={language}
-          backendCapabilities={backendCapabilities}
-          onOpenPluginPrompt={onOpenPluginPrompt}
-          onEditHomeLayout={onEditHomeLayout}
-          section={section}
-          activeProjectDir={activeProjectDir}
-          workflowValidationAvailable={workflowValidationAvailable}
-          skills={skills}
-          disabledSkillNames={disabledSkillNames}
-          onToggleSkill={onToggleSkill}
-          onReloadSkills={onReloadSkills}
-          onLoadSkillDetail={onLoadSkillDetail}
-          onOpenConversation={onOpenConversation}
-        />
+        {content[section](props)}
       </Suspense>
     </section>
   );

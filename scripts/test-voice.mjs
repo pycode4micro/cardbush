@@ -56,7 +56,7 @@ test('voice credentials are redacted; retained credentials cannot follow a new e
   assert.equal(saved.hasApiKey, true); assert.equal(saved.apiKey, undefined);
   assert.ok(!readFileSync(file, 'utf8').includes('voice-test-secret'));
   instance.save({ ...saved, voice: 'male' }); assert.equal(instance.settings().voice, 'male');
-  assert.throws(() => instance.save({ ...saved, baseUrl: 'https://another.invalid/v1' }), /重新填写/);
+  assert.throws(() => instance.save({ ...saved, baseUrl: 'https://another.invalid/v1' }), {key: 'voiceNative.replaceApiKey'});
   for (const baseUrl of ['http://public.invalid', 'https://user:pass@api.invalid', 'https://api.invalid/?token=x']) assert.throws(() => validateVoiceSettings({ ...saved, baseUrl }));
   instance.save({ ...saved, apiKey: '' }); assert.equal(instance.settings().hasApiKey, false);
 });
@@ -64,7 +64,7 @@ test('voice credentials are redacted; retained credentials cannot follow a new e
 test('new profiles default to local speech; legacy cloud preferences remain explicit', async () => {
   const { instance, file } = service(() => { throw Error('Local mode must not contact the network'); });
   assert.equal(instance.settings().engine, 'system'); assert.equal(instance.settings().hasApiKey, false);
-  await assert.rejects(instance.speak(1, { id: 'local', text: '你好' }, () => {}), /本地语音组件/);
+  await assert.rejects(instance.speak(1, { id: 'local', text: '你好' }, () => {}), {key: 'voiceNative.localUnavailable'});
   const legacy = { ...defaultVoiceSettings, secret: Buffer.from('legacy').toString('base64') }; delete legacy.engine; delete legacy.recognitionEngine; delete legacy.recognitionLanguage;
   writeFileSync(file, JSON.stringify(legacy)); assert.equal(instance.settings().engine, 'cloud');
   instance.save({ ...instance.settings(), engine: 'system' }); assert.equal(instance.settings().engine, 'system');
@@ -102,7 +102,7 @@ test('transcription validates uploads and speech streams before completion with 
 test('provider errors do not echo secrets and cancellation is owner scoped', async () => {
   const auth = service(async () => new Response('secret-key-private-provider-body', { status: 401 })).instance;
   auth.save({ ...defaultVoiceSettings, apiKey: 'key' });
-  await assert.rejects(auth.speak(1, { id: 'a', text: '你好' }, () => {}), error => !error.message.includes('secret') && /授权失败/.test(error.message));
+  await assert.rejects(auth.speak(1, { id: 'a', text: '你好' }, () => {}), error => !error.message.includes('secret') && error.key === 'voiceNative.cloudUnauthorized' && /授权失败/.test(error.describe('zh')));
   const entered = deferred();
   const blocking = service(async (_url, input) => { entered.resolve(); return new Promise((_resolve, reject) => input.signal.addEventListener('abort', () => reject(Error('aborted')))); }).instance;
   blocking.save({ ...defaultVoiceSettings, apiKey: 'key' });

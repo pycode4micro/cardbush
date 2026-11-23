@@ -1,4 +1,5 @@
 import { browserIconUrl, cachedBrowserSiteIcon, rememberBrowserSiteIconImage } from './browserSiteIcons';
+import { rendererSurface } from '../../shared/rendererSurface';
 
 const pending = new Map<string, Promise<void>>();
 const failed = new Map<string, { key: string; until: number }>();
@@ -6,6 +7,7 @@ export const isCachedBrowserIcon = (icon: string) => icon.startsWith('data:image
 
 /** Web links and installed apps share small offline PNGs and in-flight reads. */
 export function cacheBrowserSiteIcon(address: string, candidates: string[]): Promise<void> {
+  if (rendererSurface() !== 'workspace') return Promise.resolve();
   const readIcon = window.cardbushDesktop?.browser?.readIcon;
   if (!readIcon || cachedBrowserSiteIcon(address)) return Promise.resolve();
   let origin: string;

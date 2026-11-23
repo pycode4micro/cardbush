@@ -2,7 +2,6 @@ import type { ChatMessage } from '../types';
 
 export const scrollBottomLockTolerance = 72;
 export const scrollBottomWheelLockTolerance = 4;
-export const scrollBottomWheelFreezeMs = 1600;
 export const manualScrollDetachHoldMs = 4200;
 
 export type ScrollBottomMetrics = {

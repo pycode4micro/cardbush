@@ -69,16 +69,29 @@ test('interpolation is literal, nonrecursive and rejects incomplete contracts', 
 });
 
 test('the complete App keeps translated literals and conditional appearance values out of components', async () => {
+  const localizedVoice = new Set([
+    'voiceIpc', 'voiceService', 'voiceUiError', 'voiceModelStore', 'voiceModelDownload', 'voiceModelManifest',
+    'windowsVoice', 'senseVoice', 'kokoroVoice', 'kokoroManifest', 'speakerManifest', 'speakerLock', 'speakerEmbedding',
+    'customSpeech', 'customSpeechModel', 'realtimeVoiceContext', 'realtimeVoiceMessages',
+  ].map(name => `electron/${name}.ts`));
   const files = (await readdir('src', { recursive: true })).filter(file => /\.(?:ts|tsx)$/.test(file)
     && !file.replaceAll('\\', '/').startsWith('i18n/') && !file.replaceAll('\\', '/').startsWith('features/pre_test/')).map(file => path.join('src', file));
   files.push(...(await readdir('web', { recursive: true })).filter(file => /\.(?:ts|tsx)$/.test(file)).map(file => path.join('web', file)));
   files.push('electron/main.ts', 'electron/fileContextMenu.ts', 'electron/localApplications.ts', 'electron/windowsApplicationShortcuts.ts');
+  files.push('electron/browserUi.ts', 'electron/browserPopup.ts', 'electron/browserImport.ts',
+    'electron/browserLibrary.ts', 'electron/browserWebApplications.mts', 'electron/sessionAttentionRouting.ts');
+  files.push('electron/calendarError.mts', 'electron/calendarImport.mts', 'electron/calendarImportWorker.mts', 'electron/calendarStore.mts');
+  files.push(...localizedVoice);
   files.push('packages/bush-runtime/src/assistantConversation.ts', 'packages/bush-runtime/src/subagentTool.ts', 'packages/bush-runtime/src/runtimeUiError.ts');
   for (const file of files) {
     const text = await readFile(file, 'utf8');
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const location = node => `${file}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}`;
     const walk = node => {
+      if ((localizedVoice.has(file) || /^electron\/(?:browser(?:Ui|Popup|Import|Library|WebApplications)|sessionAttentionRouting|calendar\w+)\./.test(file))
+        && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))) {
+        assert.doesNotMatch(node.text, /\p{Script=Han}/u, `${location(node)}: native UI text belongs in the catalogue`);
+      }
       if (ts.isJsxAttribute(node) && node.name.getText(source) === 'size' && node.initializer && ts.isJsxExpression(node.initializer) && node.initializer.expression) {
         assert.ok(!ts.isConditionalExpression(node.initializer.expression), `${location(node)}: icon size variants belong in CSS variables`);
       }
@@ -116,6 +129,15 @@ test('the complete App keeps translated literals and conditional appearance valu
       ts.forEachChild(node, walk);
     };
     walk(source);
+  }
+});
+
+test('the Windows voice helper reports error keys present in every shipped pack', async () => {
+  for (const name of ['CardBushVoiceHost.cs', 'WindowsVoices.cs']) {
+    const source = await readFile(`native/voice/${name}`, 'utf8');
+    const keys = [...source.matchAll(/"(voiceNative\.windows[\w]+)"/g)].map(match => match[1]);
+    assert.ok(keys.length, name);
+    for (const key of keys) assert.equal(typeof defaults.messages[key], 'string', key);
   }
 });
 

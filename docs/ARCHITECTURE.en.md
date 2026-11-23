@@ -50,7 +50,11 @@ flowchart TD
 
 A file under `electron/` does not imply an Electron runtime dependency. Conversely, the complete desktop installer is not the server distribution.
 
+`RuntimeCacheMaintenance` owns the maintenance lease, idle collection timers, and cancellation. `InMemoryRuntimeHost` determines admission from active sessions, tasks, and plugins. Each store determines which data is still referenced. Session deletion acquires the lease before resolving its scope. Foreground commands can interrupt idle collection, and shutdown stops the timers and aborts active collection.
+
 ## Windows and loading boundaries
+
+Desktop startup, retry and exit share resource cleanup. Failed startups retain the original error and log each cleanup failure separately. Exit stops new requests and lets the Product Host finish. SSH and plugin networking close after Agent connections and account services finish.
 
 `src/main.tsx` chooses the window role before loading main workspace, companion or shadow conversation, with retry on load failure. Windows share presentation components, not ownership of workspace hooks. Preload retains the latest companion state so lazy subscribers receive initial state.
 
@@ -60,6 +64,12 @@ Office/3D previews use separate HTML entries. Vite splits by actual ownership, n
 
 `test:renderer-boundaries` inspects production dependency closure: previews do not load chat, companion does not load workspace, shadow avoids useCardbushChat, browser avoids duplicate CommonJS Zod, and loading/error UI avoids early Three. It also checks the existing 500 kB chunk bound. Bundle size is not runtime memory. Native dialog cancel/close goes through `dialogEventHandler`; child/file-dialog events cannot close a parent.
 
+The Web sign-in page loads the workspace after authentication. The workspace loads organization administration when the user opens it. Module failures can be retried in place. The release test verifies both loading boundaries, enforces the existing 500 kB per-chunk limit, and reports the full static dependency size for each entry.
+
+Components, Creation, Team and Plugins load through their own page entries. `FeaturePanel` owns the common heading, loading state and page map. `feature-surface.css` styles the shared shell. Skills are available in Plugins, child Agents in task details and registration, workflow editing in Team, and terminal execution through Runtime tools and SSH. The old panel, its styles, and unused desktop terminal/workflow channels were removed after checking page mappings, style references and preload/IPC consumers. Existing workflow files, Runtime tools and published protocols still use their established entries.
+
+The home component library owns its IPC, SQLite lifetime and file subscriptions. The workspace can read and edit the full library. The companion window can read component IDs and titles for Assistant references. The calendar import Worker reports message keys and field details, which the Electron main process renders in the current App language. Browser menus and desktop notifications use the same language catalogues.
+
 ## Conversation facts and settings
 
 Local chat shares useCardbushChat, ChatPanel, composer and Runtime event semantics. Remote child inspectors retain the original host context through `conversationHost.ts`; remote paths are not local file paths. Services persist inputs before acknowledging and clearing only the matching draft. Same-session execution is sequential; other sessions remain independent. Retried submissions retain identity/content. Stream reconnect is separate from send; unsubscribe never means stop.
@@ -67,6 +77,8 @@ Local chat shares useCardbushChat, ChatPanel, composer and Runtime event semanti
 Tool start/return/failure comes from Runtime events; display titles, history summaries and archive locators are not new execution. Navigation stores location, not secrets/drafts/results; background streams do not add history. In-page Back resolves its route parent even if browser history was evicted; window forward/back remains chronological.
 
 Settings manages the current Product Host. Worker configuration is independent, with no automatic connection sync. Theme/language/fonts/shortcuts are UI preferences. Gate new fields on declared capabilities. Model connections have explicit apiProtocol/custom headers and immutable provider-binding revisions. Inject conversation headers per request, never mutate a shared concurrent binding.
+
+Desktop model catalogue reads return a `revision`, and whole-catalogue saves include an `expectedRevision`. The Product Host compares the revision under the configuration file lock. Successful catalogue writes and per-model reasoning changes advance it. On conflict, the desktop reloads the host snapshot and drops pending saves based on the old revision. Published unversioned calls and authoritative Web tenant provisioning keep using the existing command.
 
 ModelProviderRegistry selects adapters only. Adapters project messages and normalize streams; they neither execute tools nor own history or next-round decisions. `executeModelRound` collects normalized events, and Runtime owns tools, permissions, retry, stop, compression and recovery. Signed provider reasoning stays opaque replay data, not a second loop state.
 
@@ -81,6 +93,8 @@ Assistant model/effort belongs to personal-assistant, not the current ordinary c
 Assistant no longer selects a direct remote host. It assembles registered workers/Team locally; continuations retain role/service/task ownership. File transfer is explicit and no parent history/OAuth/model credentials are copied. `applicationVoiceSession` owns microphone, playback and execution bridge across navigation/settings/minimize. Controls follow the owning composer/capsule; draft dictation remains bound to the visible page and cancels unsubmitted capture on leaving. Hangup and task cancellation are separate.
 
 Realtime provider normalizes audio/context/receipts/control; the service deduplicates, applies backpressure and recovers. Voice context maintenance uses an independent text-model compression transaction and confirms new remote history before replacement; uncertain recovery rebuilds the connection without replaying tools. Secure storage encrypts voice-history transcripts/summaries; session JSONL is separate and raw call audio is not archived. Voice context summaries are not cross-session habits. See [Assistant](PERSONAL_ASSISTANT.en.md), [realtime voice](REALTIME_VOICE.en.md), [local voice](LOCAL_VOICE_MODELS.en.md).
+
+The Windows voice helper reports failures with stable message keys. Voice IPC renders errors in the current App language. Model installation status translates failures and source titles on read, and realtime call status is translated when emitted. Voice settings, history, and model instructions retain their own stores and contracts.
 
 ## Plugins, references and presentation
 

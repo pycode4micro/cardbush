@@ -1,3 +1,5 @@
+import { uiText } from '@cardbush/platform/i18n';
+import { NativeVoiceError, type NativeVoiceMessage } from './voiceUiError';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -11,7 +13,7 @@ export const collectVoiceModelStaging = (root: string) => collectTemporaryDirect
   /^[\w.-]+-staging-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/, 24 * 60 * 60_000);
 
 export interface VoiceModelDefinition {
-  version: string; model: string; sources: { title: string; url: string }[];
+  version: string; model: string; sources: ReadonlyArray<{ url: string } & ({ title: string } | { titleKey: NativeVoiceMessage })>;
   archives: VoiceModelArchive[]; licenses: Record<string, string>; attribution: string;
 }
 const defaultDefinition = (): VoiceModelDefinition => ({ version: voiceModelVersion, model: 'SenseVoice Small (INT8)',
@@ -22,12 +24,13 @@ const defaultDefinition = (): VoiceModelDefinition => ({ version: voiceModelVers
 export class VoiceModelStore {
   readonly directory: string;
   private archives: VoiceModelArchive[];
-  private progress: Partial<VoiceModelStatus> = {};
+  private progress: Partial<Omit<VoiceModelStatus, 'error'>> & { failure?: NativeVoiceError } = {};
   private job?: { controller: AbortController; promise: Promise<VoiceModelStatus> };
   private removal?: Promise<VoiceModelStatus>;
   private users = 0;
   private fingerprints = new Map<string, string>();
-  constructor(private root: string, private fetcher: typeof fetch = fetch, private definition: VoiceModelDefinition = defaultDefinition()) {
+  constructor(private root: string, private fetcher: typeof fetch = fetch, private definition: VoiceModelDefinition = defaultDefinition(),
+    private uiLanguage: () => string = () => 'en') {
     if (!/^[a-zA-Z0-9_.-]+$/.test(definition.version)) throw Error('Invalid model version.');
     this.archives = definition.archives;
     this.root = path.resolve(root); this.directory = path.join(this.root, definition.version);
@@ -37,15 +40,18 @@ export class VoiceModelStore {
     const installed = files.length > 0 && fs.existsSync(path.join(this.directory, 'installed.json')) && files.every(file => {
       try { const s = fs.lstatSync(path.join(this.directory, file.name)); return s.isFile() && !s.isSymbolicLink() && s.size === file.bytes; } catch { return false; }
     });
+    const { failure, ...progress } = this.progress;
+    const language = this.uiLanguage();
+    const t = uiText(language);
     return { supported: this.archives.length > 0, model: this.definition.model, version: this.definition.version,
-      sources: this.definition.sources, downloadedBytes: 0, totalBytes: this.archives.reduce((sum, archive) => sum + archive.bytes, 0),
-      state: installed ? 'installed' : 'not-installed', ...this.progress };
+      sources: this.definition.sources.map(source => ({ url: source.url, title: 'titleKey' in source ? t(source.titleKey) : source.title })), downloadedBytes: 0, totalBytes: this.archives.reduce((sum, archive) => sum + archive.bytes, 0),
+      state: installed ? 'installed' : 'not-installed', ...progress, ...(failure ? { error: failure.describe(language) } : {}) };
   }
   install(): Promise<VoiceModelStatus> {
-    if (this.removal) return Promise.reject(Error('模型正在卸载，请稍后重试。'));
+    if (this.removal) return Promise.reject(new NativeVoiceError('voiceNative.modelRemoving'));
     if (this.job) return this.job.promise;
-    if (!this.archives.length) return Promise.reject(Error('当前平台不支持这个可选语音模型。'));
-    if (this.users) return Promise.reject(Error('语音模型正在使用，请结束语音任务后再安装。'));
+    if (!this.archives.length) return Promise.reject(new NativeVoiceError('voiceNative.modelUnsupported'));
+    if (this.users) return Promise.reject(new NativeVoiceError('voiceNative.modelBusyInstall'));
     if (this.status().state === 'installed') return Promise.resolve(this.status());
     const controller = new AbortController();
     const promise = this.performInstall(controller.signal).finally(() => { this.job = undefined; });
@@ -59,7 +65,7 @@ export class VoiceModelStore {
   }
   private async performRemove(): Promise<VoiceModelStatus> {
     await this.cancelInstall();
-    if (this.users) throw Error('语音模型正在使用，请结束语音任务后再卸载。');
+    if (this.users) throw new NativeVoiceError('voiceNative.modelBusyRemove');
     await this.removeOwned(this.directory); this.fingerprints.clear(); this.progress = {}; return this.status();
   }
   private async removeOwned(directory: string) {
@@ -101,7 +107,9 @@ export class VoiceModelStore {
       catch (error) { if (replaced) await fs.promises.rename(backup, this.directory); throw error; }
       this.progress = {}; if (replaced) await this.removeOwned(backup);
     } catch (error) {
-      this.progress = cancel.aborted ? {} : { state: 'error', error: signal.aborted ? '下载超时，请重试。' : error instanceof Error ? error.message : '模型安装失败，请重试。' };
+      const failure = signal.aborted ? new NativeVoiceError('voiceNative.modelDownloadTimeout')
+        : error instanceof NativeVoiceError ? error : new NativeVoiceError('voiceNative.modelInstallFailed');
+      this.progress = cancel.aborted ? {} : { state: 'error', failure };
     } finally {
       try { await this.removeOwned(staging); }
       finally { release?.(); }
@@ -110,7 +118,7 @@ export class VoiceModelStore {
   }
   /** Verify pinned file hashes before the first use, and again if any file changes. */
   async acquire() {
-    if (this.job || this.removal || this.status().state !== 'installed') throw Error('本地语音模型未安装或不可用，请在语音设置中安装。');
+    if (this.job || this.removal || this.status().state !== 'installed') throw new NativeVoiceError('voiceNative.modelUnavailable');
     this.users++;
     try {
       for (const file of this.archives.flatMap(archive => archive.files)) {
@@ -118,7 +126,12 @@ export class VoiceModelStore {
         const fingerprint = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
         if (this.fingerprints.get(target) !== fingerprint) { await verifyVoiceFile(target, file); this.fingerprints.set(target, fingerprint); }
       }
-    } catch { this.users--; this.progress = { state: 'error', error: '本地模型完整性校验失败，请重新安装。' }; throw Error(this.progress.error); }
+    } catch {
+      this.users--;
+      const failure = new NativeVoiceError('voiceNative.modelIntegrityFailed');
+      this.progress = { state: 'error', failure };
+      throw failure;
+    }
     let released = false;
     return { directory: this.directory, release: () => { if (!released) { released = true; this.users--; } } };
   }

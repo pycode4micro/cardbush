@@ -117,7 +117,8 @@ export const QuickContextRail = memo(function QuickContextRail({
     const ticks = ticksRef.current;
     if (!ticks) return;
     const wheel = (event: WheelEvent) => {
-      if (!event.cancelable || event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey ||
+      // Native scrolling can deliver non-cancelable events to this passive listener.
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey ||
         !Number.isFinite(event.deltaY) || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
       event.stopPropagation();
       browsingRef.current = true;

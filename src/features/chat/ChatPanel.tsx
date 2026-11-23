@@ -56,7 +56,6 @@ import {
   lastAssistantMessage,
   manualScrollDetachHoldMs,
   scrollBottomLockTolerance,
-  scrollBottomWheelFreezeMs,
   scrollBottomWheelLockTolerance,
   streamingAssistantMessage,
   type ScrollBottomMetrics,
@@ -68,7 +67,7 @@ import {
 } from '../chatMessages';
 import { QuickContextRail } from './QuickContextRail';
 import { createChatScrollMotion } from './chatScrollMotion';
-import { connectConversationWheelScrolling, scrollConversationByWheel } from './conversationWheelScrolling';
+import { scrollConversationByWheel } from './conversationWheelScrolling';
 import { observeConversationReflow } from './conversationReflow';
 import { reconcileResponseLayout, releaseResponseSpacer, responseFollowScrollTop, submittedUserReadingOffset, updateResponseSpacer } from './responseSpacer';
 import {
@@ -233,6 +232,7 @@ export function ChatPanel({
   draft,
   onDraftChange,
   headerActions,
+  headerActionsTarget,
   composerAccessory,
   welcomeWorkspaceControl,
   transcriptFooter,
@@ -351,6 +351,7 @@ export function ChatPanel({
   draft: string;
   onDraftChange: (value: string) => void;
   headerActions?: ReactNode;
+  headerActionsTarget?: HTMLElement | null;
   composerAccessory?: ReactNode;
   welcomeWorkspaceControl?: ReactNode;
   transcriptFooter?: ReactNode;
@@ -522,15 +523,9 @@ export function ChatPanel({
   const lastScrollTopRef = useRef(0);
   const lastWheelEventAtRef = useRef(0);
   const manualScrollDirectionRef = useRef(0);
-  const handledWheelEventsRef = useRef<WeakSet<globalThis.WheelEvent>>(new WeakSet());
   const scrollbarDragActiveRef = useRef(false);
   const scrollbarDragUntilRef = useRef(0);
   const scrollBottomWheelCleanupRef = useRef<(() => void) | null>(null);
-  const lastWheelLockRef = useRef<{
-    at: number;
-    source: string;
-    scrollTop: number;
-  } | null>(null);
   const scrollActivationRef = useRef<{
     scroller: HTMLElement;
     position: ConversationScrollPosition | undefined;
@@ -760,25 +755,6 @@ export function ChatPanel({
     [readBottomMetrics, shouldShowScrollBottomForMetrics],
   );
 
-  const nativeWheelEvent = useCallback(
-    (event: WheelEvent<HTMLElement> | globalThis.WheelEvent) =>
-      'nativeEvent' in event ? event.nativeEvent : event,
-    [],
-  );
-
-  const wheelAlreadyHandled = useCallback(
-    (event: WheelEvent<HTMLElement> | globalThis.WheelEvent) =>
-      handledWheelEventsRef.current.has(nativeWheelEvent(event)),
-    [nativeWheelEvent],
-  );
-
-  const markWheelHandled = useCallback(
-    (event: WheelEvent<HTMLElement> | globalThis.WheelEvent) => {
-      handledWheelEventsRef.current.add(nativeWheelEvent(event));
-    },
-    [nativeWheelEvent],
-  );
-
   const wheelTargetIsListSurface = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Node)) {
       return false;
@@ -907,161 +883,10 @@ export function ChatPanel({
     scrollMotion.cancel();
   }, [scrollMotion]);
 
-  const restoreWheelLockedScrollTop = useCallback(
-    (
-      scroller: HTMLElement,
-      lockedScrollTop: number,
-    ) => {
-      if (Math.abs(scroller.scrollTop - lockedScrollTop) >= 0.5) {
-        scroller.scrollTop = lockedScrollTop;
-      }
-    },
-    [],
-  );
-
-  const resolveWheelLockedScrollTop = useCallback(
-    (
-      source: string,
-      scroller: HTMLElement,
-      metrics: { visualNearBottom: boolean },
-    ) => {
-      const now = Date.now();
-      const previous = lastWheelLockRef.current;
-      const reusePrevious =
-        previous &&
-        now - previous.at < scrollBottomWheelFreezeMs &&
-        metrics.visualNearBottom &&
-        Math.abs(scroller.scrollTop - previous.scrollTop) <=
-          scrollBottomLockTolerance * 2;
-      const scrollTop = reusePrevious ? previous.scrollTop : scroller.scrollTop;
-      const anchor = {
-        at: now,
-        source,
-        scrollTop,
-      };
-      lastWheelLockRef.current = anchor;
-      return scrollTop;
-    },
-    [],
-  );
-
-  const lockWheelDownAtBottom = useCallback(
-    (source: 'list' | 'scroll-bottom-hotzone', event: WheelEvent<HTMLElement>) => {
-      const scroller = listScrollerRef.current;
-      if (!scroller || event.deltaY <= 0) {
-        return false;
-      }
-      const metrics = readBottomMetrics(scroller);
-      if (!metrics.visualAtBottom) {
-        return false;
-      }
-      if (metrics.absoluteAtBottom) {
-        return false;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      manualScrollDetachUntilRef.current = 0;
-      autoFollowStreamRef.current = true;
-      userDetachedFromBottomRef.current = false;
-      setScrollBottomVisible(false);
-      const lockedScrollTop = resolveWheelLockedScrollTop(source, scroller, metrics);
-      scrollDebug('wheel-bottom-lock', {
-        source,
-        scrollTop: Math.round(scroller.scrollTop),
-        lockedScrollTop: Math.round(lockedScrollTop),
-        visualBottomDistance: Math.round(metrics.visualBottomDistance),
-        absoluteBottomDistance: Math.round(metrics.absoluteBottomDistance),
-        visualAtBottom: metrics.visualAtBottom,
-      });
-      restoreWheelLockedScrollTop(scroller, lockedScrollTop);
-      return true;
-    },
-    [
-      readBottomMetrics,
-      resolveWheelLockedScrollTop,
-      restoreWheelLockedScrollTop,
-      setScrollBottomVisible,
-    ],
-  );
-
-  const lockNativeWheelDownAtBottom = useCallback(
-    (
-      source: 'native-chat-body' | 'native-list' | 'native-scroll-bottom-hotzone',
-      event: globalThis.WheelEvent,
-    ) => {
-      const scroller = listScrollerRef.current;
-      if (!scroller || event.deltaY <= 0) {
-        return false;
-      }
-      const metrics = readBottomMetrics(scroller);
-      if (!metrics.visualAtBottom) {
-        return false;
-      }
-      if (metrics.absoluteAtBottom) {
-        return false;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      manualScrollDetachUntilRef.current = 0;
-      autoFollowStreamRef.current = true;
-      userDetachedFromBottomRef.current = false;
-      setScrollBottomVisible(false);
-      const lockedScrollTop = resolveWheelLockedScrollTop(source, scroller, metrics);
-      scrollDebug('native-wheel-bottom-lock', {
-        source,
-        scrollTop: Math.round(scroller.scrollTop),
-        lockedScrollTop: Math.round(lockedScrollTop),
-        visualBottomDistance: Math.round(metrics.visualBottomDistance),
-        absoluteBottomDistance: Math.round(metrics.absoluteBottomDistance),
-        visualAtBottom: metrics.visualAtBottom,
-      });
-      restoreWheelLockedScrollTop(scroller, lockedScrollTop);
-      return true;
-    },
-    [
-      readBottomMetrics,
-      resolveWheelLockedScrollTop,
-      restoreWheelLockedScrollTop,
-      setScrollBottomVisible,
-    ],
-  );
-
-  const releaseWheelBottomFreeze = useCallback(
-    (
-      event: WheelEvent<HTMLElement> | globalThis.WheelEvent,
-    ) => {
-      if (event.deltaY >= 0) {
-        return false;
-      }
-      const previous = lastWheelLockRef.current;
-      if (!previous) {
-        return false;
-      }
-      lastWheelLockRef.current = null;
-      programmaticScrollUntilRef.current = 0;
-      manualScrollDetachUntilRef.current = Date.now() + manualScrollDetachHoldMs;
-      autoFollowStreamRef.current = false;
-      userDetachedFromBottomRef.current = true;
-      pendingSubmittedUserFocusRef.current = false;
-      releaseAssistantStageReservation();
-      cancelScheduledStreamFollow();
-      setScrollBottomVisible(shouldShowScrollBottomForScroller(listScrollerRef.current));
-      return true;
-    },
-    [
-      cancelScheduledStreamFollow,
-      releaseAssistantStageReservation,
-      setScrollBottomVisible,
-      shouldShowScrollBottomForScroller,
-    ],
-  );
-
   const markUserDetachedFromBottom = useCallback((reason = 'user-scroll') => {
     finishConversationScrollRestoration();
     const scroller = listScrollerRef.current;
     captureScrollGeometry('trace-detach', { reason });
-    lastWheelLockRef.current = null;
     programmaticScrollUntilRef.current = 0;
     manualScrollDetachUntilRef.current = Date.now() + manualScrollDetachHoldMs;
     cancelScheduledStreamFollow();
@@ -1100,7 +925,7 @@ export function ChatPanel({
 
   const handleListWheelCapture = useCallback(
     (event: WheelEvent<HTMLElement>) => {
-      if (event.defaultPrevented || wheelAlreadyHandled(event)) {
+      if (event.defaultPrevented) {
         return;
       }
       lastWheelEventAtRef.current = Date.now();
@@ -1115,31 +940,19 @@ export function ChatPanel({
         releaseAssistantStageReservation();
       }
       if (event.deltaY < 0) {
-        if (releaseWheelBottomFreeze(event)) {
-          markWheelHandled(event);
-        }
         markUserDetachedFromBottom('wheel-up');
-        markWheelHandled(event);
         return;
       }
       if (event.deltaY > 0 && scrollMotion.isActive()) {
         markUserDetachedFromBottom('wheel-down');
         manualScrollDirectionRef.current = 1;
       }
-      if (lockWheelDownAtBottom('list', event)) {
-        markWheelHandled(event);
-        return;
-      }
     },
     [
-      lockWheelDownAtBottom,
       captureScrollGeometry,
       markUserDetachedFromBottom,
-      markWheelHandled,
       releaseAssistantStageReservation,
-      releaseWheelBottomFreeze,
       scrollMotion,
-      wheelAlreadyHandled,
     ],
   );
 
@@ -1148,7 +961,6 @@ export function ChatPanel({
 
       if (
         event.defaultPrevented ||
-        wheelAlreadyHandled(event) ||
         wheelTargetIsListSurface(event.target) ||
         event.target instanceof Element && Boolean(event.target.closest('.quick-context-rail, .conversation-work-summary'))
       ) {
@@ -1160,68 +972,15 @@ export function ChatPanel({
         releaseAssistantStageReservation();
       }
       if (event.deltaY < 0) {
-        if (releaseWheelBottomFreeze(event)) {
-          markWheelHandled(event);
-        }
         markUserDetachedFromBottom('wheel-up-body');
-        markWheelHandled(event);
       }
     },
     [
       markUserDetachedFromBottom,
-      markWheelHandled,
       releaseAssistantStageReservation,
-      releaseWheelBottomFreeze,
-      wheelAlreadyHandled,
       wheelTargetIsListSurface,
     ],
   );
-
-  useEffect(() => {
-    const chatBody = chatBodyRef.current;
-    if (!chatBody) {
-      return undefined;
-    }
-    const handleNativeWheel = (event: globalThis.WheelEvent) => {
-
-      if (
-        event.defaultPrevented ||
-        wheelAlreadyHandled(event) ||
-        wheelTargetIsListSurface(event.target) ||
-        event.target instanceof Element && Boolean(event.target.closest('.quick-context-rail, .conversation-work-summary'))
-      ) {
-        return;
-      }
-      lastWheelEventAtRef.current = Date.now();
-      if (event.deltaY !== 0) {
-        releaseAssistantStageReservation();
-      }
-      if (releaseWheelBottomFreeze(event)) {
-        markWheelHandled(event);
-        return;
-      }
-      if (lockNativeWheelDownAtBottom('native-chat-body', event)) {
-        markWheelHandled(event);
-        return;
-      }
-    };
-    chatBody.addEventListener('wheel', handleNativeWheel, {
-      capture: true,
-      passive: false,
-    });
-    return () => {
-      chatBody.removeEventListener('wheel', handleNativeWheel, {
-        capture: true,
-      });
-    };
-  }, [
-    lockNativeWheelDownAtBottom,
-    markWheelHandled,
-    releaseAssistantStageReservation,
-    releaseWheelBottomFreeze,
-    wheelAlreadyHandled,
-    wheelTargetIsListSurface,
-  ]);
 
   const lockStreamFollow = useCallback(
     (_reason: string) => {
@@ -1373,7 +1132,6 @@ export function ChatPanel({
       const metrics = readBottomMetrics(scroller);
       scrollbarDragActiveRef.current = true;
       scrollbarDragUntilRef.current = Date.now() + 4000;
-      lastWheelLockRef.current = null;
       autoFollowStreamRef.current = false;
       userDetachedFromBottomRef.current = true;
       pendingSubmittedUserFocusRef.current = false;
@@ -1446,7 +1204,6 @@ export function ChatPanel({
       const metrics = readBottomMetrics(scroller);
       atBottomRef.current = metrics.visualAtBottom;
       const now = Date.now();
-      const recentLock = lastWheelLockRef.current;
       const recentWheel = now - lastWheelEventAtRef.current <= 250;
       const scrollbarDragging =
         scrollbarDragActiveRef.current || now < scrollbarDragUntilRef.current;
@@ -1469,7 +1226,6 @@ export function ChatPanel({
         now >= programmaticScrollUntilRef.current &&
         now - lastWheelEventAtRef.current > 120;
       if (scrollbarDragging) {
-        lastWheelLockRef.current = null;
         autoFollowStreamRef.current = false;
         userDetachedFromBottomRef.current = true;
         pendingSubmittedUserFocusRef.current = false;
@@ -1495,7 +1251,6 @@ export function ChatPanel({
         !scrollMotion.isActive() &&
         (recentWheel || now >= programmaticScrollUntilRef.current)
       ) {
-        lastWheelLockRef.current = null;
         programmaticScrollUntilRef.current = 0;
         manualScrollDetachUntilRef.current =
           Date.now() + manualScrollDetachHoldMs;
@@ -1506,30 +1261,6 @@ export function ChatPanel({
         cancelScheduledStreamFollow();
         manualScrollDirectionRef.current = -1;
         setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
-        return;
-      }
-      if (
-        recentLock &&
-        now - recentLock.at < scrollBottomWheelFreezeMs &&
-        scroller.scrollTop < recentLock.scrollTop - 0.5 &&
-        metrics.visualNearBottom
-      ) {
-        lastWheelLockRef.current = null;
-        autoFollowStreamRef.current = false;
-        userDetachedFromBottomRef.current = true;
-        pendingSubmittedUserFocusRef.current = false;
-        releaseAssistantStageReservation();
-        cancelScheduledStreamFollow();
-        setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
-        return;
-      }
-      if (
-        recentLock &&
-        now - recentLock.at < scrollBottomWheelFreezeMs &&
-        Math.abs(scroller.scrollTop - recentLock.scrollTop) >= 0.5 &&
-        metrics.visualNearBottom
-      ) {
-        scroller.scrollTop = recentLock.scrollTop;
         return;
       }
       if (!sending) {
@@ -1891,7 +1622,6 @@ export function ChatPanel({
       userDetachedFromBottomRef.current = false;
       pendingSubmittedUserFocusRef.current = false;
       atBottomRef.current = true;
-      lastWheelLockRef.current = null;
       setScrollBottomVisible(false);
 
       scrollMotion.move(scroller, () => absoluteBottomScrollTop(scroller), 'jump', () => {
@@ -1978,7 +1708,6 @@ export function ChatPanel({
       programmaticScrollUntilRef.current = 0;
       lastWheelEventAtRef.current = 0;
       manualScrollDirectionRef.current = 0;
-      lastWheelLockRef.current = null;
       scrollbarDragActiveRef.current = false;
       scrollbarDragUntilRef.current = 0;
       lastScrollTopRef.current = scroller.scrollTop;
@@ -2111,47 +1840,6 @@ export function ChatPanel({
     return () => { reflow.dispose(); conversationReflowRef.current = null; };
   }, [activeConversationId, scrollMountRevision, loading, showWelcome]);
 
-  useEffect(() => {
-    const scroller = listScrollerRef.current;
-    if (!scroller) return undefined;
-    const handleNativeWheel = (event: globalThis.WheelEvent) => {
-      if (event.defaultPrevented || wheelAlreadyHandled(event)) {
-        return;
-      }
-      lastWheelEventAtRef.current = Date.now();
-      if (event.deltaY !== 0) {
-        releaseAssistantStageReservation();
-      }
-      if (releaseWheelBottomFreeze(event)) {
-        markWheelHandled(event);
-        return;
-      }
-      if (lockNativeWheelDownAtBottom('native-list', event)) {
-        markWheelHandled(event);
-      }
-    };
-    scroller.addEventListener('wheel', handleNativeWheel, {
-      capture: true,
-      passive: false,
-    });
-    const disconnectWheel = connectConversationWheelScrolling(scroller);
-    return () => {
-      disconnectWheel();
-      scroller.removeEventListener('wheel', handleNativeWheel, {
-        capture: true,
-      });
-    };
-  }, [
-    activeConversationId,
-    loading,
-    showWelcome,
-    lockNativeWheelDownAtBottom,
-    markWheelHandled,
-    releaseAssistantStageReservation,
-    releaseWheelBottomFreeze,
-    wheelAlreadyHandled,
-  ]);
-
   const setScrollBottomRef = useCallback(
     (ref: HTMLButtonElement | null) => {
       scrollBottomWheelCleanupRef.current?.();
@@ -2161,13 +1849,12 @@ export function ChatPanel({
         return;
       }
       const handleNativeWheel = (event: globalThis.WheelEvent) => {
-        if (event.ctrlKey || event.deltaY === 0 || event.defaultPrevented || wheelAlreadyHandled(event)) return;
+        if (event.ctrlKey || event.deltaY === 0 || event.defaultPrevented) return;
         const scroller = listScrollerRef.current;
         if (!scroller) return;
         // The floating button is outside the scroller. Route its wheel input
         // explicitly so it cannot become a dead spot above the composer.
         event.preventDefault();
-        markWheelHandled(event);
         lastWheelEventAtRef.current = Date.now();
         markUserDetachedFromBottom(event.deltaY < 0 ? 'wheel-up-hotzone' : 'wheel-down-hotzone');
         manualScrollDirectionRef.current = Math.sign(event.deltaY);
@@ -2186,8 +1873,6 @@ export function ChatPanel({
     },
     [
       markUserDetachedFromBottom,
-      markWheelHandled,
-      wheelAlreadyHandled,
     ],
   );
 
@@ -2409,6 +2094,8 @@ export function ChatPanel({
         workSummaryHoverProps={workSummaryHoverProps}
         inspectorOpen={inspectorOpen}
         workspaceControl={headerActions}
+        actionsTarget={headerActionsTarget}
+        showActionTooltips={Boolean(headerActionsTarget)}
         onToggleWorkSummary={workSummaryAvailable && renderMessages.length > 0
           ? toggleWorkSummary
           : undefined}

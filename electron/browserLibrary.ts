@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { BrowserUiError } from './browserUiError';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { browserWebUrl } from './browserImport';
@@ -17,7 +18,7 @@ export class BrowserLibrary {
   private load() {
     return this.loaded ??= readFile(this.file, 'utf8').then(text => {
       const data = JSON.parse(text);
-      if (!Array.isArray(data.history) || !Array.isArray(data.downloads)) throw Error('浏览器记录文件损坏。Browser library is unreadable.');
+      if (!Array.isArray(data.history) || !Array.isArray(data.downloads)) throw new BrowserUiError('browserNative.libraryUnreadable');
       return { history: data.history.filter((item: BrowserVisit) => browserWebUrl(item.url)).slice(0, 5000),
         downloads: data.downloads.slice(0, 1000).map((item: BrowserDownload) => ({ ...item, state: item.state === 'progressing' ? 'interrupted' : item.state, paused: false })) } as Library;
     }, error => { if (error.code !== 'ENOENT') throw error; return { history: [], downloads: [] }; });

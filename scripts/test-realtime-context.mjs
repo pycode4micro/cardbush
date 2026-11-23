@@ -90,7 +90,7 @@ test('stale, malformed and timed-out summaries retain originals and do not repea
     f.memory.tick();t.mock.timers.tick(1000);assert.equal(f.jobs.length,1);assert.equal(f.sent.length,0);
     f.history.append('later question','later answer');t.mock.timers.tick(31000);f.memory.tick();assert.equal(f.jobs.length,2);
     t.mock.timers.tick(65001);assert.equal(f.history.summary,'');assert.equal(f.history.pairs.length,6);
-    assert.ok(f.status.at(-1).includes('原始记录已保留'));
+    assert.equal(f.status.at(-1), 'voiceNative.compactingHistoryRetry');
   } finally {f.memory.close();}
 });
 test('no delete is sent on lost summary ACK, mismatched ACK, active playback, or after hangup',async t=>{
@@ -195,7 +195,7 @@ test('the compatible bridge still requires client-assigned item identities',asyn
 
 test('connection deadlines identify transport, session creation and history acknowledgement separately',async t=>{
   t.mock.timers.enable({apis:['setTimeout','Date']});
-  for(const [stage,pattern] of [['connecting',/网络连接超时/],['creating_session',/确认会话/],['restoring_history',/确认历史恢复/]]){
+  for(const [stage,pattern] of [['connecting',/connection timed out/],['creating_session',/confirm the session/],['restoring_history',/confirm history restoration/]]){
     const socket=new Socket(),diagnostics=[],service=new RealtimeVoiceService(path.join(root(),'settings.json'),{
       ...crypto,diagnostic:entry=>diagnostics.push(entry),connect:async()=>({socket,dispose(){}}),
     });
@@ -321,7 +321,7 @@ test('retry budget is bounded, mute survives reconnection and invalid context AC
     socket.close();t.mock.timers.tick(1);await pause();f.sockets.at(-1).fire('error');t.mock.timers.tick(1001);await pause();
     f.sockets.at(-1).fire('error');t.mock.timers.tick(3001);await pause();f.sockets.at(-1).fire('error');
     const count=f.sockets.length;t.mock.timers.tick(100000);await pause();assert.equal(f.sockets.length,count);
-    assert.equal(f.events.filter(e=>e.type==='error').length,1);assert.match(f.events.find(e=>e.type==='error').message,/原来的上下文/);
+    assert.equal(f.events.filter(e=>e.type==='error').length,1);assert.match(f.events.find(e=>e.type==='error').message,/previous context/);
   }finally{f.dispose();}
 });
 

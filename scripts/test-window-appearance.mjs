@@ -80,4 +80,14 @@ test('native captions follow themes and palette edits without recreating the bac
   controller.apply(resolveWindowAppearance({ ...input, theme: 'bright' }), '#f5f3ef');
   assert.equal(captions.at(-1).symbolColor, '#1e1c1a');
   assert.ok(captions.every(caption => caption.color === '#00000000'), 'native captions retain the themed backdrop');
+  assert.ok(captions.every(caption => caption.height === mainWindowFrameOptions('win32').titleBarOverlay.height));
+});
+
+test('Reapplying appearance preserves the main window caption and backdrop', () => {
+  const { controller, calls, captions } = fixture();
+  const appearance = resolveWindowAppearance(input);
+  const initial = controller.apply(appearance, '#181818');
+  assert.equal(controller.apply(appearance, '#181818'), initial);
+  assert.deepEqual(captions.map(caption => caption.height), [44]);
+  assert.equal(calls.length, 3);
 });

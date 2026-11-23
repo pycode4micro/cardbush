@@ -4,19 +4,29 @@ type WheelMotion = {
   start: number; target: number; started: number; direction: number; lastTop: number;
   frame: number;
 };
-const motions = new WeakMap<HTMLElement, WheelMotion>();
+const motions = new Map<HTMLElement, WheelMotion>();
 const owners = new Map<HTMLElement, number>();
-const handled = new WeakSet<WheelEvent>();
-export const conversationWheelWasHandled = (event: WheelEvent) => handled.has(event);
+const routed = new WeakSet<WheelEvent>();
+export const conversationWheelWasRouted = (event: WheelEvent) => routed.has(event);
+
+function cancelInput() {
+  for (const scroller of motions.keys()) cancelConversationWheel(scroller);
+}
 
 export function cancelConversationWheel(scroller: HTMLElement) {
   const motion = motions.get(scroller);
   if (!motion) return;
   cancelAnimationFrame(motion.frame);
   motions.delete(scroller);
+  if (!motions.size) {
+    window.removeEventListener('pointerdown', cancelInput, true);
+    window.removeEventListener('keydown', cancelInput, true);
+    window.removeEventListener('touchstart', cancelInput, true);
+    document.removeEventListener('visibilitychange', cancelInput);
+  }
 }
 
-/** Both native conversation input and sandboxed HTML use this one motion. */
+/** Share one motion across HTML preview handoffs and explicit wheel routing. */
 export function scrollConversationByWheel(scroller: HTMLElement, delta: number) {
   if (!Number.isFinite(delta) || !delta) return;
   const clamp = (value: number) => Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, value));
@@ -45,6 +55,12 @@ export function scrollConversationByWheel(scroller: HTMLElement, delta: number) 
   // container's style can invalidate a native guest's painted surface. External
   // layout/anchor corrections are handled by the position guard below instead.
   const motion: WheelMotion = { start: scroller.scrollTop, lastTop: scroller.scrollTop, target, direction, started: performance.now(), frame: 0 };
+  if (!motions.size) {
+    window.addEventListener('pointerdown', cancelInput, true);
+    window.addEventListener('keydown', cancelInput, true);
+    window.addEventListener('touchstart', cancelInput, { capture: true, passive: true });
+    document.addEventListener('visibilitychange', cancelInput);
+  }
   motions.set(scroller, motion);
   const tick = (now: number) => {
     if (!scroller.isConnected || document.hidden) { cancelConversationWheel(scroller); return; }
@@ -61,53 +77,44 @@ export function scrollConversationByWheel(scroller: HTMLElement, delta: number) 
 }
 
 function handleWheel(event: WheelEvent) {
-  if (event.defaultPrevented || !event.cancelable || event.ctrlKey || event.metaKey || event.shiftKey ||
+  if (!event.isTrusted || event.defaultPrevented || !event.cancelable || event.ctrlKey || event.metaKey || event.shiftKey ||
     !Number.isFinite(event.deltaY) || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
   const path = event.composedPath();
   const scroller = path.find((node): node is HTMLElement => node instanceof HTMLElement && owners.has(node));
-  if (!scroller) return;
+  if (!scroller || scroller !== event.currentTarget) return;
   for (const node of path) {
     if (node === scroller) break;
     if (!(node instanceof Element)) continue;
     if (node.matches('input[type="number"],select')) return;
-    const style = getComputedStyle(node), remaining = node.scrollHeight - node.clientHeight;
-    if (!/(auto|scroll|overlay)/.test(style.overflowY) || remaining <= 1) continue;
+    const style = getComputedStyle(node);
+    if (!/(auto|scroll|overlay)/.test(style.overflowY)) continue;
+    const remaining = node.scrollHeight - node.clientHeight;
+    if (remaining <= 1) continue;
     if ((event.deltaY < 0 ? node.scrollTop > 0 : node.scrollTop < remaining - 1) ||
       /^(contain|none)$/.test(style.overscrollBehaviorY)) return;
   }
   const unit = event.deltaMode === 1 ? parseFloat(getComputedStyle(scroller).lineHeight) || 16
     : event.deltaMode === 2 ? scroller.clientHeight : 1;
   event.preventDefault();
-  handled.add(event);
+  routed.add(event);
   scrollConversationByWheel(scroller, event.deltaY * unit);
 }
 
-function cancelInput() { for (const scroller of owners.keys()) cancelConversationWheel(scroller); }
-
-/** Reference counted: many embeds and the conversation share one listener. */
-export function connectConversationWheelScrolling(scroller: HTMLElement) {
-  if (!owners.size) {
-    // Run after the conversation's follow, bottom-lock and authored handlers.
-    window.addEventListener('wheel', handleWheel, { passive: false });
-    window.addEventListener('pointerdown', cancelInput, true);
-    window.addEventListener('keydown', cancelInput, true);
-    window.addEventListener('touchstart', cancelInput, { capture: true, passive: true });
-    document.addEventListener('visibilitychange', cancelInput);
-  }
-  owners.set(scroller, (owners.get(scroller) ?? 0) + 1);
+/** Only viewports containing a native guest need to combine browser and guest deltas. */
+export function connectEmbeddedConversationWheelScrolling(scroller: HTMLElement) {
+  const count = owners.get(scroller) ?? 0;
+  if (!count) scroller.addEventListener('wheel', handleWheel, { passive: false });
+  owners.set(scroller, count + 1);
   let disposed = false;
   return () => {
     if (disposed) return;
     disposed = true;
     const count = (owners.get(scroller) ?? 1) - 1;
     if (count) owners.set(scroller, count);
-    else { owners.delete(scroller); cancelConversationWheel(scroller); }
-    if (!owners.size) {
-      window.removeEventListener('wheel', handleWheel);
-      window.removeEventListener('pointerdown', cancelInput, true);
-      window.removeEventListener('keydown', cancelInput, true);
-      window.removeEventListener('touchstart', cancelInput, true);
-      document.removeEventListener('visibilitychange', cancelInput);
+    else {
+      owners.delete(scroller);
+      scroller.removeEventListener('wheel', handleWheel);
+      cancelConversationWheel(scroller);
     }
   };
 }

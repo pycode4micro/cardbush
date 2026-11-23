@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
 import { z } from 'zod';
 import { AgentService } from './agentService.mjs';
-import { AgentBusyError } from './agentErrors.mjs';
+import { AgentBusyError, AgentWebFileUnavailableError } from './agentErrors.mjs';
 import { agentApiPath, agentOperations, type AgentEventFrame } from './agentTypes.js';
 
 class HttpError extends Error {
@@ -103,9 +103,10 @@ export async function serveAgentHttp(service: AgentService, options: { host?: st
       } finally { clearInterval(heartbeat); abort.abort(); }
     })().catch(error => {
       if (!response.headersSent && !response.destroyed) {
-        const status = error instanceof HttpError ? error.status : error instanceof z.ZodError ? 400 : 409;
+        const fileUnavailable = error instanceof AgentWebFileUnavailableError;
+        const status = error instanceof HttpError ? error.status : fileUnavailable ? 404 : error instanceof z.ZodError ? 400 : 409;
         const code = (error as { code?: string })?.code;
-        json(response, status, { error: { code: error instanceof HttpError || error instanceof AgentBusyError ? error.code
+        json(response, status, { error: { code: error instanceof HttpError || error instanceof AgentBusyError || fileUnavailable ? error.code
           : code === 'permission_not_pending' || code === 'solution_not_pending' || code === 'invalid_model_configuration' ? code
           : status === 400 ? 'invalid_request' : 'operation_failed', message: error instanceof Error ? error.message : 'Agent request failed.' } });
       } else if (!response.writableEnded) response.destroy();

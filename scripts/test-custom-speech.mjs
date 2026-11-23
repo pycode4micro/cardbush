@@ -35,22 +35,22 @@ test('Qwen metadata reads presets without executing model code or loading weight
   const json = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'))); json.tts_model_size = '0b6'; put(dir, 'config.json', json);
   assert.equal(inspectCustomSpeechModel(dir).supportsInstructions, false);
   json.tts_model_type = 'base'; put(dir, 'config.json', json);
-  assert.throws(() => inspectCustomSpeechModel(dir), /CustomVoice/);
+  assert.throws(() => inspectCustomSpeechModel(dir), {key: 'voiceNative.qwenArchitectureUnsupported'});
 });
 test('incomplete weights, code-loading metadata and escaping shard paths are rejected', () => {
   const dir = qwen('invalid');
   put(dir, 'tokenizer_config.json', { auto_map: { AutoTokenizer: 'custom.Tokenizer' } });
-  assert.throws(() => inspectCustomSpeechModel(dir), /Python/);
+  assert.throws(() => inspectCustomSpeechModel(dir), {key: 'voiceNative.customModelCodeUnsupported'});
   put(dir, 'tokenizer_config.json', {}); fs.unlinkSync(path.join(dir, 'model.safetensors'));
   put(dir, 'model.safetensors.index.json', { weight_map: { x: '../outside.safetensors' } });
-  assert.throws(() => inspectCustomSpeechModel(dir), /路径/);
+  assert.throws(() => inspectCustomSpeechModel(dir), {key: 'voiceNative.customModelIndexPathInvalid'});
   put(dir, 'model.safetensors.index.json', { weight_map: { x: 'part.safetensors' } });
-  assert.throws(() => inspectCustomSpeechModel(dir), /part.safetensors/);
+  assert.throws(() => inspectCustomSpeechModel(dir), error => error.key === 'voiceNative.customModelFileMissing' && error.variables.name === 'part.safetensors');
   put(dir, 'part.safetensors'); assert.equal(inspectCustomSpeechModel(dir).kind, 'qwen3-customvoice');
   fs.unlinkSync(path.join(dir, 'speech_tokenizer/model.safetensors'));
-  assert.throws(() => inspectCustomSpeechModel(dir), /模型目录/);
-  assert.throws(() => validateCustomSpeech({ ...defaultCustomSpeechSettings, directory: 'relative' }), /完整/);
-  assert.throws(() => validateCustomSpeech({ ...defaultCustomSpeechSettings, device: 'unknown' }), /设备/);
+  assert.throws(() => inspectCustomSpeechModel(dir), {key: 'voiceNative.customModelFileMissing'});
+  assert.throws(() => validateCustomSpeech({ ...defaultCustomSpeechSettings, directory: 'relative' }), {key: 'voiceNative.customPathAbsolute'});
+  assert.throws(() => validateCustomSpeech({ ...defaultCustomSpeechSettings, device: 'unknown' }), {key: 'voiceNative.customDeviceInvalid'});
 });
 test('custom Kokoro routes imported data and gender to the existing verified runtime', async () => {
   const dir = kokoro(), calls = [];
@@ -59,8 +59,8 @@ test('custom Kokoro routes imported data and gender to the existing verified run
   const chunks = []; await backend.speak({ id: 'male', text: '你好', voice: 'male' }, config(dir), new AbortController().signal, v => chunks.push(v));
   assert.deepEqual(calls[0][4], { directory: dir, sid: 58 }); assert.equal(chunks[0].id, 'male');
   assert.equal(fs.existsSync(path.join(dir, 'model.int8.onnx')), true, 'imported files stay in place');
-  const missing = new CustomSpeech({}, () => false, 'unused'); assert.throws(() => missing.validate(config(dir)), /可选组件/);
-  assert.throws(() => backend.validate({ ...config(dir), customSpeech: { ...config(dir).customSpeech, maleVoice: '999' } }), /音色/);
+  const missing = new CustomSpeech({}, () => false, 'unused'); assert.throws(() => missing.validate(config(dir)), {key: 'voiceNative.customKokoroRequired'});
+  assert.throws(() => backend.validate({ ...config(dir), customSpeech: { ...config(dir).customSpeech, maleVoice: '999' } }), {key: 'voiceNative.customVoiceMissing'});
   const abort = new AbortController(); abort.abort(); await assert.rejects(backend.speak({ id: 'cancel', text: '取消' }, config(dir), abort.signal, noNetwork));
   assert.equal(calls.length, 1);
 });
@@ -81,7 +81,7 @@ test('custom settings persist, stay separate from ASR, and never fall through to
   reopened.save({ ...reopened.settings(), engine: 'system' });
   assert.equal(reopened.settings().engine, 'system');
   const missing = new VoiceService(file, { fetch: noNetwork, encrypt: noNetwork, decrypt: noNetwork });
-  assert.throws(() => missing.save(config(dir)), /自定义本地/); assert.equal(missing.settings().engine, 'system');
+  assert.throws(() => missing.save(config(dir)), {key: 'voiceNative.customUnavailable'}); assert.equal(missing.settings().engine, 'system');
 });
 test('custom synthesis cancellation is owner bound and keeps the service reusable', async () => {
   let started;
@@ -110,10 +110,10 @@ test('primary Qwen persists at natural speed, keeps ASR and credentials, and rou
   for (const voice of ['female', 'male']) await service.speak(1, { id: voice, text: '你好', voice }, () => {});
   assert.deepEqual(calls, [['female', 'qwen', 1], ['male', 'qwen', 1]]);
   assert.equal(validateVoiceSettings({ ...service.settings(), recognitionEngine: undefined }).recognitionEngine, 'system');
-  assert.throws(() => service.save({ ...service.settings(), customSpeech: { ...service.settings().customSpeech, directory: kokoro('wrong-qwen-format') } }), /Qwen/);
+  assert.throws(() => service.save({ ...service.settings(), customSpeech: { ...service.settings().customSpeech, directory: kokoro('wrong-qwen-format') } }), {key: 'voiceNative.qwenCustomVoiceRequired'});
   assert.equal(service.settings().customSpeech.directory, dir, 'invalid replacement cannot overwrite working settings');
   fs.renameSync(dir, dir + '-moved'); assert.equal(service.settings().engine, 'qwen');
-  assert.throws(() => service.save(service.settings()), /模型目录/);
+  assert.throws(() => service.save(service.settings()), {key: 'voiceNative.customModelDirectoryUnavailable'});
   service.save({ ...service.settings(), engine: 'system' }); assert.equal(service.settings().engine, 'system');
 });
 

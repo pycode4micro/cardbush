@@ -5,7 +5,11 @@ import { once } from 'node:events';
 import { randomBytes, randomUUID, scryptSync } from 'node:crypto';
 import { mkdir, mkdtemp, rm, readFile, writeFile, symlink } from 'node:fs/promises';
 import { resolve, join, sep } from 'node:path';
+import { conversationTitleLimit } from '@cardbush/bush-protocol';
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { AgentService } from '../dist-electron/agentService.mjs';
+import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
+import { AgentHttpClient } from '../dist-electron/agentHttpClient.mjs';
 import { serveWeb } from '../dist-electron/webServer.mjs';
 import { hashWebPassword, verifyWebPassword } from '../dist-electron/webStore.mjs';
 import { WebError, modelToken, tenantKey } from '../dist-electron/webCommon.mjs';
@@ -14,6 +18,7 @@ import { AgentWebFiles } from '../dist-electron/agentWebFiles.mjs';
 import { DockerTenantBroker } from '../dist-electron/webTenantBroker.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const titleInstructions = renderPromptTemplate('conversation-title', { limit: conversationTitleLimit });
 async function until(read, test, timeout = 20000) {
   const start = Date.now(); let value;
   while (Date.now() - start < timeout) { value = await read(); if (test(value)) return value; await pause(40); }
@@ -41,23 +46,31 @@ class MemoryStore {
   async remove(userId, id) { await this.conversation(userId, id); this.rows.delete(id); }
   async touch(userId, id, text) { const row = await this.conversation(userId, id); if (row.title === '新对话') row.title = text.slice(0, 40); }
 }
-async function fixture(t, malicious = false, modelOutput) {
+async function fixture(t, malicious = false, modelOutput, { agentHttp = false } = {}) {
   const base = resolve('tmp/web-tests'); await mkdir(base, { recursive: true }); const root = await mkdtemp(join(base, 'run-'));
   const calls = []; let web; const services = new Map();
+  const listeners = new Map();
   const marker = join(root, 'must-never-exist.txt');
   const model = createServer(async (request, response) => {
     let raw = ''; for await (const chunk of request) raw += chunk; const body = JSON.parse(raw);
-    if (request.url.endsWith('/input_tokens')) { response.end(JSON.stringify({ input_tokens: 100 })); return; }
-    calls.push(body); const n = calls.length;
-    const item = modelOutput ? modelOutput({ body, n, root }) : malicious && n === 1 ? { id: 'bad-call', call_id: 'bad-call', type: 'function_call', name: malicious === 'solution' ? 'request_user_input_async' : malicious === 'read' ? 'read_file' : 'terminal_exec',
+    if (new URL(request.url, 'http://fixture.local').pathname.endsWith('/input_tokens')) {
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ input_tokens: 100 }));
+      return;
+    }
+    // Auxiliary title generation is a separate model call from the user turn.
+    const title = Array.isArray(body.input) && body.input.some(message => message.role === 'system' && message.content === titleInstructions);
+    if (!title) calls.push(body);
+    const n = calls.length;
+    const item = title ? { id: 'title', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Fixture title', annotations: [] }] }
+      : modelOutput ? modelOutput({ body, n, root }) : malicious && n === 1 ? { id: 'bad-call', call_id: 'bad-call', type: 'function_call', name: malicious === 'solution' ? 'request_user_input_async' : malicious === 'read' ? 'read_file' : 'terminal_exec',
       arguments: JSON.stringify(malicious === 'solution' ? {questions:[{id:'solution',prompt:'选择方案', options:['方案甲','方案乙']}]} : malicious === 'read' ? {path:join(root,'usr_alice','workspaces','uploads','native.txt')} : { command: `echo forbidden > "${marker}"`, cwd: root, shell: process.platform === 'win32' ? 'cmd' : 'posix' }), status: 'completed' }
       : { id: `msg-${n}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: `reply-${n}`, annotations: [] }] };
     response.writeHead(200, { 'Content-Type': 'text/event-stream' }); const emit = value => response.write(`data: ${JSON.stringify(value)}\n\n`);
-    const output = { id: `resp-${n}`, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
+    const output = { id: title ? 'resp-title' : `resp-${n}`, object: 'response', model: body.model, status: 'in_progress', store: false, output: [] };
     emit({ type: 'response.created', response: output }); emit({ type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } });
     await pause(120);
     if (response.destroyed) return;
-    emit(item.type === 'function_call' ? { type: 'response.function_call_arguments.delta', output_index: 0, delta: item.arguments } : { type: 'response.output_text.delta', item_id: item.id, output_index: 0, content_index: 0, delta: `reply-${n}` });
+    emit(item.type === 'function_call' ? { type: 'response.function_call_arguments.delta', output_index: 0, delta: item.arguments } : { type: 'response.output_text.delta', item_id: item.id, output_index: 0, content_index: 0, delta: item.content[0].text });
     emit({ type: 'response.output_item.done', output_index: 0, item });
     emit({ type: 'response.completed', response: { ...output, status: 'completed', output: [item], usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105 } } }); response.end();
   });
@@ -72,6 +85,16 @@ async function fixture(t, malicious = false, modelOutput) {
         await service.call('web.configure', { imageEnabled:false, gateway:'http://private.test/images', credential:'g'.repeat(64) });
         services.set(userId, service);
       }
+      if (agentHttp) {
+        if (!listeners.has(userId)) {
+          const token = randomBytes(32).toString('hex');
+          const server = await serveAgentHttp(service, { port: 0, token });
+          const client = new AgentHttpClient(`http://127.0.0.1:${server.port}`, token);
+          listeners.set(userId, { server, client });
+          await client.info();
+        }
+        return listeners.get(userId).client;
+      }
       return { call: (...args) => service.call(...args), async *events(input, signal) { yield { type: 'ready' }; for await (const event of service.eventStream(input, signal)) yield { type: 'event', event }; yield { type: 'end' }; } };
     }, close() {},
   };
@@ -79,7 +102,9 @@ async function fixture(t, malicious = false, modelOutput) {
   web = await serveWeb({ origin, host: '127.0.0.1', port: 0, staticRoot: resolve('dist-web'), modelSecret: 'm'.repeat(64), defaultModelId: 'fixture', models: [{ id: 'fixture', name: 'Fixture', model: 'fixture', apiKey: 'fixture-key', baseURL: modelURL }] }, store, pool);
   const baseURL = `http://127.0.0.1:${web.port}`;
   t.after(async () => {
-    await web.close(); for (const service of services.values()) await service.close();
+    await web.close();
+    for (const { server, client } of listeners.values()) { client.close(); await server.close(); }
+    for (const service of services.values()) await service.close();
     model.closeAllConnections(); await new Promise(resolve => model.close(resolve));
     assert.ok(resolve(root).startsWith(base + sep)); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
   });
@@ -219,7 +244,7 @@ test('restricted tool ceiling survives a malicious model and all_free input', as
   const outsideFile = join(f.root, 'not-a-personal-upload.txt');
   await writeFile(outsideFile, 'private host data');
   await assert.rejects(service.call('chat.send', { requestId: 'metadata-attachment', sessionId: 'text-only', text: 'Read attachment', modelId: 'fixture',
-    userMessageMetadata: { attachments: [{ id: 'hidden-file', name: 'host.txt', path: outsideFile, type: 'document' }] } }), /outside personal files/);
+    userMessageMetadata: { attachments: [{ id: 'hidden-file', name: 'host.txt', path: outsideFile, type: 'document' }] } }), { code: 'web_file_unavailable' });
   await assert.rejects(service.call('chat.send', { requestId: 'goal', sessionId: 'text-only', text: 'goal', modelId: 'fixture', goalObjective: 'goal' }), /unavailable/);
   await service.call('chat.send', { requestId: 'host-policy', sessionId: 'text-only', text: 'Write a file using terminal.', modelId: 'fixture', permissionMode: 'all_free' });
   const jobs = await until(() => service.call('chat.jobs', {}), jobs => jobs.every(job => !['running', 'queued'].includes(job.status)));
@@ -288,11 +313,11 @@ test('personal file reads reject traversal, secrets, symlinks and unexpected too
   assert.ok(await webToolDenial(request,'terminal_exec',{}));
   assert.ok(await webToolDenial(request,'inject_image_input',{url:'http://internal/config'}));
   assert.ok(await webToolDenial(request,'read_file',{path:mine,environment:'remote'}));
-  await assert.rejects(agent.call('web.files',{action:'read',path:secret}),/denied/);
+  await assert.rejects(agent.call('web.files',{action:'read',path:secret}),{code:'web_file_unavailable'});
 });
 
-test('uploads are resumable, validated and private; videos and forged attachments are rejected', async t=>{
-  const f=await fixture(t),a=await f.login('alice'),b=await f.login('bob'); const uploadId=randomUUID();
+test('uploads are resumable and private, support video, and reject disguised media and foreign attachments', async t=>{
+  const f=await fixture(t, false, undefined, { agentHttp: true }),a=await f.login('alice'),b=await f.login('bob'); const uploadId=randomUUID();
   const data={uploadId,name:'notes.txt',offset:0,size:12,content:Buffer.from('hello ').toString('base64'),done:false};
   assert.equal((await a.request('/files','POST',data)).status,200);
   assert.equal((await a.request('/files','POST',data)).status,200);
@@ -305,13 +330,28 @@ test('uploads are resumable, validated and private; videos and forged attachment
   const ownJobs=await(await a.request(`/sessions/${ownSession.id}/jobs`)).json();
   assert.equal(ownJobs.find(job=>job.id===attachmentJob.id).attachments[0].path,path);
   assert.equal(await (await a.request('/files/view?path='+encodeURIComponent(path))).text(),'hello world!');
-  assert.equal((await b.request('/files/view?path='+encodeURIComponent(path))).status,404);
-  for(const name of ['video.mp4','video.png','video.txt']) {
-    const bytes=Buffer.from('0000ftypmp42VIDEO');
-    assert.equal((await a.request('/files','POST',{uploadId:randomUUID(),name,offset:0,size:bytes.length,content:bytes.toString('base64'),done:true})).status,400,name);
-  }
+  const view = '/files/view?path=' + encodeURIComponent(path);
+  const foreign = await b.request(view);
+  const missing = await a.request('/files/view?path=' + encodeURIComponent(path + '.missing'));
+  assert.equal(foreign.status, 404);
+  assert.equal(missing.status, 404);
+  const unavailable = await foreign.json();
+  assert.equal(unavailable.code, 'web_file_unavailable');
+  assert.deepEqual(await missing.json(), unavailable);
+  assert.equal((await b.request(view, 'HEAD')).status, 404);
+  const bytes=Buffer.from('0000ftypmp42VIDEO');
+  const upload = name => a.request('/files','POST',{uploadId:randomUUID(),name,offset:0,size:bytes.length,content:bytes.toString('base64'),done:true});
+  const video = await upload('video.mp4');
+  assert.equal(video.status, 200);
+  assert.equal((await video.json()).attachment.mime, 'video/mp4');
+  for(const name of ['video.png','video.txt']) assert.equal((await upload(name)).status,400,name);
   const session=await(await b.request('/sessions','POST',{requestId:randomUUID()})).json();
-  assert.equal((await b.request(`/sessions/${session.id}/messages`,'POST',{requestId:randomUUID(),text:'steal',modelId:'fixture',attachments:[uploadId]})).status,503);
+  const forged = await b.request(`/sessions/${session.id}/messages`,'POST',{requestId:randomUUID(),text:'steal',modelId:'fixture',attachments:[uploadId]});
+  assert.equal(forged.status, 404);
+  assert.deepEqual(await forged.json(), unavailable);
+  assert.deepEqual(await f.services.get('usr_bob').call('chat.jobs', {}), []);
+  (await f.pool.get('usr_bob')).close();
+  assert.equal((await b.request(view)).status, 503, 'transport failure remains a service error');
 });
 
 test('only admins install plugins and grants are checked again after revocation',async t=>{

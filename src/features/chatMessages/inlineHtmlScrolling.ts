@@ -1,4 +1,4 @@
-import { connectConversationWheelScrolling, conversationWheelWasHandled, scrollConversationByWheel } from '../chat/conversationWheelScrolling';
+import { connectEmbeddedConversationWheelScrolling, scrollConversationByWheel } from '../chat/conversationWheelScrolling';
 
 type PreviewGuest = HTMLElement & { executeJavaScript(code: string): Promise<unknown> };
 type WheelDelta = { pixels: number; lines: number; pages: number; events: number };
@@ -70,7 +70,7 @@ export function connectInlineHtmlScrolling(
     for (let node = host.parentElement; node; node = node.parentElement) {
       if (/(auto|scroll|overlay)/.test(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight + 1) return node;
     }
-    return document.scrollingElement as HTMLElement | null;
+    return null;
   };
   let disposed = false, lastLog = 0;
   let scrollContainer: HTMLElement | null = null;
@@ -80,9 +80,9 @@ export function connectInlineHtmlScrolling(
     if (next !== scrollContainer) {
       disconnectWheel?.();
       scrollContainer = next;
-      disconnectWheel = next ? connectConversationWheelScrolling(next) : undefined;
+      disconnectWheel = next ? connectEmbeddedConversationWheelScrolling(next) : undefined;
     }
-    return next;
+    return next ?? (document.scrollingElement as HTMLElement | null);
   };
   connectScroller();
   const disposeGuest = () => {
@@ -109,16 +109,17 @@ export function connectInlineHtmlScrolling(
         const dy = Math.max(-target.clientHeight * 3, Math.min(target.clientHeight * 3, distance));
         if (!dy) continue;
         // Notify the existing conversation follow/reading-position handlers.
-        // Synthetic wheel events have no default scroll; apply it only when
-        // those handlers have not already consumed or cancelled the gesture.
+        // Synthetic wheel events have no default scroll. Apply the handoff
+        // after the viewport's handlers have had a chance to cancel it.
         const event = new WheelEvent('wheel', { deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true });
         const before = target.scrollTop;
-        if (guest.dispatchEvent(event)) scrollConversationByWheel(target, dy);
+        const cancelled = !guest.dispatchEvent(event);
+        if (!cancelled) scrollConversationByWheel(target, dy);
         const now = performance.now();
         if (now - lastLog >= 250) {
           lastLog = now;
           diagnostic?.('wheel-handoff', { deltaY: dy, events: delta.events, before, after: target.scrollTop,
-            scrollOwner: 'conversation', cancelled: event.defaultPrevented && !conversationWheelWasHandled(event) });
+            scrollOwner: 'conversation', cancelled });
         }
       }
     } catch { if (!disposed) diagnostic?.('wheel-bridge-error', {}); }

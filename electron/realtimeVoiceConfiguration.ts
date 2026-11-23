@@ -1,3 +1,4 @@
+import { NativeVoiceError } from './voiceUiError';
 import fs from 'node:fs';
 import path from 'node:path';
 import { defaultRealtimeVoiceSettings, type RealtimeVoiceSettings, type RealtimeVoiceSettingsInput, type RealtimeVoiceConnectionProfile, type RealtimeVoiceSelection } from './realtimeVoiceTypes';
@@ -14,7 +15,7 @@ export class RealtimeVoiceConfiguration {
   private read(): Saved {
     if (!fs.existsSync(this.file)) return { ...defaultRealtimeVoiceSettings, profiles: {} };
     const data = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-    if (!Object.hasOwn(realtimeVoiceCatalog, data.provider)) throw Error('Invalid realtime provider.');
+    if (!Object.hasOwn(realtimeVoiceCatalog, data.provider)) throw new NativeVoiceError('voiceNative.invalidRealtimeProvider');
     const instructions = data.instructions === legacyPrompt ? defaultRealtimeVoiceSettings.instructions : data.instructions;
     // Migrate the original single-provider file in memory; write only on Save.
     return { provider: data.provider, mode: data.mode, instructions, profiles: data.version === 2 ? data.profiles : {
@@ -32,12 +33,12 @@ export class RealtimeVoiceConfiguration {
       hasApiKey: Boolean(secret), profiles } satisfies RealtimeVoiceSettings };
   }
   save(input: RealtimeVoiceSettingsInput) {
-    if (!input || !['realtime', 'chained'].includes(input.mode) || !Object.hasOwn(realtimeVoiceCatalog, input.provider)) throw Error('Invalid realtime provider.');
-    if (typeof input.instructions !== 'string' || input.instructions.length > 2000 || input.instructions.includes('\0')) throw Error('语音提示词最多 2000 个字符。');
-    for (const voice of [input.femaleVoice, input.maleVoice]) if (typeof voice !== 'string' || !voice.trim() || !/^[a-zA-Z0-9_.: -]{1,200}$/.test(voice)) throw Error('Invalid realtime voice ID.');
+    if (!input || !['realtime', 'chained'].includes(input.mode) || !Object.hasOwn(realtimeVoiceCatalog, input.provider)) throw new NativeVoiceError('voiceNative.invalidRealtimeProvider');
+    if (typeof input.instructions !== 'string' || input.instructions.length > 2000 || input.instructions.includes('\0')) throw new NativeVoiceError('voiceNative.instructionsLimit');
+    for (const voice of [input.femaleVoice, input.maleVoice]) if (typeof voice !== 'string' || !voice.trim() || !/^[a-zA-Z0-9_.: -]{1,200}$/.test(voice)) throw new NativeVoiceError('voiceNative.invalidRealtimeVoice');
     const defaults = realtimeVoiceCatalog[input.provider].defaults;
     const model = input.model ?? defaults.model;
-    if (typeof model !== 'string' || !/^[a-zA-Z0-9_./:-]{1,200}$/.test(model)) throw Error('请填写有效的语音模型 ID。');
+    if (typeof model !== 'string' || !/^[a-zA-Z0-9_./:-]{1,200}$/.test(model)) throw new NativeVoiceError('voiceNative.invalidRealtimeModel');
     let endpoint = defaults.endpoint;
     if (input.provider === 'qwen') {
       const error=()=>Error(uiText(this.language())('realtimeVoice.qwenEndpointRequired'));
@@ -50,14 +51,14 @@ export class RealtimeVoiceConfiguration {
       endpoint=url.href;
     } else if (input.provider === 'cardbush') {
       let url: URL;
-      try { url = new URL(input.endpoint ?? ''); } catch { throw Error('请填写 CardBush Realtime 兼容服务的 WebSocket 地址。'); }
+      try { url = new URL(input.endpoint ?? ''); } catch { throw new NativeVoiceError('voiceNative.bridgeEndpointRequired'); }
       if ((url.protocol !== 'wss:' && !(url.protocol === 'ws:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) || url.username || url.password || url.search || url.hash) {
-        throw Error('使用 wss:// 地址；仅本机回环允许 ws://。密钥请填写在 API Key 中，不放入地址。');
+        throw new NativeVoiceError('voiceNative.bridgeEndpointSecure');
       }
       endpoint = url.href;
     }
     const data = this.read(), previous = data.profiles[input.provider];
-    if (input.apiKey !== undefined && (typeof input.apiKey !== 'string' || input.apiKey.length > 4096 || /[\r\n\0]/.test(input.apiKey))) throw Error('Invalid API Key.');
+    if (input.apiKey !== undefined && (typeof input.apiKey !== 'string' || input.apiKey.length > 4096 || /[\r\n\0]/.test(input.apiKey))) throw new NativeVoiceError('voiceNative.invalidRealtimeApiKey');
     const secret = input.apiKey !== undefined ? input.apiKey.trim() ? this.encrypt(input.apiKey.trim()) : '' :
       previous?.endpoint === endpoint ? previous.secret : '';
     const selection = this.validateVoices({...input, voiceId:input.voiceId ?? previous?.voiceId, customVoices:input.customVoices ?? previous?.customVoices});
@@ -67,7 +68,7 @@ export class RealtimeVoiceConfiguration {
   }
   /** Change a provider's voice without copying credentials or switching providers. */
   saveVoices(input: RealtimeVoiceSelection) {
-    if(!input || !Object.hasOwn(realtimeVoiceCatalog,input.provider)) throw Error('Invalid realtime provider.');
+    if(!input || !Object.hasOwn(realtimeVoiceCatalog,input.provider)) throw new NativeVoiceError('voiceNative.invalidRealtimeProvider');
     const data=this.read(), profile=data.profiles[input.provider] ?? {...realtimeVoiceCatalog[input.provider].defaults,secret:''};
     const selection=this.validateVoices({...profile,provider:input.provider,voiceId:input.voiceId,customVoices:input.customVoices ?? profile.customVoices});
     data.profiles[input.provider]={...profile,...selection};

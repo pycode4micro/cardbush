@@ -24,6 +24,43 @@
   display:flex; align-items:center; min-width:0; gap:clamp(12px,1.5vw,24px); margin-inline-start:clamp(4px,1vw,14px);
 }
 .window-conversation-context:empty { display:none; }
+.window-conversation-identity {
+  display:flex; align-items:center; flex:0 1 auto; min-width:0; white-space:nowrap;
+}
+.window-conversation-name {
+  margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis;
+  color:var(--text); font-size:calc(15px * var(--ui-font-scale,1)); font-weight:600;
+}
+.window-conversation-status {
+  display:inline-flex; align-items:center; flex:0 0 auto; gap:6px;
+  color:var(--text-mid); font-size:calc(12px * var(--ui-font-scale,1));
+  --assistant-status-color:var(--info);
+}
+.window-conversation-status[data-activity="waiting"] { --assistant-status-color:var(--warning); }
+.window-conversation-status[data-activity="error"] { --assistant-status-color:var(--danger); }
+.window-conversation-status:has(> span) { margin-inline-start:10px; }
+.window-conversation-status:has(> span)::before {
+  content:''; flex:none; width:6px; height:6px; border-radius:50%; background:var(--assistant-status-color);
+}
+.window-conversation-actions {
+  display:flex; flex:none; align-items:center; gap:2px;
+  height:24px; margin-inline-end:6px; padding-inline-end:10px; border-inline-end:1px solid var(--chrome-edge,var(--border));
+}
+.window-conversation-actions:empty { display:none; }
+.window-conversation-actions .topbar-inspector-action {
+  color:var(--text-mid); border:0; border-radius:6px;
+}
+.window-conversation-actions .topbar-inspector-action:is(:hover,[aria-expanded="true"]) {
+  color:var(--text); background:var(--chrome-control-hover,var(--hover));
+}
+@media (max-width:680px) {
+  [data-conversation-titlebar] .window-conversation-context { gap:6px; margin-inline-start:2px; }
+  .window-conversation-actions { margin-inline-end:2px; padding-inline-end:4px; }
+  .window-conversation-status:has(> span) { margin-inline-start:6px; }
+  .window-conversation-context:has(.stage-call-controls) .window-conversation-status > span {
+    position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%);
+  }
+}
 .recent-bar-chat {
   flex:0 1 auto; min-width:0; max-width:min(50vw,60ch); max-height:100%;
   display:flex; align-items:center; overflow:hidden; border:0; padding:0 6px; border-radius:5px; background:transparent; font:inherit; cursor:pointer;

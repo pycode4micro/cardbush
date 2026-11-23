@@ -1,5 +1,6 @@
+import { NativeVoiceError, type NativeVoiceMessage } from './voiceUiError';
 import path from 'node:path';
-import { uiText } from '@cardbush/platform/i18n';
+import { uiText, type MessageVariables } from '@cardbush/platform/i18n';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import type { VoiceTextSnapshot } from './realtimeVoiceTypes';
 import { randomUUID } from 'node:crypto';
@@ -109,11 +110,11 @@ export class RealtimeVoiceService {
     if (!input || !/^[a-zA-Z0-9-]{1,100}$/.test(input.id) || !validRealtimeVoiceId(input.voice)) throw Error('Invalid realtime call.');
     // A closing call may still append its last history pair. Do not open a
     // second writer for personal-assistant until finish() releases ownership.
-    if (input.assistant && [...this.calls.values()].some(call => call.assistant)) throw Error('assistant 已有语音通话，请挂断另一端并等待连接关闭。');
-    if (this.calls.has(owner)) throw Error('语音通话正在关闭，请稍后重试。');
+    if (input.assistant && [...this.calls.values()].some(call => call.assistant)) throw new NativeVoiceError('voiceNative.assistantBusy');
+    if (this.calls.has(owner)) throw new NativeVoiceError('voiceNative.callClosing');
     const saved = this.read();
-    if (!saved.secret && realtimeVoiceCatalog[saved.settings.provider].apiKeyRequired) throw Error('请在语音设置中配置实时语音 API Key。');
-    if (saved.settings.mode !== 'realtime') throw Error('请先选择实时语音通话模式。');
+    if (!saved.secret && realtimeVoiceCatalog[saved.settings.provider].apiKeyRequired) throw new NativeVoiceError('voiceNative.realtimeKeyRequired');
+    if (saved.settings.mode !== 'realtime') throw new NativeVoiceError('voiceNative.realtimeModeRequired');
     this.validateText(input);
     if (input.sessionId!==undefined && (typeof input.sessionId!=='string' || !input.sessionId || input.sessionId.length>200)) throw Error('Invalid voice conversation.');
     if (input.assistant && (input.sessionId !== 'personal-assistant' || typeof input.assistant.name !== 'string' || !input.assistant.name.trim() || input.assistant.name.length > 60 || typeof input.assistant.persona !== 'string' || input.assistant.persona.length > 2000)) throw Error('Invalid assistant profile.');
@@ -134,7 +135,7 @@ export class RealtimeVoiceService {
         restartOnly: call.provider.contextMode === 'instructions', maxPairs: call.provider.contextPolicy?.maxPairs,
         send:event=>this.send(call,event), create:items=>call.provider.context(items),
         request:job=>call.emit({id:call.id,type:'context-compact',job}),
-        status:message=>{call.emit({id:call.id,type:'context-status',message});if (!message) this.scheduleNotification(call);},
+        status:key=>{call.emit({id:call.id,type:'context-status',message:key ? this.text(key) : ''});if (!key) this.scheduleNotification(call);},
         idle:()=>call.ready && !call.closing && !call.transitioning && !call.capturePaused && !call.inputSpeaking && !call.outputSpeaking && !call.playback && !call.batches.size,
         restart:()=>this.restart(call),
         diagnostic:(event,detail)=>this.diagnostic(call,event,detail),
@@ -143,7 +144,7 @@ export class RealtimeVoiceService {
     }
     this.calls.set(owner,call);
     this.observe(call, 'waiting');
-    call.timeout = setTimeout(() => this.fail(call, '通话记忆恢复暂未完成，历史仍已保留，请稍后重试。'), 90_000);
+    call.timeout = setTimeout(() => this.fail(call, this.text('voiceNative.memoryRestoreTimeout')), 90_000);
     // Do not make cancellation/timeout wait for a potentially slow system proxy lookup.
     void this.connect(call);
     return started;
@@ -172,7 +173,7 @@ export class RealtimeVoiceService {
       const sessionBytes=Buffer.byteLength(JSON.stringify(this.sessionStart(call)));
       call.memory!.setFixedTokens(sessionBytes / 2);
       context=await call.memory!.prepareInitial(Math.max(3000,(call.provider.contextPolicy?.maxInputBytes??16000)-sessionBytes));
-    } catch { if(current())this.fail(call,'通话记忆暂未恢复，原始记录和后台任务已保留，请稍后重试。');return; }
+    } catch { if(current())this.fail(call,this.text('voiceNative.memoryRestoreFailed'));return; }
     if (!current()) return;
     if(call.provider.contextMode==='instructions') { call.instructionContext=context; call.deferredContext=[]; }
     else call.deferredContext=context.splice(call.provider.contextPolicy?.batchItems??40);
@@ -186,7 +187,7 @@ export class RealtimeVoiceService {
         if(!current() || call.connection!==connection)return;
         this.waitForConnection(call,'creating_session');
         try { if(!call.provider.serverInitiatedSession) {this.send(call,this.sessionStart(call));call.configurationSent=true;} }
-        catch { this.connectionLost(call,'实时语音启动连接失败。'); }
+        catch { this.connectionLost(call,this.text('voiceNative.initialConnectionFailed')); }
       });
       connection.socket.addEventListener('message', event => {
         if (this.calls.get(owner)!==call || generation!==call.generation || call.connection!==connection) return;
@@ -237,8 +238,8 @@ export class RealtimeVoiceService {
               this.archive(call,raw.type==='response.canceled');
             }
             if (raw.type !== 'response.output_audio.delta') this.scheduleNotification(call);
-            for (const parsed of call.provider.parse(raw)) {
-              if (parsed.type === 'closed') { if(call.closing)this.finish(call);else this.connectionLost(call,'语音服务关闭了连接。','provider_session_closed'); return; }
+            for (const parsed of call.provider.parse(raw,this.deps.uiLanguage?.())) {
+              if (parsed.type === 'closed') { if(call.closing)this.finish(call);else this.connectionLost(call,this.text('voiceNative.providerClosed'),'provider_session_closed'); return; }
               if (call.closing) continue;
               if (parsed.type === 'error') {
                 if (call.openingRequestId && raw.event_id === call.openingRequestId) {
@@ -296,18 +297,18 @@ export class RealtimeVoiceService {
             }
           }
           call.memory?.tick();
-        } catch { this.fail(call,'实时语音协议异常，通话已停止。已启动的 Agent 任务会继续执行。'); }
+        } catch { this.fail(call,this.text('voiceNative.realtimeProtocolFailed')); }
       });
-      connection.socket.addEventListener('error', () => { if (current() && call.connection===connection) this.connectionLost(call,'实时语音网络连接暂时不可用。','websocket_error'); });
+      connection.socket.addEventListener('error', () => { if (current() && call.connection===connection) this.connectionLost(call,this.text('voiceNative.realtimeNetworkUnavailable'),'websocket_error'); });
       connection.socket.addEventListener('close', event => {
         if (call.connection!==connection) return;
         if (call.closing) this.finish(call);
         else if(current()) {
           this.diagnostic(call,'websocket_closed',{closeCode:Number.isInteger(event.code)?event.code:undefined,wasClean:typeof event.wasClean==='boolean'?event.wasClean:undefined});
-          this.connectionLost(call,'实时语音网络连接已断开。','websocket_closed');
+          this.connectionLost(call,this.text('voiceNative.realtimeDisconnected'),'websocket_closed');
         }
       });
-    } catch { if(current())this.connectionLost(call,'无法建立实时语音连接，请检查网络与配置。'); }
+    } catch { if(current())this.connectionLost(call,this.text('voiceNative.realtimeConnectFailed')); }
   }
   private restoreOrReady(call:LiveCall) {
     if(call.provider.contextMode==='instructions' && call.deferredContext.length) {
@@ -346,16 +347,19 @@ export class RealtimeVoiceService {
     try { this.deps.diagnostic?.({event,callId:call.id,sessionId:call.history?.sessionId,provider:call.settings.provider,
       stage:call.stage,elapsedMs:Date.now()-call.startedAt,generation:call.generation,...detail}); } catch { /* Best effort. */ }
   }
+  private text(key: NativeVoiceMessage, variables?: MessageVariables) {
+    return uiText(this.deps.uiLanguage?.())(key, variables);
+  }
   private waitForConnection(call:LiveCall,stage:'connecting'|'creating_session'|'restoring_history') {
     this.observe(call, 'waiting');
     call.stage=stage;this.diagnostic(call,'stage');clearTimeout(call.timeout);
-    const messages={connecting:'实时语音网络连接超时，请检查网络与代理设置。',
-      creating_session:'语音服务未及时确认会话，请稍后重试。',
-      restoring_history:'语音服务未及时确认历史恢复，原始记录已保留，请重新接通。'};
+    const messages={connecting:'voiceNative.connectTimeout',
+      creating_session:'voiceNative.createTimeout',
+      restoring_history:'voiceNative.restoreTimeout'} as const;
     const deadline=call.recoveryDeadline??call.startedAt+90_000;
-    call.timeout=setTimeout(()=>this.connectionLost(call,messages[stage],'handshake_timeout'),Math.max(1,Math.min(20_000,deadline-Date.now())));
+    call.timeout=setTimeout(()=>this.connectionLost(call,this.text(messages[stage]),'handshake_timeout'),Math.max(1,Math.min(20_000,deadline-Date.now())));
   }
-  private owned(owner: number | string,id: string,preparing=false) { const call=this.calls.get(owner); if (!call || call.id!==id || call.closing || !preparing && !call.ready && !call.transitioning) throw Error('语音通话已结束。'); return call; }
+  private owned(owner: number | string,id: string,preparing=false) { const call=this.calls.get(owner); if (!call || call.id!==id || call.closing || !preparing && !call.ready && !call.transitioning) throw new NativeVoiceError('voiceNative.callEnded'); return call; }
   private ready(call:LiveCall) {
     this.observe(call, 'running');
     call.stage='ready';this.diagnostic(call,'connected');
@@ -366,19 +370,19 @@ export class RealtimeVoiceService {
     const discarded=call.capturePaused;
     const finish=()=>{
       call.audioDrainTimer=undefined;call.capturePaused=false;
-      call.emit({id:call.id,type:'connection-state',state:'connected',message:discarded?'已恢复原来的上下文，请重说断线期间那一句。':''});
+      call.emit({id:call.id,type:'connection-state',state:'connected',message:discarded?this.text('voiceNative.callRecovered'):''});
       this.scheduleOpening(call);
       call.memory?.resumed();this.scheduleNotification(call);
     };
     if(!call.bufferedFrames.length){finish();return;}
     call.capturePaused=true;
-    call.emit({id:call.id,type:'connection-state',state:'paused',message:'连接已恢复，正在接续刚才的录音，请稍等片刻。'});
+    call.emit({id:call.id,type:'connection-state',state:'paused',message:this.text('voiceNative.recordingResuming')});
     const drain=()=>{
       if(this.calls.get(call.owner)!==call || call.closing || call.transitioning)return;
       if(call.muted)call.bufferedFrames=[];
       const pcm=call.bufferedFrames.shift();
       if(!pcm){finish();return;}
-      try{this.send(call,call.provider.audio(pcm));}catch{this.connectionLost(call,'接续录音时连接暂时不可用。');return;}
+      try{this.send(call,call.provider.audio(pcm));}catch{this.connectionLost(call,this.text('voiceNative.recordingResumeFailed'));return;}
       call.audioDrainTimer=setTimeout(drain,20);
     };
     call.audioDrainTimer=setTimeout(drain,20);
@@ -451,12 +455,12 @@ export class RealtimeVoiceService {
       if(call.capturePaused)return;
       if (call.bufferedFrames.length>=250) {
         call.bufferedFrames=[];call.capturePaused=true;
-        call.emit({id:call.id,type:'connection-state',state:'paused',message:'正在自动重连，收音暂时暂停；恢复后请重说断线期间那一句。历史和后台任务仍在。'});return;
+        call.emit({id:call.id,type:'connection-state',state:'paused',message:this.text('voiceNative.recordingPaused')});return;
       }
       call.bufferedFrames.push(Buffer.from(pcm).toString('base64')); return;
     }
     try { this.send(call,call.provider.audio(Buffer.from(pcm).toString('base64'))); }
-    catch { this.connectionLost(call,'实时语音网络发送暂时拥堵。','audio_send_unavailable'); }
+    catch { this.connectionLost(call,this.text('voiceNative.audioSendCongested'),'audio_send_unavailable'); }
   }
   control(owner:number | string,id:string,action:'mute'|'unmute'|'interrupt'|'commit') {
     if (!['mute','unmute','interrupt','commit'].includes(action)) throw Error('Invalid voice control.');
@@ -466,7 +470,7 @@ export class RealtimeVoiceService {
     if (action === 'unmute') call.muted = false;
     if (action === 'interrupt' && call.provider.archiveOnResponseDone) this.archive(call,true);
     if (call.transitioning) { if (action==='mute') call.bufferedFrames=[]; return; }
-    try{this.send(call,call.provider.control(action));}catch{this.connectionLost(call,'实时语音控制消息暂时无法送达。');}
+    try{this.send(call,call.provider.control(action));}catch{this.connectionLost(call,this.text('voiceNative.controlDeliveryFailed'));}
   }
   results(owner:number | string,id:string,results:RealtimeToolResult[]) {
     const call=this.owned(owner,id);
@@ -480,10 +484,10 @@ export class RealtimeVoiceService {
     context.forEach((item,index)=>{if(sequence)item.id=`history_${sequence}_${index?'a':'u'}`;});
     if(call.transitioning || call.orphanedBatches.has(batch[0])) {
       if(call.transitioning)call.deferredContext.push(...context);else if(context.length) {
-        try{this.addContext(call,context);}catch{this.connectionLost(call,'任务回执等待连接恢复。');}
+        try{this.addContext(call,context);}catch{this.connectionLost(call,this.text('voiceNative.taskReceiptPending'));}
       }
     } else {
-      try{this.send(call,call.provider.results(results));}catch{this.connectionLost(call,'任务回执等待连接恢复。');}
+      try{this.send(call,call.provider.results(results));}catch{this.connectionLost(call,this.text('voiceNative.taskReceiptPending'));}
     }
     call.batches.delete(batch[0]);call.orphanedBatches.delete(batch[0]);
     const transientResults=results.filter(result=>call.transientTools?.has(result.id));
@@ -541,6 +545,7 @@ export class RealtimeVoiceService {
     void this.recover(call).catch(()=>{});
   }
   private recover(call:LiveCall):Promise<void> {
+    const retryLimit = 3;
     this.clearOpening(call);
     call.openingRequestId = undefined;
     const old=call.connection;call.connection=undefined;call.generation++;
@@ -554,9 +559,9 @@ export class RealtimeVoiceService {
     const pending=call.recovery;
     call.transitioning=true;call.ready=false;call.inputSpeaking=false;call.outputSpeaking=false;call.playback=false;
     for(const id of call.batches.keys())call.orphanedBatches.add(id);
-    if(++call.retryCount>3 || Date.now()>=call.recoveryDeadline!){this.fail(call,'自动重连暂未成功，原来的上下文和后台任务已保留，请稍后重新接通。');return pending;}
-    call.emit({id:call.id,type:'connection-state',state:call.capturePaused?'paused':'reconnecting',message:`正在自动重连（${call.retryCount}/3），恢复原来的上下文和后台任务。`});
-    call.timeout=setTimeout(()=>this.fail(call,'恢复通话等待超时，原始上下文仍已保留，请稍后重试。'),Math.max(1,call.recoveryDeadline!-Date.now()));
+    if(++call.retryCount>retryLimit || Date.now()>=call.recoveryDeadline!){this.fail(call,this.text('voiceNative.reconnectFailed'));return pending;}
+    call.emit({id:call.id,type:'connection-state',state:call.capturePaused?'paused':'reconnecting',message:this.text('voiceNative.reconnectAttempt', { attempt: call.retryCount, limit: retryLimit })});
+    call.timeout=setTimeout(()=>this.fail(call,this.text('voiceNative.reconnectTimeout')),Math.max(1,call.recoveryDeadline!-Date.now()));
     call.retryTimer=setTimeout(()=>{void this.connect(call);},call.retryCount===1?0:call.retryCount===2?1000:3000);
     return pending;
   }
@@ -585,7 +590,7 @@ export class RealtimeVoiceService {
         call.memory?.setFixedTokens(Buffer.byteLength(JSON.stringify(this.sessionStart(call,false)))/2);
         if(call.provider.contextMode!=='instructions')this.send(call,{...session,type:'session.update'});
         this.scheduleNotification(call);
-      } catch { this.connectionLost(call,'后台任务结果等待语音连接恢复。'); }
+      } catch { this.connectionLost(call,this.text('voiceNative.taskResultPending')); }
     },750);
   }
   private flushText(call: LiveCall, snapshot: VoiceTextSnapshot) {
@@ -621,7 +626,7 @@ export class RealtimeVoiceService {
   close(owner:number | string,id?:string) {
     const call=this.calls.get(owner); if (!call || id && call.id!==id || call.closing) return;
     this.clearOpening(call);
-    call.closing=true; clearTimeout(call.timeout); clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer); call.reject(Error('语音通话已取消。'));
+    call.closing=true; clearTimeout(call.timeout); clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer); call.reject(new NativeVoiceError('voiceNative.callCancelled'));
     call.memory?.close();
     if (!call.connection || call.connection.socket.readyState!==1) { this.finish(call); return; }
     if (call.provider.closeWithSocket) {this.finish(call);return;}
@@ -646,8 +651,8 @@ export class RealtimeVoiceService {
     this.observe(call, status);
     this.diagnostic(call,'closed');
     call.memory?.close();
-    try { this.archive(call,true); } catch { call.emit({id:call.id,type:'context-status',message:'本次通话记录保存失败，请检查本地磁盘。'}); }
-    clearTimeout(call.timeout);clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer); this.calls.delete(call.owner);call.generation++; call.reject(Error('语音通话已结束。'));
+    try { this.archive(call,true); } catch { call.emit({id:call.id,type:'context-status',message:this.text('voiceNative.callHistorySaveFailed')}); }
+    clearTimeout(call.timeout);clearTimeout(call.retryTimer);clearTimeout(call.audioDrainTimer);clearTimeout(call.notificationTimer); this.calls.delete(call.owner);call.generation++; call.reject(new NativeVoiceError('voiceNative.callEnded'));
     call.connection?.socket.close(); call.connection?.dispose(); call.emit({id:call.id,type:'closed'});
   }
 }

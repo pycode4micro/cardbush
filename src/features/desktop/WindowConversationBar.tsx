@@ -1,22 +1,44 @@
 import { useSyncExternalStore } from 'react';
 import { PhoneCall } from 'lucide-react';
-import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION, type AssistantWorkActivity } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
 import { useAssistantWorkActivity, voiceCallActivity } from '../assistant/assistantActivity';
 import { applicationVoiceSession } from '../voice/VoiceConversation';
 import { VoiceComposerPanel, useVoiceConnectingCue } from '../voice/VoiceComposerPanel';
 import { voiceComposerPresentation } from '../voice/voiceComposerPresentation';
 
-type ToolbarConversation = { id: string; title: string; status?: string };
+type ToolbarConversation = { id: string; title: string; status?: string; activity?: AssistantWorkActivity };
 
 type Props = {
-  language: string; conversation: ToolbarConversation; viewingConversation: boolean; assistantName: string; open(id: string, returnToCall?: boolean): void;
+  language: string; conversation: ToolbarConversation; viewingConversation: boolean; assistantName: string;
+  activeView?: 'assistant' | 'chat'; open(id: string, returnToCall?: boolean): void;
 };
 
 export function WindowConversationBar(props: Props) {
   return <div className="window-conversation-context">
-    <ConversationStatusButton {...props}/>
+    {props.activeView === 'assistant'
+      ? <AssistantWindowTitle language={props.language} assistantName={props.assistantName}/>
+      : props.activeView === 'chat'
+        ? <ConversationWindowTitle title={props.conversation.title} status={props.conversation.status} activity={props.conversation.activity}/>
+        : <ConversationStatusButton {...props}/>}
     <WindowCallControls language={props.language} open={props.open}/>
+  </div>;
+}
+
+function AssistantWindowTitle({ language, assistantName }: Pick<Props, 'language' | 'assistantName'>) {
+  const t = uiText(language);
+  const activity = useAssistantWorkActivity();
+  const status = activity === 'idle' ? undefined : t(activity === 'working' ? 'assistantTitlebar.working'
+    : activity === 'waiting' ? 'sessionAttention.confirmationPending' : `assistantActivity.${activity}`);
+  return <ConversationWindowTitle title={assistantName} status={status} activity={activity}/>;
+}
+
+function ConversationWindowTitle({ title, status, activity = 'idle' }: Pick<ToolbarConversation, 'title' | 'status' | 'activity'>) {
+  return <div className="window-conversation-identity">
+    <h1 className="window-conversation-name" title={title}>{title}</h1>
+    <span className="window-conversation-status" role="status" data-activity={activity}>
+      {status && <span>{status}</span>}
+    </span>
   </div>;
 }
 

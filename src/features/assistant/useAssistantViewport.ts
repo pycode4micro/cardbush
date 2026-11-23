@@ -1,8 +1,9 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import { useScrollBottomPresence } from '../../hooks/useScrollBottomPresence';
 import { createChatScrollMotion } from '../chat/chatScrollMotion';
-import { connectConversationWheelScrolling } from '../chat/conversationWheelScrolling';
-import { scrollDebug } from '../chat/scrollDebug';
+import { conversationWheelWasRouted } from '../chat/conversationWheelScrolling';
+import { scrollDebug, scrollDebugEnabled } from '../chat/scrollDebug';
+import { windowScrollDiagnosticsActive } from '../chat/windowScrollDiagnostics';
 import { suspendScrollAnchoring } from '../scrollAnchoring';
 import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 
@@ -17,6 +18,7 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
   const state = useRef({ revision });
   state.current = { revision };
   const trace = useCallback((reason: string, detail: Record<string, unknown> = {}) => {
+    if (!scrollDebugEnabled() && !windowScrollDiagnosticsActive()) return;
     const scroller = scrollerRef.current;
     scrollDebug('assistant-viewport', { reason, following: following.current, followTail: followTail.current,
       ...state.current, scrollTop: scroller?.scrollTop, scrollHeight: scroller?.scrollHeight,
@@ -96,7 +98,8 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     const detach = (reason: string) => { motion.cancel(); releaseAnchoring(); following.current = false; trace(reason); };
     const atBottom = () => scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 2;
     const wheel = (event: WheelEvent) => {
-      if (!event.defaultPrevented && !event.ctrlKey && event.deltaY && !(event.deltaY > 0 && atBottom())) detach('wheel');
+      if ((!event.defaultPrevented || conversationWheelWasRouted(event)) && !event.ctrlKey && event.deltaY &&
+          !(event.deltaY > 0 && atBottom())) detach('wheel');
     };
     let pointer: { id: number; x: number; y: number; touch: boolean } | undefined;
     const down = (event: PointerEvent) => {
@@ -119,7 +122,6 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     };
     scroller.addEventListener('scroll', scroll, { passive: true });
     scroller.addEventListener('wheel', wheel, { passive: true });
-    const disconnectWheel = connectConversationWheelScrolling(scroller);
     scroller.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -127,7 +129,7 @@ export function useAssistantViewport({ active, bodyRef, dockRef, scrollerRef, re
     window.addEventListener('blur', up);
     scroller.addEventListener('keydown', key);
     return () => {
-      disconnectWheel(); motion.cancel(); scroller.removeEventListener('scroll', scroll); scroller.removeEventListener('wheel', wheel);
+      motion.cancel(); scroller.removeEventListener('scroll', scroll); scroller.removeEventListener('wheel', wheel);
       scroller.removeEventListener('pointerdown', down); scroller.removeEventListener('keydown', key);
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
       window.removeEventListener('blur', up);

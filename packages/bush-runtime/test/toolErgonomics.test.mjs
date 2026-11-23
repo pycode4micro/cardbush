@@ -1,6 +1,7 @@
 import { registerBuiltinToolDisclosure } from '../dist/builtinToolDisclosure.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -58,8 +59,10 @@ test('failed exact edits guide a version-checked line retry without changing ind
   assert.equal(readFileSync(path, 'utf8'), 'if ready:\r\n    repeat()\r\n    selected()\r\n');
   const external = 'new external content\n'; writeFileSync(path, external);
   const stale = await run('edit_file', { path, start_line: 3, end_line: 3, expected_sha256: read.result.sha256, new_text: 'wrong' });
-  assert.equal(stale.kind, 'failed'); assert.equal(stale.error.code, 'workspace_revision_not_observed');
-  assert.match(stale.error.message, /read_file.*expected_sha256/);
+  assert.equal(stale.kind, 'failed'); assert.equal(stale.error.code, 'workspace_revision_conflict');
+  assert.equal(stale.error.details.path, path);
+  assert.equal(stale.error.details.expectedSha256, retry.result.sha256);
+  assert.equal(stale.error.details.currentSha256, createHash('sha256').update(external).digest('hex'));
   assert.equal(readFileSync(path, 'utf8'), external);
   const current = await run('read_file', { path });
   for (const [args, code] of [

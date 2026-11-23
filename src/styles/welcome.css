@@ -1,57 +1,3 @@
-
-
-.topbar-team-status {
-  position: relative;
-  width: 30px;
-  height: 30px;
-  display: inline-grid;
-  flex: 0 0 auto;
-  place-items: center;
-  color: color-mix(in srgb, var(--accent) 86%, var(--text));
-  background: transparent;
-  border: 0;
-  border-radius: 10px;
-}
-
-.topbar-team-status:hover,
-.topbar-team-status.active {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.topbar-team-status .lucide-loader-circle {
-  animation: cardbush-spin 900ms linear infinite;
-}
-
-.topbar-team-badge {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 6px;
-  height: 6px;
-  background: #7ac98e;
-  border: 1px solid var(--surface);
-  border-radius: 999px;
-}
-
-.topbar-team-badge.has-count {
-  top: 1px;
-  right: 1px;
-  min-width: 14px;
-  width: auto;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
-  color: var(--surface);
-  background: color-mix(in srgb, var(--accent) 82%, var(--text));
-  border: 1px solid color-mix(in srgb, var(--surface) 84%, transparent);
-  font-size: calc(9px * var(--ui-font-scale, 1));
-  font-weight: 850;
-  line-height: 1;
-}
-
 .error-banner,
 .notice-banner {
   position: relative;
@@ -312,6 +258,14 @@
   color: var(--text-mid);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(html:not([data-motion-preference="off"])) .loading-rhythm span {
+    animation: none;
+    transform: scaleY(0.4);
+    opacity: 0.7;
+  }
 }
 
 @keyframes loading-rhythm {

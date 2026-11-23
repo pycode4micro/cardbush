@@ -236,6 +236,7 @@ import { childExecutionFacts, childSubmission } from './teamSubmission.js';
 import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
 import { RuntimeConversations, type RuntimeConversation } from './runtimeConversations.js';
+import { RuntimeCacheMaintenance } from './runtimeCacheMaintenance.js';
 import { validateEnvironmentSource, RuntimeEnvironment, type EnvironmentSource } from './runtimeEnvironment.js';
 import { OBSERVE_RUNTIME_AGENT_COMMAND, runtimeAgentObservationSchema, GET_RUNTIME_ENVIRONMENT_COMMAND, runtimeEnvironmentReadSchema } from '@cardbush/bush-protocol';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
@@ -470,11 +471,13 @@ export class InMemoryRuntimeHost {
   readonly #stopEventTriggers: () => void;
   readonly #contextCompactionAuthorizations = new Map<string, { state: ContextCompactionState; format: ContextCheckpointFormat }>();
   #shuttingDown = false;
-  #cacheMaintenance: Promise<void> | undefined;
-  #cacheCleanupPending = false;
-  #cacheCleanupTimer: ReturnType<typeof setTimeout> | undefined;
-  #cacheRetentionTimer: ReturnType<typeof setInterval> | undefined;
-  #backgroundCacheController: AbortController | undefined;
+  readonly #cache = new RuntimeCacheMaintenance({
+    idle: () => !(this.#shuttingDown || this.#workspaceActions || this.#activeTurns.size || this.#turnAdmissions ||
+      this.#teams.hasActiveRuns() || this.#assistant.working || this.#activeAppCommands || this.#mcpApps.busy ||
+      this.#pluginBackground.busy || this.#automation?.busy || this.#activeExtensionCommands.size),
+    collect: signal => this.#guardCacheMaintenance(() => this.#collectCaches(signal)),
+    settled: () => this.#conversations.settled(),
+  });
   #activeAppCommands = 0;
 
   readonly #workspaceRedo: WorkspaceRedoStore;
@@ -486,7 +489,7 @@ export class InMemoryRuntimeHost {
         : this.#conversations.hasPending(session, turn) ? 'peer_message' : undefined;
     });
     this.#conversations = new RuntimeConversations({
-      busy: sessionId => this.#shuttingDown || this.#sessionAdmissions.has(sessionId) || !!this.#cacheMaintenance || this.#workspaceActions > 0,
+      busy: sessionId => this.#shuttingDown || this.#sessionAdmissions.has(sessionId) || !!this.#cache.active || this.#workspaceActions > 0,
       signal: (sessionId, turnId) => this.#turnSignals.wake(sessionId, turnId, 'peer_message'),
       run: request => this.runSessionTurn(request),
       error: error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))),
@@ -1161,11 +1164,7 @@ export class InMemoryRuntimeHost {
       ],
     };
     for (const candidate of options.extensions ?? []) this.installExtension(candidate.create, { enabled: candidate.enabled });
-    this.#scheduleCacheCleanup(60_000);
-    this.#cacheRetentionTimer = setInterval(() => {
-      if (!this.#cacheCleanupPending) this.#scheduleCacheCleanup();
-    }, 60 * 60_000);
-    this.#cacheRetentionTimer.unref();
+    this.#cache.start();
   }
 
   /** Stage registrations, then atomically admit a plugin. A bad factory cannot leave partial tools behind. */
@@ -1331,7 +1330,7 @@ export class InMemoryRuntimeHost {
   }
   hasActiveSession(sessionId: string): boolean {
     if (this.#teams.hasActiveRuns(sessionId)) return true;
-    if ((this.#cacheMaintenance || this.#workspaceActions) && (!this.#workspaceActionSessions || this.#workspaceActionSessions.has(sessionId))) return true;
+    if ((this.#cache.active || this.#workspaceActions) && (!this.#workspaceActionSessions || this.#workspaceActionSessions.has(sessionId))) return true;
     return [...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId);
   }
 
@@ -1364,16 +1363,19 @@ export class InMemoryRuntimeHost {
     signal?: AbortSignal,
     onToolOutcome?: (outcome: import('./toolExecutionCoordinator.js').ToolExecutionOutcome) => void,
   ): Promise<unknown> {
+    if (signal?.aborted && command.kind === RUN_MODEL_TURN_COMMAND) {
+      return this.runModelTurn(modelRequestSchema.parse(command.payload), { signal });
+    }
     // Keep deletion receipts transactional, but never queue foreground work
     // behind an idle cache scan. Session reads do not alter its reference roots.
-    if (this.#cacheMaintenance) command = structuredClone(command);
-    while (this.#cacheMaintenance) {
-      if (this.#backgroundCacheController) {
+    if (this.#cache.active) command = structuredClone(command);
+    while (this.#cache.active) {
+      if (this.#cache.background) {
         if (command.kind === GET_RUNTIME_CAPABILITIES_COMMAND || command.kind === LIST_RUNTIME_SESSIONS_COMMAND || command.kind === GET_RUNTIME_SESSION_COMMAND ||
           command.kind === GET_RUNTIME_SESSION_HISTORY_COMMAND || command.kind === LIST_RUNTIME_SESSION_SUMMARIES_COMMAND) break;
-        this.#backgroundCacheController.abort();
+        this.#cache.interruptBackground();
       }
-      await settleAtAbort(this.#cacheMaintenance, signal, 'Runtime command cancelled while waiting for cache maintenance.');
+      await settleAtAbort(this.#cache.active, signal, 'Runtime command cancelled while waiting for cache maintenance.');
       signal?.throwIfAborted();
     }
     signal?.throwIfAborted();
@@ -1540,7 +1542,7 @@ export class InMemoryRuntimeHost {
         try {
           this.#toolExecutions.fork(input.sourceSessionId, input.sessionId, new Set(snapshot.turns.map(turn => turn.turnId)));
           return snapshot;
-        } catch (error) { await this.#deleteSession(input.sessionId); this.#scheduleCacheCleanup(); throw error; }
+        } catch (error) { await this.#deleteSession(input.sessionId); this.#cache.schedule(); throw error; }
       }
       case CREATE_RUNTIME_SESSION_COMMAND: {
         const input = createRuntimeSessionRequestSchema.parse(command.payload);
@@ -1591,7 +1593,7 @@ export class InMemoryRuntimeHost {
         return this.#withCacheMaintenance(async () => {
           await this.#assertSessionDeletable(identity.sessionId);
           const deleted = await this.#deleteSession(identity.sessionId);
-          if (deleted) this.#scheduleCacheCleanup();
+          if (deleted) this.#cache.schedule();
           return { sessionId: identity.sessionId, deleted };
         }, () => this.#sessionDeletionScope(identity.sessionId, signal));
       }
@@ -1925,6 +1927,7 @@ export class InMemoryRuntimeHost {
       }
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
+        this.#cache.stop();
         await this.#assistantEvents.close();
         this.#conversations.close();
         this.#stopEnvironmentObservation();
@@ -1936,10 +1939,6 @@ export class InMemoryRuntimeHost {
         for (const controller of this.#voiceMaintenance.values()) controller.abort();
         await this.#memory.close();
         this.#mcpApps.close();
-        clearInterval(this.#cacheRetentionTimer);
-        this.#cacheRetentionTimer = undefined;
-        clearTimeout(this.#cacheCleanupTimer);
-        this.#cacheCleanupTimer = undefined;
         this.#pluginBackground.stop();
         for (const controller of this.#activeTurnControllers.values()) controller.abort();
         await this.#workspaceTerminals.close();
@@ -2012,6 +2011,15 @@ export class InMemoryRuntimeHost {
     input: ModelRequest,
     options: { signal?: AbortSignal; execution?: RuntimeExecutionOptions } = {},
   ): Promise<RuntimeEvent> {
+    if (options.signal?.aborted) {
+      const request = modelRequestSchema.parse(input);
+      const { requestId, sessionId, turnId } = request;
+      // Publish the stop without entering admission or claiming that work started.
+      return this.#withAgentExecution(request, undefined, async () => this.#eventLog.append({ requestId, sessionId, turnId }, {
+        kind: 'turn_terminal',
+        payload: { status: 'stopped', reason: 'turn_stop_requested', details: {} },
+      }));
+    }
     return this.#withAgentExecution(input, options.signal,
       () => this.#withTurnAdmission(input.sessionId, () => this.#runModelTurn(input, options)));
   }
@@ -5009,9 +5017,9 @@ export class InMemoryRuntimeHost {
   }
 
   async #withTurnAdmission<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    if (this.#backgroundCacheController) {
-      this.#backgroundCacheController.abort();
-      await this.#cacheMaintenance;
+    if (this.#cache.background) {
+      this.#cache.interruptBackground();
+      await this.#cache.active;
     }
     if (this.#workspaceActions && (!this.#workspaceActionSessions || this.#workspaceActionSessions.has(sessionId))) {
       throw new Error("A workspace action is in progress. Retry the Turn after it settles.");
@@ -5039,7 +5047,7 @@ export class InMemoryRuntimeHost {
         related.add(session.sessionId); changed = true;
       }
     }
-    if (this.#cacheMaintenance || this.#workspaceActions || [...related].some(id => this.#sessionAdmissions.has(id)) ||
+    if (this.#cache.active || this.#workspaceActions || [...related].some(id => this.#sessionAdmissions.has(id)) ||
       [...this.#activeTurns].some(key => related.has(JSON.parse(key)[0]))) {
       throw new Error("请等待此会话及其子任务结束，再切换工作区。 / Wait for this conversation and its child tasks before switching workspaces.");
     }
@@ -5073,30 +5081,20 @@ export class InMemoryRuntimeHost {
     return related;
   }
 
-  async #withCacheMaintenance<T>(operation: () => Promise<T>, sessionScope?: () => Promise<ReadonlySet<string>>): Promise<T> {
-    // Acquire before resolving the deletion scope: queued reads and deletes must
-    // not overtake an operation while its session metadata is being loaded.
-    let release!: () => void;
-    this.#cacheMaintenance = new Promise<void>(resolve => { release = resolve; });
-    try {
-      const sessionIds = sessionScope ? await sessionScope() : undefined;
-      // A single deletion closes only that session's resources. Shared cache
-      // collection still waits for every owner; it is deferred until idle.
-      if (this.#activeAppCommands || this.#mcpApps.busy || this.#activeExtensionCommands.size ||
-          (this.#assistant.working && (!sessionIds || sessionIds.has(PERSONAL_ASSISTANT_SESSION))) ||
-          (sessionIds ? [...sessionIds].some(id => this.#teams.hasActiveRuns(id)) : this.#teams.hasActiveRuns()) ||
-          (!sessionIds && (this.#pluginBackground.busy || this.#automation?.busy))) {
-        throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
-      }
-      return await this.#withWorkspaceAction(operation, sessionIds);
+  #withCacheMaintenance<T>(operation: () => Promise<T>, sessionScope?: () => Promise<ReadonlySet<string>>): Promise<T> {
+    // Claim the lease before the asynchronous deletion-scope read.
+    return this.#cache.run(async () => this.#guardCacheMaintenance(operation, sessionScope ? await sessionScope() : undefined));
+  }
+
+  #guardCacheMaintenance<T>(operation: () => Promise<T>, sessionIds?: ReadonlySet<string>): Promise<T> {
+    // A single deletion protects its own resources. Shared collection waits for every owner.
+    if (this.#activeAppCommands || this.#mcpApps.busy || this.#activeExtensionCommands.size ||
+        (this.#assistant.working && (!sessionIds || sessionIds.has(PERSONAL_ASSISTANT_SESSION))) ||
+        (sessionIds ? [...sessionIds].some(id => this.#teams.hasActiveRuns(id)) : this.#teams.hasActiveRuns()) ||
+        (!sessionIds && (this.#pluginBackground.busy || this.#automation?.busy))) {
+      throw new Error('Cache maintenance requires background tasks and app actions to settle first.');
     }
-    finally {
-      // Release only after the workspace guard is gone. Waiting callers must
-      // neither collide with that guard nor inherit this operation's failure.
-      this.#cacheMaintenance = undefined;
-      release();
-      this.#conversations.settled();
-    }
+    return this.#withWorkspaceAction(operation, sessionIds);
   }
 
   async #assertSessionDeletable(sessionId: string) {
@@ -5128,43 +5126,6 @@ export class InMemoryRuntimeHost {
   async #collectCacheAfterDeletion() {
     try { return await this.#collectCaches(); }
     catch (error) { return { counts: {}, errors: [`History was removed; associated cache cleanup needs a retry: ${error instanceof Error ? error.message : String(error)}`] }; }
-  }
-
-  #scheduleCacheCleanup(delayMs = 1_000) {
-    this.#cacheCleanupPending = true;
-    clearTimeout(this.#cacheCleanupTimer);
-    if (this.#shuttingDown) return;
-    this.#cacheCleanupTimer = setTimeout(() => {
-      this.#cacheCleanupTimer = undefined;
-      void this.#collectIdleCaches();
-    }, delayMs);
-    this.#cacheCleanupTimer.unref();
-  }
-
-  async #collectIdleCaches() {
-    if (!this.#cacheCleanupPending || this.#shuttingDown) return;
-    if (this.#cacheMaintenance || this.#workspaceActions || this.#activeTurns.size || this.#turnAdmissions ||
-        this.#teams.hasActiveRuns() || this.#assistant.working ||
-        this.#activeAppCommands || this.#mcpApps.busy || this.#pluginBackground.busy || this.#automation?.busy || this.#activeExtensionCommands.size) {
-      this.#scheduleCacheCleanup();
-      return;
-    }
-    const controller = new AbortController();
-    this.#backgroundCacheController = controller;
-    try {
-      const result = await this.#withCacheMaintenance(() => this.#collectCaches(controller.signal));
-      if (result.errors.length) console.warn('Deferred session cache cleanup needs a retry:', result.errors);
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        // Keep leftovers for the next deletion or explicit maintenance. Do not
-        // repeatedly rescan an unreadable store in the background.
-        this.#cacheCleanupPending = false;
-        console.warn('Deferred session cache cleanup needs a retry:', error);
-      }
-    } finally {
-      this.#backgroundCacheController = undefined;
-      if (this.#cacheCleanupPending) this.#scheduleCacheCleanup();
-    }
   }
 
   async #collectCaches(signal?: AbortSignal) {
@@ -5214,9 +5175,7 @@ export class InMemoryRuntimeHost {
     for (const [key, count] of Object.entries(retention.counts)) result.counts[key] = (result.counts[key] ?? 0) + count;
     result.errors.push(...retention.errors);
     signal?.throwIfAborted();
-    this.#cacheCleanupPending = false;
-    clearTimeout(this.#cacheCleanupTimer);
-    this.#cacheCleanupTimer = undefined;
+    this.#cache.collected();
     result.counts.automation_contexts = automation?.removed ?? 0;
     result.counts.child_sessions = removedChildren;
     return result;

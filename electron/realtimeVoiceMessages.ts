@@ -1,4 +1,5 @@
 import type { RealtimeVoiceProvider, ProviderEvent } from './realtimeVoiceProvider';
+import { uiText } from '@cardbush/platform/i18n';
 const str = (value: unknown) => typeof value === 'string' ? value : '';
 
 /** CardBush's canonical JSON messages; native adapters may translate these to vendor frames. */
@@ -8,7 +9,7 @@ export const realtimeVoiceMessages: Pick<RealtimeVoiceProvider, 'context' | 'aud
   control: action => ({ type: ({ mute: 'input_audio_mute.commit', unmute: 'input_audio_unmute.commit', interrupt: 'response.cancel', commit: 'input_audio_buffer.commit', close: 'session.close' })[action] }),
   results: results => ({ type: 'conversation.item.create', items: results.map(result => ({ call_id: result.id, role: 'tool', content: [{ type: 'input_text', text: result.output }] })) }),
   speak: text => ({ type: 'speech_text_buffer.commit', text }),
-  parse: event => {
+  parse: (event, language) => {
     const type = str(event.type), itemId = str(event.item_id) || str(event.response_id);
     const response = str(event.response_id) ? { responseId: str(event.response_id) } : {};
     if (type === 'session.created') return [{ type: 'ready' }];
@@ -35,7 +36,8 @@ export const realtimeVoiceMessages: Pick<RealtimeVoiceProvider, 'context' | 'aud
     if (type === 'error') {
       // Never expose raw vendor error text, which can echo credentials or audio.
       const code = String(event.status_code ?? '').replace(/[^0-9]/g, '').slice(0,12);
-      return [{ type: 'error', message: `实时语音请求失败${code ? `（${code}）` : ''}，请检查 API Key、服务开通和网络设置。` }];
+      const t = uiText(language);
+      return [{ type: 'error', message: code ? t('voiceNative.providerRejectedWithStatus', { status: code }) : t('voiceNative.providerRejected') }];
     }
     const user = type.startsWith('conversation.item.input_audio_transcription.');
     if (user || type.startsWith('response.output_text.')) {

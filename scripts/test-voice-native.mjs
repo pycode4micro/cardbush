@@ -31,7 +31,7 @@ test('packaging includes both Windows voice helpers and builds them for developm
 test('unsupported platforms report local speech unavailable without network fallback', async () => {
   const backend = new WindowsVoice(executable, 'linux');
   assert.equal((await backend.capabilities(signal())).available, false);
-  await assert.rejects(backend.speak({ id: 'test', text: '你好' }, defaultVoiceSettings, signal(), () => {}), /Windows/);
+  await assert.rejects(backend.speak({ id: 'test', text: '你好' }, defaultVoiceSettings, signal(), () => {}), {key: 'voiceNative.windowsOnly'});
 });
 
 test('real Windows male/female synthesis and Chinese dictation need no key or network', { skip: process.platform !== 'win32', timeout: 60000 }, async t => {
@@ -55,12 +55,12 @@ test('real Windows male/female synthesis and Chinese dictation need no key or ne
     t.diagnostic(`${voice}: ${chunks[0].sampleRate} Hz, ${pcm.length} PCM bytes, transcription: ${result.text}`);
   }
   assert.notDeepEqual(audioByGender[0], audioByGender[1]);
-  await assert.rejects(local.speak({ id: 'missing', text: '你好' }, { ...defaultVoiceSettings, systemFemaleVoice: 'nonexistent-voice' }, signal(), () => {}), /未安装/);
+  await assert.rejects(local.speak({ id: 'missing', text: '你好' }, { ...defaultVoiceSettings, systemFemaleVoice: 'nonexistent-voice' }, signal(), () => {}), error => error.key === 'voiceNative.windowsVoiceMissing' && /system voice is unavailable/i.test(error.describe('en')) && /未安装/.test(error.describe('zh-CN')));
 });
 
 test('Windows speech cancellation kills the native request', { skip: process.platform !== 'win32', timeout: 10000 }, async () => {
   const controller = new AbortController();
   const promise = local.speak({ id: 'cancel', text: '这是一段用于测试取消的文字。'.repeat(100) }, defaultVoiceSettings, controller.signal, () => {});
   setTimeout(() => controller.abort(), 30);
-  await assert.rejects(promise, /已取消/);
+  await assert.rejects(promise, {key: 'voiceNative.cancelled'});
 });

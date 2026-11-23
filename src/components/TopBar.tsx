@@ -2,7 +2,7 @@ import { createPortal } from 'react-dom';
 import { uiText } from '../i18n';
 import { AlignLeft, PanelRight } from 'lucide-react';
 import type { AppLanguage } from '../types';
-import type { HTMLAttributes, ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { conversationDisplayTitle } from '../shared/conversationTitle';
 
 export function TopBar({
@@ -16,6 +16,7 @@ export function TopBar({
   onToggleInspector,
   workspaceControl,
   actionsTarget,
+  showActionTooltips = false,
 }: {
   title?: string;
   language: AppLanguage;
@@ -23,11 +24,15 @@ export function TopBar({
   workSummaryVisible?: boolean;
   inspectorOpen: boolean;
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
-  workSummaryHoverProps?: HTMLAttributes<HTMLButtonElement>;
+  workSummaryHoverProps?: ComponentProps<'button'>;
   onToggleInspector?: () => void;
   workspaceControl?: ReactNode;
   actionsTarget?: HTMLElement | null;
+  showActionTooltips?: boolean;
 }) {
+  const t = uiText(language);
+  const summaryLabel = t('topBar.showOrHideWorkSummary');
+  const inspectorLabel = t(inspectorOpen ? 'app.closeInspector' : 'topBar.expandSidebar');
   const actions = (
     <>
       {workspaceControl}
@@ -39,7 +44,8 @@ export function TopBar({
           data-work-summary-toggle
           aria-expanded={Boolean(workSummaryVisible)}
           onClick={(event) => onToggleWorkSummary(event.currentTarget)}
-          aria-label={uiText(language)('topBar.showOrHideWorkSummary')}
+          aria-label={summaryLabel}
+          data-tooltip={showActionTooltips ? summaryLabel : undefined}
         >
           <AlignLeft size={15} aria-hidden="true" />
         </button>
@@ -50,7 +56,8 @@ export function TopBar({
         data-inspector-toggle
         data-shortcut="toggleInspector"
         onClick={() => onToggleInspector()}
-        aria-label={uiText(language)(inspectorOpen ? 'app.closeInspector' : 'topBar.expandSidebar')}
+        aria-label={inspectorLabel}
+        data-tooltip={showActionTooltips ? inspectorLabel : undefined}
         aria-expanded={inspectorOpen}
         aria-controls="right-inspector"
       >

@@ -1,9 +1,8 @@
 import { Activity, createContext, memo, useState, type ReactNode } from 'react';
-import type { AppSection } from '../../types';
+import type { FeatureSection } from './appPage';
 import { PageNavigationScope } from './PageNavigation';
 
 export const FeaturePageVisible = createContext(true);
-type FeatureSection = Exclude<AppSection, 'home' | 'assistant' | 'chat'>;
 type RenderPage = (section: FeatureSection) => ReactNode;
 const FeaturePage = memo(function FeaturePage({section, visible, render}: {section: FeatureSection; visible: boolean; render: RenderPage}) {
   return <Activity mode={visible ? 'visible' : 'hidden'}>

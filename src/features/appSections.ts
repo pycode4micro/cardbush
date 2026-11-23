@@ -7,8 +7,6 @@ export const sectionLabels: Record<AppSection, MessageKey> = {
   components: 'appCenterModel.components',
   chat: 'appSections.chat',
   plugins: 'appCenterModel.plugins',
-  skills: 'composer.skills',
-  subagents: 'appSections.subagents',
   team: 'appCenterModel.workflows',
   'md-presentation': 'appCenterModel.create',
 };

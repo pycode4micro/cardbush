@@ -1,5 +1,9 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron';
 
+function mainWindowCaption(symbolColor: string) {
+  return { color: '#00000000', symbolColor, height: 44 };
+}
+
 // Keep the menu in the existing title bar, with Windows owning caption controls
 // and their non-client hit testing (including maximize hover / Snap Layouts).
 export function mainWindowFrameOptions(platform: string): Pick<BrowserWindowConstructorOptions,
@@ -7,7 +11,7 @@ export function mainWindowFrameOptions(platform: string): Pick<BrowserWindowCons
   return platform === 'win32' ? {
     frame: true,
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#00000000', symbolColor: '#eeeeee', height: 36 },
+    titleBarOverlay: mainWindowCaption('#eeeeee'),
   } : { frame: false };
 }
 
@@ -86,11 +90,11 @@ export class WindowAppearanceController {
     const symbolColor = captionSymbolColor(request.theme, request.customTheme ? captionColor : undefined);
     if (this.platform === 'win32' && symbolColor !== this.#captionColor) {
       try {
-        this.target.setTitleBarOverlay({ color: '#00000000', symbolColor, height: 36 });
+        this.target.setTitleBarOverlay(mainWindowCaption(symbolColor));
       } catch (error) {
         this.onError(error);
         // An invalid imported color must not prevent window startup.
-        this.target.setTitleBarOverlay({ color: '#00000000', symbolColor: captionSymbolColor(request.theme), height: 36 });
+        this.target.setTitleBarOverlay(mainWindowCaption(captionSymbolColor(request.theme)));
       }
       this.#captionColor = symbolColor;
     }

@@ -8,6 +8,7 @@ import './styles/windowMaterial.css';
 import './styles/appearance.css';
 import { installWindowVisibility } from './shared/windowVisibility';
 import { DeferredModuleNotice, recoverableLazy } from './shared/recoverableLazy';
+import { rendererSurface } from './shared/rendererSurface';
 
 const stopWindowVisibility = installWindowVisibility();
 const disposeWindowVisibility = () => {
@@ -44,7 +45,7 @@ window.addEventListener('unhandledrejection', (event) => {
   });
 });
 
-const rendererWindow = new URLSearchParams(window.location.search).get('window');
+const rendererWindow = rendererSurface();
 if (rendererWindow === 'assistant') document.documentElement.dataset.assistantWindow = '';
 const language = resolveUiLanguage(navigator.language);
 // Select the window before importing its state owners. Shadow

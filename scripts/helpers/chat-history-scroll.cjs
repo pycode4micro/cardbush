@@ -17,6 +17,11 @@ module.exports = async ({ run, until, pause, window }) => {
   `);
   await until("!!document.querySelector('[data-message-id=history-answer-99]')", 'long history mounted');
   await pause(600);
+  const point = await run(`(() => {
+    const rect = document.querySelector('.message-list').getBoundingClientRect();
+    return { x: Math.round(rect.left + 12), y: Math.round(rect.top + rect.height * 0.4) };
+  })()`);
+  window.webContents.sendInputEvent({ type: 'mouseMove', ...point });
   window.webContents.debugger.attach('1.3');
   try {
     await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 4 });
@@ -47,15 +52,13 @@ module.exports = async ({ run, until, pause, window }) => {
         if (historyScrolling) historyFrame = requestAnimationFrame(sample);
       });
     `);
-    await run(`new Promise(resolve => {
-      let count = 0;
-      const timer = setInterval(() => {
-        historyList.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, bubbles: true, cancelable: true }));
-        if (++count === 70) { clearInterval(timer); resolve(); }
-      }, 24);
-    })`);
-    // Include the precise anchor after the 160ms wheel motion and 100ms idle
-    // delay. Timing is diagnostic; deterministic work counts catch regressions
+    // Only trusted input invokes the Chromium scroll default.
+    for (let count = 0; count < 70; count++) {
+      window.webContents.sendInputEvent({ type: 'mouseWheel', ...point, deltaX: 0, deltaY: 240 });
+      await pause(24);
+    }
+    // Include the precise anchor once native scrolling and reading settle.
+    // Timing is diagnostic; deterministic work counts catch regressions
     // without requiring a particular GPU or frame rate on the test machine.
     await pause(400);
     const result = await run(`(() => {
@@ -66,7 +69,7 @@ module.exports = async ({ run, until, pause, window }) => {
         moved: historyStartTop - historyList.scrollTop, rows: historyList.querySelectorAll('.message-list-item').length };
     })()`);
     console.log('History scroll:', JSON.stringify(result));
-    assert.ok(result.moved > 14000, 'an upward wheel burst must keep its pending distance across turns');
+    assert.ok(result.moved > 14000, 'an upward wheel burst must cover the expected distance across turns');
     assert.equal(result.rows, 200, 'offscreen history remains available for navigation and selection');
     assert.ok(result.hitTests >= 1 && result.hitTests <= 6, 'precise text hit-testing resumes for settled reading, not each wheel/scroll event');
     assert.ok(result.scans <= 6, 'unchanged message rows must not be rediscovered by whole-DOM scans per frame');

@@ -32,7 +32,7 @@ static class WindowsVoices
     public static void Speak(string text, string language, string gender, string id, double speed, Action<object> emit) {
         var selected = Installed().FirstOrDefault(v => v.language.Equals(language, StringComparison.OrdinalIgnoreCase) &&
             v.gender.Equals(gender, StringComparison.OrdinalIgnoreCase) && (String.IsNullOrEmpty(id) || v.id == id));
-        if (selected == null) throw new InvalidOperationException("未安装所选语言和性别的系统音色，请在 Windows 设置中安装语音包，或选择其他已安装音色。");
+        if (selected == null) throw new VoiceHostException("voiceNative.windowsVoiceMissing");
         if (selected.id.StartsWith("sapi:")) {
             using (var synth = new SpeechSynthesizer()) using (var output = new PcmOutput(emit)) {
                 synth.SelectVoice(selected.name);
@@ -48,7 +48,7 @@ static class WindowsVoices
             var job = synth.SynthesizeTextToStreamAsync(text);
             while (job.Status == AsyncStatus.Started) Thread.Sleep(10);
             using (var result = job.GetResults()) using (var reader = new DataReader(result)) {
-                if (result.Size > 12 * 1024 * 1024) throw new InvalidOperationException("本地语音回复过长。");
+                if (result.Size > 12 * 1024 * 1024) throw new VoiceHostException("voiceNative.windowsAudioTooLong");
                 var loading = reader.LoadAsync((uint)result.Size);
                 while (loading.Status == AsyncStatus.Started) Thread.Sleep(10);
                 var bytes = new byte[loading.GetResults()]; reader.ReadBytes(bytes);
@@ -58,20 +58,20 @@ static class WindowsVoices
     }
     static void EmitWave(byte[] bytes, Action<object> emit) {
         using (var reader = new BinaryReader(new MemoryStream(bytes, false))) {
-            if (Encoding.ASCII.GetString(reader.ReadBytes(4)) != "RIFF") throw new InvalidOperationException("系统音频格式无效。");
+            if (Encoding.ASCII.GetString(reader.ReadBytes(4)) != "RIFF") throw new VoiceHostException("voiceNative.windowsAudioInvalid");
             reader.ReadUInt32();
-            if (Encoding.ASCII.GetString(reader.ReadBytes(4)) != "WAVE") throw new InvalidOperationException("系统音频格式无效。");
+            if (Encoding.ASCII.GetString(reader.ReadBytes(4)) != "WAVE") throw new VoiceHostException("voiceNative.windowsAudioInvalid");
             int rate = 0; bool valid = false, emitted = false;
             while (reader.BaseStream.Position + 8 <= bytes.Length) {
                 var tag = Encoding.ASCII.GetString(reader.ReadBytes(4)); var length = reader.ReadUInt32();
                 long start = reader.BaseStream.Position, end = start + length;
-                if (end > bytes.Length) throw new InvalidOperationException("系统音频数据不完整。");
+                if (end > bytes.Length) throw new VoiceHostException("voiceNative.windowsAudioIncomplete");
                 if (tag == "fmt " && length >= 16) {
                     var format = reader.ReadUInt16(); var channels = reader.ReadUInt16(); rate = reader.ReadInt32();
                     reader.ReadUInt32(); reader.ReadUInt16(); var bits = reader.ReadUInt16();
                     valid = format == 1 && channels == 1 && bits == 16 && rate >= 8000 && rate <= 48000;
                 } else if (tag == "data") {
-                    if (!valid || length % 2 != 0) throw new InvalidOperationException("系统音频不是受支持的单声道 PCM。");
+                    if (!valid || length % 2 != 0) throw new VoiceHostException("voiceNative.windowsPcmUnsupported");
                     for (long offset = start; offset < end; offset += 4800) {
                         int count = (int)Math.Min(4800, end - offset);
                         emit(new { type = "audio", pcm = Convert.ToBase64String(bytes, (int)offset, count), sampleRate = rate }); emitted = true;
@@ -79,7 +79,7 @@ static class WindowsVoices
                 }
                 reader.BaseStream.Position = end + (length % 2);
             }
-            if (!emitted) throw new InvalidOperationException("系统没有生成音频。");
+            if (!emitted) throw new VoiceHostException("voiceNative.windowsAudioEmpty");
         }
     }
     sealed class PcmOutput : Stream {

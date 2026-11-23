@@ -6,6 +6,8 @@ import { BrowserBookmarkImporter, browserWebUrl, type BookmarkImportResult, type
 import { BrowserLibrary, type BrowserDownload, type BrowserLibraryPage, type BrowserVisit, type BrowserFrequentSite } from './browserLibrary';
 import { readBrowserIcon, readBrowserSiteIcon } from './browserIcon';
 import { isHomeWebsiteGuest } from './homeWebsiteGuest';
+import { uiText } from '@cardbush/platform/i18n';
+import { BrowserUiError } from './browserUiError';
 import type { WebApplicationInfo } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 export type BrowserPageCommand = { action: 'status' | 'print' | 'screenshot' }
@@ -57,7 +59,7 @@ export class BrowserUiService {
   }
   guest(owner: WebContents, id: number) {
     const guest = Number.isSafeInteger(id) ? webContents.fromId(id) : undefined;
-    if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' || guest.hostWebContents?.id !== owner.id || this.guests.get(id) !== owner.id) throw Error('此浏览器标签页已关闭或不属于当前窗口。Browser tab unavailable.');
+    if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' || guest.hostWebContents?.id !== owner.id || this.guests.get(id) !== owner.id) throw new BrowserUiError('browserNative.tabUnavailable');
     return guest;
   }
   track(owner: WebContents, id: number) {
@@ -117,53 +119,55 @@ export class BrowserUiService {
     const result = () => ({ zoom: guest.isDestroyed() ? 1 : guest.getZoomFactor() });
     if (command?.action === 'status') return result();
     if (command?.action === 'zoom') {
-      if (!Number.isFinite(command.factor) || command.factor < .25 || command.factor > 5) throw Error('Invalid zoom.');
+      if (!Number.isFinite(command.factor) || command.factor < .25 || command.factor > 5) throw new BrowserUiError('browserNative.invalidZoom');
       guest.setZoomFactor(command.factor); return result();
     }
     if (command?.action === 'device') {
       const size = command.size;
-      if (size !== null && (!size || !Number.isInteger(size.width) || !Number.isInteger(size.height) || size.width < 240 || size.width > 3840 || size.height < 240 || size.height > 3840 || !Number.isFinite(size.scale) || size.scale < .05 || size.scale > 1)) throw Error('Invalid device viewport.');
+      if (size !== null && (!size || !Number.isInteger(size.width) || !Number.isInteger(size.height) || size.width < 240 || size.width > 3840 || size.height < 240 || size.height > 3840 || !Number.isFinite(size.scale) || size.scale < .05 || size.scale > 1)) throw new BrowserUiError('browserNative.invalidViewport');
       if (size) { this.emulate(guest, size); this.devices.set(id, size); }
       else { guest.disableDeviceEmulation(); this.devices.delete(id); }
       return result();
     }
     if (command?.action === 'print') {
       const printed = await new Promise<{ success: boolean; reason: string }>(resolve => guest.print({ silent: false, printBackground: true }, (success, reason) => resolve({ success, reason })));
-      if (!printed.success && !/cancel/i.test(printed.reason)) throw Error(printed.reason || '打印失败。Printing failed.');
+      if (!printed.success && !/cancel/i.test(printed.reason)) {
+        throw printed.reason ? new Error(printed.reason) : new BrowserUiError('browserNative.printFailed');
+      }
       return { ...result(), cancelled: !printed.success };
     }
     if (command?.action === 'screenshot') {
       const image = await guest.capturePage();
-      if (image.isEmpty()) throw Error('当前页面尚未绘制，请稍后再试。Page is not ready for capture.');
+      if (image.isEmpty()) throw new BrowserUiError('browserNative.captureNotReady');
       const parent = BrowserWindow.fromWebContents(owner);
-      if (!parent) throw Error('Browser window unavailable.');
+      if (!parent) throw new BrowserUiError('browserNative.windowUnavailable');
       const chosen = await dialog.showSaveDialog(parent, { defaultPath: join(app.getPath('downloads'), `CardBush-${Date.now()}.png`), filters: [{ name: 'PNG', extensions: ['png'] }] });
       if (chosen.canceled || !chosen.filePath) return { ...result(), cancelled: true };
       await writeFile(chosen.filePath, image.toPNG()); return { ...result(), path: chosen.filePath };
     }
-    throw Error('Unknown browser action.');
+    throw new BrowserUiError('browserNative.unknownAction');
   }
   async downloadAction(id: string, action: string) {
     if (action === 'show') {
       const saved = await this.library.findDownload(id);
-      if (!saved?.path) throw Error('下载文件尚未保存。Download not saved yet.');
+      if (!saved?.path) throw new BrowserUiError('browserNative.downloadNotSaved');
       shell.showItemInFolder(saved.path); return;
     }
     const item = this.downloads.get(id);
-    if (!item) throw Error('下载已结束；中断的下载请在原网页重新开始。Download is no longer active.');
+    if (!item) throw new BrowserUiError('browserNative.downloadInactive');
     if (action === 'pause') item.pause();
     else if (action === 'resume' && item.canResume()) item.resume();
     else if (action === 'cancel') { item.cancel(); return; }
-    else throw Error('Unsupported download action.');
+    else throw new BrowserUiError('browserNative.unsupportedDownloadAction');
     // Pausing stops progress events, so publish the resulting state immediately.
     await this.library.download(this.downloadRecord(id, item));
   }
   async clear(owner: WebContents, input: BrowserClearData) {
-    if (!input || ['history', 'downloads', 'cache', 'site'].some(key => typeof input[key as keyof BrowserClearData] !== 'boolean')) throw Error('Invalid data selection.');
+    if (!input || ['history', 'downloads', 'cache', 'site'].some(key => typeof input[key as keyof BrowserClearData] !== 'boolean')) throw new BrowserUiError('browserNative.invalidDataSelection');
     if (input.site) {
       const guest = this.guest(owner, input.guestId!);
       const url = browserWebUrl(guest.getURL()), appUrl = browserWebUrl(owner.getURL());
-      if (!url || new URL(url).origin !== input.origin || appUrl && new URL(appUrl).origin === input.origin) throw Error('页面地址已改变，请重新选择要清理的网站。The selected site changed.');
+      if (!url || new URL(url).origin !== input.origin || appUrl && new URL(appUrl).origin === input.origin) throw new BrowserUiError('browserNative.siteChanged');
       // Origin-scoped deletion must never clear the application's localStorage.
       await guest.session.clearData({ origins: [input.origin!], dataTypes: ['cookies', 'localStorage', 'indexedDB', 'fileSystems', 'serviceWorkers', 'cache'] });
     }
@@ -172,20 +176,29 @@ export class BrowserUiService {
   }
 }
 
-export function registerBrowserUiIpc(assertSender: (id: number) => void, createService = () => new BrowserUiService(join(app.getPath('userData'), 'browser')), iconFetch: typeof fetch = fetch) {
+export function registerBrowserUiIpc(assertSender: (id: number) => void, createService = () => new BrowserUiService(join(app.getPath('userData'), 'browser')),
+  iconFetch: typeof fetch = fetch, text = () => uiText(app.getLocale())) {
   let service: BrowserUiService | undefined;
   const get = () => service ??= createService();
-  const handle = (channel: string, action: (owner: WebContents, ...args: any[]) => unknown) => ipcMain.handle(`browser:${channel}`, (event, ...args) => {
+  const handle = <Args extends unknown[]>(channel: string, action: (owner: WebContents, ...args: Args) => unknown) => ipcMain.handle(`browser:${channel}`, async (event, ...args) => {
     assertSender(event.sender.id);
-    if (event.senderFrame !== event.sender.mainFrame) throw Error('Browser management is available only in the application.');
-    return action(event.sender, ...args);
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error(text()('browserNative.invalidFrame'));
+    try { return await action(event.sender, ...args as Args); }
+    catch (error) {
+      if (error instanceof BrowserUiError) throw new Error(text()(error.key), { cause: error });
+      throw error;
+    }
   });
   handle('profiles', () => get().importer.profiles());
   handle('bookmarks-import', async (owner, profileId?: string) => {
     if (profileId !== undefined) return get().importer.profile(profileId);
     const parent = BrowserWindow.fromWebContents(owner);
-    if (!parent) throw Error('Browser window unavailable.');
-    const chosen = await dialog.showOpenDialog(parent, { properties: ['openFile'], filters: [{ name: 'Bookmarks', extensions: ['html', 'htm', 'json'] }, { name: 'All files', extensions: ['*'] }] });
+    if (!parent) throw new BrowserUiError('browserNative.windowUnavailable');
+    const t = text();
+    const chosen = await dialog.showOpenDialog(parent, { properties: ['openFile'], filters: [
+      { name: t('browserLibraryDialog.bookmarks'), extensions: ['html', 'htm', 'json'] },
+      { name: t('browserNative.allFiles'), extensions: ['*'] },
+    ] });
     return chosen.canceled || !chosen.filePaths[0] ? null : get().importer.file(chosen.filePaths[0]);
   });
   handle('page', (owner, id: number, command: BrowserPageCommand) => get().page(owner, id, command));

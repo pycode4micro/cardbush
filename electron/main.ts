@@ -43,7 +43,7 @@ import {
   type MenuItemConstructorOptions,
   type OpenDialogOptions,
 } from 'electron';
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -64,7 +64,7 @@ import { windowsShellIconPath } from './windowsAppIdentity';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
 import { collectPluginAcquisitionCache, runAcquisitionCommand } from './pluginAcquisition';
-import { closeHostProcesses, processOwnerSignal, runHostCommand, spawnHostProcess, setHostApplicationMemoryProvider } from './hostProcesses';
+import { closeHostProcesses, runHostCommand, setHostApplicationMemoryProvider } from './hostProcesses';
 import { applicationMemoryBytes, installPreviewResourceProtection, relievePreviewForMemoryPressure } from './previewResourceProtection';
 import { installInspectorWindowOpen } from './inspectorWindowOpen';
 import { installWindowHistoryInput } from './windowHistoryInput';
@@ -99,6 +99,7 @@ import {
   SessionAttentionNotificationGate,
   decodeSessionAttentionActivation,
   encodeSessionAttentionActivation,
+  normalizeSessionAttentionPayload,
 } from './sessionAttentionRouting';
 import { taskbarBadge } from './taskbarBadge';
 import {
@@ -112,7 +113,8 @@ import {
 import { BrowserConnectorLifecycle } from './browserConnectorLifecycle';
 import { installApplicationInstance } from './applicationInstance';
 import { previewHomeComponent } from './homeComponentPreview';
-import type { HomeToolHost, HomeSnapshot, HomeItem } from './homeComponentTools.mjs' with { 'resolution-mode': 'import' };
+import type { HomeItem } from './homeComponentTools.mjs' with { 'resolution-mode': 'import' };
+import { registerDesktopHomeComponents } from './desktopHomeComponents';
 import { connectorDataRoot } from './browserConnectorFiles';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
@@ -213,28 +215,8 @@ type DesktopControlTurn = { sessionId: string; turnId: string; toolCallId: strin
 let browserConnectorBroker: BrowserConnectorHandle | null = null;
 let browserConnectorLifecycle: BrowserConnectorLifecycle | null = null;
 let browserConnectorRegistrationCache: { state: string; value: ReturnType<typeof browserConnectorRegistrationStatus> } | null = null;
-let productHostController: import('./productPluginTools.mjs', { with: { 'resolution-mode': 'import' } }).ProductPluginToolHost & {
-  exportSharedConfiguration: () => Promise<{ models: Record<string, unknown>; subagents: Record<string, unknown>; sandbox?: { version: 1; enabled: boolean } }>;
-  execute: (command: unknown) => Promise<unknown>;
-  executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
-  shutdown: () => Promise<void>;
-  refreshMcp: (uninstallPluginId?: string, updatePluginId?: string, signal?: AbortSignal) => Promise<unknown>;
-  listMcpServers: () => Promise<unknown>;
-  reconnectMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
-  configureMcpServer: (input: import('./productMcpManagement.mjs', { with: { 'resolution-mode': 'import' } }).McpServerPatch, signal?: AbortSignal) => Promise<unknown>;
-  removeMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
-  listPluginConnections: (pluginId?: string) => Promise<unknown>;
-  pluginTroubleshootingContext: (pluginId: string, componentId: string) => Promise<unknown>;
-  configurePluginConnection: (input: unknown, signal?: AbortSignal) => Promise<unknown>;
-  savePluginConnections: (input: unknown) => Promise<unknown>;
-  uninstallPlugin: (pluginId: string) => Promise<unknown>;
-  replacePlugin: import('./productPlugins').ProductPluginReplacement;
-  requestPluginCredentials: (input: unknown, signal: AbortSignal) => Promise<unknown>;
-  resolveAutomationModel: (modelId: string) => Promise<Record<string, unknown>>;
-  resolveWebhookModel: (modelId: string, language?: string) => Promise<Record<string, unknown>>;
-  subagentModels: () => Promise<Array<{ id: string; model: string; maxContextTokens?: number; maxOutputTokens?: number }>>;
-  resolveSubagentModel: (modelId: string) => Promise<Record<string, unknown>>;
-} | null = null;
+type DesktopProductHost = import('./productHostController.mjs', { with: { 'resolution-mode': 'import' } }).ElectronProductHostController;
+let productHostController: DesktopProductHost | null = null;
 let productMcpManagement: { url: string; token: string; close: () => Promise<void> } | null = null;
 let browserUseEndpoint: { url: string; token: string; close: () => Promise<void> } | null = null;
 let browserUseRouterPromise: Promise<import('./browserUseHost.mjs', { with: { 'resolution-mode': 'import' } }).BrowserUseRouter> | undefined;
@@ -401,16 +383,6 @@ let sessionAttentionCount = 0;
 const sessionAttentionOpenQueue = new SessionAttentionOpenQueue();
 const sessionAttentionNotificationGate = new SessionAttentionNotificationGate();
 const activeSessionAttentionNotifications = new Set<Notification>();
-const terminalSessions = new Map<
-  string,
-  {
-    process: ChildProcessWithoutNullStreams;
-    stop: () => void;
-    ownerId: number;
-    cwd: string;
-  }
->();
-
 type AppThemeMode = 'bright' | 'dark';
 
 const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
@@ -942,7 +914,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
   installPreviewResourceProtection(target.webContents);
-  installInspectorWindowOpen(target.webContents, event => appendDebugLog('browser-popup', event));
+  installInspectorWindowOpen(target.webContents, event => appendDebugLog('browser-popup', event), nativeText);
   browserUi.attach(target.webContents);
   installSandboxFrameNavigationGuard(target.webContents);
   target.webContents.setWindowOpenHandler(({ url }) => {
@@ -1572,28 +1544,9 @@ function applySessionAttentionBadge() {
   }
 }
 
-function sanitizeSessionAttentionPayload(value: unknown) {
-  const payload = value && typeof value === 'object'
-    ? value as Record<string, unknown>
-    : {};
-  const kind = String(payload.kind ?? '').trim().toLowerCase();
-  const interactionId = String(payload.interactionId ?? '').trim();
-  if (!['completed', 'interaction', 'error'].includes(kind) || (kind === 'interaction' && !interactionId)) return null;
-  return {
-    sessionId: String(payload.sessionId ?? '').trim(),
-    title: String(payload.title ?? '').trim().slice(0, 120) || 'CardBush',
-    body: String(payload.body ?? '').trim().slice(0, 500) || (kind === 'interaction'
-      ? '有待处理的方案或审批请求。'
-      : kind === 'error' ? '任务执行出错，点击查看详情。' : '任务已完成，点击查看结果。'),
-    kind,
-    turnId: String(payload.turnId ?? '').trim(),
-    interactionId,
-  } as const;
-}
-
 function showSessionAttentionNotification(value: unknown) {
-  const payload = sanitizeSessionAttentionPayload(value);
-  if (!payload?.sessionId) {
+  const payload = normalizeSessionAttentionPayload(value, nativeText());
+  if (!payload) {
     return { shown: false };
   }
   if (!sessionAttentionNotificationGate.accept(payload)) return { shown: false };
@@ -2020,7 +1973,8 @@ ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
   const owner = diagnosticsWindow(event);
   if (!owner) throw new Error('invalid_window_sender');
   if (scope === 'window-scroll') return windowScrollDiagnostics.get(owner)?.append(payload);
-  if (owner !== mainWindow && !secondaryRendererLogScopes.has(scope)) throw new Error('invalid_renderer_log_scope');
+  const assistantTrace = owner === assistantWindow && scope === 'assistant-send';
+  if (owner !== mainWindow && !assistantTrace && !secondaryRendererLogScopes.has(scope)) throw new Error('invalid_renderer_log_scope');
   return appendDebugLog(scope, payload);
 });
 
@@ -2685,7 +2639,7 @@ ipcMain.on('agents:events:stop', (event, subscriptionId: string) => {
 });
 function sshConnections() {
   return sshConnectionsPromise ??= import('./sshConnections.mjs').then(({ SshConnectionManager }) => new SshConnectionManager(path.join(app.getPath('userData'), 'ssh', 'connections.json'), {
-    encrypt: value => { if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw Error('系统安全凭据存储不可用，请使用 SSH Agent 或无口令密钥。'); return safeStorage.encryptString(value).toString('base64'); },
+    encrypt: value => { if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw Error(nativeText()('native.sshCredentialStorageUnavailable')); return safeStorage.encryptString(value).toString('base64'); },
     decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
   }));
 }
@@ -2930,7 +2884,7 @@ function conversationExtracts() {
       const response = await controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
         command: { kind: 'runtime.extract_session', payload: { sessionId, keys } } }) as { ok?: boolean;
           result?: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).ConversationExtractSource; error?: { message: string } };
-      if (!response.ok || !response.result) throw new Error(response.error?.message ?? '无法读取会话。');
+      if (!response.ok || !response.result) throw new Error(response.error?.message ?? nativeText()('native.conversationReadFailed'));
       return response.result;
     }, { notify: () => { for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'conversation-extracts:changed'); } });
     app.once('will-quit', () => store.close());
@@ -2962,11 +2916,17 @@ ipcMain.handle('conversation-extracts:command', async (event, input: { action?: 
 });
 ipcMain.handle('calendar:command', async (event, input: unknown) => {
   assertMainWindowSender(event.sender.id);
+  if (event.senderFrame !== event.sender.mainFrame) throw Error('invalid_window_sender');
   calendarStore ??= import('./calendarStore.mjs').then(({ CalendarStore }) => new CalendarStore(path.join(app.getPath('userData'), 'calendars', 'calendars.json')));
+  const language = nativeUiLanguage ?? app.getLocale();
   const result = await (await calendarStore).command(input, async () => {
     const options = { title: nativeText()('main.import_calendar'), properties: ['openFile'] as Array<'openFile'>, filters: [{ name: nativeText()('main.calendar_data'), extensions: ['json', 'ics'] }] };
     const chosen = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return chosen.canceled ? undefined : chosen.filePaths[0];
+  }, language).catch(async error => {
+    const { CalendarError } = await import('./calendarError.mjs');
+    if (error instanceof CalendarError) throw new Error(error.describe(nativeUiLanguage ?? app.getLocale()), { cause: error });
+    throw error;
   });
   if ((input as { action?: string })?.action !== 'list' && !result.cancelled) {
     for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'calendar:changed');
@@ -3132,7 +3092,7 @@ ipcMain.handle(
   'project:rename-directory',
   (event, input: { rootPath?: string; name?: string }) => {
     assertMainWindowSender(event.sender.id);
-    if (input.rootPath?.startsWith('ssh://')) throw Error('远程项目可修改显示名称；目录重命名请在远程终端执行。');
+    if (input.rootPath?.startsWith('ssh://')) throw Error(nativeText()('native.renameRemoteProjectDirectory'));
     return renameProjectDirectory(
       String(input?.rootPath ?? ''),
       String(input?.name ?? ''),
@@ -3144,36 +3104,6 @@ ipcMain.handle('project:search-files', async (_, rootPath: string, query: string
   if (rootPath.startsWith('ssh://')) return (await sshConnections()).searchFiles(rootPath, query);
   return searchProjectFiles(rootPath, query);
 });
-
-ipcMain.handle(
-  'team-workflow:save',
-  (_, input: { projectDir?: string; workflowId?: string; yaml?: string }) => {
-    const workflowId = String(input?.workflowId ?? '').trim().toLowerCase();
-    const yaml = String(input?.yaml ?? '');
-    if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(workflowId)) {
-      throw new Error('Workflow id must contain only letters, numbers, hyphens, or underscores.');
-    }
-    if (!yaml.trim() || yaml.length > 2_000_000) {
-      throw new Error('Workflow YAML is empty or too large.');
-    }
-    const requestedProjectDir = String(input?.projectDir ?? '').trim();
-    if (requestedProjectDir.startsWith('ssh://')) throw Error('远程工作流文件请使用远程文件工具保存。');
-    const projectDir = requestedProjectDir ? path.resolve(requestedProjectDir) : '';
-    if (projectDir && (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory())) {
-      throw new Error('Project directory does not exist.');
-    }
-    const workflowDir = projectDir
-      ? path.join(projectDir, '.bush', 'workflows')
-      : path.join(app.getPath('userData'), 'workflows');
-    fs.mkdirSync(workflowDir, { recursive: true });
-    const filePath = path.join(workflowDir, `${workflowId}.yaml`);
-    const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
-    fs.writeFileSync(temporaryPath, yaml, 'utf8');
-    if (fs.existsSync(filePath)) fs.rmSync(filePath);
-    fs.renameSync(temporaryPath, filePath);
-    return { path: filePath, scope: projectDir ? 'project' : 'global' };
-  },
-);
 
 ipcMain.handle('project:git-info', async (_, rootPath: string) => {
   if (rootPath.startsWith('ssh://')) return (await sshConnections()).git(rootPath, 'info');
@@ -3222,42 +3152,10 @@ ipcMain.handle('app:host-capabilities', () => {
     defaultTerminalRuntime: runtimes[0], ...platformFeatures(process.platform, process.arch) };
 });
 
-ipcMain.handle('terminal:create', (event, cwd?: string, runtime?: TerminalRuntime) => {
-  return createTerminalSession(event.sender.id, cwd, runtime, processOwnerSignal(event.sender));
-});
-
 ipcMain.handle('project:restore-file-changes', (_, rootPath: string,
   files: Array<{ path: string; diff?: string; lines?: string[] }>) => {
   const result = applyFileChanges(rootPath, files, false);
   return { restoredFiles: result.fileCount, output: result.output };
-});
-
-ipcMain.on('terminal:write', (event, sessionId: string, data: string) => {
-  const session = terminalSessions.get(sessionId);
-  if (!session || session.ownerId !== event.sender.id || session.process.killed) {
-    return;
-  }
-  session.process.stdin.write(process.platform === 'win32' ? data.replace(/\r/g, '\n') : data);
-});
-
-ipcMain.on('terminal:resize', (event, sessionId: string, _cols: number, _rows: number) => {
-  const session = terminalSessions.get(sessionId);
-  if (!session || session.ownerId !== event.sender.id) {
-    return;
-  }
-});
-
-ipcMain.handle('terminal:close', (event, sessionId: string) => {
-  const session = terminalSessions.get(sessionId);
-  if (!session || session.ownerId !== event.sender.id) {
-    return;
-  }
-  session.stop();
-  terminalSessions.delete(sessionId);
-});
-
-ipcMain.handle('terminal:run', (event, command: string, cwd?: string, runtime?: TerminalRuntime) => {
-  return runTerminalCommand(command, cwd, runtime, processOwnerSignal(event.sender));
 });
 
 let pastedTextStore: Promise<import('./pastedTextAttachments.mjs', { with: { 'resolution-mode': 'import' } }).PastedTextAttachments> | undefined;
@@ -3275,53 +3173,27 @@ ipcMain.handle('files:pasted-text', async (event, action: string, input: unknown
   throw new Error('Unknown text attachment action.');
 });
 
-type HomeLibrary = HomeToolHost & {snapshot(revision?: number): HomeSnapshot | null; save(items: HomeItem[], revision: number): HomeSnapshot;
-  migrate(items: HomeItem[]): HomeSnapshot; close(): void};
-let homeLibrary: HomeLibrary | undefined;
-function desktopHomeLibrary(): HomeLibrary {
-  if (homeLibrary) return homeLibrary;
-  const profile = app.getPath('userData');
-  const {openLibrary} = require(path.join(bundledProductSkillRoot(), 'cardbush-docs', 'scripts', 'home-library.cjs'));
-  const db: HomeLibrary = openLibrary(profile);
-  homeLibrary = db;
-  let timer: ReturnType<typeof setTimeout>;
-  const watcher = fs.watch(profile, {persistent: false}, (_event, file) => {
-    if (file && !String(file).startsWith('home-components.sqlite')) return;
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      sendToLiveRenderer(mainWindow, 'home-components:changed');
-      sendToLiveRenderer(assistantWindow, 'home-components:changed');
-    }, 100);
-  });
-  app.once('will-quit', () => { clearTimeout(timer); watcher.close(); db.close(); });
-  return db;
-}
+const { library: desktopHomeLibrary, dispose: disposeDesktopHomeComponents } = registerDesktopHomeComponents({
+  profileDirectory: () => app.getPath('userData'),
+  scriptsDirectory: () => path.join(bundledProductSkillRoot(), 'cardbush-docs', 'scripts'),
+  requireAppFrame,
+  requireWorkspaceFrame(event) {
+    assertMainWindowSender(event.sender.id);
+    if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
+  },
+  onChanged: () => {
+    sendToLiveRenderer(mainWindow, 'home-components:changed');
+    sendToLiveRenderer(assistantWindow, 'home-components:changed');
+  },
+  onWatchError: error => console.warn('[home-components] Change notifications unavailable', error),
+});
+app.once('will-quit', disposeDesktopHomeComponents);
 ipcMain.handle('plugin-runtimes:manage', async (event, action, kind, version) => {
   assertMainWindowSender(event.sender.id);
   if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
   const { managePluginRuntime } = await import('./pluginRuntimeManager.mjs');
   return managePluginRuntime(action, kind, version, undefined, pluginFetch);
 });
-ipcMain.handle('home-components:assemble', (event, files) => {
-  assertMainWindowSender(event.sender.id);
-  if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
-  const {assembleComponent} = require(path.join(bundledProductSkillRoot(), 'cardbush-docs', 'scripts', 'component-files.cjs'));
-  return assembleComponent(files);
-});
-ipcMain.handle('assistant:home-component-catalog', event => {
-  requireAppFrame(event);
-  return desktopHomeLibrary().snapshot()?.items.slice(0, 40).map(({id, title}) => ({id, title})) ?? [];
-});
-ipcMain.handle('home-components:library', (event, action, revision, items) => {
-  assertMainWindowSender(event.sender.id);
-  if (event.senderFrame !== event.sender.mainFrame) throw Error('INVALID_SENDER');
-  const db = desktopHomeLibrary();
-  if (action === 'read') return db.snapshot(revision);
-  if (action === 'migrate') return db.migrate(items);
-  if (action === 'save') return db.save(items, revision);
-  throw Error('INVALID_ACTION');
-});
-
 ipcMain.handle('inspector:capture-region', async (event, input: import('./inspectorRegionCapture').InspectorRegionCapture) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner || (owner !== mainWindow && !shadowWindows.has(event.sender.id))) throw Error('Invalid preview capture sender.');
@@ -3373,7 +3245,7 @@ ipcMain.handle('image:gallery-start', (event, root: string, recursive: boolean) 
 ipcMain.handle('image:gallery-next', (event, id: string) => imageGalleryScanner.next(imageGalleryOwner(event), id));
 ipcMain.handle('image:gallery-close', (event, id: string) => imageGalleryScanner.close(imageGalleryOwner(event), id));
 
-const browserUi = registerBrowserUiIpc(assertMainWindowSender, undefined, pluginFetch);
+const browserUi = registerBrowserUiIpc(assertMainWindowSender, undefined, pluginFetch, nativeText);
 ipcMain.handle('browser:settings-read', async event => {
   assertMainWindowSender(event.sender.id);
   return (await browserConfigurationStore()).read();
@@ -3402,8 +3274,8 @@ ipcMain.handle('inspector:browser-bind', async (event, input: { sessionId: strin
   try { configuration = JSON.parse(await fs.promises.readFile(productAppsConfigPath(), 'utf8')); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const plugin = configuration.plugins?.find(plugin => plugin.id === 'chrome');
-  if (configuration.serviceEnabled === false || plugin?.enabled === false) throw new Error('请先在设置中启用 Browser Use，再引用内置浏览器标签页。Enable Browser Use before referencing an integrated tab.');
-  if (plugin?.config?.connectionMode === 'remote_debugging') throw new Error('当前为 Chrome 远程调试模式。请在浏览器设置中选择普通 Browser Use，再操作 CardBush 内置标签页；不会转去控制 Chrome。');
+  if (configuration.serviceEnabled === false || plugin?.enabled === false) throw new Error(nativeText()('native.enableBrowserUseForIntegratedTab'));
+  if (plugin?.config?.connectionMode === 'remote_debugging') throw new Error(nativeText()('native.useIntegratedBrowserMode'));
   return (await browserUseRouter()).bindReferences(event.sender, input.sessionId, input.references);
 });
 ipcMain.handle('browser:settings-update', async (event, input: { startPage: string; expectedRevision: number }) => {
@@ -3469,7 +3341,7 @@ ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
 });
 
 ipcMain.handle('shell:open-path', (event, targetPath: string) => {
-  if (targetPath.startsWith('ssh://')) return '远程路径请在项目的 SSH 目录浏览器中查看。';
+  if (targetPath.startsWith('ssh://')) return nativeText()('native.openRemotePathInProject');
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) {
     return 'Open path is only available from the main CardBush window.';
@@ -4106,21 +3978,41 @@ async function startRuntimeServices(force = false): Promise<void> {
 }
 
 async function disposeRuntimeServices(error?: Error) {
-  runtimeAutomationStartup?.abort();
+  const automation = runtimeAutomationStartup;
+  const catalog = disposeCapabilityCatalogWatcher;
+  const controller = runtimeHostController;
+  const product = productHostController;
   runtimeAutomationStartup = null;
-  disposeDesktopControlMonitor();
-  disposeCapabilityCatalogWatcher?.();
   disposeCapabilityCatalogWatcher = undefined;
-  runtimeHostIpc?.reset(error);
-  runtimeHostController?.dispose();
   runtimeHostController = null;
   productHostController = null;
+  await settleRuntimeCleanup([
+    ['automation startup', () => automation?.abort()],
+    ['desktop control', disposeDesktopControlMonitor],
+    ['capability catalogue', () => catalog?.()],
+    ['Product Host maintenance', () => product?.stopMaintenance()],
+    ['runtime IPC', () => runtimeHostIpc?.reset(error)],
+    ['runtime controller', () => controller?.dispose()],
+    ['runtime bridges', closeRuntimeBridges],
+  ]);
+}
+
+async function settleRuntimeCleanup(tasks: ReadonlyArray<readonly [string, () => unknown]>) {
+  const outcomes = await Promise.allSettled(tasks.map(([, clean]) => Promise.resolve().then(clean)));
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === 'rejected') console.warn('[bush-runtime] cleanup failed:', tasks[index]![0], outcome.reason);
+  });
+}
+
+function closeRuntimeBridges() {
   const management = productMcpManagement;
-  productMcpManagement = null;
-  await management?.close();
   const browserEndpoint = browserUseEndpoint;
+  productMcpManagement = null;
   browserUseEndpoint = null;
-  await browserEndpoint?.close();
+  return settleRuntimeCleanup([
+    ['MCP management bridge', () => management?.close()],
+    ['browser bridge', () => browserEndpoint?.close()],
+  ]);
 }
 
 async function initializeRuntimeHost() {
@@ -4416,7 +4308,7 @@ async function initializeProductHost(controller: RuntimeHostController, signal: 
   const userSkillRoot = path.join(app.getPath('userData'), 'skills');
   const bundledPluginRoot = path.join(app.getAppPath(), 'assets', 'plugins');
   const userPluginRoot = path.join(app.getPath('userData'), 'plugins');
-  productHostController = new productModule.ElectronProductHostController({
+  const product: DesktopProductHost = new productModule.ElectronProductHostController({
     sandbox: sandboxSetup,
     dataRoot: path.join(app.getPath('userData'), 'product-host'),
     runtimeStateRoot,
@@ -4436,25 +4328,34 @@ async function initializeProductHost(controller: RuntimeHostController, signal: 
       write: (key: string, value: unknown) => mcpDesktop().handle('credentials.write', { key, value }, new AbortController().signal),
     },
     requestClientCredentials: (input: Parameters<McpDesktopHost['requestClientCredentials']>[0], signal: AbortSignal) => mcpDesktop().requestClientCredentials(input, signal),
-  }) as NonNullable<typeof productHostController>;
+  });
+  productHostController = product;
   disposeCapabilityCatalogWatcher?.();
   const catalogConfigRoot = path.join(app.getPath('userData'), 'product-host', 'config');
-  disposeCapabilityCatalogWatcher = watchCapabilityCatalog([
+  const catalogAbort = new AbortController();
+  const isCurrent = () => productHostController === product && !catalogAbort.signal.aborted && !runtimeServicesStopping;
+  const stopWatching = watchCapabilityCatalog([
     ...productSkillRoots(),
     bundledPluginRoot, userPluginRoot,
     catalogConfigRoot,
   ], () => {
-    void refreshPluginUiNetwork().catch((error: unknown) => console.warn('[plugin-ui-network]', error));
+    if (!isCurrent()) return;
+    void refreshPluginUiNetwork().catch((error: unknown) => { if (isCurrent()) console.warn('[plugin-ui-network]', error); });
     const notify = () => {
+      if (!isCurrent()) return;
       for (const window of BrowserWindow.getAllWindows()) {
         sendToLiveRenderer(window, 'capabilities:changed');
       }
     };
     notify();
-    void productHostController?.refreshMcp().catch((error: unknown) => {
-      console.warn('[capability-refresh]', error instanceof Error ? error.message : String(error));
+    void product.refreshMcp(undefined, undefined, catalogAbort.signal).catch((error: unknown) => {
+      if (isCurrent()) console.warn('[capability-refresh]', error instanceof Error ? error.message : String(error));
     }).finally(notify);
   }, catalogConfigRoot);
+  disposeCapabilityCatalogWatcher = () => {
+    catalogAbort.abort();
+    stopWatching();
+  };
 }
 
 function legacyBushserverModelConfigPaths(): string[] {
@@ -4768,7 +4669,7 @@ function registerLocalFileProtocol() {
           const preview = await runHostCommand({ executable: process.execPath, args: [path.join(__dirname, 'officePreviewWorker.js'), officePath, nativeUiLanguage ?? app.getLocale()],
             cwd: path.dirname(officePath), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, signal: request.signal,
             memoryCeilingBytes: 512 * 1024 ** 2, maxOutputBytes: 24 * 1024 ** 2, timeoutMs: 20_000 });
-          if (preview.exitCode !== 0) throw new Error(preview.stderr || '预览未完成，可在外部应用打开文件。');
+          if (preview.exitCode !== 0) throw new Error(preview.stderr || nativeText()('native.openPreviewExternally'));
           previewHtml = preview.stdout;
         } catch (error) {
           previewHtml = await renderTextFilePreview(
@@ -4875,34 +4776,50 @@ async function previewRendererAssetResponse(
   });
 }
 
+async function shutdownDesktopHosts() {
+  runtimeServicesStopping = true;
+  const startup = runtimeServicesInitialization;
+  const automation = runtimeAutomationStartup;
+  const catalog = disposeCapabilityCatalogWatcher;
+  const product = productHostController;
+  runtimeAutomationStartup = null;
+  disposeCapabilityCatalogWatcher = undefined;
+  runtimeServicesAbort?.abort(new Error('CardBush Runtime is shutting down.'));
+
+  // Stop main-process commands while the Product Host still has its dependencies.
+  const ownedCleanup = settleRuntimeCleanup([
+    ['host processes', closeHostProcesses],
+    ['automation startup', () => automation?.abort()],
+    ['capability catalogue', () => catalog?.()],
+  ]);
+  await settleRuntimeCleanup([['product host', () => product?.shutdown()]]);
+  await settleRuntimeCleanup([
+    ['runtime startup', () => startup],
+    ['local model access', () => localModelAccessBroker?.close()],
+    ['OpenAI accounts', async () => (await openAiAccountPromise)?.close()],
+    ['SIWC accounts', async () => (await siwcAccountsPromise)?.close()],
+    ['runtime bridges', closeRuntimeBridges],
+    ['model preview', () => modelPreviewService?.dispose()],
+    ['host processes and observers', () => ownedCleanup],
+    ['agent connections', async () => (await agentConnectionsPromise)?.close()],
+  ]);
+  // Account managers and Agent connections may still use networking during cleanup.
+  await settleRuntimeCleanup([
+    ['SSH connections', async () => (await sshConnectionsPromise)?.close()],
+    ['plugin networking', async () => (await pluginNetworkPromise)?.close()],
+  ]);
+  localModelAccessBroker = undefined;
+  modelPreviewService = undefined;
+}
+
 app.on('before-quit', (event) => {
   isQuitting = true;
-  runtimeAutomationStartup?.abort();
-  runtimeAutomationStartup = null;
-  disposeCapabilityCatalogWatcher?.();
-  disposeCapabilityCatalogWatcher = undefined;
-  if (hostShutdownComplete) {
-    return;
-  }
+  if (hostShutdownComplete) return;
   event.preventDefault();
   if (hostShutdownPromise == null) {
-    // Stop only main-process-owned commands; the Runtime and shared MCP services
-    // continue through their own orderly shutdown below.
-    const processesClosed = closeHostProcesses();
-    hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(async () => {
-      await localModelAccessBroker?.close().catch(() => {}); localModelAccessBroker = undefined;
-      await (await openAiAccountPromise)?.close();
-      await (await siwcAccountsPromise)?.close();
-      await (await pluginNetworkPromise)?.close();
-      await productMcpManagement?.close();
-      productMcpManagement = null;
-      await browserUseEndpoint?.close();
-      browserUseEndpoint = null;
-      await modelPreviewService?.dispose();
-      await processesClosed;
-      await (await agentConnectionsPromise)?.close();
-      await (await sshConnectionsPromise)?.close();
-      modelPreviewService = undefined;
+    hostShutdownPromise = shutdownDesktopHosts().catch(error => {
+      console.warn('[bush-runtime] shutdown failed:', error);
+    }).finally(() => {
       hostShutdownComplete = true;
       app.quit();
     });
@@ -4924,10 +4841,6 @@ app.on('will-quit', () => {
     clearTimeout(quitFallbackTimer);
     quitFallbackTimer = null;
   }
-  for (const session of terminalSessions.values()) {
-    session.stop();
-  }
-  terminalSessions.clear();
 });
 
 app.on('window-all-closed', () => {
@@ -5301,16 +5214,22 @@ function assertRuntimeRendererSender(senderId: number) {
 
 function filesystemLocations() {
   const candidates = [
-    ['home', 'Home', app.getPath('home')],
-    ['desktop', 'Desktop', app.getPath('desktop')],
-    ['documents', 'Documents', app.getPath('documents')],
-    ['downloads', 'Downloads', app.getPath('downloads')],
-    ['pictures', 'Pictures', app.getPath('pictures')],
-    ['music', 'Music', app.getPath('music')],
+    ['home', 'Home'],
+    ['desktop', 'Desktop'],
+    ['documents', 'Documents'],
+    ['downloads', 'Downloads'],
+    ['pictures', 'Pictures'],
+    ['music', 'Music'],
   ] as const;
-  return candidates
-    .filter(([, , targetPath]) => Boolean(targetPath) && fs.existsSync(targetPath))
-    .map(([id, name, targetPath]) => ({ id, name, path: targetPath }));
+  return candidates.flatMap(([id, name]) => {
+    try {
+      const targetPath = app.getPath(id);
+      return targetPath && fs.existsSync(targetPath) ? [{ id, name, path: targetPath }] : [];
+    } catch {
+      // Native profiles may not have every optional known folder.
+      return [];
+    }
+  });
 }
 
 
@@ -5925,7 +5844,7 @@ function requireGitRoot(rootPath: string) {
 }
 
 function requireProjectDirectory(rootPath: string) {
-  if (rootPath.startsWith('ssh://')) throw Error('此操作需要使用远程终端完成。');
+  if (rootPath.startsWith('ssh://')) throw Error(nativeText()('native.remoteTerminalRequired'));
   const root = path.resolve(rootPath);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
     throw new Error(`Project directory does not exist: ${root}`);
@@ -6002,77 +5921,6 @@ function commandErrorMessage(caught: unknown) {
     return (caught as { message: string }).message;
   }
   return String(caught);
-}
-
-async function createTerminalSession(ownerId: number, cwd?: string, runtime?: TerminalRuntime, signal?: AbortSignal) {
-  const workingDirectory = resolveCwd(cwd);
-  const shellInfo = terminalShell(runtime, workingDirectory);
-  const managed = await spawnHostProcess({ executable: shellInfo.command, args: shellInfo.args,
-    cwd: workingDirectory,
-    signal,
-    env: {
-      ...process.env,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-    },
-  });
-  const child = managed.child;
-  const id = randomUUID();
-  terminalSessions.set(id, {
-    process: child,
-    stop: managed.stop,
-    ownerId,
-    cwd: workingDirectory,
-  });
-
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    sendTerminalData(ownerId, id, chunk);
-  });
-  child.stderr.on('data', (chunk) => {
-    sendTerminalData(ownerId, id, chunk);
-  });
-  child.on('error', (error) => {
-    sendTerminalData(ownerId, id, `${error.message}\r\n`);
-  });
-  child.stdin.on('error', () => undefined); // The shell can close between a write and renderer delivery.
-  child.on('close', async (exitCode) => {
-    terminalSessions.delete(id);
-    const report = await managed.complete();
-    if (report?.code && !signal?.aborted && !child.killed) sendTerminalData(ownerId, id, `${report.message}\r\n`);
-    sendToOwner(ownerId, 'terminal:exit', {
-      id,
-      exitCode,
-    });
-  });
-
-  return {
-    id,
-    cwd: workingDirectory,
-    shell: path.basename(shellInfo.command),
-  };
-}
-
-function sendTerminalData(ownerId: number, id: string, data: string | Buffer) {
-  sendToOwner(ownerId, 'terminal:data', {
-    id,
-    data: typeof data === 'string' ? data : data.toString('utf8'),
-  });
-}
-
-function sendToOwner(ownerId: number, channel: string, payload: unknown) {
-  const owner = BrowserWindow.getAllWindows().find(
-    (window) => window.webContents.id === ownerId,
-  );
-  if (!owner || owner.webContents.isDestroyed()) {
-    return;
-  }
-  sendToLiveRenderer(owner, channel, payload);
-}
-
-function terminalShell(runtime?: TerminalRuntime, cwd?: string) {
-  return terminalInvocation(runtime, cwd);
 }
 
 async function runTerminalCommand(command: string, cwd?: string, runtime?: TerminalRuntime, signal?: AbortSignal) {

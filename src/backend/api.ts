@@ -17,6 +17,7 @@ import { WORKSPACE_REVIEW_TURN_LIMIT, FORK_RUNTIME_SESSION_COMMAND, SWITCH_RUNTI
 import { promptReferenceParts } from '../shared/promptReferences';
 import { conversationDisplayTitle, conversationTitleFromUserText } from '../shared/conversationTitle';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
+import { enqueueLocalModelWrite } from './modelConfigWrites';
 import type {
   AppLanguage,
   AssistantRevision,
@@ -75,7 +76,7 @@ import { standardImageInputToolDefaultName } from './toolVisibility';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { isVisibleConversationSession } from './runtimeSessionVisibility';
-import { ASSISTANT_CONVERSATION_COMMAND } from '@cardbush/bush-protocol';
+import { ASSISTANT_CONVERSATION_COMMAND, storageInventorySchema } from '@cardbush/bush-protocol';
 import { journalMessages, type ConversationJournalSnapshot } from './conversationJournal';
 import { contextWindowMetrics, failedCompactionInputTokens } from './contextWindowUsage';
 import { contextCompactionPresentationExecutions } from './contextCompactionPresentation';
@@ -111,6 +112,7 @@ export const RUNTIME_ASSET_RESET_PROTOCOL = 'cardbush.runtime_asset_reset.v1';
 
 export interface BackendModelConfigsResult {
   defaultModelId: string;
+  revision?: string;
   models: ManagedModelConfig[];
   raw: unknown;
 }
@@ -693,6 +695,7 @@ function runtimeExperimentalGoal(goal: RuntimeGoalState): ExperimentalGoal {
 export async function saveModelConfigs(request: {
   defaultModelId?: string;
   models: ManagedModelConfig[];
+  expectedRevision?: string;
 }): Promise<BackendModelConfigsResult> {
   return modelConfigsFromPayload(
     await productHostValue({
@@ -701,6 +704,7 @@ export async function saveModelConfigs(request: {
         version: 1,
         defaultModelId: request.defaultModelId?.trim() ?? '',
         models: request.models,
+        ...(request.expectedRevision === undefined ? {} : { expectedRevision: request.expectedRevision }),
       },
     }),
   );
@@ -708,14 +712,18 @@ export async function saveModelConfigs(request: {
 
 export async function saveModelReasoning(modelId: string, reasoningEffort: ReasoningEffort | null, connectionId = '') {
   const command = { kind: 'model.reasoning.update' as const, modelId, reasoningEffort };
-  const saved = modelConfigsFromPayload(connectionId
-    ? await window.cardbushDesktop!.agents!.call(connectionId, 'product.command', command)
-    : await productHostValue(command));
-  window.dispatchEvent(new CustomEvent('cardbush:model-reasoning-updated', { detail: {
-    connectionId, modelId, reasoningEffort: saved.models.find(model => model.id === modelId)?.reasoningEffort ?? null,
-  } }));
-  if (connectionId) window.dispatchEvent(new CustomEvent('cardbush:agent-settings-updated', { detail: connectionId }));
-  return saved;
+  const update = async () => {
+    const saved = modelConfigsFromPayload(connectionId
+      ? await window.cardbushDesktop!.agents!.call(connectionId, 'product.command', command)
+      : await productHostValue(command));
+    window.dispatchEvent(new CustomEvent('cardbush:model-reasoning-updated', { detail: {
+      connectionId, modelId, reasoningEffort: saved.models.find(model => model.id === modelId)?.reasoningEffort ?? null,
+      catalogue: { revision: saved.revision, models: saved.models, defaultModelId: saved.defaultModelId },
+    } }));
+    if (connectionId) window.dispatchEvent(new CustomEvent('cardbush:agent-settings-updated', { detail: connectionId }));
+    return saved;
+  };
+  return connectionId ? update() : enqueueLocalModelWrite(update);
 }
 
 export async function fetchCardbushAppsConfiguration(): Promise<CardbushAppsConfiguration> {
@@ -1009,6 +1017,7 @@ function modelConfigsFromPayload(payload: unknown): BackendModelConfigsResult {
     .filter((item): item is ManagedModelConfig => item !== null);
   return {
     defaultModelId: String(root.default_model_id ?? root.defaultModelId ?? ''),
+    ...(typeof root.revision === 'string' && root.revision ? { revision: root.revision } : {}),
     models,
     raw: payload,
   };
@@ -1735,7 +1744,7 @@ async function productHostValue(
 }
 
 export async function fetchStorageInventory() {
-  return (await import('@cardbush/bush-protocol')).storageInventorySchema.parse(
+  return storageInventorySchema.parse(
     await productHostValue({ kind: 'maintenance.storage_inventory' }),
   );
 }

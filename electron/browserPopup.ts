@@ -1,4 +1,5 @@
-import { BrowserWindow, Menu, clipboard, shell, type HandlerDetails, type WebContents } from 'electron';
+import { app, BrowserWindow, Menu, clipboard, shell, type HandlerDetails, type WebContents } from 'electron';
+import { uiText } from '@cardbush/platform/i18n';
 
 export type BrowserPopupEvent = {
   phase: 'requested' | 'opened' | 'navigated' | 'failed' | 'closed';
@@ -33,6 +34,7 @@ export function installBrowserPopupHandler(
   owner: WebContents,
   openTab: (url: string) => void,
   onEvent?: (event: BrowserPopupEvent) => void,
+  text = () => uiText(app.getLocale()),
 ): void {
   const windows = new Set<BrowserWindow>();
   const report = (phase: BrowserPopupEvent['phase'], url: string, detail: Partial<BrowserPopupEvent> = {}) => {
@@ -76,13 +78,18 @@ export function installBrowserPopupHandler(
         popup.setTitle(url ? `${new URL(url).origin} — CardBush` : 'CardBush');
       };
       popup.on('page-title-updated', event => { event.preventDefault(); updateTitle(); });
-      popup.setMenu(Menu.buildFromTemplate([{ label: '页面 / Page', submenu: [
-        { label: '重新加载 / Reload', accelerator: 'CmdOrCtrl+R', click: () => child.reload() },
-        { label: '复制网址 / Copy address', click: () => { const url = webUrl(child.getURL()); if (url) clipboard.writeText(url); } },
-        { label: '在默认浏览器打开原网页 / Open original page in browser', enabled: Boolean(originalUrl),
-          click: () => { if (originalUrl) void shell.openExternal(originalUrl).catch(() => {}); } },
-        { type: 'separator' }, { role: 'close' },
-      ] }]));
+      const updateMenu = () => {
+        const t = text();
+        popup.setMenu(Menu.buildFromTemplate([{ label: t('browserNative.page'), submenu: [
+          { label: t('browserNative.reload'), accelerator: 'CmdOrCtrl+R', click: () => child.reload() },
+          { label: t('browserNative.copyAddress'), click: () => { const url = webUrl(child.getURL()); if (url) clipboard.writeText(url); } },
+          { label: t('browserNative.openOriginal'), enabled: Boolean(originalUrl),
+            click: () => { if (originalUrl) void shell.openExternal(originalUrl).catch(() => {}); } },
+          { type: 'separator' }, { role: 'close', label: t('common.close') },
+        ] }]));
+      };
+      popup.on('focus', updateMenu);
+      updateMenu();
       child.on('will-frame-navigate', event => {
         // Local/app resources and external protocols never become popup pages.
         const frameData = !event.isMainFrame && /^(?:data:|blob:)/i.test(event.url);

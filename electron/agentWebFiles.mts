@@ -7,10 +7,20 @@ import { normalizeWebImage } from '@cardbush/bush-runtime/web-policy';
 import { agentFileRead, agentFileUpload } from './agentFiles.mjs';
 import { FILE_TRANSFER_LIMIT, MEDIA_FILE_EXTENSION, transferredFileMime } from '@cardbush/bush-protocol';
 import { collectTemporaryDirectories } from './cacheMaintenance.js';
+import { AgentWebFileUnavailableError } from './agentErrors.mjs';
 
 const limit = 16 * 1024 * 1024;
 const uuid = z.string().uuid();
-type Attachment = { id: string; path: string; name: string; size: number; mime: string; textPath?: string };
+export type WebFileDescription = { id: string; path: string; name: string; size: number; mime: string; textPath?: string };
+
+async function lookupFile<T>(lookup: () => Promise<T>): Promise<T> {
+  try { return await lookup(); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') throw new AgentWebFileUnavailableError();
+    throw error;
+  }
+}
 function extractDocument(path: string): Promise<string> {
   return new Promise(resolve => {
     const child = fork(new URL('./agentWebDocument.mjs', import.meta.url), [path], { execArgv: ['--max-old-space-size=128'], stdio: ['ignore','ignore','ignore','ipc'], env: { PATH: process.env.PATH, HOME: process.env.HOME, SystemRoot: process.env.SystemRoot } });
@@ -67,21 +77,23 @@ export class AgentWebFiles {
     return collectTemporaryDirectories(join(this.root, 'upload-staging', '.cardbush-attachments'),
       /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i, 24 * 60 * 60_000);
   }
-  async describe(path: string): Promise<Attachment> {
-    const personal = await realpath(join(this.root, 'workspaces'));
-    const candidate = await realpath(isAbsolute(path) ? path : join(personal, path));
-    const rel = relative(personal, candidate);
-    if (isAbsolute(rel) || rel === '..' || rel.startsWith('../') || rel.startsWith('..\\')) throw new Error('Access outside personal files denied.');
-    const info = await stat(candidate);
-    if (!info.isFile() || info.size > FILE_TRANSFER_LIMIT) throw new Error('File unavailable.');
-    const file = await open(candidate, 'r');
-    let mime: string;
-    try { const header = Buffer.alloc(64); const { bytesRead } = await file.read(header, 0, 64, 0); mime = transferredFileMime(candidate, header.subarray(0, bytesRead)); }
-    finally { await file.close(); }
-    return { id: '', path: candidate, name: basename(candidate), size: info.size, mime };
+  describe(path: string): Promise<WebFileDescription> {
+    return lookupFile(async () => {
+      const personal = await realpath(join(this.root, 'workspaces'));
+      const candidate = await realpath(isAbsolute(path) ? path : join(personal, path));
+      const rel = relative(personal, candidate);
+      if (isAbsolute(rel) || rel === '..' || rel.startsWith('../') || rel.startsWith('..\\')) throw new AgentWebFileUnavailableError();
+      const info = await stat(candidate);
+      if (!info.isFile() || info.size > FILE_TRANSFER_LIMIT) throw new AgentWebFileUnavailableError();
+      const file = await open(candidate, 'r');
+      let mime: string;
+      try { const header = Buffer.alloc(64); const { bytesRead } = await file.read(header, 0, 64, 0); mime = transferredFileMime(candidate, header.subarray(0, bytesRead)); }
+      finally { await file.close(); }
+      return { id: '', path: candidate, name: basename(candidate), size: info.size, mime };
+    });
   }
-  async attachment(id: string): Promise<Attachment> {
-    const value = JSON.parse(await readFile(join(this.root, 'config', 'files', uuid.parse(id) + '.json'), 'utf8')) as Attachment;
+  async attachment(id: string): Promise<WebFileDescription> {
+    const value = JSON.parse(await lookupFile(() => readFile(join(this.root, 'config', 'files', uuid.parse(id) + '.json'), 'utf8'))) as WebFileDescription;
     await this.describe(value.path); return value;
   }
   call(input: Record<string, unknown>): Promise<unknown> {
@@ -130,7 +142,7 @@ export class AgentWebFiles {
     const path = join(target, name);
     if (bytes) await writeFile(result.path, bytes, { mode: 0o600 });
     await rename(result.path, path);
-    const attachment: Attachment = { id: value.uploadId, path, name, mime, size: bytes?.length ?? value.size };
+    const attachment: WebFileDescription = { id: value.uploadId, path, name, mime, size: bytes?.length ?? value.size };
     if (/\.(pdf|docx|xlsx|pptx)$/i.test(name)) {
       attachment.textPath = path + '.extracted.txt';
       await writeFile(attachment.textPath, await extractDocument(path), { mode: 0o600 });

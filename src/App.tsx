@@ -75,13 +75,11 @@ import {
   defaultBackendCapabilities,
   fetchBackendCapabilities,
   fetchBackendReadiness,
-  fetchModelConfigs,
   forkConversation,
   fetchSkills,
   isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
   restoreSessionWorkspaceChanges,
-  saveModelConfigs,
   saveModelReasoning,
 } from './backend/api';
 import { useCardbushChat } from './hooks/useCardbushChat';
@@ -191,7 +189,6 @@ import {
   type AppSection,
   type AppSettingsState,
   type BackendCapabilities,
-  type ManagedModelConfig,
   type ChatMessage,
   type ConversationSummary,
   type RuntimeAssetCategory,
@@ -229,7 +226,7 @@ import { FeaturePanel } from './features/panels/FeaturePanel';
 import { normalizeAppSettings, persistAppSettings } from './features/settings/appSettingsStore';
 import { useAppSettings } from './features/settings/useAppSettings';
 import { clampSidebarWidth, persistDisabledSkillNames, persistVisualInputEnabled, readDisabledSkillNames, readInitialLanguageMode, readInitialSidebarWidth, readSystemLanguage, readVisualInputEnabled, resolveAppLanguage } from './features/settings/localPreferences';
-import { defaultModelConfigId, effectiveModels, mergeLegacyModelCredentials, modelConfigSignature, normalizeManagedModelConfigs, readManagedModelConfigs } from './features/settings/modelPreferences';
+import { useLocalModelCatalog } from './features/settings/useLocalModelCatalog';
 import { ProjectRenameDialog } from './features/sidebar/ProjectRenameDialog';
 import { persistProjectItems, readProjectItems, stableProjectId } from './features/sidebar/projectStore';
 
@@ -308,6 +305,7 @@ function CardbushApp() {
   );
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(requestedWorkspace === 'settings');
+  const conversationTitlebar = !settingsOpen && (destination === 'assistant' || destination === 'chat') ? destination : undefined;
   const [conversationPromptFocus, setConversationPromptFocus] = useState(0);
   const [settingsMounted, setSettingsMounted] = useState(requestedWorkspace === 'settings');
   const [settingsReady, setSettingsReady] = useState(false);
@@ -346,9 +344,6 @@ function CardbushApp() {
     const capabilities = await fetchBackendCapabilities();
     if (isCurrent()) setBackendCapabilities(capabilities);
   }, []), { enabled: runtimeStartup.phase === 'ready', initial: true });
-  const [modelConfigSyncReady, setModelConfigSyncReady] = useState(false);
-  const [backendDefaultModelId, setBackendDefaultModelId] = useState(() => window.localStorage.getItem('cardbush.selected_model') ?? '');
-  const lastSavedModelConfigSignatureRef = useRef('');
   const projectItemsRef = useRef(projectItems);
   const theme = resolveTheme(themePreference, systemDark);
   const appearance = useMemo(() => normalizeAppearance(appSettings.appearance), [appSettings.appearance]);
@@ -377,96 +372,8 @@ function CardbushApp() {
     void window.cardbushDesktop?.setUiLanguage?.(language).catch(error => console.warn('Native UI language update failed', error));
   }, [language]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadModelConfigs() {
-      try {
-        const remote = await fetchModelConfigs();
-        if (cancelled) {
-          return;
-        }
-        if (remote.models.length > 0) {
-          const remoteModels = normalizeManagedModelConfigs(remote.models);
-          const legacyModels = normalizeManagedModelConfigs(readManagedModelConfigs());
-          const migrated = mergeLegacyModelCredentials(remoteModels, legacyModels);
-          const snapshot = migrated.changed
-            ? await saveModelConfigs({
-                defaultModelId: remote.defaultModelId,
-                models: migrated.models,
-              })
-            : remote;
-          if (cancelled) {
-            return;
-          }
-          const normalized = normalizeManagedModelConfigs(snapshot.models);
-          const defaultConfig =
-            normalized.find((item) => item.id === snapshot.defaultModelId) ??
-            normalized[0];
-          lastSavedModelConfigSignatureRef.current = modelConfigSignature(
-            normalized,
-            defaultConfig?.id ?? '',
-          );
-          setAppSettings((current) => {
-            const next = normalizeAppSettings({
-              ...current,
-              managedModelConfigs: normalized,
-            });
-            persistAppSettings(next);
-            return next;
-          });
-          setBackendDefaultModelId(defaultConfig?.id ?? '');
-          return;
-        }
-        const legacy = normalizeManagedModelConfigs(readManagedModelConfigs());
-        if (legacy.length > 0) {
-          const defaultId = defaultModelConfigId(
-            legacy,
-            window.localStorage.getItem('cardbush.selected_model') ?? '',
-          );
-          const saved = await saveModelConfigs({
-            defaultModelId: defaultId,
-            models: legacy,
-          });
-          if (cancelled) {
-            return;
-          }
-          const normalized = normalizeManagedModelConfigs(saved.models);
-          const savedDefault =
-            normalized.find((item) => item.id === saved.defaultModelId) ??
-            normalized.find((item) => item.id === defaultId) ??
-            normalized[0];
-          lastSavedModelConfigSignatureRef.current = modelConfigSignature(
-            normalized,
-            savedDefault?.id ?? '',
-          );
-          setAppSettings((current) => {
-            const next = normalizeAppSettings({
-              ...current,
-              managedModelConfigs: normalized,
-            });
-            persistAppSettings(next);
-            return next;
-          });
-          setBackendDefaultModelId(savedDefault?.id ?? '');
-        }
-      } catch {
-        lastSavedModelConfigSignatureRef.current = '';
-      } finally {
-        if (!cancelled) {
-          setModelConfigSyncReady(true);
-        }
-      }
-    }
-    void loadModelConfigs();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const availableModels = useMemo(
-    () => effectiveModels(appSettings.managedModelConfigs),
-    [appSettings.managedModelConfigs],
-  );
+  const { ready: modelConfigSyncReady, availableModels, defaultModelId: backendDefaultModelId,
+    setDefaultModelId: setBackendDefaultModelId } = useLocalModelCatalog(appSettings.managedModelConfigs, setAppSettings);
   const visualInputAvailable = backendCapabilities.standardImageInputTool;
   const visualInputEnabled = visualInputAvailable && visualInputEnabledSetting;
   const browserPrivacyModeEnabled =
@@ -503,16 +410,6 @@ function CardbushApp() {
   });
   useTaskbarUnread(chat.workspaceNotices.length, runtimeStartup.phase === 'ready');
   useEffect(() => installUiLongTaskObserver(), []);
-  useEffect(() => {
-    const saved = (event: Event) => {
-      const detail = (event as CustomEvent<{ connectionId: string; modelId: string; reasoningEffort: ManagedModelConfig['reasoningEffort'] }>).detail;
-      if (detail.connectionId) return;
-      setAppSettings(current => ({ ...current, managedModelConfigs: current.managedModelConfigs.map(model =>
-        model.id === detail.modelId ? { ...model, reasoningEffort: detail.reasoningEffort } : model) }));
-    };
-    window.addEventListener('cardbush:model-reasoning-updated', saved);
-    return () => window.removeEventListener('cardbush:model-reasoning-updated', saved);
-  }, []);
   useEffect(() => {
     setUiPerformanceActiveSession(chat.activeConversationId);
   }, [chat.activeConversationId]);
@@ -559,54 +456,6 @@ function CardbushApp() {
       persistDisabledSkillNames(next);
     }
   }, [language]);
-  useEffect(() => {
-    if (!modelConfigSyncReady) {
-      return;
-    }
-    const defaultId = defaultModelConfigId(
-      appSettings.managedModelConfigs,
-      backendDefaultModelId,
-    );
-    const signature = modelConfigSignature(
-      appSettings.managedModelConfigs,
-      defaultId,
-    );
-    if (signature === lastSavedModelConfigSignatureRef.current) {
-      return;
-    }
-    lastSavedModelConfigSignatureRef.current = signature;
-    void saveModelConfigs({
-      defaultModelId: defaultId,
-      models: appSettings.managedModelConfigs,
-    }).then((saved) => {
-      if (lastSavedModelConfigSignatureRef.current !== signature) return;
-      const sanitized = normalizeManagedModelConfigs(saved.models);
-      const savedDefaultId = defaultModelConfigId(sanitized, saved.defaultModelId || defaultId);
-      setBackendDefaultModelId(current => current === backendDefaultModelId ? savedDefaultId : current);
-      lastSavedModelConfigSignatureRef.current = modelConfigSignature(
-        sanitized,
-        savedDefaultId,
-      );
-      setAppSettings((current) => {
-        if (modelConfigSignature(current.managedModelConfigs, defaultId) !== signature) {
-          return current;
-        }
-        const next = normalizeAppSettings({
-          ...current,
-          managedModelConfigs: sanitized,
-        });
-        persistAppSettings(next);
-        return next;
-      });
-    }).catch(() => {
-      lastSavedModelConfigSignatureRef.current = '';
-    });
-  }, [
-    appSettings.managedModelConfigs,
-    backendDefaultModelId,
-    modelConfigSyncReady,
-  ]);
-
   const activeConversationProjectDir = conversationProjectRoot(chat.activeConversation);
   const conversationProjectDir = conversationWorkspaceRoot(chat.activeConversation);
   const activeProjectDir = conversationProjectDir || undefined;
@@ -2038,6 +1887,7 @@ function CardbushApp() {
     onOpenConversation: handlePreviousConversation,
   });
   const [chatActionsTarget, setChatActionsTarget] = useState<HTMLSpanElement | null>(null);
+  const [conversationActionsTarget, setConversationActionsTarget] = useState<HTMLDivElement | null>(null);
   const navigationSection = currentPage.section;
   const splitCoverClass = !workspacePage && !settingsOpen && splitOpen
     ? inspectorCover ? ' inspector-covered' : conversationCovered ? ' inspector-conversation-covered' : '' : '';
@@ -2058,12 +1908,14 @@ function CardbushApp() {
   const titleSessionId = titlePage === 'assistant' ? PERSONAL_ASSISTANT_SESSION : chat.activeConversationId;
   const chatAttention = chat.attentionByConversation[chat.activeConversationId];
   const running = chat.sending || Boolean(chat.activeTurnId) || chat.processingConversationIds.has(chat.activeConversationId);
-  const titleStatus = titlePage === 'chat' && (running || chat.stopping) ? quickInputState({
+  const titleActivity = titlePage === 'chat' ? quickInputState({
     language, messages: [], sending: running, stopping: chat.stopping, recovery: chat.activeConnectionRecovery,
-    waiting: chatAttention?.kind === 'interaction' || chat.pendingInteraction?.sessionId === chat.activeConversationId,
-  }).label : undefined;
-  const title = titlePage === 'assistant' ? assistantProfile.name
-    : conversationDisplayTitle(chat.activeConversation?.title ?? '') || uiText(language)('chatSidebar.newChat');
+    waiting: chatAttention?.kind === 'interaction' || Boolean(chat.pendingInteraction && chat.pendingInteraction.sessionId === chat.activeConversationId),
+  }) : undefined;
+  const titleStatus = titleActivity?.state === 'waiting' ? uiText(language)('sessionAttention.confirmationPending')
+    : titleActivity && titleActivity.state !== 'idle' ? titleActivity.label : undefined;
+  const chatTitle = conversationDisplayTitle(chat.activeConversation?.title ?? '') || uiText(language)('chatSidebar.newChat');
+  const title = titlePage === 'assistant' ? assistantProfile.name : chatTitle;
   const workSummaryAvailable = !inspectorControlsVisible;
   const eventInbox = (sessionId: string) => <ConversationEventInbox key={sessionId} sessionId={sessionId} items={chat.unreadEventResults}
     language={language} requestedRunId={!settingsVisible && !workspacePage && requestedEvent?.sourceId === sessionId ? requestedEvent.runId : undefined}
@@ -2194,6 +2046,7 @@ function CardbushApp() {
       data-translucent-sidebar={appearance.translucentSidebar}
       data-window-material-preference={windowMaterial}
       data-desktop-workspace=""
+      data-conversation-titlebar={conversationTitlebar}
       data-pointer-cursor={appearance.pointerCursor}
       data-diff-indicators={appearance.diffIndicators}
     >
@@ -2213,6 +2066,8 @@ function CardbushApp() {
         language={language}
         sidebarCollapsed={sidebarCollapsed}
         menus={windowMenus}
+        actions={conversationTitlebar && <div className="window-conversation-actions no-drag" ref={setConversationActionsTarget}
+          inert={drawerLayout && !sidebarCollapsed || undefined}/>}
         onBack={pageNavigation.canGoBack ? pageNavigation.back : settingsOpen ? () => setSettingsOpen(false) : undefined}
         onForward={pageNavigation.canGoForward ? pageNavigation.forward : undefined}
         onInspectorHistory={(direction, tabId = activeInspectorTabIdentity) => {
@@ -2223,8 +2078,8 @@ function CardbushApp() {
         }}
         onError={error => { void showUiError(uiText(language)('app.actionFailed'), errorMessage(error)); }}
       >
-        <WindowConversationBar language={language} assistantName={assistantProfile.name} viewingConversation={viewingConversation}
-          conversation={{ id: titleSessionId, title, status: titleStatus }} open={openRecentConversation}/>
+        <WindowConversationBar language={language} assistantName={assistantProfile.name} activeView={conversationTitlebar} viewingConversation={viewingConversation}
+          conversation={{ id: titleSessionId, title, status: titleStatus, activity: titleActivity?.state }} open={openRecentConversation}/>
       </WindowFrame>
       {conversationSearch.open && <ConversationSearchDialog
         language={language}
@@ -2350,6 +2205,7 @@ function CardbushApp() {
           )}
           <section ref={mainStageRef} className="main-stage" aria-hidden={workspacePage || settingsVisible || undefined} inert={workspacePage || settingsVisible || inspectorControlsVisible || drawerLayout && !sidebarCollapsed ? true : undefined}>
             <AssistantView observeActivity={runtimeStartup.phase === 'ready'} active={section === 'assistant'} language={language} prepare={chat.prepareAssistantRequest}
+              headerActionsTarget={conversationTitlebar === 'assistant' ? conversationActionsTarget : null}
               transcriptVisible={readingAssistant} noticeTarget={readingAssistant ? assistantNoticeTarget : undefined} onNoticeLocated={clearAssistantNoticeTarget}
               transcriptFooter={section === 'assistant' ? eventInbox(PERSONAL_ASSISTANT_SESSION) : undefined}
               workSummaryAvailable={workSummaryAvailable}
@@ -2379,7 +2235,8 @@ function CardbushApp() {
                 browserTabs={composerBrowserTabs}
                 language={language}
                 theme={theme}
-                title={chat.activeConversation?.title ?? 'cardbush'}
+                title={chatTitle}
+                headerActionsTarget={conversationTitlebar === 'chat' ? conversationActionsTarget : null}
                 sidebarCollapsed={sidebarCollapsed}
                 windowMaximized={windowMaximized}
                 inspectorOpen={inspectorOpen}
@@ -2493,8 +2350,6 @@ function CardbushApp() {
                 inspectorOpen={inspectorOpen}
                 onToggleInspector={toggleInspector}
                 section={feature}
-                activeProjectDir={activeProjectDir}
-                workflowValidationAvailable={backendCapabilities.teamWorkflows}
                 skills={chat.skills}
                 disabledSkillNames={disabledSkillNames}
                 onToggleSkill={toggleSkillEnabled}

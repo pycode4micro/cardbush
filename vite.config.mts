@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import react from '@vitejs/plugin-react';
@@ -8,11 +7,9 @@ import { pptxWorkerPlugin } from './scripts/pptx-worker-plugin.mjs';
 import { pptxChartPlugin } from './scripts/pptx-chart-plugin.mjs';
 import { pdfPreviewAssetsPlugin } from './scripts/pdf-preview-assets-plugin.mjs';
 import { spreadsheetRegionPlugin } from './scripts/spreadsheet-region-plugin.mjs';
+import { languageChunkGroups } from './scripts/vite-language-chunks.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-const languageDirectory = path.join(rootDir, 'src/i18n/locales');
-const languageLocales = readdirSync(languageDirectory).filter(file => file.endsWith('.json'))
-  .map(file => Intl.getCanonicalLocales(JSON.parse(readFileSync(path.join(languageDirectory, file), 'utf8')).locale)[0]);
 
 export default defineConfig({
   base: './',
@@ -34,12 +31,7 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
-            ...languageLocales.map(locale => ({
-              name: `ui-language-${locale}`,
-              test: new RegExp(`[\\\\/]i18n[\\\\/]generatedPacks[\\\\/]${locale}\\.js$`),
-              priority: 40,
-              entriesAware: true,
-            })),
+            ...languageChunkGroups(),
             {
               name: 'page-editor-engine',
               test: /node_modules[\\/](?:@tiptap|prosemirror-[^\\/]+)[\\/]/,

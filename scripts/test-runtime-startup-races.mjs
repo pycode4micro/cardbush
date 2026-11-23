@@ -10,7 +10,7 @@ import ts from 'typescript';
 // service boundaries. No user profile, network, model, or sandbox is touched.
 const source = ts.createSourceFile('main.ts', readFileSync('electron/main.ts', 'utf8'), ts.ScriptTarget.Latest, true);
 const names = ['ensureRuntimeServicesReady', 'ensureRuntimeHostReady', 'startRuntimeServices',
-  'disposeRuntimeServices', 'initializeRuntimeHost', 'prepareRuntimeHost',
+  'disposeRuntimeServices', 'settleRuntimeCleanup', 'closeRuntimeBridges', 'shutdownDesktopHosts', 'initializeRuntimeHost', 'prepareRuntimeHost',
   'withRuntimeStartupTimeout', 'initializeProductHost', 'startRuntimeAutomations', 'runtimeStartupStep', 'contextWebhookHost'];
 const functions = names.map(name => {
   const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
@@ -37,6 +37,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(timeout = 2000) {
   const gates = {}, controllers = [], managers = [], browserEndpoints = [], products = [], calls = [], statuses = [], warnings = [], ipc = new Map();
+  const catalogSubscriptions = [], windowEvents = [];
   const wait = name => gates[name]?.promise ?? Promise.resolve();
   class Controller {
     disposed = false;
@@ -47,6 +48,7 @@ function fixture(timeout = 2000) {
   }
   class Product {
     constructor(options) { this.options = options; products.push(this); }
+    async stopMaintenance() { this.maintenanceStops = (this.maintenanceStops ?? 0) + 1; }
     async execute(input) { await wait('apps'); return input; }
     async refreshMcp(_uninstall, _update, signal) { this.refreshSignal = signal; this.refreshCount = (this.refreshCount ?? 0) + 1; await wait('refresh'); signal?.throwIfAborted(); }
     async pluginTroubleshootingContext() { return 'troubleshooting'; }
@@ -75,7 +77,15 @@ function fixture(timeout = 2000) {
     visualThemeContextPath: () => '/theme', browserConfigurationPath: () => '/browser', productAppsConfigPath: () => '/apps',
     platformFeatures: () => ({}), productAppsConfig: () => ({}), appLogsDir: () => '/logs',
     bundledProductSkillRoot: () => '/skills', legacyBushserverModelConfigPaths: () => [],
-    clearApplicationCaches() {}, watchCapabilityCatalog: () => () => {}, syncBrowserConnectorPlugin: async () => {},
+    clearApplicationCaches() {}, syncBrowserConnectorPlugin: async () => {}, refreshPluginUiNetwork: async () => {},
+    watchCapabilityCatalog(_roots, changed) {
+      const watcher = { changed, disposed: false };
+      catalogSubscriptions.push(watcher);
+      return () => { watcher.disposed = true; };
+    },
+    BrowserWindow: { getAllWindows: () => [{}] },
+    sendToLiveRenderer(_window, channel) { windowEvents.push(channel); },
+    desktopHomeLibrary: () => ({}), pluginMarkets: {},
     assistantWindow: null, requireAppFrame() { return {}; }, assertMainWindowSender() {}, assertRuntimeRendererSender() {},
     randomUUID: (() => { let id = 0; return () => `operation-${++id}`; })(),
     ipcMain: { handle: (channel, fn) => ipc.set(channel, fn) },
@@ -102,7 +112,7 @@ function fixture(timeout = 2000) {
   };
   vm.runInNewContext(code, context);
   const invoke = (channel, ...args) => ipc.get(channel)({ sender: { id: 1 } }, ...args);
-  return { context, gates, controllers, managers, browserEndpoints, products, calls, statuses, warnings, invoke };
+  return { context, gates, controllers, managers, browserEndpoints, products, calls, statuses, warnings, invoke, catalogSubscriptions, windowEvents };
 }
 
 test('early desktop requests wait for one boot and each dispatches once', async () => {
@@ -278,4 +288,59 @@ test('cleanup failure cannot hide the original startup failure', async () => {
   f.managers[0].close = async () => { throw Error('secondary cleanup failure'); };
   f.gates.worker.reject(Error('original worker failure')); await failed;
   assert.equal(f.context.runtimeStartupStatus.error, 'original worker failure');
+  assert.equal(f.products[0].maintenanceStops, 1, 'a failed boot disposes the retired diagnostic timer');
+  assert.equal(f.browserEndpoints[0].closed, 1, 'a failed management close cannot leave the browser bridge open');
+  assert.ok(f.warnings.some(entry => entry[1] === 'MCP management bridge'));
+});
+
+test('desktop shutdown settles failed resources and releases shared networking last', async () => {
+  const f = fixture();
+  await f.context.startRuntimeServices();
+  const product = deferred(), connections = deferred(), order = [];
+  f.products[0].shutdown = () => { order.push('product'); return product.promise; };
+  f.managers[0].close = () => { throw Error('management close failed'); };
+  Object.assign(f.context, {
+    closeHostProcesses: async () => { throw Error('process close failed'); },
+    disposeCapabilityCatalogWatcher: () => { throw Error('watcher close failed'); },
+    localModelAccessBroker: undefined, modelPreviewService: undefined,
+    openAiAccountPromise: undefined, siwcAccountsPromise: undefined,
+    agentConnectionsPromise: Promise.resolve({ close: () => { order.push('agent'); return connections.promise; } }),
+    sshConnectionsPromise: Promise.resolve({ close: () => { order.push('ssh'); } }),
+    pluginNetworkPromise: Promise.resolve({ close: () => { order.push('plugins'); } }),
+  });
+  const stopped = f.context.shutdownDesktopHosts();
+  await flush();
+  assert.equal(f.context.runtimeServicesStopping, true);
+  assert.deepEqual(order, ['product']);
+  assert.equal(f.browserEndpoints[0].closed, 0, 'the Product Host still owns its dependencies');
+  product.reject(Error('product shutdown failed'));
+  await flush();
+  assert.deepEqual(order, ['product', 'agent']);
+  assert.equal(f.browserEndpoints[0].closed, 1, 'the browser bridge closes despite a failed management bridge');
+  connections.resolve();
+  await stopped;
+  assert.deepEqual(order, ['product', 'agent', 'ssh', 'plugins']);
+  assert.deepEqual(f.warnings.map(entry => entry[1]).sort(), ['MCP management bridge', 'capability catalogue', 'host processes', 'product host']);
+});
+
+test('retired catalog watchers cannot refresh or notify the replacement Runtime', async () => {
+  const f = fixture();
+  await f.context.startRuntimeServices(); await flush();
+  const [old] = f.catalogSubscriptions;
+  const refreshing = f.gates.refresh = deferred();
+  old.changed();
+  assert.deepEqual(f.windowEvents, ['capabilities:changed']);
+  const oldSignal = f.products[0].refreshSignal;
+  delete f.gates.refresh;
+  await f.invoke('app:retry-runtime');
+  assert.equal(old.disposed, true);
+  assert.equal(oldSignal.aborted, true);
+  refreshing.reject(Error('retired refresh'));
+  old.changed();
+  await flush();
+  assert.deepEqual(f.windowEvents, ['capabilities:changed']);
+  assert.deepEqual(f.warnings, []);
+  f.catalogSubscriptions[1].changed();
+  await flush();
+  assert.equal(f.windowEvents.length, 3, 'the active watcher still publishes start and completion');
 });
