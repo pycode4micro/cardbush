@@ -4747,7 +4747,7 @@
     "assistantRuntime.busy": "Assistant 仍在运行，请先停止再重试。",
     "assistantRuntime.noRetry": "没有可重试的 Assistant 消息。",
     "assistantRuntime.invalidParent": "Assistant 父会话无效。",
-    "assistantRuntime.roundLimit": "Assistant 已达到本次回复的轮次上限，后台任务继续执行。",
+    "assistantRuntime.roundLimit": "本次回复的工具轮次已用完，未能生成最终回复。工具回执已保留，可以重试继续。",
     "runtime.subagentName": "子 Agent {id}",
     "mcpAppBridge.requestTimedOut": "宿主请求超时",
     "common.send": "发送",

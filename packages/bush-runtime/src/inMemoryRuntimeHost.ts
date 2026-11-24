@@ -552,6 +552,7 @@ export class InMemoryRuntimeHost {
       releaseTurnResources: (sessionId, turnId) => this.#toolRegistry.releaseTurnResources(sessionId, turnId),
       onMaintenanceError: options.onRecoveryError,
       exists: id => this.#sessions.hasSession(id), tasks: id => this.#subagentTasks.list(id),
+      teamRuns: id => this.#teams.listRuns(id),
       resultDelivery: this.#subagentTasks.delivery,
       refreshTasks: async (id, signal) => { await this.#refreshChildResults?.(id, signal); },
       runningTaskCount: id => this.#subagentTasks.runningCount(id),

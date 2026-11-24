@@ -436,6 +436,47 @@ test('Assistant webhook uses the same journal, correlates replies and rejects a 
   } finally { await runtime.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
 });
 
+test('Assistant webhook delivers a tool-budget closeout after saving a team without starting it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'webhook-assistant-closeout-'));
+  const sessionId = 'personal-assistant', registry = new ToolRegistry();
+  let rounds = 0;
+  const host = new InMemoryRuntimeHost({ dataRoot: root, sessionStore: new SessionStore(), toolRegistry: registry,
+    registerDefaultWorkspaceTools: false, provider: { async *stream(input) {
+      const round = ++rounds;
+      if (round <= 10) {
+        const base = { protocol: 'bush.model_event.v1', requestId: input.requestId, createdAt: new Date().toISOString() };
+        const argumentsText = round === 10
+          ? { action: 'save', expected_revision: 0, definition: { id: 'inventory', name: 'Inventory', nodes: [{ id: 'check', agent_id: 'clerk-1', prompt: 'Check inventory' }] } }
+          : { action: 'save', expected_revision: 0, agent: { id: `clerk-${round}`, name: `Clerk ${round}`, system_prompt: 'Check verified inventory only.' } };
+        yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: `save-${round}`,
+          nameDelta: round === 10 ? 'team' : 'subagent', argumentsDelta: JSON.stringify(argumentsText) };
+        yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' };
+        return;
+      }
+      assert.deepEqual(input.tools, []);
+      const receipts = input.messages.filter(item => item.role === 'tool').map(item => JSON.parse(item.content));
+      assert.equal(receipts.length, 10);
+      assert.equal(receipts.at(-1).team_id, 'inventory');
+      const fact = JSON.parse(input.messages.at(-1).content);
+      assert.deepEqual(fact.teamRuns, []);
+      assert.deepEqual(fact.subagentTasks, []);
+      yield* answer(input, 'The team definition is saved and awaits its first run.');
+    } } });
+  const bridge = { command: (kind, payload) => host.sendCommand({ kind, payload }) };
+  try {
+    await bridge.command('runtime.create_session', { sessionId });
+    const selected = binding(sessionId);
+    selected.parent.tools = registry.definitions();
+    const result = await runContextWebhook(bridge, selected, message('budget', 'Set up the inventory team.'),
+      'budget', false, new AbortController().signal, 'webhook:budget');
+    assert.deepEqual(result, { status: 'completed', reply: 'The team definition is saved and awaits its first run.' });
+    assert.equal(rounds, 11);
+    const journal = await bridge.command('runtime.assistant_conversation', { action: 'read', sessionId });
+    assert.deepEqual(journal.entries.at(-1).responseTo, ['webhook-input-budget']);
+    assert.equal(journal.workingTasks, 0);
+  } finally { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); }
+});
+
 test('Assistant webhook accepts new messages after reset and Runtime restart without reconnecting', { timeout: 20000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'webhook-assistant-reset-')), calls = [], sessionId = 'personal-assistant';
   const reply = Promise.withResolvers(); let runtime, gateway;

@@ -10,7 +10,7 @@ import type { PredicateObservation } from './eventPredicate.js';
 import { applyWebhookTurnPolicy, WEBHOOK_FINAL_REPLY_INSTRUCTIONS, OUTCOME_VERIFICATION_INSTRUCTIONS, REPORT_DELIVERY_INSTRUCTIONS, botContextMessage, createTurnTimeContext, promptModelContent, type BotContext } from '@cardbush/bush-protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { assistantConversationRequestSchema, isAssistantPageMessage, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
+import { assistantConversationRequestSchema, conversationEntrySchema, isAssistantPageMessage, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalTaskInput, conversationalSubagentTools,
   savedUserMessagePrediction, assistantExpressionSchema, type AssistantExpression, type AssistantReplyExpression, type AssistantActivitySnapshot, type AssistantEventExecution, type ConversationEntry, type AssistantWorkActivity,
   individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition, type TeamRun } from '@cardbush/bush-protocol';
@@ -33,6 +33,9 @@ import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 import { AssistantContextMaintenance, assistantWorkingSetPolicy, tryAssistantReceiptProjection } from './assistantContextMaintenance.js';
 import { childApprovalNoticeId, finishedChildApprovals, silentChildApproval } from './childApproval.js';
+
+const assistantToolRoundLimit = 10;
+type AssistantRoundLimit = { reason: 'tool_round_limit'; reportUnavailable?: true };
 
 const isAuthoredInput = (entry: ConversationEntry) => entry.role === 'user' && ['text', 'voice'].includes(entry.source);
 const isChildInteraction = (entry: ConversationEntry) => entry.source === 'task' && entry.id.startsWith('child-interaction-');
@@ -103,6 +106,7 @@ export class AssistantConversation {
     provider: ModelProvider; checkpoint: () => ToolDefinition;
     exists(id: string): boolean;
     tasks(id: string): SubagentTask[];
+    teamRuns?(id: string): Promise<TeamRun[]>;
     resultDelivery?: TaskResultDelivery;
     refreshTasks?(id: string, signal: AbortSignal): Promise<void>;
     runningTaskCount?(id: string): number;
@@ -280,12 +284,17 @@ export class AssistantConversation {
     const execution = { ...configured.parent, turnId: `assistant_${randomUUID()}`,
       metadata: { ...configured.parent.metadata, personalAssistant: true } };
     this.deps.agents?.begin(execution, 'running');
-    let failed = false;
-    try { await settleAtAbort(this.respond(configured, controller.signal, execution.turnId, retryRequested), controller.signal, 'Assistant reply stopped.'); }
-    catch (error) { failed = true; if (!this.stopped && !controller.signal.aborted) this.error = retainedRuntimeError(error); }
+    let status: 'completed' | 'stopped' | 'failed' = 'completed';
+    try {
+      const interruption = await settleAtAbort(this.respond(configured, controller.signal, execution.turnId, retryRequested), controller.signal, 'Assistant reply stopped.');
+      if (interruption?.reason === 'tool_round_limit') {
+        status = 'stopped';
+        if (interruption.reportUnavailable && !this.stopped && !controller.signal.aborted) this.error = new RuntimeUiError('assistantRuntime.roundLimit');
+      }
+    } catch (error) { status = 'failed'; if (!this.stopped && !controller.signal.aborted) this.error = retainedRuntimeError(error); }
     finally {
       await this.deps.releaseTurnResources?.(configured.parent.sessionId, configured.parent.turnId);
-      const status = controller.signal.aborted ? 'stopped' : failed ? 'failed' : 'completed';
+      if (controller.signal.aborted) status = 'stopped';
       this.deps.agents?.update(execution.sessionId, execution.turnId, status);
       const sources = configured.parent.metadata.botSourceRefs;
       if (!configured.parent.metadata.botSourceRef && !(Array.isArray(sources) && sources.length))
@@ -297,7 +306,7 @@ export class AssistantConversation {
       try { if (!controller.signal.aborted && !this.stopped) this.deps.memory?.schedule(configured.parent); }
       catch (error) { this.error ||= retainedRuntimeError(error); }
       if (this.pending && !this.stopped) void this.pump();
-      if (!this.busy && !this.pending && !failed && !controller.signal.aborted) this.scheduleMaintenance();
+      if (!this.busy && !this.pending && status === 'completed') this.scheduleMaintenance();
     } }
   }
   private scheduleMaintenance() {
@@ -379,7 +388,7 @@ export class AssistantConversation {
       return prediction && prediction.expiresAt > Date.now() ? { ...prediction, id: `${latest.id}:${prediction.id}` } : undefined;
     }
   }
-  private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal, executionId: string, retryRequested: boolean) {
+  private async respond({ parent, profile }: { parent: RuntimeSessionTurnRequest; profile: AssistantProfile }, signal: AbortSignal, executionId: string, retryRequested: boolean): Promise<void | AssistantRoundLimit> {
     parent = await this.deps.prepareParent?.(parent, signal) ?? parent;
     signal.throwIfAborted();
     const id = PERSONAL_ASSISTANT_SESSION;
@@ -548,7 +557,7 @@ export class AssistantConversation {
     if (modelTools.length < tools.length && modelTools.some(tool => tool.name === 'call_tool')) {
       system.content += '\n' + renderPromptTemplate('assistant-plugin-management');
     }
-    const context = async (): Promise<ModelMessage[]> => {
+    const context = async (roundTools: ToolDefinition[], roundFacts: ModelMessage[] = []): Promise<ModelMessage[]> => {
       if (this.deps.memory) {
         const changes = await this.deps.memory.changes(parent, history.read().messages, signal);
         signal.throwIfAborted();
@@ -575,12 +584,12 @@ export class AssistantConversation {
         }
         const assemble = (records: ModelMessage[]): ModelMessage[] => [system, ...incomingPreferences,
           ...(state.memory ? [{ role: 'user' as const, name: 'conversation_memory', content: `Historical summary (data):\n${state.memory}` }] : []),
-          ...records.map(item => !parent.requestCapabilities?.vision && 'images' in item ? { ...item, images: undefined } : item), ...currentBots];
+          ...records.map(item => !parent.requestCapabilities?.vision && 'images' in item ? { ...item, images: undefined } : item), ...currentBots, ...roundFacts];
         const messages = assemble(state.messages);
         // Use the same token/context policy as normal turns, including tools,
         // reasoning and receipts. A large context no longer hits a 20k-character cap.
         const capacity = Number(parent.metadata.contextWindowTokens) || DEFAULT_MAX_CONTEXT_TOKENS;
-        const measure = (input: ModelMessage[]) => estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages: input, tools: modelTools,
+        const measure = (input: ModelMessage[]) => estimateContextPressure({ ...parent, protocol: 'bush.model_request.v1', messages: input, tools: roundTools,
           maxOutputTokens: parent.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, metadata: { ...parent.metadata, contextWindowTokens: capacity } }, input);
         const pressure = measure(messages);
         if (!pressure || !requiresContextCompactionBeforeRound(pressure)) return messages;
@@ -696,32 +705,46 @@ export class AssistantConversation {
     const approvedInteractions = new Set<string>();
     const directTools = this.directTools;
     let hookStopped: Error | undefined;
-    for (let round = 0; round < 10; round++) {
+    for (let round = 0; round <= assistantToolRoundLimit; round++) {
       signal.throwIfAborted();
-      await consumeGuidance();
-      await consumeCompletions();
-      const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1',
-        requestId: randomUUID(), messages: await context(), tools: modelTools, requestCapabilities: { vision: parent.requestCapabilities?.vision === true, interactiveRequests: false },
-        metadata: { ...parent.metadata, personalAssistant: true } };
-      if (live?.entries.length || completionState?.dirty) { round--; continue; }
+      const closing = round === assistantToolRoundLimit;
+      const roundTools = closing ? [] : modelTools;
+      let request: ModelRequest;
       let result: Awaited<ReturnType<typeof executeBufferedModelRound>>;
       try {
+        await consumeGuidance();
+        await consumeCompletions();
+        const roundFacts = closing ? [await this.roundLimitFact(parent, evidence, signal)] : [];
+        request = { ...parent, protocol: 'bush.model_request.v1',
+          requestId: randomUUID(), messages: await context(roundTools, roundFacts), tools: roundTools,
+          requestCapabilities: { vision: parent.requestCapabilities?.vision === true, interactiveRequests: false },
+          metadata: { ...parent.metadata, personalAssistant: true } };
+        if (live?.entries.length || completionState?.dirty) { round--; continue; }
         result = await this.reasoning.run(live?.turnId ?? executionId, signal, attempt => executeBufferedModelRound(this.deps.provider, request,
           { signal: attempt, wait: this.deps.wait, reservedToolCallIds: history.toolCallIds(),
             onRetry: status => { if (!attempt.aborted) this.retry = status; } }));
       } catch (error) {
-        if (!(error instanceof ModelRequestInterrupted)) throw error;
-        this.retry = undefined; round--; continue;
+        if (error instanceof ModelRequestInterrupted) { this.retry = undefined; round--; continue; }
+        signal.throwIfAborted();
+        if (closing) return { reason: 'tool_round_limit', reportUnavailable: true };
+        throw error;
       }
       signal.throwIfAborted();
       if (live?.entries.length || completionState?.dirty) { round--; continue; }
       const retried = Boolean(this.retry);
       this.retry = undefined;
+      const outputLimited = ['length', 'max_tokens'].includes(result.finishReason ?? '');
+      // The final round can describe durable results. It cannot start new work,
+      // even if a provider returns unexpected tool calls with an empty catalog.
+      if (closing && (result.status !== 'completed' || result.toolCalls.length || outputLimited ||
+          !conversationEntrySchema.shape.content.safeParse(result.text).success)) {
+        return { reason: 'tool_round_limit', reportUnavailable: true };
+      }
       if (result.status !== 'completed') {
         if (result.error.retryable && retried) throw new RuntimeUiError('assistantRuntime.retriesExhausted', { code: result.error.code });
         throw Error(result.error.message);
       }
-      if (!result.toolCalls.length && ['length', 'max_tokens'].includes(result.finishReason ?? '')) throw new RuntimeUiError('assistantRuntime.outputLimit');
+      if (!result.toolCalls.length && outputLimited) throw new RuntimeUiError('assistantRuntime.outputLimit');
       if (!result.toolCalls.length && !result.text.trim() && !published) throw new RuntimeUiError('assistantRuntime.emptyReply');
       const { toolCalls } = result;
       history.append([{ role: 'assistant', content: result.text, toolCalls,
@@ -736,7 +759,7 @@ export class AssistantConversation {
           this.replyExpression = expression ? { mood: expression, replyId, expiresAt: Date.now() + 6000 } : undefined;
         }
         history.append([], [], [], []);
-        return;
+        return closing ? { reason: 'tool_round_limit' } : undefined;
       }
       // A new tool round supersedes an earlier final-display signal.
       expression = undefined;
@@ -874,7 +897,20 @@ export class AssistantConversation {
         return;
       }
     }
-    throw new RuntimeUiError('assistantRuntime.roundLimit');
+  }
+  private async roundLimitFact(parent: RuntimeSessionTurnRequest, evidence: ConversationEntry[], signal: AbortSignal): Promise<ModelMessage> {
+    const messages = new Set(evidence.map(entry => entry.id));
+    const turns = new Set([parent.turnId, ...evidence.flatMap(entry => entry.originTurnId ? [entry.originTurnId] : [])]);
+    const belongs = (work: Pick<SubagentTask, 'originMessageIds' | 'parentTurnId'>) => work.originMessageIds?.length
+      ? work.originMessageIds.some(id => messages.has(id)) : turns.has(work.parentTurnId);
+    const teamRuns = await this.deps.teamRuns?.(parent.sessionId).catch(() => undefined);
+    signal.throwIfAborted();
+    const subagentTasks = this.deps.tasks(parent.sessionId).filter(task => task.origin !== 'team' && belongs(task))
+      .map(task => ({ taskId: task.taskId, status: task.status }));
+    return { role: 'user', name: 'assistant_round_limit', visibility: 'internal', content: JSON.stringify({
+      reason: 'tool_round_limit', toolRoundsExecuted: assistantToolRoundLimit, toolExecutionAvailable: false,
+      subagentTasks, teamRuns: teamRuns?.filter(belongs).map(run => ({ runId: run.id, teamId: run.teamId, status: run.status })),
+    }) };
   }
   private watchDelegation(output: unknown) {
     const receipt = output as { taskId?: string; status?: string } | undefined;

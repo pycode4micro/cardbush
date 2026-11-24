@@ -4790,7 +4790,7 @@
     "assistantRuntime.busy": "Assistant is still running. Stop it before retrying.",
     "assistantRuntime.noRetry": "No assistant message to retry.",
     "assistantRuntime.invalidParent": "Invalid assistant parent.",
-    "assistantRuntime.roundLimit": "Assistant reached its response round limit; background tasks continue.",
+    "assistantRuntime.roundLimit": "The tool round limit was reached before a final reply could be generated. Tool results are saved and you can retry to continue.",
     "runtime.subagentName": "Subagent {id}",
     "mcpAppBridge.requestTimedOut": "Host request timed out",
     "common.send": "Send",

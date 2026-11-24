@@ -114,6 +114,89 @@ test('manual retry resumes after an accepted task receipt without dispatching it
   assert.equal(f.journal.read(id).filter(entry => entry.source === 'text' && entry.role === 'user').length, 1);
 });
 
+for (const running of [false, true]) test(`tool budget closes with a read-only reply and ${running ? 'correlated' : 'no'} background work`, async t => {
+  const calls = [], terminal = [];
+  const subagent = { name: 'subagent', description: 'Save an agent', inputSchema: { type: 'object' } };
+  const team = { name: 'team', description: 'Save or run a team', inputSchema: { type: 'object' } };
+  const other = { originMessageIds: ['other-request'], parentTurnId: 'another-turn', status: 'running' };
+  const current = { originMessageIds: ['user-input'], parentTurnId: 'turn', status: 'running' };
+  const f = fixture(t, { async *stream(request) {
+    const round = calls.push(request);
+    if (round <= 10) {
+      const name = round === 10 ? 'team' : 'subagent';
+      const action = name === 'team' && running ? 'run' : 'save';
+      yield event(request, 0, 'tool_call_delta', { index: 0, toolCallId: `call-${round}`, nameDelta: name, argumentsDelta: JSON.stringify({ action }) });
+      yield event(request, 1, 'response_completed', { finishReason: 'tool_calls' });
+      return;
+    }
+    assert.deepEqual(request.tools, []);
+    const receipts = request.messages.filter(message => message.role === 'tool');
+    assert.equal(receipts.length, 10);
+    assert.equal(JSON.parse(receipts.at(-1).content).team_id, 'saved-team');
+    const fact = request.messages.at(-1);
+    assert.equal(fact.name, 'assistant_round_limit');
+    assert.deepEqual(JSON.parse(fact.content), { reason: 'tool_round_limit', toolRoundsExecuted: 10, toolExecutionAvailable: false,
+      subagentTasks: running ? [{ taskId: 'current-child', status: 'running' }] : [],
+      teamRuns: running ? [{ runId: 'current-run', teamId: 'saved-team', status: 'running' }] : [] });
+    yield event(request, 0, 'text_delta', { delta: running ? 'The team has started.' : 'The team definition was saved.' });
+    yield event(request, 1, 'response_completed', { finishReason: 'stop' });
+  } }, undefined, {
+    delegationTools: () => [subagent, team],
+    tasks: () => [{ ...other, taskId: 'unrelated-child' }, ...(running ? [{ ...current, taskId: 'current-child' },
+      { ...current, taskId: 'team-node', origin: 'team' }] : [])],
+    teamRuns: async () => [{ ...other, id: 'unrelated-run', teamId: 'another-team' },
+      ...(running ? [{ ...current, id: 'current-run', teamId: 'saved-team' }] : [])],
+    delegate: async input => {
+      f.delegated.push(input);
+      return input.action === 'team' ? { team_id: 'saved-team', ...(running ? { run_id: 'current-run', status: 'running' } : { revision: 1 }) }
+        : { agent_id: `agent-${f.delegated.length}`, revision: 1 };
+    },
+    observeOutcome: observation => { if (observation.kind === 'turn_terminal') terminal.push(observation.status); },
+  });
+  f.send({ tools: [subagent, team] });
+  await until(() => !f.read().busy);
+  assert.equal(calls.length, 11);
+  assert.equal(f.delegated.length, 10);
+  assert.deepEqual(terminal, ['stopped']);
+  assert.equal(f.read().error, '');
+  const reply = f.journal.read(id).at(-1);
+  assert.equal(reply.content, running ? 'The team has started.' : 'The team definition was saved.');
+  assert.deepEqual(reply.responseTo, ['user-input']);
+  assert.equal(f.journal.modelHistory(id).read().messages.some(message => message.name === 'assistant_round_limit'), false);
+});
+
+test('an invalid closeout leaves a retryable report without executing its calls or replaying prior receipts', async t => {
+  let calls = 0;
+  const f = fixture(t, { async *stream(request) {
+    const round = ++calls;
+    if (round <= 11) {
+      if (round === 11) assert.deepEqual(request.tools, []);
+      yield event(request, 0, 'tool_call_delta', { index: 0, toolCallId: `call-${round}`, nameDelta: 'subagent', argumentsDelta: '{"prompt":"Inspect files"}' });
+      yield event(request, 1, 'response_completed', { finishReason: 'tool_calls' });
+      return;
+    }
+    assert.equal(request.messages.filter(message => message.role === 'tool').length, 10);
+    assert.ok(request.tools.some(tool => tool.name === 'subagent'));
+    yield event(request, 0, 'text_delta', { delta: 'Recovered from the saved receipts.' });
+    yield event(request, 1, 'response_completed', { finishReason: 'stop' });
+  } });
+  f.send({ metadata: { uiLanguage: 'zh' } });
+  await until(() => !f.read().busy);
+  assert.equal(calls, 11);
+  assert.equal(f.delegated.length, 10);
+  assert.equal(f.read().canRetry, true);
+  assert.match(f.read().error, /工具回执已保留/);
+  assert.doesNotMatch(f.read().error, /后台任务继续/);
+  assert.deepEqual(f.journal.modelHistory(id).replyInputs(), ['user-input']);
+  assert.equal(f.journal.modelHistory(id).toolCallIds().includes('call-11'), false);
+  f.retry();
+  await until(() => !f.read().busy);
+  assert.equal(calls, 12);
+  assert.equal(f.delegated.length, 10);
+  assert.equal(f.read().error, '');
+  assert.deepEqual(f.journal.read(id).map(entry => entry.content), ['Inspect the files', 'Recovered from the saved receipts.']);
+});
+
 test('an unfinished persisted message offers recovery after restarting assistant', async t => {
   const f = fixture(t, { async *stream(request) { yield failure(request, 0, { status: 401 }); } });
   f.send(); await until(() => !f.read().busy); f.assistant.close();
