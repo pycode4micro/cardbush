@@ -233,11 +233,12 @@ import { LocalSubagentInteractions } from './localSubagentInteractions.js';
 import { observationControl } from './subagentInteractions.js';
 import { childFinalMessageIds, childConversationReadHint, continueChildConversation, type ChildConversationSource } from './subagentConversation.js';
 import { childExecutionFacts, childSubmission } from './teamSubmission.js';
-import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
+import type { RuntimeExtensionFactory } from './runtimeExtension.js';
+import { RuntimeExtensions, type RuntimeExtensionInstallOptions } from './runtimeExtensions.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
-import { RuntimeConversations, type RuntimeConversation } from './runtimeConversations.js';
+import { RuntimeConversations } from './runtimeConversations.js';
 import { RuntimeCacheMaintenance } from './runtimeCacheMaintenance.js';
-import { validateEnvironmentSource, RuntimeEnvironment, type EnvironmentSource } from './runtimeEnvironment.js';
+import { RuntimeEnvironment, type EnvironmentSource } from './runtimeEnvironment.js';
 import { OBSERVE_RUNTIME_AGENT_COMMAND, runtimeAgentObservationSchema, GET_RUNTIME_ENVIRONMENT_COMMAND, runtimeEnvironmentReadSchema } from '@cardbush/bush-protocol';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
 import { parseSshWorkspace } from '@cardbush/bush-protocol';
@@ -431,10 +432,7 @@ export class InMemoryRuntimeHost {
   readonly #turnSignals: RuntimeTurnSignals;
   readonly #asyncJobs: RuntimeAsyncJobs;
   readonly #terminalNotifications: TerminalCompletionNotifications;
-  readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory' | 'environment'> & { environment: Pick<RuntimeExtensionApi['environment'], 'read'> };
-  readonly #extensions = new Map<string, { extension: RuntimeExtension; enabled: boolean; uses: number; retired?: boolean }>();
-  readonly #activeExtensionCommands = new Map<string, number>();
-  readonly #extensionIdle = new Set<() => void>();
+  readonly #extensions: RuntimeExtensions;
   readonly #workspaceObservations: WorkspaceObservationStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
@@ -474,7 +472,7 @@ export class InMemoryRuntimeHost {
   readonly #cache = new RuntimeCacheMaintenance({
     idle: () => !(this.#shuttingDown || this.#workspaceActions || this.#activeTurns.size || this.#turnAdmissions ||
       this.#teams.hasActiveRuns() || this.#assistant.working || this.#activeAppCommands || this.#mcpApps.busy ||
-      this.#pluginBackground.busy || this.#automation?.busy || this.#activeExtensionCommands.size),
+      this.#pluginBackground.busy || this.#automation?.busy || this.#extensions.busy),
     collect: signal => this.#guardCacheMaintenance(() => this.#collectCaches(signal)),
     settled: () => this.#conversations.settled(),
   });
@@ -1002,21 +1000,6 @@ export class InMemoryRuntimeHost {
       void this.#assistantEvents.observeRuntime({ ...observation, nowMs: Date.parse(event.createdAt) }, event.eventId)
         .catch(error => options.onRecoveryError?.(error));
     });
-    this.#extensionApi = {
-      withToolFailureFacts,
-      environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
-      conversations: { list: () => this.#conversations.list(), notify: (id, notice) => this.#conversations.notify(id, notice),
-        dismiss: (id, key) => this.#conversations.dismiss(id, key),
-        wait: (id, turn, event, signal) => this.#turnSignals.wait(id, turn, [event], 'any', signal) },
-      subagentTasks: this.#subagentTasks,
-      hasActiveTurns: () => this.hasActiveTurns(),
-      getToolDefinitions: () => this.#toolRegistry.definitions(),
-      permissionPolicy: subagentPermissionPolicy,
-      runChild: async (request, signal) => {
-        const terminal = await this.runSessionTurn(request, { signal });
-        return { terminal, session: this.#sessions.snapshot(request.sessionId) };
-      },
-    };
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
       hostId: options.hostId ?? "in-memory-runtime",
@@ -1163,137 +1146,43 @@ export class InMemoryRuntimeHost {
         ...(options.additionalFeatures ?? []),
       ],
     };
-    for (const candidate of options.extensions ?? []) this.installExtension(candidate.create, { enabled: candidate.enabled });
+    this.#extensions = new RuntimeExtensions({
+      baseCapabilities: this.#capabilities,
+      tools: this.#toolRegistry,
+      environment: this.#environment,
+      conversations: this.#conversations,
+      onError: this.#onRecoveryError,
+      api: {
+        withToolFailureFacts,
+        environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
+        wait: (id, turn, event, signal) => this.#turnSignals.wait(id, turn, [event], 'any', signal),
+        subagentTasks: this.#subagentTasks,
+        hasActiveTurns: () => this.hasActiveTurns(),
+        getToolDefinitions: () => this.#toolRegistry.definitions(),
+        permissionPolicy: subagentPermissionPolicy,
+        runChild: async (request, signal) => {
+          const terminal = await this.runSessionTurn(request, { signal });
+          return { terminal, session: this.#sessions.snapshot(request.sessionId) };
+        },
+      },
+    });
+    for (const candidate of options.extensions ?? []) this.#extensions.install(candidate.create, { enabled: candidate.enabled });
     this.#cache.start();
   }
 
-  /** Stage registrations, then atomically admit a plugin. A bad factory cannot leave partial tools behind. */
-  installExtension(create: RuntimeExtensionFactory, options: { id?: string; enabled?: boolean; dataDirectory?: string; replace?: boolean } = {}): string {
-    const staged = new ToolRegistry();
-    const sources = new Map<string, EnvironmentSource>();
-    const extension = create({ ...this.#extensionApi, tools: staged, dataDirectory: options.dataDirectory,
-      environment: { ...this.#extensionApi.environment, register: (name, source) => {
-        validateEnvironmentSource(name, source);
-        if (sources.has(name) || sources.size >= 16) throw new Error('Duplicate environment source or plugin source limit reached.');
-        sources.set(name, source);
-        return () => { if (sources.get(name) === source) sources.delete(name); };
-      } },
-      conversations: { ...this.#extensionApi.conversations, notify: (id, notice) => {
-        const current = this.#extensions.get(extension.id);
-        return current?.extension === extension && current.enabled && !current.retired
-          ? this.#conversations.notify(id, { ...notice, key: `${extension.id}:${notice.key}` }) : false;
-      }, dismiss: (id, key) => this.#conversations.dismiss(id, `${extension.id}:${key}`) },
-    });
-    try {
-      if (!extension || !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(extension.id) || (options.id && extension.id !== options.id)) throw new Error('Runtime extension identity is empty, invalid, or does not match its package.');
-      if (!Array.isArray(extension.features) || extension.features.some(value => typeof value !== 'string' || !value.trim())) throw new Error('Invalid Runtime extension features.');
-      if (!extension.commands || typeof extension.commands !== 'object') throw new Error('Invalid Runtime extension commands.');
-      const prior = this.#extensions.get(extension.id);
-      if (prior && !options.replace) throw new Error(`Duplicate Runtime extension ${extension.id}.`);
-      const commands = new Set(this.#capabilities.supportedCommands);
-      for (const { extension: installed } of this.#extensions.values()) if (installed.id !== extension.id) {
-        Object.keys(installed.commands).forEach(command => commands.add(command));
-      }
-      for (const [command, handler] of Object.entries(extension.commands)) {
-        if (!command.trim() || commands.has(command) || typeof handler !== 'function') throw new Error(`Runtime extension command conflicts with an existing command: ${command}`);
-      }
-      const owner = runtimeExtensionOwner(extension.id);
-      const entry = { extension, enabled: options.enabled === true, uses: 0 };
-      this.#toolRegistry.replaceOwned(owner, staged.catalog().map(item => {
-        const registration = staged.resolve(item.definition.name)!;
-        return { ...registration,
-          execute: context => this.#useExtension(entry, () => registration.execute(context)),
-          ...(registration.authorize ? { authorize: context => this.#useExtension(entry, () => registration.authorize!(context)) } : {}),
-        };
-      }));
-      this.#environment.replaceOwned(extension.id, sources, entry.enabled);
-      this.#extensions.set(extension.id, entry);
-      this.#toolRegistry.setOwnerEnabled(owner, options.enabled === true);
-      if (prior) { this.#conversations.revoke(`${extension.id}:`); this.#retireExtension(prior); }
-      if (entry.enabled) this.#refreshConversationExtension(entry);
-      return extension.id;
-    } catch (error) {
-      try { void Promise.resolve(extension?.dispose?.()).catch(() => {}); } catch { /* preserve admission error */ }
-      throw error;
-    }
+  installExtension(create: RuntimeExtensionFactory, options?: RuntimeExtensionInstallOptions): string {
+    return this.#extensions.install(create, options);
   }
 
-  removeExtension(id: string): void {
-    const entry = this.#extensions.get(id);
-    if (!entry) return;
-    this.setExtensionEnabled(id, false);
-    this.#toolRegistry.removeOwned(runtimeExtensionOwner(id));
-    this.#extensions.delete(id);
-    this.#environment.removeOwned(id);
-    this.#retireExtension(entry);
-  }
+  removeExtension(id: string): void { this.#extensions.remove(id); }
 
-  #retireExtension(entry: { extension: RuntimeExtension; uses: number; retired?: boolean }): void {
-    entry.retired = true;
-    if (!entry.uses) {
-      try { void Promise.resolve(entry.extension.dispose?.()).catch(error => console.warn('Extension cleanup failed', error)); }
-      catch (error) { console.warn('Extension cleanup failed', error); }
-    }
-  }
+  setExtensionEnabled(id: string, enabled: boolean): void { this.#extensions.setEnabled(id, enabled); }
 
-  async #useExtension<T>(entry: { extension: RuntimeExtension; uses: number; retired?: boolean }, operation: () => T | Promise<T>): Promise<T> {
-    if (entry.retired) throw Object.assign(new Error('Plugin was updated before this call started. Use the current tool definition.'),
-      { code: 'tool_definition_changed', details: { inputDispatched: false } });
-    const id = entry.extension.id;
-    entry.uses++;
-    this.#activeExtensionCommands.set(id, (this.#activeExtensionCommands.get(id) ?? 0) + 1);
-    try { return await operation(); }
-    finally {
-      entry.uses--;
-      const remaining = (this.#activeExtensionCommands.get(id) ?? 1) - 1;
-      if (remaining) this.#activeExtensionCommands.set(id, remaining);
-      else this.#activeExtensionCommands.delete(id);
-      if (entry.retired && !entry.uses) this.#retireExtension(entry);
-      const waiters = [...this.#extensionIdle]; this.#extensionIdle.clear(); waiters.forEach(resolve => resolve());
-    }
-  }
+  capabilities(): RuntimeCapabilities { return this.#extensions.capabilities(); }
 
-  capabilities(): RuntimeCapabilities {
-    const result = structuredClone(this.#capabilities);
-    for (const { extension, enabled } of this.#extensions.values()) if (enabled) {
-      result.features.push(...extension.features);
-      result.supportedCommands.push(...Object.keys(extension.commands));
-    }
-    return result;
-  }
+  isExtensionCommand(kind: string): boolean { return this.#extensions.hasCommand(kind); }
 
-  setExtensionEnabled(id: string, enabled: boolean): void {
-    const entry = this.#extensions.get(id);
-    if (!entry) throw new Error(`Runtime extension ${id} is not available in this host.`);
-    const wasEnabled = entry.enabled;
-    entry.enabled = enabled;
-    if (!enabled) this.#conversations.revoke(`${id}:`);
-    this.#environment.setOwnerEnabled(id, enabled);
-    this.#toolRegistry.setOwnerEnabled(runtimeExtensionOwner(id), enabled);
-    if (enabled && !wasEnabled) this.#refreshConversationExtension(entry);
-  }
-
-  #refreshConversationExtension(entry: { extension: RuntimeExtension; enabled: boolean; uses: number; retired?: boolean }) {
-    if (!entry.extension.conversationContext) return;
-    // Hot loading observes already-running conversations at their next normal model boundary.
-    void (async () => {
-      for (const fact of this.#conversations.list()) {
-        if (fact.status !== 'running' || entry.retired || !entry.enabled) continue;
-        const messages = await this.#useExtension(entry, () => entry.extension.conversationContext!(fact));
-        if (!entry.retired && entry.enabled) messages.forEach((message, index) => this.#conversations.notify(fact.agentId, {
-          key: `${entry.extension.id}:catalog:${index}`, content: message.content,
-        }));
-      }
-    })().catch(error => this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))));
-  }
-
-  isExtensionCommand(kind: string): boolean {
-    return [...this.#extensions.values()].some(({ extension }) => Object.hasOwn(extension.commands, kind));
-  }
-
-  isExtensionBusy(id: string): boolean {
-    return (this.#activeExtensionCommands.get(id) ?? 0) > 0;
-  }
+  isExtensionBusy(id: string): boolean { return this.#extensions.isBusy(id); }
 
   hasActiveTurns(): boolean {
     return this.#activeTurns.size > 0 || this.#teams.hasActiveRuns();
@@ -1312,16 +1201,13 @@ export class InMemoryRuntimeHost {
   }
   hasActiveWork(): boolean {
     return Boolean(this.hasActiveTurns() || this.#turnAdmissions || this.#workspaceActions || this.#activeAppCommands ||
-      this.#mcpApps.busy || this.#pluginBackground.busy || this.#activeExtensionCommands.size || this.#workspaceTerminals.hasActiveProcesses());
+      this.#mcpApps.busy || this.#pluginBackground.busy || this.#extensions.busy || this.#workspaceTerminals.hasActiveProcesses());
   }
   async preparePluginUninstall(pluginId: string, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    this.removeExtension(pluginId);
-    while (this.isExtensionBusy(pluginId)) {
-      let wake!: () => void;
-      try { await settleAtAbort(new Promise<void>(resolve => { wake = resolve; this.#extensionIdle.add(resolve); }), signal, 'Plugin update cancelled.'); }
-      finally { this.#extensionIdle.delete(wake); }
-    }
+    this.#extensions.remove(pluginId);
+    await this.#extensions.waitForIdle(pluginId, signal);
+    signal?.throwIfAborted();
     await settleAtAbort(this.#pluginHooks.removePlugin(pluginId, true), signal, 'Plugin update cancelled.');
   }
   async refreshPluginHooks(): Promise<void> {
@@ -1379,14 +1265,9 @@ export class InMemoryRuntimeHost {
       signal?.throwIfAborted();
     }
     signal?.throwIfAborted();
-    for (const entry of this.#extensions.values()) {
-      const { extension, enabled } = entry;
-      const handler = Object.hasOwn(extension.commands, command.kind) ? extension.commands[command.kind] : undefined;
-      if (handler) {
-        if (!enabled) throw new Error(`Runtime extension ${extension.id} is not enabled.`);
-        return this.#useExtension(entry, () => handler(command.payload, signal));
-      }
-    }
+    const extensionResult = this.#extensions.dispatch(command.kind, command.payload, signal);
+    if (extensionResult) return extensionResult;
+
     switch (command.kind) {
       case AGENT_REGISTRY_COMMAND: {
         const input = command.payload as { action?: string; definition?: unknown; agent_id?: string; expected_revision?: number };
@@ -1942,7 +1823,7 @@ export class InMemoryRuntimeHost {
         this.#pluginBackground.stop();
         for (const controller of this.#activeTurnControllers.values()) controller.abort();
         await this.#workspaceTerminals.close();
-        for (const id of this.#extensions.keys()) this.removeExtension(id);
+        this.#extensions.close();
         await Promise.allSettled([...this.#pluginStartedSessions].filter(sessionId => ![...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId)).map(sessionId => this.#pluginHooks.closeSession(sessionId)));
         return { accepted: true, activeTurns: this.#activeTurns.size };
       case STOP_RUNTIME_TURN_COMMAND: {
@@ -2295,17 +2176,7 @@ export class InMemoryRuntimeHost {
     let workspaceStarted = false;
     let conversationStopped = true;
     try {
-      if (conversation) {
-        for (const entry of this.#extensions.values()) if (entry.enabled && entry.extension.conversationContext) {
-          try {
-            const context = await this.#useExtension(entry, () => entry.extension.conversationContext!(conversation));
-            if (!entry.retired && entry.enabled) context.forEach((message, index) => this.#conversations.notify(conversation.agentId, {
-              key: `${entry.extension.id}:catalog:${index}`, content: message.content,
-            }));
-          } catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
-        }
-        await this.#publishConversation(conversation);
-      }
+      if (conversation) await this.#extensions.beginConversation(conversation);
       if (authoredInput && candidate.metadata.agentRole !== 'child' && !candidate.metadata.pluginHookEvaluation && !candidate.metadata.shadowMode) {
         try {
           const message = await recallIndividuation(this.#memory.store, memorySettings, authoredInput.message.content, prepared.modelRequest.messages, candidate, options.signal);
@@ -2342,14 +2213,7 @@ export class InMemoryRuntimeHost {
       throw error;
     } finally {
       const ended = this.#conversations.end(candidate.sessionId, candidate.turnId, conversationStopped);
-      if (ended) await this.#publishConversation(ended);
-    }
-  }
-
-  async #publishConversation(conversation: RuntimeConversation) {
-    for (const entry of this.#extensions.values()) if (entry.enabled && entry.extension.conversationChanged) {
-      try { await this.#useExtension(entry, () => entry.extension.conversationChanged!(conversation)); }
-      catch (error) { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); }
+      if (ended) await this.#extensions.conversationChanged(ended);
     }
   }
 
@@ -5088,7 +4952,7 @@ export class InMemoryRuntimeHost {
 
   #guardCacheMaintenance<T>(operation: () => Promise<T>, sessionIds?: ReadonlySet<string>): Promise<T> {
     // A single deletion protects its own resources. Shared collection waits for every owner.
-    if (this.#activeAppCommands || this.#mcpApps.busy || this.#activeExtensionCommands.size ||
+    if (this.#activeAppCommands || this.#mcpApps.busy || this.#extensions.busy ||
         (this.#assistant.working && (!sessionIds || sessionIds.has(PERSONAL_ASSISTANT_SESSION))) ||
         (sessionIds ? [...sessionIds].some(id => this.#teams.hasActiveRuns(id)) : this.#teams.hasActiveRuns()) ||
         (!sessionIds && (this.#pluginBackground.busy || this.#automation?.busy))) {

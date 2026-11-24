@@ -52,6 +52,8 @@ A file under `electron/` does not imply an Electron runtime dependency. Converse
 
 `RuntimeCacheMaintenance` owns the maintenance lease, idle collection timers, and cancellation. `InMemoryRuntimeHost` determines admission from active sessions, tasks, and plugins. Each store determines which data is still referenced. Session deletion acquires the lease before resolving its scope. Foreground commands can interrupt idle collection, and shutdown stops the timers and aborts active collection.
 
+`RuntimeExtensions` owns native extension registration, enablement, replacement and command dispatch. The Runtime host supplies conversation, environment and tool interfaces. The active generation publishes tools and conversation notices. Retired generations finish accepted calls and environment reads before cleanup. Package replacement and removal wait for the extension's asynchronous cleanup. Cancelling that wait leaves accepted operations running.
+
 ## Windows and loading boundaries
 
 Desktop startup, retry and exit share resource cleanup. Failed startups retain the original error and log each cleanup failure separately. Exit stops new requests and lets the Product Host finish. SSH and plugin networking close after Agent connections and account services finish.

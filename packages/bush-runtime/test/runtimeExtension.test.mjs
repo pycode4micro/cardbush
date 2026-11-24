@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionCoordinator, runtimeExtensionOwner } from '../dist/index.js';
+import { InMemoryRuntimeHost, SessionStore, ToolRegistry, ToolExecutionCoordinator, runtimeExtensionOwner } from '../dist/index.js';
 
 const create = api => {
   api.tools.register({
@@ -132,4 +132,44 @@ test('cancelling a package replacement does not cancel an already dispatched ext
   await assert.rejects(preparing, /fixture cancelled|Plugin update cancelled/);
   assert.equal(disposed, false);
   release('old result'); assert.equal(await call, 'old result'); assert.equal(disposed, true);
+});
+
+test('package removal waits for a live environment read and then for asynchronous disposal', { timeout: 5000 }, async t => {
+  const sessionStore = new SessionStore();
+  sessionStore.ensureSession('fixture');
+  const host = new InMemoryRuntimeHost({ sessionStore, registerDefaultWorkspaceTools: false });
+  const reading = Promise.withResolvers(), releaseRead = Promise.withResolvers();
+  const disposing = Promise.withResolvers(), releaseDispose = Promise.withResolvers();
+  let uninstalled = false, cleanupStarted = false;
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  host.installExtension(api => {
+    api.environment.register('status', () => { reading.resolve(); return releaseRead.promise; });
+    return { id: 'managed', features: [], commands: {}, dispose() {
+      cleanupStarted = true;
+      disposing.resolve();
+      return releaseDispose.promise;
+    } };
+  }, { enabled: true });
+  const snapshot = host.readEnvironment('fixture');
+  await reading.promise;
+  // Product refresh can retire the generation before requesting the uninstall barrier.
+  host.removeExtension('managed');
+  const removal = host.preparePluginUninstall('managed').then(() => { uninstalled = true; });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(uninstalled, false);
+    assert.equal(cleanupStarted, false);
+    releaseRead.resolve({ online: true });
+    assert.equal((await snapshot).sections.plugins, undefined);
+    await disposing.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(host.isExtensionBusy('managed'), true);
+    assert.equal(uninstalled, false);
+  } finally {
+    releaseRead.resolve();
+    releaseDispose.resolve();
+    await removal;
+  }
+  assert.equal(uninstalled, true);
+  assert.equal(host.isExtensionBusy('managed'), false);
 });

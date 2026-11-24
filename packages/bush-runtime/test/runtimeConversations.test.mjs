@@ -14,6 +14,29 @@ function fixture() {
   return { bus, runs, signals, errors };
 }
 
+test('a retired extension cannot dismiss a notice from its replacement', async t => {
+  const requests = [];
+  const host = new InMemoryRuntimeHost({ registerDefaultWorkspaceTools: false, provider: { async *stream(req) {
+    requests.push(req);
+    yield event(req, 0, 'text_delta', { delta: 'Handled.' });
+    yield event(req, 1, 'response_completed', { finishReason: 'stop' });
+  } } });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  let retired;
+  host.installExtension(api => {
+    retired = api.conversations;
+    return { id: 'notices', features: [], commands: {} };
+  }, { enabled: true });
+  host.installExtension(api => ({ id: 'notices', features: [], commands: {}, conversationChanged(conversation) {
+    if (conversation.status !== 'running') return;
+    api.conversations.notify(conversation.agentId, { key: 'room', content: 'Current room notice' });
+    retired.dismiss(conversation.agentId, 'room');
+  } }), { enabled: true, replace: true });
+  const terminal = await host.runSessionTurn(request());
+  assert.equal(terminal.payload.status, 'completed');
+  assert.ok(requests[0].messages.some(message => message.name === 'agent_peer_context' && message.content.includes('Current room notice')));
+});
+
 test('presence has no prompts and includes Shadow, automation and hooks with separate wake policy', () => {
   const f = fixture(); f.bus.begin(request());
   for (const metadata of [{ agentRole: 'child' }, { parentSessionId: 'a' }]) {
