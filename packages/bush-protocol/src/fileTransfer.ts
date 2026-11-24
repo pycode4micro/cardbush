@@ -1,5 +1,6 @@
 export const FILE_TRANSFER_LIMIT = 2 * 1024 * 1024 * 1024;
 export const FILE_TRANSFER_CHUNK_SIZE = 512 * 1024;
+export const MESSAGE_ATTACHMENT_LIMIT = 8;
 export const MEDIA_FILE_EXTENSION = /\.(mp4|m4v|mov|webm|mp3|wav|ogg|m4a)$/i;
 export function transferredFileMime(name: string, bytes: Uint8Array): string {
   const ext = name.split('.').at(-1)?.toLowerCase();

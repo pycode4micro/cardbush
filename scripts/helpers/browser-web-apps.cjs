@@ -1,9 +1,15 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { uiText } = require('@cardbush/platform/i18n');
 
 module.exports = async ({ window, original, origin, read, waitFor, activeReady, until, pause, click, externallyOpened, webContents }) => {
   const prefs = () => read(`JSON.parse(localStorage.getItem('cardbush_app_center_v1')||'{}')`);
+  const list = '.sidebar-app-flyout:popover-open', tile = '[data-sidebar-app^="web:"]';
+  const closeList = async () => {
+    await read("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0");
+    await waitFor(`!document.querySelector('${list}')`, 'More apps closes');
+  };
   const installReady = () => waitFor(`document.querySelector('.browser-install-dialog')?.open && !document.querySelector('.browser-install-dialog button[type=submit]').disabled`, 'web app metadata loads');
   await original.loadURL(origin + '/web-app/page'); await activeReady();
   await pause(300); // Let the inspector's initial width transition settle before native hit testing.
@@ -22,24 +28,23 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
     await fs.writeFile(path.resolve('tmp', `web-app-install-${theme}.png`), (await window.webContents.capturePage()).toPNG());
   }
   await click(window.webContents, '.browser-install-dialog button[type=submit]');
-  await waitFor(`document.querySelector('.app-center-drawer')?.open && document.querySelector('.app-center-tile[data-application-id^="web:"]')`);
+  await waitFor(`!!document.querySelector('${list} ${tile}')`, 'install adds the web application to More apps');
   const saved = await prefs(), app = saved.webApps[0];
   assert.equal(saved.webApps.length, 1); assert.equal(app.title, '我的工作台'); assert.equal(app.identity, origin + '/web-app');
   assert.equal('shortcuts' in saved, false);
   assert.equal(original.getURL(), origin + '/web-app/page', 'install form never submits the surrounding address bar');
   await read(`browserFixture.installWebApplication(${JSON.stringify(app)}); void 0`);
   assert.equal((await prefs()).webApps.length, 1, 'repeated installs retain the same app identity');
-  await waitFor(`document.querySelector('.app-center-tile[data-application-id^="web:"] img')?.naturalWidth>0`, 'app center uses website icon');
-  await waitFor(`document.querySelector('.app-center-tile[data-application-id^="web:"] img')?.src.startsWith('data:image/png;')`, 'native SVG favicon is rasterized into the shared offline cache');
-  const cachedIcon = await read(`document.querySelector('.app-center-tile[data-application-id^="web:"] img').src`);
+  await waitFor(`document.querySelector('${tile} img')?.naturalWidth>0`, 'More apps uses the website icon');
+  await waitFor(`document.querySelector('${tile} img')?.src.startsWith('data:image/png;')`, 'native SVG favicon is rasterized into the shared offline cache');
+  const cachedIcon = await read(`document.querySelector('${tile} img').src`);
   assert.ok(cachedIcon.length < 32768);
   assert.equal(await read(`window.cardbushDesktop.browser.readIcon('file:///C:/private.txt')`), '');
-  await read(`document.querySelector('.app-center-drawer button[aria-label="关闭应用中心"]').click(); void 0`);
-  await waitFor(`!document.querySelector('.app-center-drawer')`);
+  await closeList();
   await click(window.webContents, '.browser-install-button');
-  await waitFor(`document.querySelector('.app-center-drawer')?.open`);
-  assert.equal(await read(`document.querySelector('.app-center-tile[data-application-id^="web:"] img').src`), cachedIcon, 'opening the center again uses the saved image immediately');
-  await click(window.webContents, '.app-center-tile[data-application-id^="web:"] .app-center-tile-open');
+  await waitFor(`!!document.querySelector('${list}')`);
+  assert.equal(await read(`document.querySelector('${tile} img').src`), cachedIcon, 'reopening More apps uses the saved image immediately');
+  await click(window.webContents, tile);
   await waitFor(`browserFixture.navigation[browserFixture.activeId]?.url===${JSON.stringify(origin + '/web-app/start')}`); await activeReady();
   const launchedId = await read(`document.querySelector('.right-inspector-tab-page.active webview').getWebContentsId()`), launched = webContents.fromId(launchedId);
   assert.notEqual(launchedId, original.id, 'app launch opens its own start page');
@@ -47,19 +52,24 @@ module.exports = async ({ window, original, origin, read, waitFor, activeReady, 
   assert.match(await launched.executeJavaScript('document.cookie'), /webapp-session=retained/);
   assert.deepEqual(externallyOpened, [], 'web apps never launch the system browser');
   await waitFor(`document.querySelector('.browser-install-button').classList.contains('installed')`);
-  await click(window.webContents, '.browser-install-button'); await waitFor(`document.querySelector('.app-center-drawer')?.open`);
-  await read(`document.querySelector('.app-center-tile[data-application-id^="web:"] button[aria-label="移除 我的工作台"]').click(); void 0`);
-  await waitFor(`!document.querySelector('.app-center-tile[data-application-id^="web:"]')`);
+  await click(window.webContents, '.browser-install-button'); await waitFor(`!!document.querySelector('${list}')`);
+  await read(`document.querySelector('button[data-sidebar-app-remove^="web:"][aria-label="移除 我的工作台"]').click(); void 0`);
+  await waitFor(`!document.querySelector('${tile}')`);
   assert.equal((await prefs()).webApps.length, 0);
   assert.equal(await launched.executeJavaScript(`localStorage.getItem('webapp-session')`), 'retained', 'removing app preserves site data');
-  await read(`document.querySelector('.app-center-drawer button[aria-label="关闭应用中心"]').click(); void 0`);
-  await waitFor(`!document.querySelector('.app-center-drawer')`);
+  await closeList();
 
-  await launched.loadURL(origin + '/ordinary-webpage'); await activeReady();
+  const ordinaryPage = origin + '/ordinary-webpage';
+  await launched.loadURL(ordinaryPage);
+  await waitFor(`browserFixture.navigation[browserFixture.activeId]?.url===${JSON.stringify(ordinaryPage)}`, 'the address bar reflects the new page');
+  await activeReady();
   await click(window.webContents, '.browser-install-button'); await installReady();
   assert.equal(await read(`document.querySelector('.browser-install-url').textContent`), origin + '/ordinary-webpage', 'ordinary pages can be saved without a manifest');
   await read(`document.querySelector('.browser-install-dialog header button').click(); void 0`);
-  await assert.rejects(read(`window.cardbushDesktop.browser.webApplication(${window.webContents.id},${JSON.stringify(origin + '/ordinary-webpage')})`), /unavailable/i);
-  await assert.rejects(read(`window.cardbushDesktop.browser.webApplication(${launchedId},${JSON.stringify(origin + '/old-url')})`), /Page changed/);
+  const t = uiText('en');
+  await assert.rejects(read(`window.cardbushDesktop.browser.webApplication(${window.webContents.id},${JSON.stringify(origin + '/ordinary-webpage')})`),
+    error => error.message.endsWith(t('browserNative.tabUnavailable')));
+  await assert.rejects(read(`window.cardbushDesktop.browser.webApplication(${launchedId},${JSON.stringify(origin + '/old-url')})`),
+    error => error.message.endsWith(t('browserNative.installPageChanged')));
   console.log('Web apps passed: real manifest metadata, install/cancel/rename, icon, identity deduplication, internal launch with retained cookies/storage, removal, ordinary-page fallback, guest ownership and stale-navigation checks.');
 };

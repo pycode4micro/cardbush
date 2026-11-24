@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { randomBytes, randomUUID, scryptSync } from 'node:crypto';
 import { mkdir, mkdtemp, rm, readFile, writeFile, symlink } from 'node:fs/promises';
 import { resolve, join, sep } from 'node:path';
-import { conversationTitleLimit } from '@cardbush/bush-protocol';
+import { conversationTitleLimit, FILE_TRANSFER_LIMIT, MESSAGE_ATTACHMENT_LIMIT } from '@cardbush/bush-protocol';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { AgentService } from '../dist-electron/agentService.mjs';
 import { serveAgentHttp } from '../dist-electron/agentServer.mjs';
@@ -352,6 +352,38 @@ test('uploads are resumable and private, support video, and reject disguised med
   assert.deepEqual(await f.services.get('usr_bob').call('chat.jobs', {}), []);
   (await f.pool.get('usr_bob')).close();
   assert.equal((await b.request(view)).status, 503, 'transport failure remains a service error');
+});
+
+test('web messages deliver eight images and enforce attachment count and byte limits', async t => {
+  const { default: sharp } = await import('sharp');
+  const f = await fixture(t), a = await f.login('alice');
+  const session = await (await a.request('/sessions', 'POST', { requestId: randomUUID() })).json();
+  const uploads = [];
+  for (let index = 0; index < MESSAGE_ATTACHMENT_LIMIT + 1; index++) {
+    const png = await sharp({ create: { width: 32, height: 24, channels: 3, background: { r: index * 20, g: 30, b: 60 } } }).png().toBuffer();
+    const uploadId = randomUUID();
+    const response = await a.request('/files', 'POST', { uploadId, name: `image-${index}.png`, offset: 0, size: png.length, content: png.toString('base64'), done: true });
+    assert.equal(response.status, 200);
+    uploads.push(uploadId);
+  }
+  const send = attachments => a.request(`/sessions/${session.id}/messages`, 'POST', { requestId: randomUUID(), text: 'Review the images', modelId: 'fixture', attachments });
+  const accepted = await send(uploads.slice(0, MESSAGE_ATTACHMENT_LIMIT));
+  assert.equal(accepted.status, 202);
+  const job = await accepted.json();
+  assert.equal(job.attachments.length, 8);
+  const jobs = await until(() => f.services.get('usr_alice').call('chat.jobs', {}), items => items.some(item => item.id === job.id && !['queued', 'running'].includes(item.status)));
+  assert.equal(jobs.find(item => item.id === job.id).status, 'completed');
+  const images = f.calls[0].input.filter(item => item.role === 'user').flatMap(item => item.content).filter(item => item.type === 'input_image');
+  assert.equal(images.length, 8);
+  assert.equal((await send(uploads)).status, 400);
+
+  const oversized = join(f.root, 'usr_alice', 'config', 'files', `${uploads[0]}.json`);
+  const manifest = JSON.parse(await readFile(oversized, 'utf8'));
+  await writeFile(oversized, JSON.stringify({ ...manifest, size: FILE_TRANSFER_LIMIT }));
+  const rejected = await send(uploads.slice(0, 2));
+  assert.equal(rejected.status, 400);
+  assert.match((await rejected.json()).error, /2 GB/);
+  assert.equal((await f.services.get('usr_alice').call('chat.jobs', {})).length, 1);
 });
 
 test('only admins install plugins and grants are checked again after revocation',async t=>{

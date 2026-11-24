@@ -11,7 +11,7 @@ license: Apache-2.0
 | 任务 | 读取文档 |
 |---|---|
 | 创建或修改已安装的主页组件、按 ID 局部更新、预览，或者接入公开 JSON 数据源 | [主页自定义组件](references/home-components.md) |
-| 应用中心、快捷方式、@ 应用引用、独立应用链接 | [应用中心](references/app-center.md) |
+| 更多应用、快捷方式、@ 应用引用、独立应用链接 | [更多应用](references/app-center.md) |
 | 创作文档、Team 的文档可视化、从写作到协作实践 | [创作与 Team](references/bush-it.md) |
 | 添加 MCP 服务、检查连接、配置插件 OAuth | [MCP 接入](references/mcp-management.md) |
 | “把微信／飞书接到当前会话”、让外部 Bot 或 Agent 通过 Webhook 与 Assistant / CLI 对话、排查消息或文件投递 | [通过对话配置 Webhook](references/webhook-setup.md)。自建服务的请求、认证、回执和心跳见 [Webhook HTTP 接口](references/webhook-http.md)。 |

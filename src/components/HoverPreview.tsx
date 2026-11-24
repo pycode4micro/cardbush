@@ -94,12 +94,13 @@ export function useHoverPreview(disabled = false, { interactive = false, immedia
   } };
 }
 
-export function HoverPreview({ preview, className = '', boundarySelector, interactiveLabel, placement = 'side', onEscape, children }: {
+export function HoverPreview({ preview, className = '', boundarySelector, interactiveLabel, placement = 'side', clickOnly = false, onEscape, children }: {
   preview: ReturnType<typeof useHoverPreview>;
   className?: string;
   boundarySelector?: string;
   interactiveLabel?: string;
   placement?: 'side' | 'top';
+  clickOnly?: boolean;
   onEscape?: () => boolean;
   children: ReactNode;
 }) {
@@ -147,7 +148,8 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
   useLayoutEffect(() => {
     if (!anchor) return;
     const pointerDown = (event: globalThis.PointerEvent) => {
-      if (interactiveLabel && event.target instanceof Node && node.current?.contains(event.target)) return;
+      if (interactiveLabel && event.target instanceof Node &&
+        (node.current?.contains(event.target) || (clickOnly && anchor.contains(event.target)))) return;
       close();
     };
     const key = (event: KeyboardEvent) => {
@@ -178,16 +180,22 @@ export function HoverPreview({ preview, className = '', boundarySelector, intera
       window.removeEventListener('resize', close);
       window.removeEventListener('scroll', scroll, true);
     };
-  }, [anchor, close, interactiveLabel, onEscape]);
+  }, [anchor, close, clickOnly, interactiveLabel, onEscape]);
   if (!anchor) return null;
-  return createPortal(<div ref={node} id={preview.id} popover="manual" role={interactiveLabel ? 'dialog' : 'tooltip'} aria-label={interactiveLabel}
-    className={`hover-preview ${className}`} data-interactive={!!interactiveLabel} onPointerEnter={preview.keepOpen} onPointerMove={preview.keepOpen}
-    onPointerLeave={() => {
+  const hoverEvents = clickOnly ? undefined : {
+    onPointerEnter: preview.keepOpen,
+    onPointerMove: preview.keepOpen,
+    onPointerLeave: () => {
       if (interactiveLabel && node.current?.contains(document.activeElement)) return;
       preview.leave();
-    }}
-    onFocus={preview.keepOpen}
-    onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) preview.leave(); }}>
+    },
+    onFocus: preview.keepOpen,
+    onBlur: (event: FocusEvent<HTMLDivElement>) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) preview.leave();
+    },
+  };
+  return createPortal(<div ref={node} id={preview.id} popover="manual" role={interactiveLabel ? 'dialog' : 'tooltip'} aria-label={interactiveLabel}
+    className={`hover-preview ${className}`} data-interactive={!!interactiveLabel && !clickOnly} {...hoverEvents}>
     {children}
   </div>, anchor.closest(':popover-open') ?? anchor.closest('.app') ?? document.body);
 }

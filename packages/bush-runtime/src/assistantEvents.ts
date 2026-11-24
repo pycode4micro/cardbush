@@ -5,7 +5,7 @@ import { presentExistingScheduleActions } from './extendedBuiltins.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
-import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, eventPresentationSchema, friendsCommandSchema, eventPredicateSchema, eventRecurrenceSchema, applyWebhookTurnPolicy, type EventPredicate, type EventRecurrence, type BotContext, type FriendInput, type FriendsSnapshot, type FriendsWorkEvent,
+import { PERSONAL_ASSISTANT_SESSION, FRIENDS_SESSION, eventPresentationSchema, friendsCommandSchema, eventPredicateSchema, eventRecurrenceSchema, applyWebhookTurnPolicy, type AssistantEventExecution, type EventPredicate, type EventRecurrence, type BotContext, type FriendInput, type FriendsSnapshot, type FriendsWorkEvent,
   type FriendsConnectionStatus, type ModelRequest, type RuntimeEvent, type RuntimeSessionTurnRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import { AssistantEventStore, settleFriendsWebhook, type FriendsState } from './assistantEventStore.js';
 import type { ToolRegistry } from './toolRegistry.js';
@@ -59,9 +59,14 @@ export class AssistantEvents {
     // A fresh host must receive current model bindings and permission configuration
     // before resuming persisted detections. Reading status never starts execution.
   }
-  get executingAssistantEvent(): boolean {
-    return Boolean(this.controller && !this.controller.signal.aborted &&
-      this.store.select(state => Boolean(state.active && state.configuration?.assistant)));
+  get activeAssistantEvent(): Omit<AssistantEventExecution, 'status'> | undefined {
+    if (!this.controller || this.controller.signal.aborted) return undefined;
+    return this.store.select(state => {
+      const active = state.active;
+      if (!active || !state.configuration?.assistant) return undefined;
+      const event = state.events.find(candidate => candidate.id === active.eventId);
+      return event && { eventId: active.eventId, turnId: active.turnId, title: event.title };
+    });
   }
   environment(): FriendsConnectionStatus {
     return this.store.select(state => ({ configured: this.configured,

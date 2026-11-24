@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import type { AppLanguage } from '../../types';
 import { dialogEventHandler } from '../../shared/dialogEvents';
 import { webApplicationMatches, websiteApplication, type WebApplicationInfo } from '@cardbush/bush-protocol';
-import { installWebApplication, requestAppCenter, useAppCenterPreferences } from '../appCenter/appCenterStore';
+import { installWebApplication, showMoreApplications, useAppCenterPreferences } from '../appCenter/appCenterStore';
 import type { InspectorNavigationState } from '../inspector/InspectorWebview';
 import { BrowserSiteIcon } from './BrowserSiteIcon';
 import './browserInstall.css';
@@ -26,14 +26,14 @@ function InstallDialog({ language, navigation, onClose }: { language: AppLanguag
     onCancel={dialogEventHandler(() => onClose())} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <form onSubmit={event => {
       event.preventDefault(); event.stopPropagation(); if (busy || error) return;
-      try { installWebApplication({ ...info, title: name?.trim() || info.title }); onClose(); requestAppCenter(); }
+      try { installWebApplication({ ...info, title: name?.trim() || info.title }); onClose(); showMoreApplications(); }
       catch (cause) { setError(String(cause)); }
     }}>
       <header><h2 id="browser-install-title">{uiText(language)('browserInstallButton.installWebApp')}</h2><button type="button" aria-label={uiText(language)('common.close')} onClick={onClose}><X size={18}/></button></header>
       <div className="browser-install-identity"><BrowserSiteIcon url={info.url} icon={info.icon} size={40}/>
         <label>{uiText(language)('appCenter.appName')}<input autoFocus required maxLength={80} value={name ?? info.title} onChange={event => setName(event.target.value)} aria-label={uiText(language)('appCenter.appName')}/></label></div>
       <p className="browser-install-url" title={info.url}>{info.url}</p>
-      <p>{uiText(language)('browserInstallButton.addToTheAppCenterAndOpen')}</p>
+      <p>{uiText(language)('browserInstallButton.addToMoreApps')}</p>
       {error && <p role="alert">{error}</p>}
       <footer><span role="status">{busy ? (uiText(language)('browserInstallButton.readingSiteInformation')) : ''}</span>
         <button type="button" onClick={onClose}>{uiText(language)('agentConnectionForm.cancel')}</button><button type="submit" disabled={busy || Boolean(error) || name !== null && !name.trim()}>{uiText(language)('browserInstallButton.install')}</button></footer>
@@ -47,8 +47,8 @@ export function BrowserInstallButton({ language, navigation }: { language: AppLa
   useEffect(() => { setOpen(false); }, [url, guestId]);
   if (!guestId || !websiteApplication(url, '') || !window.cardbushDesktop?.browser?.webApplication) return null;
   const installed = prefs.webApps?.some(app => webApplicationMatches(app, url));
-  const label = installed ? (uiText(language)('browserInstallButton.installedViewAppCenter')) : (uiText(language)('browserInstallButton.installAsWebApp'));
+  const label = installed ? uiText(language)('browserInstallButton.installedViewMoreApps') : uiText(language)('browserInstallButton.installAsWebApp');
   return <><button type="button" className={`browser-install-button${installed ? ' installed' : ''}`} title={label} aria-label={label} aria-haspopup="dialog"
-    onClick={() => installed ? requestAppCenter() : setOpen(true)}>{installed ? <Check size={15}/> : <MonitorDown size={16}/>}</button>
+    onClick={() => installed ? showMoreApplications() : setOpen(true)}>{installed ? <Check size={15}/> : <MonitorDown size={16}/>}</button>
     {open && navigation && <InstallDialog key={`${guestId}:${url}`} language={language} navigation={navigation} onClose={() => setOpen(false)}/>}</>;
 }

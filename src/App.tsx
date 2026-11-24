@@ -36,8 +36,8 @@ import { BrowserMenu } from './features/browser/BrowserMenu';
 import { BrowserInstallButton } from './features/browser/BrowserInstallButton';
 import { appendReviewCommentsToDraft, emptyReviewComments, type ReviewCommentState } from './features/sidebar/reviewCommentModel';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
-import { AppCenterProvider } from './features/appCenter/AppCenter';
-import { requestAppCenter } from './features/appCenter/appCenterStore';
+import { ApplicationLauncher } from './features/appCenter/ApplicationLauncher';
+import { SidebarApplications } from './features/sidebar/SidebarApplications';
 import { requestPluginApplication } from './features/plugins/pluginNavigationRequests';
 import { PageNavigationContext, PageNavigationScope, usePageNavigation } from './features/navigation/PageNavigation';
 import { splitPage, tabWorkspaceDestination, type AppPage, type HomePage, type WorkspaceDestination } from './features/navigation/appPage';
@@ -1988,7 +1988,6 @@ function CardbushApp() {
 
   const toggleSidebar = () => setSidebarCollapsed(collapsed => !collapsed);
   const windowMenus = applicationMenus(language, {
-    openAppCenter: requestAppCenter,
     openPlugins: () => { setSettingsOpen(false); setSection('plugins'); },
     openAutomations: () => { setSettingsOpen(false); setSection('home'); setHomePage({ kind: 'events' }); },
     newConversation: () => { handleSearchCreateConversation(); setConversationPromptFocus(value => value + 1); },
@@ -2052,7 +2051,7 @@ function CardbushApp() {
     >
       <ProfileCenter language={language} ready={runtimeStartup.phase === 'ready'} prepare={chat.prepareAssistantRequest}
         settings={() => openSettings()}>
-      <AppCenterProvider language={language} onNavigate={(application, environmentId) => {
+      <ApplicationLauncher language={language} onNavigate={(application, environmentId) => {
 
         if (application.kind === 'web') { setSettingsOpen(false); openInspectorTarget({ target: application.target, title: application.title }); return; }
         if (environmentId && application.kind === 'builtin' && application.target === 'plugins') { openSettings('mcp', 'plugins'); return; }
@@ -2060,7 +2059,7 @@ function CardbushApp() {
         if (application.kind === 'plugin' && application.launch?.kind === 'renderer') { requestPluginApplication(application.target, application.launch.extensionId); setSection('plugins'); }
         else setSection(application.target === 'components' ? 'components' : application.target === 'team' ? 'team' : application.target === 'md-presentation' ? 'md-presentation' : 'plugins');
         if (drawerLayout) collapseSidebar();
-      }}>
+      }}/>
       <GlobalTooltip/>
       <WindowFrame
         language={language}
@@ -2137,13 +2136,13 @@ function CardbushApp() {
           {!sidebarCollapsed && (
             <>
               {navigationSection === 'team' ? (
-                <NativeTeamSidebar softVisible workspaceNavigation={<>{renderQuickNavigation()}{workspaceNavigation}</>} assistantEntry={assistantEntry}
+                <NativeTeamSidebar softVisible workspaceNavigation={<>{renderQuickNavigation()}{workspaceNavigation}<SidebarApplications language={language}/></>} assistantEntry={assistantEntry}
                   language={language}
                   onOpenSettings={() => openSettings()}
                   onSelect={() => { if (drawerLayout) collapseSidebar(); }}
                 />
               ) : navigationSection === 'md-presentation' ? (
-                <CanvasSidebar language={language} softVisible workspaceNavigation={<>{renderQuickNavigation()}{workspaceNavigation}</>} assistantEntry={assistantEntry}
+                <CanvasSidebar language={language} softVisible workspaceNavigation={<>{renderQuickNavigation()}{workspaceNavigation}<SidebarApplications language={language}/></>} assistantEntry={assistantEntry}
                   onSelect={() => { if (drawerLayout) collapseSidebar(); }}/>
               ) : null}
               <SidebarResizer
@@ -2474,14 +2473,14 @@ function CardbushApp() {
                 )}
                 {inspectorLayout && <button type="button" data-inspector-save-layout onClick={saveCurrentInspectorLayout}
                   aria-label={uiText(language)('app.saveCurrentLayoutToTools')}><Save size={16}/></button>}
-                <button
+                {!conversationTitlebar && <button
                   type="button"
                   onClick={closeInspector}
                   data-shortcut="toggleInspector"
                   aria-label={uiText(language)('app.closeInspector')}
                 >
-                  <PanelRightClose size={16} />
-                </button>
+                  <PanelRightClose size={16} aria-hidden="true" />
+                </button>}
               </header>
               {inspectorOpen && !settingsVisible && inspectorTabContextMenu && inspectorTabContextTarget && createPortal(
                 <div
@@ -2759,7 +2758,6 @@ function CardbushApp() {
       {arrivingEvent && <ConversationEventToast key={arrivingEvent.runId} item={arrivingEvent} language={language}
         onOpen={() => void openEventResult(arrivingEvent)}/>}
       <McpUserRequests language={language} />
-      </AppCenterProvider>
       </ProfileCenter>
     </div>
     </ImageGalleryProvider>

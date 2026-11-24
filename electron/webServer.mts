@@ -1,4 +1,4 @@
-import { FILE_TRANSFER_LIMIT } from '@cardbush/bush-protocol';
+import { FILE_TRANSFER_LIMIT, MESSAGE_ATTACHMENT_LIMIT } from '@cardbush/bush-protocol';
 import { describeWebFile, webFileResponse } from './webFileResponse.mjs';
 import { uiText as transferText } from '@cardbush/platform/i18n';
 import { webToolAllowed, normalizeWebImage } from '@cardbush/bush-runtime/web-policy';
@@ -28,7 +28,7 @@ type Job = { id: string; sessionId: string; turnId: string; status: string; text
 const prefix = '/api/web/v1';
 const LAYER_MODEL = 'doubao-seedream-5-5-261028';
 const visibleEvents = new Set(['turn_accepted', 'turn_started', 'assistant_segment_started', 'assistant_segment_delta', 'assistant_segment_completed', 'turn_terminal', 'model_request_usage', 'guidance_queued', 'guidance_applied', 'tool_queued', 'tool_running', 'tool_returned', 'tool_failed', 'tool_cancelled', 'solution_selection_requested', 'solution_selection_answered', 'solution_selection_cancelled', 'context_compaction_started', 'context_compaction_completed']);
-const messageSchema = z.object({ requestId: z.string().uuid(), text: z.string().trim().min(1).max(100_000), modelId: z.string().min(1).max(160), attachments: z.array(z.string().uuid()).max(8).default([]) }).strict();
+const messageSchema = z.object({ requestId: z.string().uuid(), text: z.string().trim().min(1).max(100_000), modelId: z.string().min(1).max(160), attachments: z.array(z.string().uuid()).max(MESSAGE_ATTACHMENT_LIMIT).default([]) }).strict();
 
 /** This is an authenticated web application, not a proxy for the owner API.
  * The authenticated account selects the runtime; every session route also checks
@@ -355,7 +355,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         if (!config.models.some(model => model.id === input.modelId)) throw new WebError(400, '模型未启用。');
         throttle(`message:${user.id}`, 100);
         const attachments = await Promise.all(input.attachments.map(id => describeWebFile(agent, { id })));
-        if (attachments.filter(item => item.mime.startsWith('image/')).length > 4 || attachments.reduce((sum, item) => sum + item.size, 0) > FILE_TRANSFER_LIMIT) throw new WebError(400, transferText()('web.transferMessageLimit'));
+        if (attachments.reduce((sum, item) => sum + item.size, 0) > FILE_TRANSFER_LIMIT) throw new WebError(400, transferText()('web.transferMessageLimit', { count: MESSAGE_ATTACHMENT_LIMIT }));
         const { attachments: _ids, ...message } = input;
         // Vision is a turn capability, independent of this message's attachments:
         // text follow-ups must still inspect prior uploads and generated images.

@@ -1213,7 +1213,7 @@ body.queue-reordering :is(webview, iframe) { pointer-events: none !important; }
   gap: 6px;
 }
 
-.work-summary-subagent-task {
+:is(.work-summary-subagent-task, .work-summary-activity-row) {
   width: 100%;
   min-width: 0;
   min-height: 54px;
@@ -1229,15 +1229,16 @@ body.queue-reordering :is(webview, iframe) { pointer-events: none !important; }
   text-align: left;
 }
 
-.work-summary-subagent-task:hover,
-.work-summary-subagent-task:focus-visible {
+.work-summary-event-task { min-height:44px; }
+
+:is(.work-summary-subagent-task, .work-summary-activity-row):is(:hover, :focus-visible) {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
   outline: none;
 }
 
-.work-summary-subagent-state {
+:is(.work-summary-subagent-state, .work-summary-activity-state) {
   width: 20px;
   height: 20px;
   display: grid;
@@ -1245,28 +1246,28 @@ body.queue-reordering :is(webview, iframe) { pointer-events: none !important; }
   border-radius: 7px;
 }
 
-.work-summary-subagent-state.running { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+:is(.work-summary-subagent-state, .work-summary-activity-state).running { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .work-summary-subagent-state.stopped { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .work-summary-subagent-state.complete { color: var(--success); background: color-mix(in srgb, #65b982 12%, transparent); }
 .work-summary-subagent-state.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
-.work-summary-subagent-main {
+:is(.work-summary-subagent-main, .work-summary-activity-main) {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-.work-summary-subagent-main strong,
+:is(.work-summary-subagent-main, .work-summary-activity-main) strong,
 .work-summary-subagent-main small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.work-summary-subagent-main strong { color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); }
+:is(.work-summary-subagent-main, .work-summary-activity-main) strong { color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .work-summary-subagent-main small { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); }
 
-.work-summary-subagent-status {
+:is(.work-summary-subagent-status, .work-summary-activity-status) {
   max-width: 76px;
   padding: 2px 5px;
   overflow: hidden;
@@ -1276,17 +1277,23 @@ body.queue-reordering :is(webview, iframe) { pointer-events: none !important; }
   white-space: nowrap;
 }
 
-.work-summary-subagent-status.running { color: var(--text); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+:is(.work-summary-subagent-status, .work-summary-activity-status).running { color: var(--text); background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .work-summary-subagent-status.stopped { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .work-summary-subagent-status.complete { color: var(--success); background: color-mix(in srgb, #65b982 10%, transparent); }
 .work-summary-subagent-status.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); }
 
-.work-summary-subagent-task > svg {
+.work-summary-activity-status { max-width: 9em; white-space: normal; }
+.work-summary-event-task[data-status="waiting_user"] .work-summary-activity-status {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+:is(.work-summary-subagent-task, .work-summary-activity-row) > svg {
   color: var(--text);
   transition: transform 140ms ease;
 }
 
-.work-summary-subagent-task:hover > svg { transform: translateX(2px); }
+:is(.work-summary-subagent-task, .work-summary-activity-row):hover > svg { transform: translateX(2px); }
 
 @keyframes shadow-chat-breathe {
   0%, 100% {

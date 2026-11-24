@@ -70,17 +70,21 @@ test('stopped child with a surviving running receipt is idle in the toolbar and 
 });
 test('the title bar observes only personal Assistant work without opening a conversation or reading its history', () => {
   let running = 0, waiting = false, event = false;
+  const eventIdentity = { eventId: 'schedule', turnId: 'event-run', title: 'Schedule check' };
   const assistant = new AssistantConversation({ read: () => assert.fail('read the transcript') }, {
     exists: () => false, tasks: () => assert.fail('copied complete task records'),
     runningTaskCount: session => { assert.equal(session, id); return running; },
-    eventNeedsResponse: () => waiting, eventRunning: () => event,
+    eventNeedsResponse: () => waiting, activeEvent: () => event ? eventIdentity : undefined,
   });
-  const activity = () => assistant.command({ action: 'activity', sessionId: id }).activity;
-  assert.equal(activity(), 'idle');
-  running = 1; assert.equal(activity(), 'working');
-  waiting = true; assert.equal(activity(), 'waiting');
-  running = 0; waiting = false; event = true; assert.equal(activity(), 'working');
-  event = false; assert.equal(activity(), 'idle');
+  const activity = () => assistant.command({ action: 'activity', sessionId: id });
+  assert.deepEqual(activity(), { activity: 'idle' });
+  running = 1; assert.deepEqual(activity(), { activity: 'working' });
+  waiting = true; assert.deepEqual(activity(), { activity: 'waiting' });
+  running = 0; waiting = false; event = true;
+  assert.deepEqual(activity(), { activity: 'working', activeEvent: { ...eventIdentity, status: 'running' } });
+  waiting = true;
+  assert.deepEqual(activity(), { activity: 'waiting', activeEvent: { ...eventIdentity, status: 'waiting_user' } });
+  event = false; waiting = false; assert.deepEqual(activity(), { activity: 'idle' });
   assert.throws(() => assistant.command({ action:'activity', sessionId:'ordinary-chat' }));
 });
 const entry = (key, content = '请帮我检查文件', role = 'user', source = 'text') => ({ id: key, content, role, source, visibility: 'conversation', createdAt: new Date().toISOString() });

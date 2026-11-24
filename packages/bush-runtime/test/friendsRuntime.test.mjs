@@ -430,6 +430,33 @@ const assistantConfiguration = () => ({ action: 'configure', assistant: { name: 
     parent: { protocol: 'bush.session_turn_request.v1', sessionId: PERSONAL_ASSISTANT_SESSION, requestId: 'config', turnId: 'config',
       model: 'fixture', tools: [], metadata: {}, permissionMode: 'task_free', prefixMessages: [], inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } });
 
+test('native Assistant event execution appears in activity and the journal until it completes', async t => {
+  const release = Promise.withResolvers();
+  const f = await fixture(t, async (request, round) => {
+    await release.promise;
+    return simple(request, round);
+  });
+  const sessionId = PERSONAL_ASSISTANT_SESSION;
+  const snapshot = action => f.host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { action, sessionId } });
+  try {
+    await f.host.sendCommand({ kind: 'runtime.create_session', payload: { sessionId } });
+    await f.command(assistantConfiguration());
+    await f.send('schedule-check', 'Check the schedule');
+    const { activeEvent } = await until(() => snapshot('activity'), value => value.activeEvent?.eventId === 'schedule-check' && f.requests.length === 1);
+    const event = (await f.read()).events.find(item => item.id === 'schedule-check');
+    assert.deepEqual(activeEvent, { eventId: event.id, title: event.title, turnId: f.requests[0].turnId, status: 'running' });
+    const journal = await snapshot('read');
+    assert.equal(journal.activity, 'working');
+    assert.deepEqual(journal.activeEvent, activeEvent);
+    assert.equal(f.requests.length, 1);
+  } finally {
+    release.resolve();
+  }
+  await until(f.read, state => state.events.find(event => event.id === 'schedule-check')?.status === 'completed');
+  assert.deepEqual(await snapshot('activity'), { activity: 'idle' });
+  assert.equal((await snapshot('read')).activeEvent, undefined);
+});
+
 function eventTool(registry, args) {
   const tool = registry.resolve('assistant_event');
   return tool.execute({ sessionId: PERSONAL_ASSISTANT_SESSION, toolCall: { id: crypto.randomUUID() },

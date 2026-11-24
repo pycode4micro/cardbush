@@ -97,12 +97,15 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   await until(`!document.querySelector(${locateRing})`);
   await click(quoteLink);
   await until(`document.activeElement===document.querySelector(${targetArticle})`);
-  await read(`document.querySelector(${targetArticle}).blur();document.documentElement.dataset.motionPreference='on';fixture.theme('dark');fixture.locateNotice('p');void 0`);
+  await until(`!document.querySelector(${locateRing})`);
+  await read(`document.querySelector('.assistant-composer-dock textarea').focus({preventScroll:true});document.documentElement.dataset.motionPreference='on';fixture.theme('dark');fixture.locateNotice('p');void 0`);
   await until(`!!document.querySelector(${locateRing})`);
+  assert.equal(await read('document.activeElement.matches(".assistant-composer-dock textarea")'), true, 'locating a notification preserves the current input focus');
   const reduced = await read(`(()=>{const ring=document.querySelector(${locateRing}), style=getComputedStyle(ring);
     return {opacity:style.opacity,duration:parseFloat(style.animationDuration),delay:parseFloat(style.animationDelay)}})()`);
   assert.ok(reduced.opacity === '1' && reduced.duration < .01 && reduced.delay >= .8, JSON.stringify(reduced));
   await until(`!document.querySelector(${locateRing})`);
+  assert.equal(await read(`getComputedStyle(document.querySelector(${targetArticle})).outlineStyle`), 'none', 'no focus outline remains after the notification marker expires');
   await read('fixture.portal(true);void 0');
   await until('!!document.querySelector(".quick-input-status")');
   await click('.quick-input-status');

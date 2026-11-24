@@ -17,7 +17,18 @@ export type AssistantWorkActivity = 'idle' | 'thinking' | 'working' | 'waiting' 
 export const assistantExpressionSchema = z.enum(['happy', 'curious', 'caring', 'surprised']);
 export type AssistantExpression = z.infer<typeof assistantExpressionSchema>;
 export interface AssistantReplyExpression { mood: AssistantExpression; replyId: string; expiresAt: number }
-export interface AssistantActivitySnapshot { activity: AssistantWorkActivity; expression?: AssistantReplyExpression; toolName?: string }
+export interface AssistantEventExecution {
+  eventId: string;
+  turnId: string;
+  title: string;
+  status: 'running' | 'waiting_user';
+}
+export interface AssistantActivitySnapshot {
+  activity: AssistantWorkActivity;
+  expression?: AssistantReplyExpression;
+  toolName?: string;
+  activeEvent?: AssistantEventExecution;
+}
 export const ASSISTANT_REACTIONS = ['❤️', '👍', '👎', '‼️', '😂', '✅', '🎉', '🙏', '🤔', '👀', '🚀', '😮'] as const;
 export const assistantReactionSchema = z.enum(ASSISTANT_REACTIONS);
 export type AssistantReaction = z.infer<typeof assistantReactionSchema>;

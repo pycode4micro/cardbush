@@ -56,5 +56,22 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   }
   await read('fixture.management.plan=undefined;void 0'); await click('[data-work-summary-toggle]');
   await until('!!document.querySelector(".conversation-work-summary")&&!document.querySelector(".work-summary-plan")');
-  console.log('Assistant management UI passed: live overall plan, approval/deny/cancel/error recovery, portal, preserved draft and responsive themes. Screenshots: ' + directory);
+  await read('fixture.showHeader(true);fixture.activity="working";void 0');
+  await until('document.querySelector(".window-conversation-status").textContent===fixture.uiText("zh")("assistantTitlebar.working")');
+  assert.equal(await read('!!document.querySelector(".work-summary-event-task")'), false, 'generic work is not shown as an event');
+  await read(`fixture.activeEvent={eventId:'schedule-check',turnId:'run',title:'赛程收尾探测',status:'running'};
+    fixture.eventSnapshot={events:[{id:'another-event',title:'其他事件',status:'watching',inputs:[]},
+      {id:'schedule-check',title:fixture.activeEvent.title,status:'running',inputs:[]}],detections:[],permissions:[],solutions:[]};void 0`);
+  await until('document.querySelector(".window-conversation-status").textContent===fixture.uiText("zh")("assistantTitlebar.eventRunning")');
+  await until('document.querySelector(".work-summary-event-task[data-status=running]")?.textContent.includes(fixture.activeEvent.title)');
+  await click('.work-summary-event-task');
+  await until('document.querySelector(".assistant-events-dialog:modal .event-overview h3")?.textContent===fixture.activeEvent.title');
+  await click('.assistant-events-dialog .settings-dialog-header button');
+  await read('fixture.activity="waiting";fixture.activeEvent.status="waiting_user";fixture.eventNeedsResponse=true;void 0');
+  await until('document.querySelector(".work-summary-event-task[data-status=waiting_user]")?.textContent.includes(fixture.uiText("zh")("sessionAttention.confirmationPending"))');
+  await read('fixture.language("en");void 0');
+  await until('document.querySelector(".work-summary-event-task[data-status=waiting_user]")?.textContent.includes(fixture.uiText("en")("sessionAttention.confirmationPending"))');
+  await read('fixture.activity="idle";fixture.activeEvent=undefined;fixture.eventNeedsResponse=false;void 0');
+  await until('!document.querySelector(".work-summary-event-task") && !document.querySelector(".window-conversation-status").textContent');
+  console.log('Assistant management UI passed: live plan, approvals, responsive themes and event progress/details. Screenshots: ' + directory);
 };

@@ -564,7 +564,7 @@ export class InMemoryRuntimeHost {
         }
         return recent;
       },
-      eventRunning: () => this.#assistantEvents.executingAssistantEvent,
+      activeEvent: () => this.#assistantEvents.activeAssistantEvent,
       delegate: (payload, signal, onOutcome) => this.sendCommand({ kind: REALTIME_AGENT_TOOL_COMMAND, payload }, signal, onOutcome),
       delegationTools: () => this.#toolRegistry.definitions().filter(tool => ['subagent', 'list_subagent_options', 'team', 'tasks', 'worker_connection'].includes(tool.name)),
       eventNeedsResponse: () => {

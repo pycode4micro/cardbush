@@ -44,15 +44,15 @@ module.exports = async ({ read, until, click, pause, win, directory }) => {
   }void 0`);
   await until('document.querySelectorAll(".assistant-messages .assistant-task-strip").length === 2 && !!document.querySelector(".quick-input-transcript .assistant-task-strip")');
   assert.deepEqual(await read(`Array.from(document.querySelectorAll('.assistant-messages .assistant-task-strip')).map(row => row.children.length)`), [10, 1]);
-  assert.deepEqual(await read(`Array.from(document.querySelectorAll('.assistant-messages .assistant-task-strip')[0].children).slice(0, 3).map(card => card.textContent)`),
+  assert.deepEqual(await read(`Array.from(document.querySelectorAll('.assistant-messages .assistant-task-strip')[0].children).slice(0, 3).map(card => card.querySelector('.assistant-task-name').textContent)`),
     ['A0', 'VeryLongUnbrokenSubagentName', '子 Agent 00000002'], 'cards show stored names or the localized legacy identifier');
   for (const surface of ['.assistant-messages', '.quick-input-transcript']) {
     assert.ok(await read(`(() => {
       const row = document.querySelector('${surface} .assistant-task-strip'), tiles = Array.from(row.children);
       const rects = tiles.map(tile => tile.getBoundingClientRect());
-      return rects.every((r, i) => Math.abs(r.width - r.height) < 1 && r.top === rects[0].top
+      return rects.every((r, i) => r.width > r.height && r.top === rects[0].top
         && (!i || r.left > rects[i - 1].right) && parseFloat(getComputedStyle(tiles[i]).borderRadius) > 0);
-    })()`), 'the strip uses one line of rounded squares');
+    })()`), 'the strip lays out the compact cards in one row');
   }
   assert.ok(await read(`(() => {
     const row = document.querySelector('.assistant-messages .assistant-task-strip');

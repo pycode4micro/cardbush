@@ -45,7 +45,7 @@ test('app preferences preserve valid external links when reading old shortcut pr
   for (const address of ['file:///C:/program.exe', 'data:text/html,x', 'https://user:secret@example.test', 'app:run', {}, null]) assert.equal(applicationLink(address), undefined);
   assert.equal(applicationLink('https://example.test/apps?q=test'), 'https://example.test/apps?q=test');
 });
-test('only explicit launchable pages enter the app center; connectors, tools and settings renderers do not', () => {
+test('only explicit launchable pages enter the application catalog; connectors, tools and settings renderers do not', () => {
   const canvas = { kind: 'app', id: 'canvas', name: 'Canvas', app: { kind: 'url', url: 'https://example.test/designer' } };
   const plugins = [{ id: 'demo', name: 'Demo', installed: true, enabled: true, components: [canvas, { kind: 'app', id: 'slack', mcp: { registeredAppId: 'slack' } }, { kind: 'mcp', id: 'tools' }, { kind: 'runtime', id: 'demo', runtime: { settings: true } }] },
     { id: 'absent', installed: false, enabled: true, components: [canvas] },

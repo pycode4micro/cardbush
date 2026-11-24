@@ -177,11 +177,10 @@ async function buildViews() {
     'src/features/shortcuts/keyboardShortcuts.ts',
     'src/components/GlobalTooltip.tsx',
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'delete-focus' ? ['src/components/confirmAction.tsx', 'src/i18n/index.ts', 'src/shared/conversationDraft.ts', 'src/features/settings/conversationModel.ts'] : []),
-    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'app-center' ? [
-      'src/features/appCenter/AppCenter.tsx', 'src/features/appCenter/appCenterStore.ts',
+    ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'more-apps' ? [
+      'src/features/appCenter/ApplicationLauncher.tsx', 'src/features/appCenter/appCenterStore.ts', 'src/features/sidebar/SidebarApplications.tsx',
       'src/features/browser/browserSiteIcons.ts',
-      'src/components/WindowFrame.tsx',
-      'src/features/windowMenu/applicationMenus.ts', 'src/features/conversationHost.ts',
+      'src/features/conversationHost.ts',
     ] : []),
     ...(process.env.CARDBUSH_APP_VIEWS_CASE === 'page-navigation' ? [
       'src/features/navigation/PageNavigation.tsx', 'src/features/plugins/PluginManagementPanel.tsx',
@@ -379,7 +378,7 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      if (!['sidebar-menu', 'sidebar-quick-sections', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'app-center', 'page-navigation', 'composer-memory'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
+      if (!['sidebar-menu', 'sidebar-quick-sections', 'conversation-titles', 'conversation-search', 'review-preview', 'ssh-review', 'more-apps', 'page-navigation', 'composer-memory'].includes(${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)})) preview('D:/fixture/first.md');
     `);
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'assistant-feedback') {
       await require('./helpers/assistant-feedback.cjs')({ run, until, pause });
@@ -534,7 +533,7 @@ app.whenReady().then(async () => {
       await require('./helpers/quick-context-visual.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []); return;
     }
-    if (!['media-reveal', 'user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-permissions', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'stream-follow', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'app-center', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+    if (!['media-reveal', 'user-message-disclosure', 'markdown-table-links', 'inspector-cover', 'model-protocols', 'model-reasoning', 'composer-reference-sizing', 'pasted-text', 'ssh', 'compact-window', 'quick-context', 'delete-focus', 'tool-disclosure', 'tool-update-stability', 'terminal-task', 'composer-input', 'composer-prediction', 'composer-resize', 'composer-permissions', 'composer-paste-stability', 'previous-conversation', 'guidance-rendering', 'session-scroll', 'submission-motion', 'scroll-motion', 'stream-follow', 'reflow-scroll', 'first-submission', 'composer-layout', 'composer-presentation', 'turn-layout', 'more-apps', 'composer-memory', 'team-composer'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     for (const [input, expected] of [
@@ -818,9 +817,9 @@ app.whenReady().then(async () => {
       await require('./helpers/composer-pasted-text.cjs')({ run, until, pause, window, root });
       assert.deepEqual(await run('failures'), [], 'no pasted text renderer errors'); assert.deepEqual(errors, []); return;
     }
-    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'app-center') {
-      await require('./helpers/app-center.cjs')({ run, until, pause, window, root });
-      assert.deepEqual(await run('failures'), [], 'no app center renderer errors'); assert.deepEqual(errors, []); return;
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'more-apps') {
+      await require('./helpers/more-apps.cjs')({ run, until, pause, window, root });
+      assert.deepEqual(await run('failures'), [], 'no More apps renderer errors'); assert.deepEqual(errors, []); return;
     }
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'quick-context') {
       await require('./helpers/quick-context-layout.cjs')({ run, until, pause, window, root });

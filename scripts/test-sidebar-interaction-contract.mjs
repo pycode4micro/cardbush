@@ -82,7 +82,7 @@ assert.doesNotMatch(
   'The internal split-resizer treatment must not replace native window resizing',
 );
 const windowDragRule = stylesSource.match(/\.window-drag\s*\{([^}]*)\}/)?.[1] ?? '';
-const windowSpacerRule = stylesSource.match(/\.window-spacer\s*\{([^}]*)\}/)?.[1] ?? '';
+const windowSpacerRule = stylesSource.match(/^\.window-spacer\s*\{([^}]*)\}/m)?.[1] ?? '';
 const noDragRule = stylesSource.match(
   /\.window-drag \.no-drag,\s*\.window-drag button,\s*\.window-drag select,\s*\.window-drag input,\s*\.window-drag textarea\s*\{([^}]*)\}/,
 )?.[1] ?? '';
@@ -119,8 +119,8 @@ assert.match(
   /id: 'builtin:team', kind: 'builtin', target: 'team', title: uiText\(language\)\('appCenterModel\.workflows'\)/,
   'Team workflows must have one localized, launchable entry in the application catalog',
 );
-assert.match(menuSource, /item\('openAppCenter', 'appCenter\.appCenter', actions\.openAppCenter/,
-  'The file menu opens the shared application center');
+assert.match(sidebarSource, /<SidebarApplications language=\{language\}/, 'The sidebar owns the More apps entry');
+assert.doesNotMatch(menuSource, /openAppCenter/, 'The file menu has no duplicate app drawer');
 assert.doesNotMatch(menuSource, /actions\.openTeam|id:\s*['"]beta['"]/i,
   'Team must not regain a separate legacy Beta menu route');
 assert.doesNotMatch(appSource, /label="OS"|onOpenOs|enterOsMode/);

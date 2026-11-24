@@ -15,7 +15,7 @@ export type WindowMenuEntry = WindowMenuItem | { separator: true };
 type Actions = {
   newConversation: () => void; openProject?: () => void; openFiles?: () => void;
   openSettings: () => void; showShortcuts: () => void; openDiagnostics: () => void;
-  openAppCenter?: () => void; openPlugins?: () => void; openAutomations?: () => void;
+  openPlugins?: () => void; openAutomations?: () => void;
   toggleSidebar: () => void; toggleInspector: () => void; search: () => void;
   openBrowser: () => void; focusBrowserAddress?: () => void; reloadBrowser?: () => void;
   openReview?: () => void; openHistory?: () => void; openShadow?: () => void;
@@ -37,7 +37,6 @@ export function applicationMenus(language: AppLanguage, actions: Actions, state:
   return [
     { id: 'file', label: uiText(language)('reviewCommentModel.file'), children: [
       item('newConversation', 'conversationSearchDialog.newChat', actions.newConversation, 'newConversation'), separator,
-      item('openAppCenter', 'appCenter.appCenter', actions.openAppCenter, 'openAppCenter'),
       { id: 'applications', label: uiText(language)('composer.applications'), children: [
         item('openPlugins', 'appCenterModel.plugins', actions.openPlugins, 'openPlugins'),
         item('openAutomations', 'desktop.events', actions.openAutomations, 'openAutomations'),

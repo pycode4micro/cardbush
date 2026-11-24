@@ -13,7 +13,7 @@ import { openHeadlessWorkers } from './headlessWorkerStore.mjs';
 import { openLocalWorkers } from './localWorkerStore.mjs';
 import { callRemoteWorker } from './remoteWorkers.mjs';
 import { workerConnectionStatus } from './workerConnectionStatus.mjs';
-import { compactConversationTitle, readUserPrompt, remoteWorkerSchema, promptContextMetadata, collectTurnAttachments, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
+import { compactConversationTitle, readUserPrompt, remoteWorkerSchema, promptContextMetadata, collectTurnAttachments, MESSAGE_ATTACHMENT_LIMIT, RESOLVE_RUNTIME_FILE_RECEIPT_COMMAND, type RuntimeFileReceipt } from '@cardbush/bush-protocol';
 import { ModelImageStore } from '@cardbush/bush-runtime';
 import { sessionSummarySchema, sessionHistoryPageSchema } from '@cardbush/bush-protocol';
 import { webToolAllowed, webToolDefinition } from '@cardbush/bush-runtime/web-policy';
@@ -981,6 +981,7 @@ export class AgentService {
         requestId: job.id, sessionId: job.sessionId, turnId: job.turnId, messageId: `message-${job.id}`, createdAt: job.createdAt,
         userText: job.delegation ? withoutReportDeliveryPreface(job.input.text) : job.input.text,
         userMessageName: job.goalContinuation ? 'goal_continuation' : job.input.goalObjective ? 'goal_request' : undefined,
+        maxImageAttachments: this.#webRestricted ? MESSAGE_ATTACHMENT_LIMIT : undefined,
         sourceEnabled: job.input.sourceEnabled ?? (job.input.userMessageMetadata?.sourceEnabled !== false), individuation: job.input.individuation, conversationStyle: job.input.conversationStyle, files: job.input.files, images: job.input.images, visionEnabled: job.input.visionEnabled, userMessageMetadata: job.input.userMessageMetadata, uiLanguage: job.input.language, model: selected.model, providerBinding: selected.binding,
         maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens,
         tools: catalog.filter(tool => tool.name !== 'update_goal' || activeGoal?.status === 'active'), projectDir, workspaceDir,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { MESSAGE_ATTACHMENT_LIMIT } from "./fileTransfer.js";
 import { toolDefinitionSchema } from "./tool.js";
 import { runtimeProviderBindingRefSchema, type ModelApiProtocol } from "./providerBinding.js";
 
@@ -24,7 +25,7 @@ const userModelMessageSchema = z.object({
   content: z.string(),
   name: z.string().optional(),
   visibility: z.enum(["conversation", "internal"]).optional(),
-  images: z.array(modelImageInputSchema).max(4).optional(),
+  images: z.array(modelImageInputSchema).max(MESSAGE_ATTACHMENT_LIMIT).optional(),
 });
 
 // Provider-owned output for lossless replay. Runtime carries this data without

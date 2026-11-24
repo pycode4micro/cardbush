@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { PhoneCall } from 'lucide-react';
 import { PERSONAL_ASSISTANT_SESSION, type AssistantWorkActivity } from '@cardbush/bush-protocol';
 import { uiText } from '../../i18n';
-import { useAssistantWorkActivity, voiceCallActivity } from '../assistant/assistantActivity';
+import { useAssistantEventExecution, useAssistantWorkActivity, voiceCallActivity } from '../assistant/assistantActivity';
 import { applicationVoiceSession } from '../voice/VoiceConversation';
 import { VoiceComposerPanel, useVoiceConnectingCue } from '../voice/VoiceComposerPanel';
 import { voiceComposerPresentation } from '../voice/voiceComposerPresentation';
@@ -28,7 +28,9 @@ export function WindowConversationBar(props: Props) {
 function AssistantWindowTitle({ language, assistantName }: Pick<Props, 'language' | 'assistantName'>) {
   const t = uiText(language);
   const activity = useAssistantWorkActivity();
-  const status = activity === 'idle' ? undefined : t(activity === 'working' ? 'assistantTitlebar.working'
+  const event = useAssistantEventExecution();
+  const workingLabel = event?.status === 'running' ? 'assistantTitlebar.eventRunning' : 'assistantTitlebar.working';
+  const status = activity === 'idle' ? undefined : t(activity === 'working' ? workingLabel
     : activity === 'waiting' ? 'sessionAttention.confirmationPending' : `assistantActivity.${activity}`);
   return <ConversationWindowTitle title={assistantName} status={status} activity={activity}/>;
 }

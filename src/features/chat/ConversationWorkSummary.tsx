@@ -1,7 +1,9 @@
 import { uiText } from '../../i18n';
+import type { AssistantEventExecution } from '@cardbush/bush-protocol';
 import { ConversationHostContext } from '../conversationHost';
 import { localCanvasFilePath } from '../inspector/inspectorTargets';
 import {
+  CalendarClock,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -59,6 +61,8 @@ export function ConversationWorkSummary({
   running = false,
   activeTurnId = '',
   taskPlan,
+  eventExecution,
+  onOpenEvent,
   hoverProps,
   keepOpenUntil,
 }: {
@@ -74,10 +78,13 @@ export function ConversationWorkSummary({
   running?: boolean;
   activeTurnId?: string;
   taskPlan?: TaskPlanSnapshot;
+  eventExecution?: AssistantEventExecution;
+  onOpenEvent?: (eventId: string) => void;
   hoverProps?: HTMLAttributes<HTMLElement>;
   keepOpenUntil?: (completion: Promise<unknown>) => void;
 }) {
   const host = useContext(ConversationHostContext);
+  const t = uiText(language);
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
@@ -125,6 +132,21 @@ export function ConversationWorkSummary({
                 <span>{outputs.length} {uiText(language)('conversationWorkSummary.outputs')}</span>
               </div>
             </header>
+
+            {eventExecution && onOpenEvent && <div className="work-summary-section">
+              <div className="work-summary-section-title">
+                <strong>{t('conversationWorkSummary.eventExecution')}</strong>
+              </div>
+              <button type="button" className="work-summary-activity-row work-summary-event-task" title={eventExecution.title}
+                data-status={eventExecution.status} onClick={() => onOpenEvent(eventExecution.eventId)}>
+                <span className="work-summary-activity-state running"><CalendarClock size={13} aria-hidden="true" /></span>
+                <span className="work-summary-activity-main"><strong>{eventExecution.title}</strong></span>
+                <span className="work-summary-activity-status running">
+                  {t(eventExecution.status === 'waiting_user' ? 'sessionAttention.confirmationPending' : 'automationPanel.running')}
+                </span>
+                <ChevronRight size={14} aria-hidden="true" />
+              </button>
+            </div>}
 
             {plan && <div className="work-summary-section work-summary-plan">
               <RuntimeTaskPlan plan={plan} language={language} running={running} />

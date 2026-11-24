@@ -12,7 +12,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assistantConversationRequestSchema, isAssistantPageMessage, assistantPageInputSchema, assistantPageTool, PERSONAL_ASSISTANT_SESSION,
   conversationalSubagentInput, conversationalTaskInput, conversationalSubagentTools,
-  savedUserMessagePrediction, assistantExpressionSchema, type AssistantExpression, type AssistantReplyExpression, type AssistantActivitySnapshot, type ConversationEntry, type AssistantWorkActivity,
+  savedUserMessagePrediction, assistantExpressionSchema, type AssistantExpression, type AssistantReplyExpression, type AssistantActivitySnapshot, type AssistantEventExecution, type ConversationEntry, type AssistantWorkActivity,
   individuationPreferenceText, type AssistantProfile, type ModelMessage, type ModelRequest, type RuntimeSessionTurnRequest, type SubagentTask, type ToolDefinition, type TeamRun } from '@cardbush/bush-protocol';
 import { executeBufferedModelRound, type BufferedModelRetryStatus } from './bufferedModelRetry.js';
 import type { ModelProvider } from './modelProvider.js';
@@ -114,7 +114,7 @@ export class AssistantConversation {
     agents?: AgentExecutionRegistry;
     management?: AssistantManagement;
     eventNeedsResponse?: () => boolean;
-    eventRunning?: () => boolean;
+    activeEvent?: () => Omit<AssistantEventExecution, 'status'> | undefined;
     observeOutcome?: (observation: PredicateObservation, identity: string) => void;
     eventPreferences?: () => AssistantProfile['proactive'];
     prepareParent?: (parent: RuntimeSessionTurnRequest, signal: AbortSignal) => Promise<RuntimeSessionTurnRequest>;
@@ -127,20 +127,22 @@ export class AssistantConversation {
   private runningTasks(sessionId: string) {
     return this.deps.runningTaskCount?.(sessionId) ?? this.deps.tasks(sessionId).filter(task => task.status === 'running').length;
   }
-  private activity(workingTasks: number, eventNeedsResponse: boolean): AssistantWorkActivity {
+  private activity(workingTasks: number, eventNeedsResponse: boolean, eventRunning: boolean): AssistantWorkActivity {
     if (eventNeedsResponse || this.deps.management?.awaitingPermission) return 'waiting';
     if (this.retry) return 'retrying';
     if (this.busy && !this.paused) return this.executingTools === this.controller?.signal ? 'working' : 'thinking';
-    if (workingTasks || this.deps.eventRunning?.()) return 'working';
+    if (workingTasks || eventRunning) return 'working';
     return this.error && !this.paused ? 'error' : 'idle';
   }
   private activitySnapshot(workingTasks: number, eventNeedsResponse: boolean): AssistantActivitySnapshot {
     const expression = this.replyExpression;
-    const activity = this.activity(workingTasks, eventNeedsResponse);
+    const event = this.deps.activeEvent?.();
+    const activity = this.activity(workingTasks, eventNeedsResponse, Boolean(event));
     const direct = this.directTools.current();
     const toolName = activity === 'working' || activity === 'thinking'
       ? (direct?.running ? direct.name : (workingTasks ? this.deps.childTool?.(PERSONAL_ASSISTANT_SESSION) : undefined) ?? direct?.name) : undefined;
     return { activity, ...(toolName ? { toolName } : {}),
+      ...(event ? { activeEvent: { ...event, status: eventNeedsResponse ? 'waiting_user' : 'running' } } : {}),
       ...(expression && expression.expiresAt > Date.now() ? { expression } : {}) };
   }
   command(value: unknown) {

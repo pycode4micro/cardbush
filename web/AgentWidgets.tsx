@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, Paperclip, X } from 'lucide-react';
 import { SolutionSelectionCard } from '../src/features/interactions/SolutionSelectionCard';
 import { solutionInteractionAnswer, solutionInteractionQuestions } from '../src/features/interactions/solutionSelectionModel';
-import type { RuntimeSolutionSelection } from '@cardbush/bush-protocol';
+import { MESSAGE_ATTACHMENT_LIMIT, type RuntimeSolutionSelection } from '@cardbush/bush-protocol';
 import { api, requestId, type User } from './api';
 import { seedCachedImage, useAccountCache, useCachedImage } from './BrowserCacheProvider';
 import { prepareAttachment, uploadInChunks } from './attachmentUpload';
@@ -20,7 +20,7 @@ export function useAttachments() {
   useEffect(() => () => current.current?.abort(), []);
   const add = async (files: File[]) => {
     if (current.current || !files.length) return;
-    if (files.length + items.length > 8) { setError(uiText(language)("web.eachMessageSupportsUpTo8Attachments")); return; }
+    if (files.length + items.length > MESSAGE_ATTACHMENT_LIMIT) { setError(uiText(language)("web.messageAttachmentCountLimit", { count: MESSAGE_ATTACHMENT_LIMIT })); return; }
     const controller = new AbortController(); current.current = controller; setError(''); setProgress(uiText(language)("web.preparingAttachments"));
     try {
       const failures: string[] = [];

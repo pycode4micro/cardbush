@@ -8,6 +8,16 @@
 .sidebar-app-list button > span:first-child { display: grid; place-items: center; flex: none; }
 .sidebar-app-list :is(img,svg) { width: 17px; height: 17px; object-fit: contain; }
 .sidebar-app-list button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-app-search { display:flex; align-items:center; gap:7px; margin:3px 4px 5px; padding:5px 7px; border:1px solid var(--menu-border); border-radius:5px; color:var(--text-soft); }
+.sidebar-app-search input { min-width:0; width:100%; border:0; background:transparent; color:var(--text); font:inherit; }
+.sidebar-app-search svg { flex:none; }
+.sidebar-app-row { display:flex; align-items:center; min-width:0; }
+.sidebar-app-row > [data-sidebar-app] { flex:1; }
+.sidebar-app-list .sidebar-app-action { flex:none; min-height:28px; padding:4px; opacity:0; }
+.sidebar-app-row:is(:hover,:focus-within) .sidebar-app-action { opacity:1; }
+.sidebar-app-list .sidebar-app-action svg { width:14px; height:14px; }
+.sidebar-app-add { border-top:1px solid var(--menu-border); margin-top:4px; padding-top:4px; display:grid; }
+.sidebar-app-empty { margin:6px 10px; color:var(--text-soft); }
 .desktop-shell[data-sidebar-layout] {
   --sidebar-rail-width: 48px;
   --rail-button-size: 36px;

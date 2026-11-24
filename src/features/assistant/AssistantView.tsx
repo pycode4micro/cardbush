@@ -15,7 +15,7 @@ import type { VoiceTarget } from '../voice/voiceSession';
 import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '../chatMessages/MessageBubble';
 import { AssistantComposer, type AssistantComposerControls } from './AssistantComposer';
 import { AssistantCharacter } from './AssistantCharacter';
-import { setAssistantActivity } from './assistantActivity';
+import { setAssistantActivity, useAssistantEventExecution } from './assistantActivity';
 import { readAssistantProfile, saveAssistantProfile, useAssistantProfile } from './assistantProfile';
 import { TopBar } from '../../components/TopBar';
 import { ScrollBottomButton } from '../chat/ScrollBottomButton';
@@ -145,6 +145,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   const scroller = useRef<HTMLDivElement>(null), composerDock = useRef<HTMLDivElement>(null);
   const viewport = useAssistantViewport({ active: active && !floating, bodyRef: chatBody, dockRef: composerDock, scrollerRef: scroller, revision: lastPageEntry, portaled: Boolean(composerPortalTarget) });
   const summary = useConversationWorkSummary(chatBody, sessionId, inspectorOpen);
+  const activeEvent = useAssistantEventExecution();
   const historyLoaded = useRef(false), animationTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [arriving, setArriving] = useState<Set<string>>(() => new Set());
   const animateEntries = useCallback((ids: string[]) => {
@@ -184,7 +185,8 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       else if (result.entries.length) setEntries(current => [...current, ...result.entries.filter(entry => !current.some(old => old.id === entry.id))]);
       if (result.entries.length) setSubmitted(current => current.filter(item => !result.entries.some(entry => entry.id === item.entry.id)));
       setEventNeedsResponse(result.eventNeedsResponse === true);
-      setBusy(result.busy); setAssistantActivity(result.activity ?? (result.busy ? 'thinking' : result.workingTasks ? 'working' : 'idle'), result.expression, result.toolName);
+      setBusy(result.busy);
+      setAssistantActivity(result.activity ?? (result.busy ? 'thinking' : result.workingTasks ? 'working' : 'idle'), result.expression, result.toolName, result.activeEvent);
       setRuntimeError(result.error); setRetry(result.retry);
       setUserMessagePrediction(current => JSON.stringify(current) === JSON.stringify(result.userMessagePrediction) ? current : result.userMessagePrediction);
       setManagement(current => JSON.stringify(current) === JSON.stringify(result.management) ? current : result.management);
@@ -217,7 +219,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
         pending = true;
         try {
           const state = await assistantBackend.activity();
-          if (!disposed) setAssistantActivity(state.activity, state.expression, state.toolName);
+          if (!disposed) setAssistantActivity(state.activity, state.expression, state.toolName, state.activeEvent);
         } catch { if (!disposed) setAssistantActivity('idle'); }
         finally { pending = false; }
       };
@@ -300,7 +302,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     return true;
   }, [composerPortalTarget, scrollToMessage]);
   useEffect(() => {
-    if (noticeTarget && jumpToMessage(noticeTarget.id, true)) onNoticeLocated?.();
+    if (noticeTarget && jumpToMessage(noticeTarget.id)) onNoticeLocated?.();
   }, [noticeTarget, pageEntries, jumpToMessage, onNoticeLocated]);
   const reactToMessage = async (id: string, reaction: AssistantReaction | null) => {
     if (reactionPending.current) return;
@@ -329,7 +331,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     onMicrophoneMuteChange: microphoneMuted => saveAssistantProfile({ ...readAssistantProfile(), microphoneMuted }),
     send: text => voice.snapshot().mode === 'call' ? submit(text, true) : send(text) };
   target.refresh = () => ({ ...target, contextGeneration: generation.current, ...voiceMessagesRef.current, sending: busyRef.current });
-  const [eventsOpen, setEventsOpen] = useState(false);
+  const [eventDialog, setEventDialog] = useState<{ eventId?: string }>();
   const renderTimelineMessage = (entry: ConversationEntry, quick: boolean) => {
     const pending = submitted.find(item => item.entry.id === entry.id);
     const openMenu = (trigger: HTMLElement, x: number, y: number) => {
@@ -414,9 +416,9 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     {floatingView}
     <TopBar language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
       actionsTarget={headerActionsTarget} showActionTooltips={Boolean(headerActionsTarget)}
-      conversationContentAvailable={workSummaryAvailable && timeline.length > 0} workSummaryVisible={summary.showWorkSummary}
+      conversationContentAvailable={workSummaryAvailable && (timeline.length > 0 || Boolean(activeEvent))} workSummaryVisible={summary.showWorkSummary}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
-    {eventsOpen && active && <AssistantEventsDialog language={language} close={() => setEventsOpen(false)}/>}
+    {eventDialog && active && <AssistantEventsDialog language={language} initialEventId={eventDialog.eventId} close={() => setEventDialog(undefined)}/>}
     {active && management?.permissions[0] && <AssistantPermissionCard key={management.permissions[0].permissionId}
       permission={management.permissions[0]} language={language} onResolved={refresh}/>}
     {messageMenu && active && <AssistantMessageMenu key={messageMenu.entry.id} target={messageMenu} language={language} reaction={reactions[messageMenu.entry.id]} pending={reacting}
@@ -430,12 +432,12 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     {(error || runtimeError) && <RuntimeStatusBanner language={language} tone="error" message={assistantErrorText(error || runtimeError, language)}
       actionLabel={canRetry ? uiText(language)('assistantView.retryReply') : undefined} onAction={canRetry ? retryReply : undefined}
       onDismiss={() => { setError(''); setRuntimeError(''); }}/>}
-    {eventNeedsResponse && <div className="assistant-event-response" role="status"><button type="button" onClick={() => setEventsOpen(true)}>{uiText(language)('assistant.events.respond')}</button></div>}
+    {eventNeedsResponse && <div className="assistant-event-response" role="status"><button type="button" onClick={() => setEventDialog({ eventId: activeEvent?.eventId })}>{uiText(language)('assistant.events.respond')}</button></div>}
     {retry && !error && !runtimeError && <ConversationConnectionNotice language={language}
       update={{ ...retry, sessionId, state: 'retrying', source: 'provider', reason: retry.code }}/>}
     <div className="assistant-body"><div className="assistant-chat chat-body" ref={chatBody} style={{ '--work-summary-anchor-right': `${summary.workSummaryAnchorRight}px` } as CSSProperties}>
       {summary.workSummaryPresence.mounted && <ConversationWorkSummary language={language} sessionId={sessionId} messages={pageMessages} changeReports={[]}
-        taskPlan={taskPlan}
+        taskPlan={taskPlan} eventExecution={activeEvent} onOpenEvent={eventId => setEventDialog({ eventId })}
         onOpenChangeReview={() => {}} subagentObservabilityAvailable={subagentObservabilityAvailable}
         hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil}
         running={busy} softVisible={summary.workSummaryPresence.visible}/>}

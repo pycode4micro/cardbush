@@ -12,7 +12,7 @@ import { conversationStyleName, conversationStylePresets } from '../settings/con
 import { usePluginCatalog, usePluginCommandCatalog } from '../plugins/pluginCatalog';
 import { useApplications } from '../appCenter/appCenterStore';
 import { applicationReference } from '../appCenter/appCenterModel';
-import { ApplicationIcon } from '../appCenter/AppCenter';
+import { ApplicationIcon } from '../appCenter/ApplicationIcon';
 import { ConversationHostContext } from '../conversationHost';
 import { ComposerPortalContext } from './ComposerPortalContext';
 import { ComposerPresentationContext } from './ComposerPresentationContext';

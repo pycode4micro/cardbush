@@ -26,14 +26,16 @@ async function buildFixture(directory) {
     name: 'assistant-fixture', enforce: 'pre', resolveId(source, importer) {
       if (source.endsWith('__assistant_fixture__.tsx')) return '\0assistant-fixture.tsx';
       if (source === './assistantBackend' || source.endsWith('/assistantBackend.ts')) return '\0assistant-backend.ts';
+      if (source === './eventBackend' && importer?.endsWith('useEventExecution.ts')) return '\0assistant-event-backend.ts';
       if (source === '../subagents/useLoopSubagentTasks' && importer?.endsWith('AssistantView.tsx')) return '\0assistant-tasks.ts';
     }, load(id) {
+      if (id === '\0assistant-event-backend.ts') return `export const eventBackend={read:async()=>structuredClone(fixture.eventSnapshot??{events:[],detections:[],permissions:[],solutions:[]})};`;
       if (id === '\0assistant-tasks.ts') return `import {useEffect,useState} from 'react';export function useLoopSubagentTasks(){const [,update]=useState(0);useEffect(()=>{const refresh=()=>update(v=>v+1);window.addEventListener('fixture-tasks',refresh);return()=>window.removeEventListener('fixture-tasks',refresh);},[]);return fixture.tasks??[];}`;
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions} from ${file('src/shared/chatAttachments.ts')};
         import {assistantInputAttachments} from ${file('src/features/assistant/assistantTimeline.ts')};
         export const assistantBackend={ensure:async()=>({id:'personal-assistant'}),contextVersion:()=>fixture.generation??0,voice:()=>({list:async()=>[],execute:async()=>({})}),
-          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),pendingInputs:structuredClone(fixture.pendingInputs??[]),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,toolName:fixture.toolName,expression:fixture.expression,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management)};},
+          read:async(after=0)=>{if(fixture.holdRead)await new Promise(resolve=>fixture.releaseRead=resolve);if(fixture.failRead)throw Error('fixture read failed');return {entries:fixture.entries.slice(after),pendingInputs:structuredClone(fixture.pendingInputs??[]),cursor:fixture.entries.length,reactions:structuredClone(fixture.reactions??{}),busy:fixture.busy,activity:fixture.activity,toolName:fixture.toolName,expression:fixture.expression,error:fixture.runtimeError??'',canRetry:!!fixture.runtimeError&&!fixture.busy,retry:fixture.retry??null,workingTasks:0,generation:fixture.generation??0,management:structuredClone(fixture.management),activeEvent:structuredClone(fixture.activeEvent),eventNeedsResponse:!!fixture.eventNeedsResponse};},
           react:async(messageId,reaction)=>{if(fixture.failReact)throw Error('fixture reaction failed');fixture.reactions??={};if(reaction)fixture.reactions[messageId]=reaction;else delete fixture.reactions[messageId];return {reactions:structuredClone(fixture.reactions)};},
           answerPermission:async(answer)=>{if(fixture.failPermission)throw Error('Approval connection failed');(fixture.permissionAnswers??=[]).push(answer);fixture.management.permissions=fixture.management.permissions.filter(item=>item.permissionId!==answer.permissionId);},
           stop:async()=>{fixture.stops=(fixture.stops??0)+1;fixture.busy=false;fixture.retry=null;fixture.runtimeError='已停止回复，可以稍后重试。';},
@@ -62,6 +64,7 @@ async function buildFixture(directory) {
         import {uiText} from ${file('src/i18n/index.ts')};
         import {ChatSidebar} from ${file('src/features/sidebar/ChatSidebar.tsx')};
         import {AssistantStageButton} from ${file('src/features/desktop/AssistantStageButton.tsx')};
+        import {WindowConversationBar} from ${file('src/features/desktop/WindowConversationBar.tsx')};
         import {AssistantSkinContext} from ${file('src/features/assistant/assistantSkinContext.ts')};
         import {pixelRobot} from ${file('src/features/assistant/art/pixelRobot.ts')};
         import ${file('src/features/desktop/recentConversationBar.css')};
@@ -96,13 +99,15 @@ async function buildFixture(directory) {
           fixture.hide=()=>setActive(false);fixture.show=()=>setActive(true);fixture.theme=setTheme;fixture.language=setLanguage;fixture.portal=setPortal;fixture.inspector=setInspector;
           fixture.locateNotice=id=>setNoticeTarget(id?{id}:undefined);
           const [skin,setSkin]=useState(pixelRobot);
+          const [header,showHeader]=useState(false);fixture.showHeader=showHeader;
           fixture.changeSkin=custom=>setSkin(custom?{...pixelRobot,props:{anchor:{x:10,y:45,size:40},paths:{pencil:'M1 1h3v3H1z'},gestures:{pencil:'scan'}}}:pixelRobot);
           return <div className={'app theme-'+theme} style={{height:'100vh',display:'flex'}}><AssistantSkinContext.Provider value={skin}><ApplicationVoiceHost><ProfileCenter language={language} ready={false} prepare={noop} settings={noop}>
             <ChatSidebar language={language} section="assistant" activeConversationId="" projects={[]} conversations={[]} changeReportsByConversation={{}}
               assistantEntry={<AssistantStageButton language={language} active={active} onOpen={noop}/>}
               onSectionChange={noop} onConversationChange={noop} onAddProject={noop} onProjectAction={noop}
               onDeleteConversation={noop} onRenameConversation={async()=>true} onOpenConversationChanges={noop} onOpenSettings={noop} onOpenSearch={noop}/>
-            <section className="main-stage"><AssistantView active={active} language={language}
+            <section className="main-stage">{header&&<WindowConversationBar language={language} assistantName={profile.name} activeView="assistant" conversation={{id:'personal-assistant',title:profile.name}} viewingConversation open={noop}/>}
+            <AssistantView active={active} language={language}
               noticeTarget={noticeTarget} onNoticeLocated={()=>setNoticeTarget(undefined)}
               composerControls={{...controls,...permissions}} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:'',...readAssistantPermissions()};}} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
               composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
@@ -356,7 +361,10 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelector(".assistant-composer-dock textarea").value'),'');
     await read(`fixture.tasks=[{taskId:'task-visible',origin:'subagent',parentSessionId:'personal-assistant',childSessionId:'child-execution',parentTurnId:'voice_turn_fixture',agentName:'桌面整理',requestPrompt:'整理桌面应用清单',status:'running',terminal:false,createdAt:new Date().toISOString(),remote:{agentId:'ssh-1',taskId:'remote-task'}}];window.addEventListener('cardbush:open-work-summary-inspector',e=>fixture.taskDetail=e.detail);window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=running]")');
-    assert.equal(await read('document.querySelector(".assistant-task-bubble").textContent'),'桌面整理');
+    assert.equal(await read('document.querySelector(".assistant-task-name").textContent'),'桌面整理');
+    assert.equal(await read('document.querySelector(".assistant-task-meta > span").textContent'), '子 Agent');
+    assert.equal(await read('document.querySelector(".assistant-task-status").textContent'), '运行中');
+    assert.ok(await read('!!document.querySelector(".assistant-task-glyph svg[aria-hidden=true]")'));
     assert.match(await read('document.querySelector(".assistant-task-bubble").getAttribute("aria-label")'),/运行中/);
     await click('.assistant-task-bubble');
     assert.equal(await read('fixture.taskDetail.kind'),'subagent-task');
@@ -373,7 +381,7 @@ app.whenReady().then(async () => {
     await pause(100);
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),1,'queued continuations share the original child conversation entry');
     assert.equal(await read('document.querySelector(".assistant-task-bubble")===fixture.taskBubble'),true,'the entry does not move or remount on a follow-up');
-    assert.equal(await read('document.querySelector(".assistant-task-bubble").textContent'),'桌面整理','retain the original child name');
+    assert.equal(await read('document.querySelector(".assistant-task-name").textContent'),'桌面整理','retain the original child name');
     await read(`fixture.tasks[0]={...fixture.tasks[0],status:'completed',terminal:true};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble").getAttribute("aria-label").includes("本轮结束后执行")');
     await read(`fixture.tasks[1]={...fixture.tasks[1],raw:{...fixture.tasks[1].raw,executionStartedAt:new Date().toISOString()}};window.dispatchEvent(new Event('fixture-tasks'));void 0`);

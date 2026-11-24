@@ -1,4 +1,4 @@
-import { compactConversationTitle } from '@cardbush/bush-protocol';
+import { compactConversationTitle, MESSAGE_ATTACHMENT_LIMIT } from '@cardbush/bush-protocol';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { CHECKPOINT_CONTINUATION_INSTRUCTIONS, DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, collectTurnAttachments, formatTurnAttachmentContext } from "@cardbush/bush-protocol";
 import { OUTCOME_VERIFICATION_MESSAGE, REPORT_DELIVERY_INSTRUCTIONS, TASK_CONTINUATION_INSTRUCTIONS, SOURCE_BINDING_INSTRUCTIONS } from '@cardbush/bush-protocol';
@@ -67,6 +67,7 @@ export interface ProductAgentTurnInput {
   teamInstructions?: string;
   files?: string[];
   images?: string[];
+  maxImageAttachments?: number;
   attachments?: Array<{
     id: string;
     name: string;
@@ -102,9 +103,10 @@ function createBaseProductAgentTurnRequest(
   const workspaceDir = input.workspaceDir?.trim() || projectDir;
   const context = runtimeContext(input, workspaceDir);
   const styleContext = conversationStyleContext(input.conversationStyle);
+  const images = input.images?.slice(0, Math.min(input.maxImageAttachments ?? 4, MESSAGE_ATTACHMENT_LIMIT));
   const attachments = collectTurnAttachments({ messageId: input.messageId,
     attachments: input.attachments ?? input.userMessageMetadata?.attachments,
-    files: input.files, images: input.images?.slice(0, 4) });
+    files: input.files, images });
   return runtimeSessionTurnRequestSchema.parse({
     protocol: "bush.session_turn_request.v1",
     requestId: input.requestId,
@@ -132,8 +134,8 @@ function createBaseProductAgentTurnRequest(
           ...(input.userMessageName ? { name: input.userMessageName } : {}),
           ...(input.userMessageName === "goal_continuation" ? { visibility: "internal" } : {}),
           content: input.userText,
-          ...(input.images?.length
-            ? { images: input.images.slice(0, 4).map((url) => ({ url })) }
+          ...(images?.length
+            ? { images: images.map((url) => ({ url })) }
             : {}),
         },
       },

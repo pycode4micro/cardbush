@@ -181,18 +181,12 @@ async function verify() {
   await wait("document.querySelector('.desktop-covers')?.getAttribute('aria-busy')==='false'");
   assert.equal(await js(`!!${eventButton('.desktop-cover, .desktop-row', report)} || !!${eventButton('.desktop-row', savedCheck)}`), false);
   console.log('Home events passed: context menu on covers and rows, keyboard menu, named delete confirmation, cancellation, and persistent deletion of Assistant and conversation events.');
-  const appCenter = async () => {
-    await js("window.dispatchEvent(new Event('cardbush-open-app-center'));void 0");
-    await wait("!!document.querySelector('.app-center-drawer:modal .app-center-tile')");
-  };
-  const closeAppCenter = async () => {
-    await click('.app-center-header-actions > button:last-child');
-    await wait("!document.querySelector('.app-center-drawer')");
-  };
-  await appCenter();
-  assert.equal(await js("!!document.querySelector('[data-application-id=\"builtin:settings\"]')"), false);
-  await closeAppCenter();
   const more = '.sidebar-more-apps', flyout = '.sidebar-app-flyout:popover-open';
+  const openApps = async () => { await click(more); await wait(`!!document.querySelector('${flyout}')`); };
+  const closeApps = async () => {
+    await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0");
+    await wait(`!document.querySelector('${flyout}')`);
+  };
   const hover = async selector => {
     const point = await js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
     win.webContents.sendInputEvent({type:'mouseMove', ...point});
@@ -217,12 +211,15 @@ async function verify() {
   win.webContents.debugger.attach('1.3');
   await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {enabled:true});
   await checkSidebarTips();
-  await hover(more);
-  await wait(`!!document.querySelector('${flyout}')`);
+  await hover(more); await sleep(350);
+  assert.equal(await js(`!!document.querySelector('${flyout}')`), false, 'hovering does not open More apps');
+  await openApps();
   assert.equal(await js("!!document.querySelector('[data-sidebar-app=\"builtin:automations\"]')"),false);
   assert.equal(await js("!!document.querySelector('[data-sidebar-app=\"builtin:settings\"]')"), false);
   await hover('[data-sidebar-app="builtin:components"]'); await sleep(350);
-  assert.ok(await js(`!!document.querySelector('${flyout}')`),'the pointer can cross from the rail into the list');
+  assert.ok(await js(`!!document.querySelector('${flyout}')`),'the list stays open while moving the pointer to it');
+  await hover('[data-nav-section=home]'); await sleep(220);
+  assert.ok(await js(`!!document.querySelector('${flyout}')`),'moving the pointer away leaves More apps open');
   await click('[data-sidebar-app="builtin:components"]');
   await wait("!document.querySelector('.desktop-explore,.sidebar-app-flyout:popover-open') && !!document.querySelector('.components-app')");
   await wait("!!document.querySelector('.feature-panel .html-component-frame')");
@@ -231,14 +228,13 @@ async function verify() {
   await wait("!previousComponentsPage.checkVisibility() && !previousComponentsPage.querySelector('iframe')");
   await click('[data-history-action=back]');
   await wait("previousComponentsPage.checkVisibility() && !!previousComponentsPage.querySelector('iframe')");
-  await appCenter();
-  assert.equal(await js("document.querySelector('.app-center-content header')?.nextElementSibling?.matches('.app-center-search')"), true);
-  await js(`(()=>{const n=document.querySelector('.app-center-search input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'xyz-no-match');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  await wait("!document.querySelector('.app-center-tile')");
-  await closeAppCenter();
-  await js("window.dispatchEvent(new Event('cardbush-open-app-center'));void 0");
-  await wait("document.querySelector('.app-center-drawer:modal .app-center-search input')?.value==='xyz-no-match'");
-  await closeAppCenter();
+  await openApps();
+  assert.equal(await js("!!document.querySelector('.sidebar-app-list > .sidebar-app-search input')"), true);
+  await js(`(()=>{const n=document.querySelector('.sidebar-app-search input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'xyz-no-match');n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await wait("!!document.querySelector('.sidebar-app-empty') && !document.querySelector('[data-sidebar-app]')");
+  await closeApps(); await openApps();
+  await wait("document.querySelector('.sidebar-app-search input')?.value==='xyz-no-match'");
+  await closeApps();
   await click('[data-nav-section=home]'); await active('overview');
   await js("Array.from(document.querySelectorAll('.desktop-shelf h2 button')).find(b=>b.textContent==='项目').click()");
   await active('projects');
@@ -257,18 +253,20 @@ async function verify() {
   win.setMinimumSize(420,500);win.setSize(650,720);
   await wait("innerWidth < 760"); await capture('home-narrow-dark');
   await checkSidebarTips();
-  win.webContents.debugger.detach();
   assert.ok(await js("document.querySelector('.desktop-library').scrollWidth<=document.querySelector('.desktop-library').clientWidth+1"));
   await js("document.querySelector('.sidebar-more-apps').focus();void 0");
   const press = keyCode => {
-    for (const type of ['keyDown','keyUp']) win.webContents.sendInputEvent({type,keyCode});
+    win.webContents.sendInputEvent({type:'keyDown',keyCode});
+    if (keyCode === 'Enter') win.webContents.sendInputEvent({type:'char',keyCode:'\r'});
+    win.webContents.sendInputEvent({type:'keyUp',keyCode});
   };
-  press('Down'); await wait("document.activeElement?.dataset.sidebarApp==='builtin:plugins'");
+  press('Enter'); await wait("document.activeElement?.dataset.sidebarApp==='builtin:plugins'");
   press('Down'); await wait("document.activeElement?.dataset.sidebarApp==='builtin:components'");
   assert.ok(await js(`(() => {const r=document.querySelector('${flyout}').getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight;})()`));
   await capture('sidebar-apps');
   press('Escape'); await wait("!document.querySelector('.sidebar-app-flyout:popover-open') && document.activeElement.matches('.sidebar-more-apps')");
-  console.log('Desktop Home passed: component cards, event detail and history, app center search, Assistant navigation, project drill-down and narrow layout.');
+  win.webContents.debugger.detach();
+  console.log('Desktop Home passed: component cards, event detail and history, More apps search, Assistant navigation, project drill-down and narrow layout.');
   await checkBoard();
   app.quit();
 }

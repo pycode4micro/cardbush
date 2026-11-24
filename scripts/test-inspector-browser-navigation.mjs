@@ -30,7 +30,8 @@ import { BrowserSiteIcon } from '${local('src/features/browser/BrowserSiteIcon.t
 import { BrowserTabAudioButton } from '${local('src/features/browser/BrowserTabAudioButton.tsx')}';
 import { BrowserMenu } from '${local('src/features/browser/BrowserMenu.tsx')}';
 import { BrowserInstallButton } from '${local('src/features/browser/BrowserInstallButton.tsx')}';
-import { AppCenterProvider } from '${local('src/features/appCenter/AppCenter.tsx')}';
+import { ApplicationLauncher } from '${local('src/features/appCenter/ApplicationLauncher.tsx')}';
+import { SidebarApplications } from '${local('src/features/sidebar/SidebarApplications.tsx')}';
 import { installWebApplication } from '${local('src/features/appCenter/appCenterStore.ts')}';
 import { ConversationHostContext } from '${local('src/features/conversationHost.ts')}';
 import { toggleBrowserBookmark, importBrowserBookmarks } from '${local('src/features/inspector/useBrowserBookmarks.ts')}';
@@ -91,9 +92,11 @@ function Harness() {
   const active=navigation[tabs.activeId];
   React.useEffect(()=>setAddress(active?.url==='about:blank'?'':active?.url||''),[active?.url,tabs.activeId]);
   return <div className="app theme-bright" style={{height:'100vh','--window-frame-height':'0px'}}>
-    <ConversationHostContext.Provider value={{id:'browser-fixture',plugins:[],pluginCommands:[]}}><AppCenterProvider language={language} onNavigate={app=>open({target:app.target,title:app.title})}>
+    <ConversationHostContext.Provider value={{id:'browser-fixture',plugins:[],pluginCommands:[]}}>
+    <ApplicationLauncher language={language} onNavigate={app=>open({target:app.target,title:app.title})}/>
     <main className={'desktop-shell sidebar-is-collapsed window-restored'+(layout?' inspector-multi-page':'')+(covered?' inspector-covered':'')}>
     <section className="main-stage"><div style={{width:'80%',margin:'40px auto'}}><input id="conversation-draft" defaultValue="Keep this draft" style={{width:'100%'}}/>
+      {${process.argv.includes('--web-apps')} && <SidebarApplications language={language}/>}
       {citation && <MarkdownContent content={citation} language="zh"/>}</div></section>
     {(presence.mounted || tabs.allTabs.length > 0) && <aside id="right-inspector" className={'right-inspector soft-panel-motion '+(presence.visible?'soft-panel-visible':'soft-panel-hidden')}
       inert={!presence.visible} aria-hidden={!presence.visible} style={{'--right-inspector-width':width+'px'}}>
@@ -145,7 +148,7 @@ function Harness() {
     </div></div>
     </aside>}
     </main>
-    </AppCenterProvider></ConversationHostContext.Provider>
+    </ConversationHostContext.Provider>
   </div>;
 }
 createRoot(document.getElementById('root')).render(<React.StrictMode><Harness/></React.StrictMode>);
@@ -163,6 +166,10 @@ try {
   await writeFile(join(directory, 'index.html'), `<!doctype html><html><head><meta charset="utf-8">${css.map(item => `<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="${entry.fileName}"></script></body></html>`);
   const require = createRequire(import.meta.url), env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
+  // The real fixture server lives on loopback, including native icon fetches.
+  const existingBypass = env.NO_PROXY ?? env.no_proxy;
+  delete env.no_proxy;
+  env.NO_PROXY = ['127.0.0.1', 'localhost', existingBypass].filter(Boolean).join(',');
   const worker = process.argv.includes('--browser-use') ? 'scripts/test-integrated-browser-use.cjs' : 'scripts/test-inspector-browser-navigation.cjs';
   const run = spawnSync(require('electron'), [worker, directory, ...process.argv.slice(2).filter(arg => ['--browser-ui', '--browser-chrome', '--browser-audio', '--browser-favicons', '--browser-popups', '--web-apps'].includes(arg))], { env, windowsHide: true, stdio: 'inherit', timeout: 60_000 });
   assert.equal(run.status, 0, String(run.error ?? 'Browser navigation regression failed'));

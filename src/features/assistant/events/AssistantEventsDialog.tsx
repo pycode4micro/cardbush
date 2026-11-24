@@ -5,9 +5,9 @@ import { confirmEventDeletion } from './eventManagement';
 import { previousEventHistory } from './eventPreferences';
 import { useEventExecution } from './useEventExecution';
 
-export function AssistantEventsDialog({ language, close }: { language: string; close(): void }) {
+export function AssistantEventsDialog({ language, initialEventId, close }: { language: string; initialEventId?: string; close(): void }) {
   const { snapshot, refresh, refreshAfterChange, error } = useEventExecution(true);
-  const [selected, select] = useState(''), [draft, edit] = useState(''), [pending, setPending] = useState(false), [failed, setFailed] = useState(false);
+  const [selected, select] = useState(initialEventId ?? ''), [draft, edit] = useState(''), [pending, setPending] = useState(false), [failed, setFailed] = useState(false);
   const retry = useRef<Parameters<typeof eventBackend.submit>[0] | undefined>(undefined);
   const event = snapshot?.events.find(item => item.id === selected);
   const previousSelection = useRef<string | undefined>(undefined);

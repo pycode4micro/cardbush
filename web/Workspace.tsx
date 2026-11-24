@@ -1,4 +1,5 @@
 import { uiText } from '../src/i18n';
+import { FILE_TRANSFER_LIMIT, MESSAGE_ATTACHMENT_LIMIT } from '@cardbush/bush-protocol';
 import { useUiLanguage } from '../src/i18n/react';
 import { createFrameStreamBuffers, type FrameStreamCheckpoint } from '../src/features/chatMessages/transcript/frameStreamBuffer';
 import { AttachmentDrafts, Solutions, UploadButton, useAttachments, type Attachment } from './AgentWidgets';
@@ -216,6 +217,10 @@ export function Workspace({ identity, logout, externalError }: { identity: Ident
   useEffect(() => { const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') { event.preventDefault(); newChat(); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [newChat]);
   async function send(event?: React.FormEvent) {
     event?.preventDefault(); const text = draft.trim() || (upload.items.length ? uiText(language)("web.pleaseReviewTheseAttachments") : ''); if (!text || busy || upload.busy || sending.current) return;
+    if (upload.items.reduce((sum, item) => sum + item.size, 0) > FILE_TRANSFER_LIMIT) {
+      setError(uiText(language)('web.transferMessageLimit', { count: MESSAGE_ATTACHMENT_LIMIT }));
+      return;
+    }
     sending.current = true;
     const attachments = [...upload.items], startedSelection = selectionRevision.current;
     let submission = pending.current?.sessionId === selected && pending.current.text === text && pending.current.modelId === model && JSON.stringify(pending.current.attachments) === JSON.stringify(attachments.map(item => item.id)) ? pending.current : { text, modelId: model, requestId: requestId(), attachments: attachments.map(item => item.id), sessionId: selected };

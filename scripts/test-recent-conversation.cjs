@@ -833,10 +833,9 @@ async function run() {
   assert.ok(await read("document.querySelector('.desktop-menu-toggle').getBoundingClientRect().right <= document.querySelector('.sidebar').getBoundingClientRect().right+1"),'menu remains within the expanded sidebar');
   await click('.desktop-menu-toggle');
   await click('[data-menu-item=file]');
-  await click('[data-menu-item=openAppCenter]');
-  await visible('.app-center-drawer:modal');
-  await click('.app-center-content>header button:last-child.app-center-icon');
-  await wait(()=>read("!document.querySelector('.app-center-drawer')"),'manager dismissed');
+  assert.equal(await read("!!document.querySelector('[data-menu-item=openAppCenter]')"), false);
+  await read("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0");
+  await read("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));void 0");
   await click('.window-sidebar-toggle'); await pause(300);
   fs.writeFileSync(path.join(project,'tmp','assistant-titlebar-alignment.png'),(await win.webContents.capturePage()).toPNG());
   await click('.sidebar-footer .profile-trigger');

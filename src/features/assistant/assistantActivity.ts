@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { PERSONAL_ASSISTANT_SESSION, type AssistantWorkActivity, type AssistantReplyExpression } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION, type AssistantWorkActivity, type AssistantReplyExpression, type AssistantEventExecution } from '@cardbush/bush-protocol';
 import { applicationVoiceSession } from '../voice/VoiceConversation';
 import type { VoiceState } from '../voice/voiceSession';
 import type { AssistantCallPhase } from '../../../electron/assistantSurface';
@@ -8,19 +8,23 @@ export type AssistantActivity = AssistantWorkActivity | AssistantCallPhase;
 let work: AssistantWorkActivity = 'idle';
 let expression: AssistantReplyExpression | undefined;
 let activeTool: string | undefined;
+let activeEvent: AssistantEventExecution | undefined;
 let expiry: ReturnType<typeof setTimeout> | undefined;
 let capsuleCall: AssistantCallPhase | null = null;
 let stopCapsuleCall: (() => void) | undefined;
 const listeners = new Set<() => void>();
-export function setAssistantActivity(next: AssistantWorkActivity, cue?: AssistantReplyExpression, toolName?: string) {
+export function setAssistantActivity(next: AssistantWorkActivity, cue?: AssistantReplyExpression, toolName?: string, event?: AssistantEventExecution) {
   if (cue && cue.expiresAt <= Date.now()) cue = undefined;
-  if (work === next && cue?.replyId === expression?.replyId && toolName === activeTool) return;
+  const eventChanged = event?.eventId !== activeEvent?.eventId || event?.turnId !== activeEvent?.turnId ||
+    event?.title !== activeEvent?.title || event?.status !== activeEvent?.status;
+  if (!eventChanged && work === next && cue?.replyId === expression?.replyId && toolName === activeTool) return;
   work = next;
   activeTool = toolName;
+  if (eventChanged) activeEvent = event;
   if (cue?.replyId !== expression?.replyId) {
     clearTimeout(expiry);
     expression = cue;
-    if (cue) expiry = setTimeout(() => setAssistantActivity(work, undefined, activeTool), cue.expiresAt - Date.now());
+    if (cue) expiry = setTimeout(() => setAssistantActivity(work, undefined, activeTool, activeEvent), cue.expiresAt - Date.now());
   }
   for (const notify of listeners) notify();
 }
@@ -29,6 +33,9 @@ export function useAssistantExpression() {
 }
 export function useAssistantTool() {
   return useSyncExternalStore(subscribe, () => activeTool);
+}
+export function useAssistantEventExecution() {
+  return useSyncExternalStore(subscribe, () => activeEvent);
 }
 function subscribe(notify: () => void) {
   listeners.add(notify);

@@ -23,6 +23,11 @@ export function saveAppCenterPreferences(next: AppCenterPreferences) {
   const value = normalizeAppCenterPreferences(next);
   localStorage.setItem(appCenterStorageKey, JSON.stringify(value)); read(); listeners.forEach(fn => fn());
 }
+export function updateAppCenterPreferences(update: (current: AppCenterPreferences) => AppCenterPreferences) {
+  const current = read();
+  const next = update(current);
+  if (next !== current) saveAppCenterPreferences(next);
+}
 export function installWebApplication(info: WebApplicationInfo) {
   const prefs = read(), existing = prefs.webApps?.find(app => app.identity === info.identity);
   const app = normalizeWebApplications([{ ...info, id: existing?.id ?? `web:${crypto.randomUUID()}` }])[0];
@@ -36,6 +41,9 @@ export function useApplications(language: AppLanguage, enabled = true) {
   return useMemo(() => applicationCatalog(language, plugins, preferences), [language, plugins, preferences]);
 }
 export const OPEN_APPLICATION_EVENT = 'cardbush-open-application';
-export const OPEN_APP_CENTER_EVENT = 'cardbush-open-app-center';
-export function requestApplication(id: string, environmentId?: string, reference?: ApplicationPromptReference) { window.dispatchEvent(new CustomEvent(OPEN_APPLICATION_EVENT, { detail: { id, environmentId, reference } })); }
-export function requestAppCenter() { window.dispatchEvent(new Event(OPEN_APP_CENTER_EVENT)); }
+export type ApplicationRequest = { id: string; environmentId?: string; reference?: ApplicationPromptReference };
+export function requestApplication(id: string, environmentId?: string, reference?: ApplicationPromptReference) {
+  window.dispatchEvent(new CustomEvent<ApplicationRequest>(OPEN_APPLICATION_EVENT, { detail: { id, environmentId, reference } }));
+}
+export const SHOW_MORE_APPLICATIONS_EVENT = 'cardbush-show-more-applications';
+export function showMoreApplications() { window.dispatchEvent(new Event(SHOW_MORE_APPLICATIONS_EVENT)); }
