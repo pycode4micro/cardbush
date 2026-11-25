@@ -720,6 +720,7 @@ export function registerWorkspaceTools(
       inputSchema: objectSchema({}, []),
     },
     manifest: manifest("terminal.list", "observation", false),
+    projectModelDefinition: (definition, scope) => scope.canRecall ? null : definition,
     parallelSafe: true,
     decodeInput: () => ({}),
     execute: (context: ToolHandlerContext<Record<string, never>>) => ({

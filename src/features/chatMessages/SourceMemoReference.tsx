@@ -1,6 +1,6 @@
 import { useUiLanguage } from '../../i18n/react';
 import { uiText } from '../../i18n';
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { parseSourceMemoReference, type SourceEvidence, type SourceMemoResolution } from '@cardbush/bush-protocol';
@@ -24,21 +24,10 @@ function evidenceLocation(source: SourceEvidence, uiLanguage: string) {
   return source.locator?.page ? (uiText(uiLanguage)('sourceMemoReference.page', { value1: source.locator.page })) : '';
 }
 
-export function SourceMemoReference({ reference, language: selectedLanguage, load = fetchSourceMemo }: {
+export function SourceMemoReference({ reference, language, load = fetchSourceMemo }: {
   reference: string; language?: string; load?: typeof fetchSourceMemo;
 }) {
-  const inheritedLanguage = useUiLanguage();
-  const language = selectedLanguage ?? inheritedLanguage;
   const host = useContext(ConversationHostContext);
-  const uiLanguage = language, id = useId();
-  const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
-  const excerptPanel = useRef<HTMLDivElement>(null);
-  const evidenceRows = useRef<(HTMLDivElement | null)[]>([]);
-  const suppressFocus = useRef(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const excerptTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const [open, setOpen] = useState<'hover' | 'pinned' | null>(null);
-  const [excerptIndex, setExcerptIndex] = useState<number | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ key: string; result?: SourceMemoResolution; failed?: boolean }>();
   const key = JSON.stringify([host?.id, reference]);
@@ -55,12 +44,33 @@ export function SourceMemoReference({ reference, language: selectedLanguage, loa
   }, [key, reference, host?.runtime, load, attempt]);
   const result = state?.key === key ? state.result : undefined;
   const failed = state?.key === key && state.failed;
+  const number = parseSourceMemoReference(reference);
+  return number === undefined ? null : <SourceCard key={key} number={number} language={language}
+    result={result} failed={failed} onRetry={() => setAttempt(value => value + 1)} />;
+}
+
+export function SourceCard({ number, language: selectedLanguage, result, failed, onRetry, body }: {
+  number: number; language?: string; result?: SourceMemoResolution; failed?: boolean; onRetry?: () => void; body?: ReactNode;
+}) {
+  const inheritedLanguage = useUiLanguage();
+  const language = selectedLanguage ?? inheritedLanguage;
+  const host = useContext(ConversationHostContext);
+  const uiLanguage = language, id = useId();
+  const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
+  const excerptPanel = useRef<HTMLDivElement>(null);
+  const evidenceRows = useRef<(HTMLDivElement | null)[]>([]);
+  const suppressFocus = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const excerptTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [open, setOpen] = useState<'hover' | 'pinned' | null>(null);
+  const [excerptIndex, setExcerptIndex] = useState<number | null>(null);
   const memo = result?.status === 'resolved' ? result.memo : undefined;
   const excerpt = excerptIndex === null ? undefined : memo?.sources[excerptIndex];
   const excerptId = `${id}-excerpt`;
   const cancelClose = () => clearTimeout(timer.current);
   const cancelExcerptTimer = () => clearTimeout(excerptTimer.current);
-  const closeSoon = () => { cancelClose(); timer.current = setTimeout(() => setOpen(value => value === 'pinned' ? value : null), 180); };
+  const closeSoon = () => { cancelClose(); timer.current = setTimeout(() => setOpen(value =>
+    value === 'pinned' || panel.current?.querySelector('dialog[open]') ? value : null), 180); };
   const closeExcerptSoon = () => {
     cancelExcerptTimer();
     excerptTimer.current = setTimeout(() => {
@@ -81,7 +91,6 @@ export function SourceMemoReference({ reference, language: selectedLanguage, loa
     setExcerptIndex(null);
   };
   useEffect(() => () => { clearTimeout(timer.current); clearTimeout(excerptTimer.current); }, []);
-  useEffect(() => { setOpen(null); setExcerptIndex(null); }, [key]);
   useEffect(() => { if (!open) { cancelExcerptTimer(); setExcerptIndex(null); } }, [open]);
   useLayoutEffect(() => {
     if (!open || !panel.current || !trigger.current) return;
@@ -172,7 +181,7 @@ export function SourceMemoReference({ reference, language: selectedLanguage, loa
   };
   const pinForContextMenu = () => { cancelClose(); cancelExcerptTimer(); setOpen('pinned'); };
   return <>
-    <button ref={trigger} type="button" className="source-memo-marker" aria-label={uiText(language)('reference.sourceNumber', { number: parseSourceMemoReference(reference) })}
+    <button ref={trigger} type="button" className="source-memo-marker" aria-label={uiText(language)('reference.sourceNumber', { number })}
       aria-expanded={Boolean(open)} aria-controls={open ? id : undefined} aria-haspopup="dialog"
       onMouseEnter={() => { cancelClose(); setOpen(value => value ?? 'hover'); }} onMouseLeave={closeSoon}
       onFocus={event => { if (!suppressFocus.current && event.currentTarget.matches(':focus-visible')) setOpen('hover'); }} onBlur={blur}
@@ -181,13 +190,13 @@ export function SourceMemoReference({ reference, language: selectedLanguage, loa
         requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('a:not([aria-disabled="true"]), button:not(:disabled)') ?? panel.current)?.focus());
       } }}
       onClick={() => { cancelClose(); setOpen(value => value === 'pinned' ? null : 'pinned'); }}>
-      {parseSourceMemoReference(reference)}
+      {number}
     </button>
     {open && createPortal(<div ref={panel} popover="manual" id={id} role="dialog" tabIndex={-1} aria-labelledby={`${id}-heading`} className="source-memo-card"
       onMouseEnter={cancelClose} onMouseLeave={closeSoon} onBlur={blur} onContextMenuCapture={pinForContextMenu}>
       <div className="source-memo-heading"><h3 id={`${id}-heading`}>{uiText(language)('sourceMemoReference.whyThisConclusion')}</h3>
-        <span>{uiText(language)('sourceMemoReference.source')}{parseSourceMemoReference(reference)}</span></div>
-      {memo ? <>
+        <span>{uiText(language)('sourceMemoReference.source')}{number}</span></div>
+      {body !== undefined ? <div className="source-memo-footnote">{body}</div> : memo ? <>
         <p className="source-memo-explanation">{memo.explanation}</p>
         {memo.sources.length > 0 ? <section className="source-memo-evidence" aria-labelledby={`${id}-sources`}>
           <div className="source-memo-evidence-heading"><h3 id={`${id}-sources`}>{uiText(language)('sourceMemoReference.supportingSources')}</h3>
@@ -214,7 +223,7 @@ export function SourceMemoReference({ reference, language: selectedLanguage, loa
       </> : <p role="status">{failed || result?.status === 'unresolved'
         ? uiText(language)('sourceMemoReference.thisSourceNoteIsUnavailable')
         : uiText(language)('sourceMemoReference.loadingSource')}</p>}
-      {(failed || result?.status === 'unresolved') && <button type="button" onClick={() => setAttempt(value => value + 1)}>{uiText(language)('common.retry')}</button>}
+      {(failed || result?.status === 'unresolved') && onRetry && <button type="button" onClick={onRetry}>{uiText(language)('common.retry')}</button>}
     </div>, document.querySelector('.app') ?? document.body)}
     {open && excerpt?.excerpt !== undefined && createPortal(<div ref={excerptPanel} popover="manual" id={excerptId}
       role="dialog" tabIndex={-1} aria-labelledby={`${excerptId}-heading`} className="source-memo-card source-memo-excerpt"

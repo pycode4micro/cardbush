@@ -1,44 +1,30 @@
-import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
-import { bindWorkspaceFileAuthorization } from './workspaceFileAccess.js';
-import { isAbsolute } from 'node:path';
-import { projectCatalogPage } from './catalogPage.js';
+import { readMemoFile } from './memoFileAccess.js';
 import { memoMarkdownLinks } from './memoMarkdownLinks.js';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
-import { FILE_MEMO_PROTOCOL, fileMemoInputSchema, fileMemoMarkdown, fileMemoReference, fileMemoSchema, parseFileMemoReference,
+import { fileMemoMarkdown, fileMemoSchema, parseFileMemoReference,
   type FileMemo, type FileMemoResolution, type ToolExecutionRecord } from '@cardbush/bush-protocol';
-import type { ToolRegistry } from './toolRegistry.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 
-export const FILE_MEMO_WRITE_TOOL = 'remember_file';
+const FILE_MEMO_WRITE_TOOL = 'remember_file';
 export interface FileMemoScope {
   sessionId?: string; turnId?: string;
   /** Optional hint for legacy call-ID typo recovery only; never part of a valid link's identity. */
   fileName?: string;
 }
 const identityPath = (path: string) => !path.startsWith('ssh:') && process.platform === 'win32' ? path.toLowerCase() : path;
-type MemoEntry = { record: ToolExecutionRecord; memo: FileMemo; fileNumber: number };
+type MemoEntry = { record: ToolExecutionRecord; memo: FileMemo };
 
 // File IDs remain local to each conversation. Link numbers use the host's durable
 // locator index so copied links and inherited child context keep the same target.
 function memoEntries(store: ToolExecutionStore, sessionId: string): MemoEntry[] {
-  const files = new Map<string, number>();
   const entries: MemoEntry[] = [];
   for (const record of store.listByTool(sessionId, FILE_MEMO_WRITE_TOOL)) {
     if (record.outcome !== 'returned') continue;
     const parsed = fileMemoSchema.safeParse(record.result);
     if (!parsed.success) continue;
-    const memo = parsed.data;
-    const path = identityPath(memo.file.path);
-    if (!files.has(path)) files.set(path, files.size + 1);
-    entries.push({ record, memo, fileNumber: files.get(path)! });
+    entries.push({ record, memo: parsed.data });
   }
   return entries;
-}
-
-function publicMemo(store: ToolExecutionStore, entry: MemoEntry): FileMemo {
-  const number = store.reserveFileMemoReference({ sessionId: entry.record.sessionId, turnId: entry.record.turnId, toolCallId: entry.record.toolCall.id });
-  const reference = fileMemoReference({ number });
-  return { ...entry.memo, id: `file_${entry.fileNumber}`, reference, markdown: fileMemoMarkdown(entry.memo.file.name, reference) };
 }
 
 /** Only recover a small transcription error in a legacy call ID, never a nearby short number. */
@@ -72,79 +58,18 @@ export async function resolveFileMemo(store: ToolExecutionStore, reference: stri
     recovered = Boolean(entry);
   }
   if (!entry) return { status: 'unresolved', reason: 'reference_not_found' };
-  const recordedReference = entry.memo.reference;
-  const memo = publicMemo(store, entry);
-  if (recordedReference !== fileMemoReference({ sessionId, turnId: entry.record.turnId, toolCallId: entry.record.toolCall.id })
-      && recordedReference !== memo.reference) {
+  const recorded = parseFileMemoReference(entry.memo.reference);
+  const stored = recorded && ('number' in recorded ? store.getFileMemoReference(recorded.number) : recorded);
+  if (stored?.sessionId !== sessionId || stored.turnId !== entry.record.turnId || stored.toolCallId !== entry.record.toolCall.id) {
     return { status: 'unresolved', reason: 'reference_mismatch' };
   }
+  const memo = { ...entry.memo, markdown: fileMemoMarkdown(entry.memo.file.name, entry.memo.reference) };
   try {
     const current = await readMemoFile(memo.file.path, 0, remote);
     return { memo, ...(recovered ? { recovered } : {}),
       currentVersion: { size: current.size, mtimeMs: current.mtimeMs },
       status: current.size === memo.file.size && current.mtimeMs === memo.file.mtimeMs ? 'available' : 'changed' };
   } catch { return { memo, status: 'unavailable' }; }
-}
-
-export function registerFileMemoTools(registry: ToolRegistry, store: ToolExecutionStore, remote?: RemoteWorkspaceBridge): void {
-  const manifest = { effect_kind: 'observation' as const, operation: 'file_memo', risk: 'low' as const,
-    owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
-  registry.register(bindWorkspaceFileAuthorization<ReturnType<typeof fileMemoInputSchema.parse>>({
-    definition: { name: FILE_MEMO_WRITE_TOOL,
-      description: 'Record or update a concise file memo in this conversation: an existing absolute local file path or ssh://saved-connection-id/absolute/file for a remote file, one short purpose and at most 3 short observations. These are your notes, not host-verified conclusions. No execution logs, dialogue summaries or long tool output. Copy the returned markdown directly when delivering a file, or use its reference verbatim in an image. References use simple stable numbers such as cardbush-memo:1, issued by the host and valid across parent/child conversations. Never construct a link from the file ID or a tool-call ID. Each revision keeps its original note and reference; the file remains at its original path. Use read_file_memos to retrieve links again.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['path', 'purpose'], properties: {
-        path: { type: 'string', minLength: 1, maxLength: 32768 }, purpose: { type: 'string', minLength: 1, maxLength: 120, pattern: '^[^\\r\\n]+$' },
-        points: { type: 'array', maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 160, pattern: '^[^\\r\\n]+$' } },
-      } } },
-    manifest, parallelSafe: false, executionChannel: 'runtime:file_memo',
-    decodeInput: value => fileMemoInputSchema.parse(value),
-    authorize: context => authorizeMemoFile(context, remote),
-    execute: async context => {
-      const file = await readMemoFile(context.input.path, 0, remote, context.signal);
-      const path = file.path;
-      const entries = memoEntries(store, context.sessionId);
-      const existing = entries.find(entry => identityPath(entry.memo.file.path) === identityPath(path));
-      const fileNumber = existing?.fileNumber ?? new Set(entries.map(entry => entry.fileNumber)).size + 1;
-      const reference = fileMemoReference({ number: store.reserveFileMemoReference({ sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id }) });
-      return fileMemoSchema.parse({ protocol: FILE_MEMO_PROTOCOL, id: `file_${fileNumber}`, reference,
-        markdown: fileMemoMarkdown(file.name, reference),
-        file: { path, name: file.name, size: file.size, mtimeMs: file.mtimeMs },
-        note: { purpose: context.input.purpose, points: context.input.points },
-      });
-    },
-  }, undefined, {
-    paths: input => isAbsolute(input.path) ? [input.path] : [],
-    resolve: (input, canonical) => isAbsolute(input.path) ? { ...input, path: canonical(input.path) } : input,
-  }));
-  registry.register<{ id?: string; offset: number }>({
-    projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['memos']),
-    definition: { name: 'read_file_memos', description: 'Read this conversation\'s concise file memos by file ID (file_1, file_2, etc.), or list up to 10 entries per offset page. Returns the latest note and ready-to-use markdown link for each file, not execution history. An individual read checks whether the referenced file is available or changed. Older file IDs are still accepted.',
-      inputSchema: { type: 'object', additionalProperties: false, properties: {
-        id: { type: 'string', pattern: '^file_(?:[1-9]\\d{0,8}|[a-f0-9]{32})$' }, offset: { type: 'integer', minimum: 0, default: 0 },
-      } } },
-    manifest, parallelSafe: false, executionChannel: 'runtime:file_memo',
-    decodeInput: value => {
-      const input = value as Record<string, unknown>;
-      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['id', 'offset'].includes(k)) ||
-        (input.id !== undefined && (typeof input.id !== 'string' || !/^file_(?:[1-9]\d{0,8}|[a-f0-9]{32})$/.test(input.id))) ||
-        (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || Number(input.offset) < 0))) throw new Error('Use an optional file ID and nonnegative offset.');
-      return { id: input.id as string | undefined, offset: Number(input.offset) || 0 };
-    },
-    execute: async context => {
-      const entries = memoEntries(store, context.sessionId);
-      const latest = new Map<number, MemoEntry>();
-      for (const entry of entries) latest.set(entry.fileNumber, entry);
-      if (context.input.id) {
-        const matching = entries.find(entry => entry.memo.id === context.input.id || `file_${entry.fileNumber}` === context.input.id);
-        const entry = matching && latest.get(matching.fileNumber);
-        if (!entry) throw new Error('File memo was not found in this conversation.');
-        return resolveFileMemo(store, publicMemo(store, entry).reference, { sessionId: context.sessionId }, remote);
-      }
-      const memos = [...latest.values()].map(entry => publicMemo(store, entry));
-      const end = context.input.offset + 10;
-      return { memos: memos.slice(context.input.offset, end), total: memos.length, offset: context.input.offset, ...(end < memos.length ? { next_offset: end } : {}) };
-    },
-  });
 }
 
 /** Check actual Markdown destinations, excluding examples in code. Does not rewrite model history. */
@@ -161,13 +86,12 @@ export async function validateFileMemoLinks(store: ToolExecutionStore, content: 
     if (result.status === 'unresolved' || result.status === 'unavailable') invalid.push({ reference, reason: result.status === 'unresolved' ? result.reason : 'file_unavailable' });
     if (invalid.length >= 10) break;
   }
-  const latest = new Map<number, MemoEntry>();
-  if (invalid.length) for (const entry of memoEntries(store, scope.sessionId)) latest.set(entry.fileNumber, entry);
+  const latest = new Map<string, MemoEntry>();
+  if (invalid.length) for (const entry of memoEntries(store, scope.sessionId)) latest.set(identityPath(entry.memo.file.path), entry);
   const availableLinks: string[] = [];
   for (const entry of [...latest.values()].slice(-10)) {
-    const memo = publicMemo(store, entry);
-    const result = await resolveFileMemo(store, memo.reference, {}, remote);
-    if (result.status === 'available' || result.status === 'changed') availableLinks.push(memo.markdown!);
+    const result = await resolveFileMemo(store, entry.memo.reference, {}, remote);
+    if (result.status === 'available' || result.status === 'changed') availableLinks.push(result.memo.markdown!);
   }
   return { invalid, links: availableLinks };
 }

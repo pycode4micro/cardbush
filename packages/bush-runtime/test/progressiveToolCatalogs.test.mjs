@@ -3,10 +3,9 @@ import test from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { AutomationScheduler, SubagentTaskStore, ToolRegistry } from '../dist/index.js';
+import { AutomationScheduler, InMemoryRuntimeHost, SubagentTaskStore, ToolRegistry } from '../dist/index.js';
 import { registerPluginCommandTools } from '../dist/pluginCommandTools.js';
 import { RuntimeTaskTools } from '../dist/taskTools.js';
-import { registerExtendedBuiltins } from '../dist/extendedBuiltins.js';
 
 async function temporary(t) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-progressive-tools-'));
@@ -15,7 +14,7 @@ async function temporary(t) {
 }
 const call = async (registry, name, args, sessionId = 'session') => {
   const tool = registry.resolve(name);
-  return tool.execute({ input: tool.decodeInput(args), sessionId, turnId: 'turn', signal: new AbortController().signal, turn: { request: { metadata: {} } } });
+  return tool.execute({ input: tool.decodeInput(args), sessionId, turnId: 'turn', toolCall: { id: 'catalog-test' }, signal: new AbortController().signal, turn: { request: { turnId: 'turn', metadata: {} } } });
 };
 
 test('plugin Command discovery is bounded, searchable and has an explicit full metadata read', async () => {
@@ -91,29 +90,31 @@ test('schedule discovery returns receipts while explicit configuration and resul
   await scheduler.remember({ protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'fixture',
     prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Schedule requested work' } }],
     tools: [], permissionMode: 'all_free', requestCapabilities: { interactiveRequests: true, vision: false }, metadata: {} });
-  registerExtendedBuiltins(registry, { dataRoot: root, automation: scheduler });
+  const host = new InMemoryRuntimeHost({ dataRoot: root, automation: scheduler, toolRegistry: registry, registerDefaultWorkspaceTools: false });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const created = [];
   for (const name of ['First', 'Second']) {
     const job = await scheduler.manage({ action: 'create', definition: { sessionId: 'session', name, prompt, trigger: { kind: 'once', at: '2099-10-09T00:00:00Z' } } });
-    const page = await call(registry, 'schedule_task', { action: 'list', query: name });
-    created.push(page.jobs.find(item => item.id === job.id));
+    const page = await call(registry, 'assistant_event', { action: 'list', query: name });
+    created.push(page.events.find(item => item.id === 'session-event:' + job.id));
   }
-  assert.equal(created[0].revision, 1);
+  assert.match(created[0].id, /^session-event:/);
   assert.doesNotMatch(JSON.stringify(created), /PRIVATE AUTOMATION|"runs"/);
-  const first = await call(registry, 'schedule_task', { action: 'list', limit: 1 });
+  const first = await call(registry, 'assistant_event', { action: 'list', limit: 1 });
   assert.equal(first.total, 2);
   assert.equal(first.next_offset, 1);
-  assert.equal(first.jobs.length, 1);
-  const second = await call(registry, 'schedule_task', { action: 'list', offset: first.next_offset });
-  assert.equal(second.jobs[0].name, 'Second');
-  const found = await call(registry, 'schedule_task', { action: 'list', query: 'private automation' });
+  assert.equal(first.events.length, 1);
+  const second = await call(registry, 'assistant_event', { action: 'list', offset: first.next_offset });
+  assert.equal(second.events[0].title, 'Second');
+  const found = await call(registry, 'assistant_event', { action: 'list', query: 'private automation' });
   assert.equal(found.total, 2);
-  const detail = await call(registry, 'schedule_task', { action: 'get', job_id: created[0].id });
-  assert.equal(detail.prompt, prompt);
+  const detail = await call(registry, 'assistant_event', { action: 'read', eventId: created[0].id });
+  assert.equal(detail.intent, prompt);
+  assert.equal(detail.revision, 1);
   assert.equal(detail.trigger.at, '2099-10-09T00:00:00Z');
-  await assert.rejects(call(registry, 'schedule_task', { action: 'get', job_id: created[0].id }, 'other'), /not found/);
+  await assert.rejects(call(registry, 'assistant_event', { action: 'read', eventId: created[0].id }, 'other'), /not found/);
   for (let i = 0; i < 25; i++) {
-    await call(registry, 'schedule_task', { action: 'run', job_id: created[0].id });
+    await call(registry, 'assistant_event', { action: 'run', eventId: created[0].id });
     await scheduler.tick();
     const deadline = Date.now() + 3000;
     while ((await scheduler.list()).jobs[0].runs.at(-1)?.status !== 'completed') {
@@ -124,13 +125,13 @@ test('schedule discovery returns receipts while explicit configuration and resul
   const native = await scheduler.list('session');
   assert.equal(native.jobs[0].prompt, prompt, 'the UI still receives editable configuration');
   assert.equal(native.jobs[0].runs.length, 25, 'the UI still receives history');
-  const list = await call(registry, 'schedule_task', { action: 'list' });
+  const list = await call(registry, 'assistant_event', { action: 'list' });
   assert.doesNotMatch(JSON.stringify(list), /PRIVATE AUTOMATION|COMPLETE SCHEDULED|"runs"/);
-  assert.equal(list.jobs[0].last_run.status, 'completed');
+  assert.equal(list[0].id, created[0].id);
   const ids = [];
   let offset = 0;
   do {
-    const page = await call(registry, 'scheduled_results', { offset });
+    const page = await call(registry, 'assistant_event', { action: 'results', offset }, 'another-session');
     assert.equal(page.total, 25);
     assert.ok(JSON.stringify(page).length < 6500);
     assert.ok(page.results.every(result => !('result' in result) && result.summary.length <= 320));
@@ -139,8 +140,34 @@ test('schedule discovery returns receipts while explicit configuration and resul
   } while (offset !== null);
   assert.equal(ids.length, 25);
   assert.equal(new Set(ids).size, 25);
-  const read = await call(registry, 'scheduled_results', { run_ids: [ids[0]] });
+  const read = await call(registry, 'assistant_event', { action: 'results', run_ids: [ids[0]] }, 'another-session');
   assert.equal(read.results.length, 1);
   assert.equal(read.results[0].result, output);
   assert.equal((await scheduler.reminder()).total, 25, 'neither browsing nor reading acknowledges results');
+});
+
+test('a time-only edit retains the interval, execution context and instructions of a legacy plan', async t => {
+  const root = await temporary(t), registry = new ToolRegistry();
+  const scheduler = new AutomationScheduler({ path: join(root, 'automations.json'), canRun: () => false, run: async () => ({ status: 'completed' }) });
+  t.after(() => scheduler.close());
+  await scheduler.remember({ protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'fixture',
+    prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Schedule report' } }], tools: [], metadata: {} });
+  const host = new InMemoryRuntimeHost({ dataRoot: root, automation: scheduler, toolRegistry: registry, registerDefaultWorkspaceTools: false });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const legacy = await scheduler.manage({ action: 'create', definition: { sessionId: 'session', name: 'Report', prompt: 'Keep original instructions.',
+    trigger: { kind: 'interval', seconds: 3600, at: '2099-10-09T00:00:00Z' }, timeZone: 'Asia/Shanghai' } });
+  const eventId = 'session-event:' + legacy.id, at = '2099-10-09T02:00:00Z';
+  const edited = await call(registry, 'assistant_event', { action: 'continue', eventId, at, expected_revision: legacy.revision });
+  assert.equal(edited.eventId, eventId);
+  const read = await call(registry, 'assistant_event', { action: 'read', eventId });
+  assert.deepEqual(read.trigger, { ...legacy.trigger, at });
+  assert.equal(read.intent, legacy.prompt);
+  assert.equal(read.executionMode, legacy.executionMode);
+  assert.equal(read.timeZone, legacy.timeZone);
+  const queued = await call(registry, 'assistant_event', { action: 'run', eventId });
+  assert.match(queued.runId, /^run_/);
+  await call(registry, 'assistant_event', { action: 'stop', eventId });
+  const stopped = await call(registry, 'assistant_event', { action: 'read', eventId });
+  assert.equal(stopped.status, 'paused');
+  assert.equal(stopped.conversationExecution.runs.at(-1).status, 'stopped');
 });

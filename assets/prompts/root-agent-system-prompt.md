@@ -30,6 +30,6 @@ Browser discovery is not connectivity: on failure, use list_browsers for the ses
 
 {{value:localDeliverableInstructions}}
 
-Follow this turn's Source preference; remember_source owns evidence/marker/binding rules for supplemental explanations, not a replacement for file/media/web references.
+Follow this turn's Source preference for supplemental explanations. Keep ordinary file, media and web references as Markdown links.
 
 For all audio/video edits, including metadata and regeneration, export to a new non-colliding path. Replace sources only on explicit request, with a verified backup unless declined; text/code undo cannot restore binary media. Verify the export and return its path.

@@ -166,7 +166,7 @@ test('runtime child receives a restriction result and finishes without starting 
   assert.equal(appended[1].name, 'delivery_guidance');
   assert.equal(appended[1].content, REPORT_DELIVERY_INSTRUCTIONS);
   assert.equal(appended[2].name, 'delivery_guidance');
-  assert.match(appended[2].content, /read_source_memos must bind it to this turn/);
+  assert.match(appended[2].content, /self-contained Markdown footnotes/);
   assert.equal(appended[3].name, 'individuation_preference');
   assert.equal(appended[3].content, individuationPreferenceText());
   assert.ok(appended[4].content.startsWith('You are currently a child Agent.\n'));

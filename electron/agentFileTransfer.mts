@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmFootnoteFromMarkdown } from 'mdast-util-gfm-footnote';
+import { gfmFootnote } from 'micromark-extension-gfm-footnote';
 
 export const transferLimit = 2 * 1024 * 1024 * 1024;
 export const transferChunkSize = 512 * 1024;
@@ -40,11 +42,16 @@ export async function transferFile(key: string, read: (offset: number, version?:
 
 /** Only explicitly delivered Markdown links/images; never scrape reasoning or arbitrary paths. */
 export function deliveredFilePaths(markdown: string): string[] {
-  const tree = fromMarkdown(markdown), definitions = new Map<string, string>(), result = new Set<string>();
-  const define = (node: any) => { if (node.type === 'definition') definitions.set(node.identifier, node.url); node.children?.forEach(define); };
+  const tree = fromMarkdown(markdown, { extensions: [gfmFootnote()], mdastExtensions: [gfmFootnoteFromMarkdown()] });
+  const definitions = new Map<string, string>(), result = new Set<string>();
+  const define = (node: any) => {
+    if (node.type === 'footnoteDefinition') return;
+    if (node.type === 'definition') definitions.set(node.identifier, node.url);
+    node.children?.forEach(define);
+  };
   define(tree);
   const visit = (node: any) => {
-    if (['code', 'inlineCode', 'html', 'definition'].includes(node.type)) return;
+    if (['code', 'inlineCode', 'html', 'definition', 'footnoteDefinition'].includes(node.type)) return;
     if (['link', 'image', 'linkReference', 'imageReference'].includes(node.type)) {
       let path = node.url ?? definitions.get(node.identifier);
       if (typeof path === 'string') {

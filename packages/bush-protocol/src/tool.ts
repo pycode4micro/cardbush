@@ -12,6 +12,22 @@ export const BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL =
   "bush.tool_execution_summary.v1" as const;
 export const GET_RUNTIME_TOOL_EXECUTION_COMMAND =
   "runtime.get_tool_execution" as const;
+export const READ_RUNTIME_TOOL_RESULT_REFERENCE_COMMAND = 'runtime.read_tool_result_reference';
+export function parseToolResultReference(locator: string) {
+  if (locator.length > 4096) return;
+  const history = /^tool-result:\/\/history\/([a-f0-9]{64})$/.exec(locator);
+  if (history) return { kind: 'history' as const, id: history[1]! };
+  const result = /^tool-result:\/\/([^/?#]+)\/([^/?#]+)\/([^/?#]+)$/.exec(locator);
+  if (!result) return;
+  try {
+    const [sessionId, turnId, toolCallId] = result.slice(1).map(decodeURIComponent);
+    if ([sessionId, turnId, toolCallId].some(value => !value || /[\x00-\x1f]/.test(value))) return;
+    return { kind: 'execution' as const, sessionId: sessionId!, turnId: turnId!, toolCallId: toolCallId! };
+  } catch { return; }
+}
+export const toolResultReferenceRequestSchema = z.object({ sessionId: z.string().min(1), locator: z.string().max(4096),
+  offset: z.int().min(0).default(0) }).strict();
+export const toolResultReferencePageSchema = z.object({ text: z.string(), nextOffset: z.int().min(1).nullable() });
 export const HAS_RUNTIME_TOOL_IMAGE_ARTIFACT_COMMAND =
   "runtime.has_tool_image_artifact" as const;
 export const toolImageArtifactRequestSchema = z.object({

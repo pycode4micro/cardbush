@@ -8,7 +8,6 @@ import { syncBuiltinESMExports } from 'node:module';
 import sharp from 'sharp';
 import { ToolRegistry, ToolExecutionCoordinator, ToolExecutionStore, registerWorkspaceTools, WorkspaceObservationStore, SessionStore, InMemoryRuntimeHost } from '../dist/index.js';
 import { registerExtendedBuiltins } from '../dist/extendedBuiltins.js';
-import { registerSourceMemoTools } from '../dist/sourceMemo.js';
 import { commandSandboxPlan, authorizedCommandSandbox } from '../dist/commandSandboxAdmission.js';
 import { SandboxFileHandle } from '../dist/workspaceSandboxFile.js';
 import { TaskWorkspaceManager } from '../dist/taskWorkspace.js';
@@ -51,21 +50,21 @@ test('image injection authorizes the canonical image behind an existing director
   assert.equal(r.prompts, 2); assert.equal(existsSync(join(f.state, 'model-images')), false);
 });
 
-for (const kind of ['image', 'source']) test(`${kind} retains the authorized identity across queuing`, async t => {
+for (const kind of ['image', 'file']) test(`${kind} retains the authorized identity across queuing`, async t => {
   const f = fixture(t), registry = new ToolRegistry();
-  registerExtendedBuiltins(registry, { dataRoot: f.state }); registerSourceMemoTools(registry, new ToolExecutionStore());
+  registerExtendedBuiltins(registry, { dataRoot: f.state }); registerWorkspaceTools(registry);
   const name = kind === 'image' ? 'image.png' : 'evidence.txt';
   if (kind === 'image') { await png(join(f.safe, name)); await png(join(f.outside, name)); }
   else { writeFileSync(join(f.safe, name), 'authorized'); writeFileSync(join(f.outside, name), 'outside'); }
   const link = join(f.work, 'link'); linkDirectory(f.safe, link);
   const r = runner(f, registry, () => { renameSync(link, join(f.work, 'old-link')); linkDirectory(f.outside, link); });
-  const { outcome } = await r.run(kind === 'image' ? 'inject_image_input' : 'remember_source', kind === 'image'
-    ? { url: join(link, name) } : { explanation: 'fixture', sources: [{ target: join(link, name), locator: { line: 1 } }] });
+  const { outcome } = await r.run(kind === 'image' ? 'inject_image_input' : 'read_file', kind === 'image'
+    ? { url: join(link, name) } : { path: join(link, name) });
   assert.equal(outcome.error.code, 'workspace_authorization_changed'); assert.equal(outcome.result, undefined); assert.equal(r.prompts, 0);
 });
 
-test('image and source content use sandbox workers, including Unicode paths and explicit single-file approval', async t => {
-  const f = fixture(t), registry = new ToolRegistry(); registerExtendedBuiltins(registry, { dataRoot: f.state }); registerSourceMemoTools(registry, new ToolExecutionStore());
+test('image and file content use sandbox workers, including Unicode paths and explicit single-file approval', async t => {
+  const f = fixture(t), registry = new ToolRegistry(); registerExtendedBuiltins(registry, { dataRoot: f.state }); registerWorkspaceTools(registry);
   const image = join(f.outside, '测试 图片.png'), source = join(f.outside, '证据.txt'); await png(image); writeFileSync(source, 'sandbox evidence');
   const originalOpen = fs.open;
   t.mock.method(fs, 'open', (path, flags, ...args) => {
@@ -75,18 +74,18 @@ test('image and source content use sandbox workers, including Unicode paths and 
   const r = runner(f, registry, undefined, request => ({ decision: 'allow_once', grantedCapabilityIds: request.capabilityIds }));
   try {
     assert.equal((await r.run('inject_image_input', { url: image, original: true })).outcome.kind, 'returned');
-    const { outcome } = await r.run('remember_source', { explanation: 'fixture', sources: [{ target: source, locator: { line: 1 } }] });
-    assert.equal(outcome.kind, 'returned', JSON.stringify(outcome)); assert.equal(outcome.result.sources[0].excerpt, 'sandbox evidence');
+    const { outcome } = await r.run('read_file', { path: source });
+    assert.equal(outcome.kind, 'returned', JSON.stringify(outcome)); assert.equal(outcome.result.content, 'sandbox evidence');
     assert.equal(r.prompts, 2);
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
-test('image and memo failures never retry content on the host', async t => {
-  const f = fixture(t), registry = new ToolRegistry(); registerExtendedBuiltins(registry, { dataRoot: f.state }); registerSourceMemoTools(registry, new ToolExecutionStore());
+test('image and file failures never retry content on the host', async t => {
+  const f = fixture(t), registry = new ToolRegistry(); registerExtendedBuiltins(registry, { dataRoot: f.state }); registerWorkspaceTools(registry);
   const image = join(f.safe, 'image.png'), source = join(f.safe, 'text.txt'); await png(image); writeFileSync(source, 'fixture');
   t.mock.method(SandboxFileHandle, 'open', async () => { throw Object.assign(Error('backend denied'), { code: 'sandbox_unavailable' }); });
   const r = runner(f, registry);
-  for (const [name, input] of [['inject_image_input', { url: image }], ['remember_source', { explanation: 'fixture', sources: [{ target: source }] }]]) {
+  for (const [name, input] of [['inject_image_input', { url: image }], ['read_file', { path: source }]]) {
     const { outcome } = await r.run(name, input); assert.equal(outcome.kind, 'failed'); assert.equal(outcome.result, undefined);
   }
   assert.equal(existsSync(join(f.state, 'model-images')), false);

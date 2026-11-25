@@ -1,15 +1,10 @@
 import { createHash } from 'node:crypto';
-import { isAbsolute } from 'node:path';
-import { bindWorkspaceFileAuthorization } from './workspaceFileAccess.js';
-import { projectCatalogPage } from './catalogPage.js';
-import { sourceMemoInputSchema, sourceMemoSchema, parseSourceMemoIdentity, parseSourceMemoReference,
+import { sourceMemoSchema, parseSourceMemoIdentity, parseSourceMemoReference,
   type SourceEvidence, type SourceMemo, type SourceMemoResolution, type SourceReferencesRequest, type SourceReferences } from '@cardbush/bush-protocol';
 import { memoMarkdownLinks } from './memoMarkdownLinks.js';
-import type { ToolRegistry } from './toolRegistry.js';
 import type { FileMemoLocator, ToolExecutionStore } from './toolExecutionStore.js';
-import { authorizeMemoFile, readMemoFile } from './memoFileAccess.js';
+import { readMemoFile } from './memoFileAccess.js';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
-import type { ToolPermissionRequest } from './toolRegistry.js';
 
 const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 /** Bind display shorthand only from notes created or explicitly read in this turn.
@@ -121,78 +116,4 @@ export async function resolveSourceMemo(store: ToolExecutionStore, reference: st
     } catch { return 'unavailable' as const; }
   }));
   return { status: 'resolved', memo: fact.memo, evidenceStatus };
-}
-
-export function registerSourceMemoTools(registry: ToolRegistry, store: ToolExecutionStore, remote?: RemoteWorkspaceBridge): void {
-  const manifest = { effect_kind: 'observation' as const, operation: 'source_memo', risk: 'low' as const,
-    owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
-  registry.register(bindWorkspaceFileAuthorization<ReturnType<typeof sourceMemoInputSchema.parse>>({
-    definition: { name: 'remember_source', description: 'Prewrite a supplemental rationale for a worthwhile final-answer claim, change or review finding. Attach up to 8 actual supporting absolute local file paths, ssh://saved-connection-id/absolute/file paths for remote evidence, or HTTP(S) links; omit sources for your own design judgment (displayed as Agent explanation). These are your notes, not independently verified conclusions. Optional locator: line/endLine, page, object or normalized image region. The host captures file version and a small text excerpt for line locators; links are not fetched or verified. Use the returned short marker such as [1] beside the relevant prose; the host binds it to the saved note. Do not construct cardbush-source URLs; keep the final answer self-contained without copying the note into its summary. Do not replace ordinary file, image, download or web links, annotate every sentence, invent evidence, or store secrets. Each note is immutable; create a new one for a new conclusion. Use read_source_memos to retrieve previous markers. Source off means do not create or add these annotations for that turn.',
-      inputSchema: { type: 'object', additionalProperties: false, required: ['explanation'], properties: {
-        explanation: { type: 'string', minLength: 1, maxLength: 600,
-          description: 'Brief natural prose explaining why the change is needed, how evidence supports the claim, or why this approach was chosen. Add a concrete cause, constraint, consequence or tradeoff beyond the final-answer summary; do not recap edits or passing tests. Distinguish necessary properties from optional implementations. State uncertainty; never invent reasons or present a design choice as uniquely necessary. Skip the annotation if it adds no information. No fixed headings or template.' },
-        sources: { type: 'array', maxItems: 8,
-          description: 'Evidence supporting the rationale. Prefer locations that establish the relevant cause or constraint, rather than merely listing changed files.', items: {
-          type: 'object', additionalProperties: false, required: ['target'], properties: {
-            target: { type: 'string' }, label: { type: 'string', maxLength: 160 }, locator: { type: 'object', additionalProperties: false, properties: {
-              line: { type: 'integer', minimum: 1 }, endLine: { type: 'integer', minimum: 1 }, page: { type: 'integer', minimum: 1 }, object: { type: 'string', maxLength: 160 },
-              region: { type: 'object', additionalProperties: false, required: ['x', 'y', 'width', 'height'], properties: { x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 }, width: { type: 'number', exclusiveMinimum: 0, maximum: 1 }, height: { type: 'number', exclusiveMinimum: 0, maximum: 1 } } },
-            } },
-          },
-        } },
-      } } }, manifest, parallelSafe: false, executionChannel: 'runtime:file_memo',
-    decodeInput: value => sourceMemoInputSchema.parse(value),
-    authorize: async context => {
-      let request: ToolPermissionRequest | undefined;
-      for (const source of context.input.sources) {
-        if (/^https?:\/\//i.test(source.target)) continue;
-        const decision = await authorizeMemoFile({ ...context, input: { path: source.target } }, remote);
-        if (decision.kind === 'ask') request = request ? { ...request,
-          targets: [...request.targets, ...decision.request.targets], capabilityIds: [...request.capabilityIds, ...decision.request.capabilityIds] } : decision.request;
-      }
-      return request ? { kind: 'ask', request } : { kind: 'allow' };
-    },
-    renderModelResult: value => {
-      const memo = sourceMemoSchema.parse(value);
-      return JSON.stringify(modelSourceMemo(memo));
-    },
-    execute: async context => {
-      const sources: SourceEvidence[] = [];
-      for (const source of context.input.sources) sources.push(await snapshot(source, context.signal, remote));
-      context.signal?.throwIfAborted();
-      const identity = store.reserveSourceMemoReference({ sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id });
-      // The display number is conversation-local; the host locator and immutable
-      // execution guard keep copied links from resolving to unrelated notes.
-      const reference = sourceMemoReference(identity), number = parseSourceMemoReference(reference)!;
-      return sourceMemoSchema.parse({ protocol: 'bush.source_memo.v1', reference, markdown: `[${number}](${reference})`,
-        explanation: context.input.explanation, sources, createdAt: new Date().toISOString() });
-    },
-  }, undefined, {
-    paths: input => input.sources.filter(source => isAbsolute(source.target)).map(source => source.target),
-    resolve: (input, canonical) => ({ ...input, sources: input.sources.map(source => isAbsolute(source.target) ? { ...source, target: canonical(source.target) } : source) }),
-  }));
-  registry.register<{ offset: number }>({
-    definition: { name: 'read_source_memos', description: 'Retrieve this conversation’s immutable Source notes and short markers such as [1], 10 per page. Reading a page binds those markers to this turn; do not construct cardbush-source URLs. Use offset for more. File delivery memos remain available through read_file_memos.',
-      inputSchema: { type: 'object', additionalProperties: false, properties: { offset: { type: 'integer', minimum: 0 } } } },
-    manifest, parallelSafe: false, executionChannel: 'runtime:file_memo',
-    renderModelResult: value => {
-      const result = value as { memos: SourceMemo[]; total: number; next_offset?: number };
-      return JSON.stringify({ ...result, memos: result.memos.map(memo => modelSourceMemo(sourceMemoSchema.parse(memo))) });
-    },
-    projectModelPage: (value, budget) => {
-      const result = value as { memos: SourceMemo[] };
-      return projectCatalogPage({ ...result, memos: result.memos.map(memo => modelSourceMemo(sourceMemoSchema.parse(memo))) }, budget, ['memos']);
-    },
-    decodeInput: value => {
-      const input = value as { offset?: number };
-      if (!input || Object.keys(input).some(key => key !== 'offset') || (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0))) throw new Error('Use a nonnegative offset.');
-      return { offset: input.offset ?? 0 };
-    },
-    execute: async context => {
-      const memos = store.listByTool(context.sessionId, 'remember_source').filter(record => record.outcome === 'returned')
-        .flatMap(record => { const memo = sourceMemoSchema.safeParse(record.result); return memo.success ? [memo.data] : []; });
-      return { memos: memos.slice(context.input.offset, context.input.offset + 10), total: memos.length, offset: context.input.offset,
-        ...(context.input.offset + 10 < memos.length ? { next_offset: context.input.offset + 10 } : {}) };
-    },
-  });
 }

@@ -113,7 +113,9 @@ import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { MarkdownReference, parseMarkdownReference, UnavailableMarkdownReference } from './MarkdownReference';
 import { WebLink, webLinkAddress } from '../browser/WebLink';
 import { ConversationFileReference } from './ConversationFileReference';
-import { FileMemoScope } from './FileMemoScope';
+import { FileMemoScope, FileMemoScopeContext } from './FileMemoScope';
+import { remarkMarkdownSourceFootnotes } from './markdownSourceFootnotes';
+import { SourceCard } from './SourceMemoReference';
 import { useSourceMemoReferences } from './useSourceMemoReferences';
 import { remarkSourceMemoShorthand } from './sourceMemoShorthand';
 import { createToolOutputProjector, mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext } from './mediaPresentation';
@@ -341,6 +343,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     imageLoading?: 'lazy' | 'eager';
     streaming?: boolean;
     skillCommands?: PluginCommandSummary[];
+    sourceFootnotes?: boolean;
   };
   const MarkdownRenderContext = createContext<MarkdownRenderSettings>({
     workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh', referenceMode: 'local', compactImages: true,
@@ -349,6 +352,11 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
   // the message. Component types must stay stable so resolved files, media and
   // code controls retain their state; current settings arrive through context.
   const components: Components = {
+    span: ({ node, children, ...props }) => {
+      const { language } = useContext(MarkdownRenderContext);
+      const number = node?.properties['data-source-footnote'];
+      return typeof number === 'number' ? <SourceCard number={number} language={language} body={children} /> : <span {...props}>{children}</span>;
+    },
     div: ({ node, children, ...props }) => {
       const { language } = useContext(MarkdownRenderContext);
       if (node?.properties['data-message-image-gallery']) {
@@ -554,11 +562,13 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
     imageLoading,
     streaming,
     skillCommands,
+    sourceFootnotes,
   }: MarkdownRenderSettings & { content: string }) {
     const host = useContext(ConversationHostContext);
     const richFileReferences = useContext(RichFileReferencesContext);
     const presentedMedia = useContext(PresentedMediaContext);
     const sourceReferences = useSourceMemoReferences(content);
+    const { sourceReferences: legacySourceScope } = useContext(FileMemoScopeContext);
     const markdown = useMemo(() => skillMarkdownPresentation(normalizeMarkdownContentForDisplay(content), skillCommands), [content, skillCommands]);
     const settings = useMemo(() => ({ workspaceRoot, pathAliases, language, referenceMode, compactImages, imageLoading }),
       [workspaceRoot, pathAliases, language, referenceMode, compactImages, imageLoading]);
@@ -569,6 +579,7 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
       // URL boundary repair can reparse the document. Enrich references only
       // after it finishes so generated Skill tokens survive that replacement.
       if (markdown.invocation) plugins.push([remarkSkillCommands, { invocation: markdown.invocation }]);
+      if (sourceFootnotes || legacySourceScope) plugins.push(remarkMarkdownSourceFootnotes);
       if (sourceReferences.references.size || sourceReferences.unresolved.size) plugins.push([remarkSourceMemoShorthand, {
         ...sourceReferences, unavailableLabel: (number: number) => uiText(language)('sourceMemoReference.unverifiedSource', { number }),
       }]);
@@ -586,8 +597,9 @@ const LazyMarkdownContent = recoverableLazy('markdown', async () => {
           && !/^data:(?:audio|video)\//i.test(path) && !presentedMedia.has(mediaPresentationKey(path));
       } }]);
       return plugins;
-    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, compactImages, presentedMedia, streaming, markdown.invocation, host?.fileReferencePath, language]);
+    }, [workspaceRoot, pathAliases, richFileReferences, referenceMode, sourceReferences, sourceFootnotes, legacySourceScope, compactImages, presentedMedia, streaming, markdown.invocation, host?.fileReferencePath, language]);
     const urlTransform = useCallback((url: string, key: string) => {
+      if (key === 'href' && /^tool-result:/i.test(url)) return url;
       if (host?.fileReferencePath) {
         if (key === 'src' || !/^(https?:\/\/|#)/i.test(url)) return host.fileReferencePath(url) ?? '';
         return defaultUrlTransform(url);
@@ -2890,6 +2902,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   imageLoading,
   streaming = false,
   skillCommands,
+  sourceFootnotes,
 }: {
   content: string;
   language: AppLanguage;
@@ -2898,6 +2911,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   imageLoading?: 'lazy' | 'eager';
   streaming?: boolean;
   skillCommands?: PluginCommandSummary[];
+  sourceFootnotes?: boolean;
 }) {
   const host = useContext(ConversationHostContext);
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
@@ -2915,6 +2929,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           imageLoading={imageLoading}
           streaming={streaming}
           skillCommands={skillCommands}
+          sourceFootnotes={sourceFootnotes}
         />
       </Suspense>
     </div>

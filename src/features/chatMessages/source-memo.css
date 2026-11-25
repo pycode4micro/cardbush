@@ -20,6 +20,11 @@
 .source-memo-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .source-memo-heading > span { flex: none; color: var(--text-soft); font-size: 10px; }
 .source-memo-card .source-memo-explanation { margin: 8px 0 12px; white-space: pre-wrap; }
+.source-memo-footnote { margin-top: 8px; }
+.source-memo-footnote > :first-child { margin-top: 0; }
+.source-memo-footnote > :last-child { margin-bottom: 0; }
+.source-memo-footnote pre { white-space: pre-wrap; }
+.tool-result-reference-dialog .tool-result-reference-output { white-space: pre-wrap; overflow-wrap: anywhere; }
 .source-memo-evidence { border-top: 1px solid var(--border); padding-top: 10px; }
 .source-memo-evidence-heading { margin-bottom: 6px; }
 .source-memo-evidence-heading small { margin-top: 2px; }

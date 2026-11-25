@@ -7,6 +7,7 @@ export function registerWorkerConnectionTool(registry: ToolRegistry, bridge?: Re
   const schema = z.object({ action: z.enum(['verify', 'reconnect']), connection_id: z.string().trim().min(1).max(200) }).strict();
   registry.register({
     definition: { name: 'worker_connection', description: 'Verify or reconnect a saved remote worker by connection_id from list_subagent_options. verify performs a fresh authenticated identity check. reconnect renews the host connection without restarting the remote service or its tasks. Credentials and managed tunnels stay with the host. Unverified is an on-demand state, not evidence of failure. Returns current state, check timestamps and a sanitized failure reason. Do not read credential files or guess authentication headers.', inputSchema: z.toJSONSchema(schema) },
+    projectModelDefinition: (definition, scope) => scope.canRecall ? null : definition,
     manifest: { effect_kind: 'delegation', operation: 'workers.connection', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
     executionChannel: 'runtime:worker-connection',
     decodeInput: input => schema.parse(input),

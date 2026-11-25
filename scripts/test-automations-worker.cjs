@@ -64,8 +64,12 @@ async function run() {
   };
   try {
     const binding = (await bind()).binding;
-    const tools = (await command('runtime.get_tool_catalog')).filter(tool => ['checkpoint_context', 'read_file', 'schedule_task', 'scheduled_results', 'terminal_exec', 'update_task_plan', 'search_plugins', 'call_tool'].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
-    assert.equal(tools.length, 8);
+    const catalog = await command('runtime.get_tool_catalog');
+    assert.ok(catalog.some(tool => tool.name === 'assistant_event'));
+    assert.ok(catalog.every(tool => !['schedule_task', 'scheduled_results'].includes(tool.name)));
+    const sharedTools = ['call_tool', 'checkpoint_context', 'read_file', 'search_plugins', 'terminal_exec', 'update_task_plan'];
+    const tools = catalog.filter(tool => sharedTools.includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
+    assert.deepEqual(tools.map(tool => tool.name), sharedTools);
     const generation = { temperature: 0, topP: 0.73, maxOutputTokens: 4096, reasoningEffort: 'high' };
     const result = await command('runtime.run_session_turn', { protocol: 'bush.session_turn_request.v1', requestId: 'human', sessionId: 'session', turnId: 'human', model: 'fixture', providerBinding: binding,
       tools, ...generation, prefixMessages: [{ role: 'system', content: '使用中文，按用户请求执行。' }], inputMessages: [{ messageId: 'human', message: { role: 'user', content: '建立会话。' } }],

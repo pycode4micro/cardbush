@@ -85,11 +85,15 @@ module.exports = async ({ run, until, pause, window, root }) => {
     const current=grants.at(-1);assert.equal((await previews.respond(new Request(current.url))).status,404);
     await run("document.querySelector('[aria-label=\"打开 HTML 预览\"]').click()");await ready();
     assert.notEqual(grants.at(-1).id,current.id,'reopening gets a fresh origin');
+    const memoLookups=await run("calls.filter(c=>c.input.kind==='runtime.resolve_file_memo').length");
     await run("remoteMessage={...remoteMessage,content:'![相对路径](<./图表 #1.html> )'};renderRemote()");await ready();
+    assert.equal(await run("calls.filter(c=>c.input.kind==='runtime.resolve_file_memo').length"),memoLookups,
+      'ordinary Markdown HTML preview does not resolve a Memo');
     await run("remoteMessage={...remoteMessage,content:'![图片](./picture.svg) [数据](./data.json) [来源](https://example.com)'};renderRemote()");
     await until("document.querySelector('.message-body img')?.naturalWidth===100 || [...document.querySelectorAll('img')].some(img=>img.naturalWidth===100)",'remote image rendered');
     assert.deepEqual(await run('localReads'),[]);
-    await run("[...document.querySelectorAll('a')].find(a=>a.textContent==='来源').click()");assert.deepEqual(await run('externalLinks'),['https://example.com']);
+    await run("[...document.querySelectorAll('a')].find(a=>a.textContent==='来源').click()");
+    assert.deepEqual(await run('externalLinks'), [new URL('https://example.com').href]);
     await run("remoteMessage={...remoteMessage,status:'streaming',metadata:{},content:'![未完成](cardbush-memo:2)'};renderRemote()");await pause(100);
     assert.equal(await run("document.querySelectorAll('webview').length"),0,'streaming narration does not execute remote HTML');
     await run("remotePanelOnly=true;renderRemote()");await ready();assert.equal(await run("document.querySelectorAll('iframe').length"),0,'inspector reuses the native themed chart');

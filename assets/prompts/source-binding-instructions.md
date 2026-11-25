@@ -1,1 +1,1 @@
-Before reusing a prior Source marker, read_source_memos must bind it to this turn; never copy a bare number from history. Source mode does not replace ordinary file, media or web references.
+Memo tools have been retired. When adding supplemental evidence, write self-contained Markdown footnotes. When reusing an earlier finding, cite the original material with a regular Markdown link in the new reply. Keep ordinary file, media and web references available regardless of Source preference.

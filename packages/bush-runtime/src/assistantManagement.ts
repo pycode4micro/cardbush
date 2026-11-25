@@ -6,9 +6,7 @@ import { resultDelivery } from './taskResultDelivery.js';
 import { RuntimePermissionBroker } from './runtimePermissionBroker.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import type { CoordinationStore } from './coordinationStore.js';
-import type { AutomationScheduler } from './automationScheduler.js';
 import { projectMcpDiscoveryResult, synchronizeMcpDiscovery } from './mcpToolDiscovery.js';
-import { presentExistingScheduleActions } from './extendedBuiltins.js';
 import { projectBuiltinDefinitions } from './builtinToolDisclosure.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
 import { pluginCommandDeniesTool } from './pluginCommandTools.js';
@@ -25,7 +23,7 @@ export class AssistantManagement {
   private permissions: RuntimePermissionBroker;
   constructor(private options: {
     registry: ToolRegistry; executions: ToolExecutionStore; capabilities: RuntimeCapabilityStore;
-    coordination: () => CoordinationStore; automation?: AutomationScheduler;
+    coordination: () => CoordinationStore;
     hooks?: (request: ModelRequest) => ToolExecutionHooks;
     onPermissionState?: (sessionId: string, executionId: string, waiting: boolean) => void;
   }) {
@@ -63,7 +61,7 @@ export class AssistantManagement {
     return catalog.filter(tool => parent.tools.some(item => item.name === tool.name) &&
       this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
         if (tool.name === 'search_plugins') return { ...tool, description: 'Discover MCP tools, Skills and local packages (bundled or user-installed) on this Runtime before delegation. Start with query, default mode=all. Narrow with mcp, skill or plugins. Use * to browse; pass a standby server ID in mcp mode or continue with cursor alone. Give the child the matched Skill mainResource or exact tool/package identity. The child reads instructions and executes on its own host.' };
-        return presentExistingScheduleActions(tool);
+        return tool;
       });
   }
   private isBridgeTool(name: string) {
@@ -78,7 +76,9 @@ export class AssistantManagement {
       registration.mcpHook.modelVisible !== false && productPluginTools.has(registration.mcpHook.tool);
   }
   projectModelDefinitions(parent: RuntimeSessionTurnRequest, tools: ToolDefinition[]) {
-    return tools.filter(tool => !this.isProductPluginTool(tool.name, parent));
+    const visible = tools.filter(tool => !this.isProductPluginTool(tool.name, parent));
+    const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [], tools: visible };
+    return { tools: projectBuiltinDefinitions(this.options.registry, request, visible), hasDeferredProductPlugins: visible.length < tools.length };
   }
   private disclosureDefinitions(parent: RuntimeSessionTurnRequest) {
     if (parent.sessionId !== PERSONAL_ASSISTANT_SESSION || parent.metadata.agentRole === 'child' ||
@@ -91,21 +91,21 @@ export class AssistantManagement {
     });
     return definitions.length === disclosureNames.length ? definitions : [];
   }
-  /** Reuse the normal presentation once per response. Memory keeps its own contract. */
-  projectDelegation(parent: RuntimeSessionTurnRequest, nativeTools: ToolDefinition[]) {
-    if (!nativeTools.length) return nativeTools;
-    const tools = [...nativeTools, ...this.disclosureDefinitions(parent)];
-    return projectBuiltinDefinitions(this.options.registry, { ...parent, protocol: 'bush.model_request.v1', messages: [], tools }, tools);
+  delegationWithDisclosure(parent: RuntimeSessionTurnRequest, nativeTools: ToolDefinition[]) {
+    return nativeTools.length ? [...nativeTools, ...this.disclosureDefinitions(parent)] : nativeTools;
   }
   private disclosureRequest(parent: RuntimeSessionTurnRequest, request: ModelRequest, nativeTools: ToolDefinition[]): ModelRequest {
     // Host-owned bridge and plugin management registrations can run directly
     // through the normal permission and execution pipeline.
     const candidates = [...nativeTools, ...this.definitions(parent), ...this.disclosureDefinitions(parent)];
+    const hasTool = (name: string) => request.tools.some(item => item.name === name);
+    const scope = { hasTool, canRecall: disclosureNames.every(hasTool) };
     const tools = candidates.flatMap(tool => {
       const registration = this.options.registry.resolve(tool.name);
       const productPlugin = this.isProductPluginTool(tool.name, parent);
       return registration && (!registration.mcpHook || this.isBridgeTool(tool.name) || productPlugin) && parent.tools.some(item => item.name === tool.name) &&
-        (productPlugin || request.tools.some(item => item.name === tool.name)) && registration.modelAvailable?.(request) !== false
+        registration.modelAvailable?.(request) !== false && (productPlugin || hasTool(tool.name) ||
+          scope.canRecall && registration.projectModelDefinition?.(registration.definition, scope) === null)
         ? [registration.definition] : [];
     });
     return { ...request, tools, metadata: { ...request.metadata }, requestCapabilities: parent.requestCapabilities };
@@ -141,13 +141,6 @@ export class AssistantManagement {
     const executionRequest: ModelRequest = disclosure ? this.disclosureRequest(parent, request, nativeTools)
       : { ...request, tools: [...parent.tools, ...this.definitions(parent).filter(tool => !parent.tools.some(item => item.name === tool.name))], requestCapabilities: parent.requestCapabilities };
     if (this.isBridgeTool(call.name) || this.isProductPluginTool(call.name, parent)) synchronizeMcpDiscovery(this.options.registry, executionRequest, request.messages);
-    if (call.name === 'schedule_task') {
-      const action = JSON.parse(call.argumentsText).action;
-      if (action === 'update') {
-        await this.options.automation?.remember(parent);
-        signal.throwIfAborted();
-      }
-    }
     if (call.name === 'search_plugins') executionRequest.metadata = { ...executionRequest.metadata, mcpToolDiscovery: true };
     const identity = { requestId: request.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: round + 1, ordinal };
     this.identities.set(call.id, identity);

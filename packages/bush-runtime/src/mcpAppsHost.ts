@@ -296,6 +296,7 @@ export function registerMcpAppStatusTool(registry: ToolRegistry, host: McpAppsHo
     definition: { name: 'mcp_app_status', description: 'Read host-observed plugin interface states in this conversation. Lists declared interfaces, currently active views and timestamped resource/frame/handshake/close/error observations. Defaults to the current turn. Resource or frame loading does not establish task completion or that an external artifact was created. Does not open an interface or call the service.',
       inputSchema: { type: 'object', additionalProperties: false, properties: { turnId: { type: 'string', minLength: 1 }, toolCallId: { type: 'string', minLength: 1 } } } },
     manifest: { effect_kind: 'observation', operation: 'mcp.app.status', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false }, parallelSafe: true,
+    projectModelDefinition: (definition, scope) => scope.canRecall ? null : definition,
     decodeInput: value => {
       const input = object(value);
       if (Object.entries(input).some(([key, value]) => !['turnId', 'toolCallId'].includes(key) || typeof value !== 'string' || !value)) throw new Error('Use an optional turnId and toolCallId.');

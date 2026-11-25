@@ -34,7 +34,7 @@ async function fixture(t, recoveredEvents = []) {
         if (f.handler) { yield* f.handler(request, options); return; }
         yield event(request, 'text_delta', { delta: 'Done.' }); yield event(request, 'response_completed', { finishReason: 'stop' });
       } } });
-    f.tools = registry.definitions().filter(tool => ['checkpoint_context', 'scheduled_results', 'search_plugins', 'call_tool', 'get_tool_schema'].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
+    f.tools = registry.definitions().filter(tool => ['checkpoint_context', 'assistant_event', 'search_plugins', 'call_tool', 'get_tool_schema'].includes(tool.name)).sort((a, b) => a.name.localeCompare(b.name));
   };
   f.close = async () => { await f.host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); f.persistence.close(); };
   f.run = (id, overrides = {}) => f.host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: `request-${id}`, sessionId: 'session', turnId: id, model: 'offline-fixture',
@@ -70,7 +70,7 @@ test('queued guidance appends the changed observation after existing tool histor
     if (++rounds <= 2) {
       if (rounds === 2) f.total = 0;
       await f.host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: { protocol: 'bush.runtime_guidance.v1', sessionId: 'session', turnId: 'guidance', messageId: `guidance-${rounds}`, content: `Scope ${rounds}`, createdAt: new Date().toISOString() } });
-      yield event(request, 'tool_call_delta', { index: 0, toolCallId: `inbox-${rounds}`, nameDelta: 'scheduled_results', argumentsDelta: '{}' });
+      yield event(request, 'tool_call_delta', { index: 0, toolCallId: `inbox-${rounds}`, nameDelta: 'assistant_event', argumentsDelta: JSON.stringify({ action: 'results' }) });
       yield event(request, 'response_completed', { finishReason: 'tool_calls' }); return;
     }
     yield event(request, 'text_delta', { delta: 'Done.' }); yield event(request, 'response_completed', { finishReason: 'stop' });
@@ -84,10 +84,13 @@ test('queued guidance appends the changed observation after existing tool histor
 });
 
 test('automatic inputs keep prior observations without adding reminders', async t => {
-  const f = await fixture(t); f.total = 1; await f.run('human');
+  const f = await fixture(t); f.total = 1;
+  // Use tools shared by all three modes. Automation runs cannot manage events.
+  const tools = f.tools.filter(tool => tool.name !== 'assistant_event');
+  await f.run('human', { tools });
   const before = reminders(f.requests[0].request); f.total = 0;
   for (const [name, metadata] of [['goal_continuation', {}], ['automation_prompt', { automationRunId: 'run' }]]) {
-    await f.run(name, { metadata, inputMessages: [{ messageId: name, message: { role: 'user', name, content: 'Continue' } }] });
+    await f.run(name, { tools, metadata, inputMessages: [{ messageId: name, message: { role: 'user', name, content: 'Continue' } }] });
     assert.deepEqual(reminders(f.requests.at(-1).request), before);
     assertExtension(f.requests.at(-2), f.requests.at(-1));
   }

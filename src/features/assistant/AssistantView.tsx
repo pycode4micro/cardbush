@@ -13,6 +13,7 @@ import { assistantErrorText } from './assistantError';
 import { VoiceConversation, applicationVoiceSession } from '../voice/VoiceConversation';
 import type { VoiceTarget } from '../voice/voiceSession';
 import { MarkdownContent, MessageFileAttachmentStrip, MessageImageStrip } from '../chatMessages/MessageBubble';
+import { FileMemoScope } from '../chatMessages/FileMemoScope';
 import { AssistantComposer, type AssistantComposerControls } from './AssistantComposer';
 import { AssistantCharacter } from './AssistantCharacter';
 import { setAssistantActivity, useAssistantEventExecution } from './assistantActivity';
@@ -358,7 +359,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       <MessageFileAttachmentStrip attachments={(entry.attachments ?? []).filter(file => file.type !== 'image')} language={language}/>
     </section>}
     {entry.content && <div className="assistant-text-bubble">{entry.role === 'assistant'
-      ? <MarkdownContent content={entry.content} language={language}/>
+      ? <FileMemoScope sessionId={sessionId}><MarkdownContent content={entry.content} language={language} sourceFootnotes/></FileMemoScope>
       : <p><PromptReferenceFallback content={entry.content}/></p>}</div>}
     {reaction && <button type="button" className="assistant-message-reaction" disabled={reacting}
       title={uiText(language)('assistantMessage.removeReaction', { reaction: reactionName(language, reaction) })}

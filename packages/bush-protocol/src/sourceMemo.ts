@@ -23,9 +23,6 @@ export const sourceLocatorSchema = z.object({
 const evidenceInput = z.object({
   target: text.max(32768), label: text.max(160).optional(), locator: sourceLocatorSchema.optional(),
 }).strict();
-export const sourceMemoInputSchema = z.object({
-  explanation: text.max(600), sources: z.array(evidenceInput).max(8).default([]),
-}).strict();
 export const sourceEvidenceSchema = evidenceInput.extend({
   kind: z.enum(['file', 'url']),
   version: z.object({ size: z.number().nonnegative(), mtimeMs: z.number(), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }).optional(),

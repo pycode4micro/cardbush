@@ -4,8 +4,7 @@ export const FILE_MEMO_PROTOCOL = 'bush.file_memo.v1' as const;
 export const FILE_MEMO_SCHEME = 'cardbush-memo:';
 export const RESOLVE_FILE_MEMO_COMMAND = 'runtime.resolve_file_memo';
 const shortLine = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]+$/);
-export const fileMemoInputSchema = z.object({
-  path: z.string().min(1).max(32768),
+const legacyFileMemoNoteSchema = z.object({
   purpose: shortLine(120),
   points: z.array(shortLine(160)).max(3).default([]),
 }).strict();
@@ -15,7 +14,7 @@ export const fileMemoSchema = z.object({
   reference: z.string().startsWith(FILE_MEMO_SCHEME),
   markdown: z.string().optional(),
   file: z.object({ path: z.string().min(1), name: z.string().min(1), size: z.number().nonnegative(), mtimeMs: z.number() }),
-  note: fileMemoInputSchema.omit({ path: true }),
+  note: legacyFileMemoNoteSchema,
 });
 export type FileMemo = z.infer<typeof fileMemoSchema>;
 export const fileMemoResolutionSchema = z.union([z.object({

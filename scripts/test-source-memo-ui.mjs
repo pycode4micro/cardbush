@@ -77,6 +77,8 @@ const shorthandReferences={10:'cardbush-source:v2:10:510-aaaaaaaaaaaaaaaa',11:'c
 window.shorthandLookups=[];
 const shorthandRuntime={client:{command:async(command,decode)=>{
   window.shorthandLookups.push(command);
+  if(command.kind==='runtime.read_tool_result_reference')return decode(command.payload.offset
+    ? {text:' second page',nextOffset:null} : {text:'Original tool receipt',nextOffset:21});
   if(command.kind==='runtime.resolve_source_references')return decode(command.payload.sessionId==='short-session'&&command.payload.turnId==='short-turn'
     ? command.payload.numbers.filter(number=>shorthandReferences[number]).map(number=>({number,reference:shorthandReferences[number]})):[]);
   if(command.kind==='runtime.resolve_source_memo'){

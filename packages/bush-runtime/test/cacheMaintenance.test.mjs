@@ -1,4 +1,5 @@
 import { sourceMemoReference } from '../dist/sourceMemo.js';
+import { persistLegacyMemoIndex, seedLegacyLocator } from './helpers/legacyMemos.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -120,9 +121,9 @@ for (const scheme of ['file', 'source', 'source-v2']) test(`restart collection p
   await f.runtime.runSessionTurn(request('source'));
   record(f.toolExecutionStore, 'source', { image, revision });
   const identity = { sessionId: 'source', turnId: 'source-turn', toolCallId: 'tool-1' };
-  if (scheme === 'source-v2') f.toolExecutionStore.reserveFileMemoReference({ sessionId: 'unused', turnId: 't', toolCallId: 'file' });
-  const locator = scheme === 'source-v2' ? f.toolExecutionStore.reserveSourceMemoReference(identity)
-    : { ...identity, number: f.toolExecutionStore.reserveFileMemoReference(identity) };
+  if (scheme === 'source-v2') seedLegacyLocator(f.toolExecutionStore, { sessionId: 'unused', turnId: 't', toolCallId: 'file' });
+  const locator = seedLegacyLocator(f.toolExecutionStore, identity, scheme === 'source-v2' ? 1 : undefined);
+  persistLegacyMemoIndex(f.toolExecutionStore, join(f.root, 'tool-executions'));
   const number = locator.number;
   const reference = scheme === 'file' ? `cardbush-memo:${number}` : sourceMemoReference(locator);
   await f.runtime.runSessionTurn(request('live', `Retain [evidence](${reference})`));
@@ -139,7 +140,7 @@ for (const scheme of ['file', 'source', 'source-v2']) test(`restart collection p
   const cleared = await restarted.runtime.sendCommand({ kind: 'runtime.clear_sessions', payload: {} });
   assert.deepEqual(cleared.errors, []); assert.equal(cleared.counts.sessions, 1);
   assert.equal(await exists(image), false); assert.equal(await exists(join(f.root, 'workspace-redo', revision)), false);
-  assert.equal(restarted.toolExecutionStore.reserveFileMemoReference({ sessionId: 'new', turnId: 'turn', toolCallId: 'tool' }), number + 1, 'stable memo IDs must never be reused');
+  assert.deepEqual(restarted.toolExecutionStore.getFileMemoReference(number), locator, 'cleanup does not rewrite the legacy index');
 });
 
 test('busy maintenance rejects before deleting any session or blob', async t => {

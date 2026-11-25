@@ -85,7 +85,7 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       const local = selected ? undefined : terminals.list(context.sessionId).find(item => item.terminalSessionId === input.sessionId);
       const terminal = local ?? (selected ? (await remoteTerminals(context.sessionId, context.signal)).find(item =>
         item.terminalSessionId === input.sessionId && parseSshWorkspace(item.uri)?.connectionId === connectionId) : undefined);
-      if (!terminal) throw Error('Terminal session is not available in this Runtime session. Use terminal_list; do not restart the command.');
+      if (!terminal) throw Error('Terminal session is not available in this Runtime session. Use terminal_list; load its schema if needed. Do not restart the command.');
       const uri: string | undefined = local ? undefined : terminal.uri;
       if (!local && !parseSshWorkspace(uri)) throw Error('Remote terminal has no valid host identity.');
       return uri;

@@ -447,9 +447,10 @@ export class AssistantConversation {
     const nativeTools = (this.deps.delegationTools?.() ?? []).filter(tool =>
       (nativeDelegation || interactionTurn && ['subagent', 'tasks'].includes(tool.name)) &&
       parent.tools.some(allowed => allowed.name === tool.name));
-    const presentedNative = this.deps.management?.projectDelegation(parent, nativeTools) ?? nativeTools;
-    const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...presentedNative, ...memoryTools, ...managementTools];
-    const modelTools = this.deps.management?.projectModelDefinitions(parent, tools) ?? tools;
+    const delegation = this.deps.management?.delegationWithDisclosure(parent, nativeTools) ?? nativeTools;
+    const tools = [...(spoken ? [assistantPageTool] : []), ...conversationalSubagentTools.filter(tool => !nativeTools.some(native => native.name === tool.name)), ...delegation, ...memoryTools, ...managementTools];
+    const presentation = this.deps.management?.projectModelDefinitions(parent, tools);
+    const modelTools = presentation?.tools ?? tools;
     let authored = remaining.filter(isAuthoredInput).at(-1);
     const originalInputs = (item: ConversationEntry) => item.source === 'task'
       ? entries.filter(entry => item.responseTo?.includes(entry.id) && isAuthoredInput(entry))
@@ -554,7 +555,7 @@ export class AssistantConversation {
     system.content += renderPromptTemplate('assistant-execution');
     if (managementTools.length) system.content += renderPromptTemplate('assistant-management');
     if (tools.some(tool => tool.name === 'call_tool')) system.content += '\n' + renderPromptTemplate('assistant-tool-disclosure');
-    if (modelTools.length < tools.length && modelTools.some(tool => tool.name === 'call_tool')) {
+    if (presentation?.hasDeferredProductPlugins && modelTools.some(tool => tool.name === 'call_tool')) {
       system.content += '\n' + renderPromptTemplate('assistant-plugin-management');
     }
     const context = async (roundTools: ToolDefinition[], roundFacts: ModelMessage[] = []): Promise<ModelMessage[]> => {

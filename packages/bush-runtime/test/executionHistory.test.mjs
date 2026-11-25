@@ -349,11 +349,20 @@ test('history locators read exact evidence only in the current live project', as
   assert.match(locator, /^tool-result:\/\/history\/[a-f0-9]{64}$/);
   const reader = registry.resolve('read_archived_tool_result');
   const read = (sessionId, value = locator) => reader.execute({ sessionId, input: reader.decodeInput({ locator: value }) });
+  const view = (sessionId, value = locator, offset = 0) => host.sendCommand({
+    kind: 'runtime.read_tool_result_reference', payload: { sessionId, locator: value, offset },
+  });
   assert.match((await read('one')).text, /exact evidence: 中文😀/);
+  assert.match((await view('one')).text, /exact evidence: 中文😀/);
+  assert.match((await view('two', 'tool-result://two/turn_cross/cross')).text, /exact evidence/);
+  await assert.rejects(view('outside'), /outside/);
+  await assert.rejects(view('outside', 'tool-result://two/turn_cross/cross'), /outside/);
+  await assert.rejects(view('one', 'tool-result://two/%xx/cross'), /Invalid archived/);
   await assert.rejects(read('outside'), /outside/);
   await assert.rejects(read('outside', 'tool-result://two/turn_cross/cross'), /outside/);
   sessions.deleteSession('two');
   await assert.rejects(read('one'), /deleted/);
+  await assert.rejects(view('one'), /deleted/);
 });
 
 test('v2 summary migration adds locators without rewriting the journal', async t => {

@@ -1,10 +1,7 @@
 import { openWorkspaceFile, withWorkspaceFileAccess } from './workspaceFileAccess.js';
 import { basename, isAbsolute, posix } from 'node:path';
 import { parseSshWorkspace, sshWorkspace } from '@cardbush/bush-protocol';
-import type { ToolAdmissionContext } from './toolRegistry.js';
 import type { RemoteWorkspaceBridge } from './workspaceTools.js';
-import { authorizePath } from './workspaceAccessPolicy.js';
-import { localContext } from './workspaceToolRouting.js';
 
 export type MemoFileSnapshot = { path: string; name: string; size: number; mtimeMs: number; content?: Buffer };
 
@@ -42,23 +39,4 @@ export async function readMemoFile(target: string, maxBytes = 0, remote?: Remote
     return { path, name: basename(path), size: after.size, mtimeMs: after.mtimeMs, ...(content ? { content } : {}) };
   } finally { await handle.close(); }
   }, { signal });
-}
-
-export async function authorizeMemoFile(context: ToolAdmissionContext<{ path: string }>, remote?: RemoteWorkspaceBridge) {
-  const target = parseSshWorkspace(context.input.path);
-  if (!target) {
-    if (!isAbsolute(context.input.path)) throw Error('Use an absolute local file path or ssh://saved-connection-id/absolute/file.');
-    return authorizePath('read')(localContext(context));
-  }
-  if (!remote) throw Error('SSH file access is unavailable on this host.');
-  const metadata = context.turn?.request.metadata;
-  const root = metadata?.workspaceDir || metadata?.projectDir || metadata?.sessionWorkspaceDir;
-  const trusted = typeof root === 'string' && parseSshWorkspace(root)?.connectionId === target.connectionId ? root : undefined;
-  const resolved = await remote.request('authorize', { uri: trusted ?? sshWorkspace(target.connectionId, '/'), path: context.input.path }, context.signal);
-  if (trusted && resolved.inside) return { kind: 'allow' as const };
-  return { kind: 'ask' as const, request: {
-    reason: `SSH read: ${resolved.path}`, actions: ['read'],
-    targets: [{ kind: 'filesystem_path' as const, value: resolved.path }], capabilityIds: [`ssh.read:${resolved.path}`],
-    scope: { mode: context.turn?.request.permissionMode === 'user_free' ? 'user_free' as const : 'task_free' as const, roots: trusted ? [resolved.root] : [] },
-  } };
 }

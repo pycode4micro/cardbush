@@ -269,9 +269,9 @@ test('real runtime turns and event registration share context, events and permis
   host = new InMemoryRuntimeHost({ automation: f.scheduler, toolRegistry: registry, registerDefaultWorkspaceTools: false,
     provider: { async *stream(request) { seen.push(request); yield { protocol: 'bush.model_event.v1', kind: 'text_delta', requestId: request.requestId, sequence: 1, createdAt: new Date().toISOString(), delta: 'Done' };
       yield { protocol: 'bush.model_event.v1', kind: 'response_completed', requestId: request.requestId, sequence: 2, createdAt: new Date().toISOString(), finishReason: 'stop' }; } } });
-  const schedule = registry.resolve('schedule_task'); assert.equal(schedule.visibleToChild, false);
+  assert.equal(registry.resolve('schedule_task'), undefined);
   await host.runSessionTurn(context());
-  const tool = registry.resolve('assistant_event');
+  const tool = registry.resolve('assistant_event'); assert.equal(tool.visibleToChild, false);
   const input = tool.decodeInput({ action: 'subscribe', topic: 'Follow up', text: 'Review the last result', session_hook: { event: 'Stop' } });
   const receipt = await tool.execute({ sessionId: 'session', toolCall: {id:'register'}, turn: { request: { turnId:'human-turn',metadata: {} } }, input });
   const job = (await f.scheduler.list()).jobs[0];
@@ -279,7 +279,6 @@ test('real runtime turns and event registration share context, events and permis
   assert.equal(job.sessionId, 'session');
   const events = await host.sendCommand({kind:'runtime.friends',payload:{action:'read'}});
   assert.equal(events.events.find(e => e.id === receipt.eventId).conversationExecution.sessionId, 'session');
-  await assert.rejects(schedule.execute({sessionId:'session',input:{action:'create'}}), /assistant_event/);
   await host.runSessionTurn({ ...context(), turnId: 'human-turn-2', requestId: 'request-2', inputMessages: [{ messageId: 'human-input-2', message: { role: 'user', content: 'Next task' } }] });
   await f.scheduler.tick(); await until(async () => (await f.scheduler.list()).jobs[0].runs.at(-1)?.status === 'completed');
   assert.equal(seen.length, 3); assert.equal(seen[2].permissionMode, 'task_free');
@@ -365,12 +364,12 @@ test('live user guidance appends changed reminders without rewriting sent histor
       if (requests.length === 1) {
         await f.scheduler.manage({ action: 'mark_read', id: job.id, runIds: [run.id] });
         await host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: { protocol: 'bush.runtime_guidance.v1', sessionId: 'session', turnId: 'human-turn', messageId: 'live-guidance', content: '按新的范围继续。', createdAt: new Date().toISOString() } });
-        yield event('tool_call_delta', { index: 0, toolCallId: 'read-inbox', nameDelta: 'scheduled_results', argumentsDelta: '{}' });
+        yield event('tool_call_delta', { index: 0, toolCallId: 'read-inbox', nameDelta: 'assistant_event', argumentsDelta: JSON.stringify({ action: 'results' }) });
         yield event('response_completed', { finishReason: 'tool_calls' }); return;
       }
       yield event('text_delta', { delta: 'Done' }); yield event('response_completed', { finishReason: 'stop' });
     } } });
-  const request = context(); request.tools = registry.definitions().filter(tool => tool.name === 'scheduled_results');
+  const request = context(); request.tools = registry.definitions().filter(tool => tool.name === 'assistant_event');
   await host.runSessionTurn(request);
   assert.equal(requests[0].messages.at(-1).name, 'automation_unread_reminder');
   assert.ok(requests[1].messages.some(message => message.content === '按新的范围继续。'));

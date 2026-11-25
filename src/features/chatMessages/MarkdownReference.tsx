@@ -1,6 +1,6 @@
 import { uiText } from '../../i18n';
 import type { ReactNode } from 'react';
-import { parseFileMemoReference, parseMcpAppReference, parseSourceMemoReference, parseBrowserTabReference, browserTabReferenceHref, type BrowserTabReference } from '@cardbush/bush-protocol';
+import { parseFileMemoReference, parseMcpAppReference, parseSourceMemoReference, parseBrowserTabReference, browserTabReferenceHref, parseToolResultReference, type BrowserTabReference } from '@cardbush/bush-protocol';
 import { BrowserTabReferenceLink } from '../browser/BrowserTabReferenceLink';
 import { parsePromptReference, type PromptReference } from '../../shared/promptReferences';
 import type { AppLanguage } from '../../types';
@@ -8,8 +8,9 @@ import { PromptReferenceLink } from '../composer/PromptReferenceLink';
 import { McpAppReferenceLink } from '../tools/McpAppReferenceLink';
 import { FileMemoReference } from './FileMemoReference';
 import { SourceMemoReference } from './SourceMemoReference';
+import { ToolResultReference } from './ToolResultReference';
 
-type Reference = { kind: 'source' | 'file' | 'app'; value: string }
+type Reference = { kind: 'source' | 'file' | 'app' | 'tool-result'; value: string }
   | { kind: 'browser-tab'; value: BrowserTabReference }
   | { kind: 'prompt'; value: PromptReference }
   | { kind: 'invalid' };
@@ -22,9 +23,10 @@ export function parseMarkdownReference(value: string | undefined): Reference | n
   if (parseSourceMemoReference(value)) return { kind: 'source', value };
   if (parseFileMemoReference(value)) return { kind: 'file', value };
   if (parseMcpAppReference(value)) return { kind: 'app', value };
+  if (parseToolResultReference(value)) return { kind: 'tool-result', value };
   const prompt = parsePromptReference(value);
   if (prompt) return { kind: 'prompt', value: prompt };
-  return /^cardbush-(?:source|memo|app|reference|browser):/i.test(value) ? { kind: 'invalid' } : null;
+  return /^(?:cardbush-(?:source|memo|app|reference|browser)|tool-result):/i.test(value) ? { kind: 'invalid' } : null;
 }
 
 export function UnavailableMarkdownReference({ children, language }: { children?: ReactNode; language: AppLanguage }) {
@@ -41,6 +43,8 @@ export function MarkdownReference({ reference, children, language, rich, inline 
   if (reference.kind === 'browser-tab') return <BrowserTabReferenceLink key={browserTabReferenceHref(reference.value)} reference={reference.value} language={language}/>;
   // Source annotations remain inspectable in collapsed-loop history as well.
   if (reference.kind === 'source') return <SourceMemoReference reference={reference.value} language={language} />;
+  if (reference.kind === 'tool-result') return inline ? <span>{children}</span>
+    : <ToolResultReference key={reference.value} locator={reference.value} language={language}>{children}</ToolResultReference>;
   if (!rich) return <span>{children}</span>;
   switch (reference.kind) {
     case 'file': return <FileMemoReference reference={reference.value} inline={inline} language={language}>{children}</FileMemoReference>;

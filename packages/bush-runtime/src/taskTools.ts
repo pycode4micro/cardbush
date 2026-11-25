@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { ToolHandlerContext, ToolRegistry } from './toolRegistry.js';
 import { briefText, projectCatalogPage } from './catalogPage.js';
 import { taskReceiptDelivery, type TaskResultLease } from './taskResultDelivery.js';
+import { presentTool } from './toolPresentation.js';
 
 export interface RuntimeTaskHandle {
   task_id: string;
@@ -86,6 +87,11 @@ export class RuntimeTaskTools {
     });
     registry.register({
       definition: { name: 'tasks', description: 'Manage owned task executions, not reusable agent definitions. Creates no work. list defaults to active or unresolved tasks; scope=all includes history. inspect reads results/progress; conversation pages one child’s ordered inputs/final replies via nextCursor, excluding private reasoning/tool logs. All but list require task_ids. after skips unchanged results. stop uses normal permissions; cancel_observation removes only a subscription. Use await when blocked; do not poll or restart pending work.', inputSchema: z.toJSONSchema(schema, { io: 'input' }) },
+      projectModelDefinition: (definition, scope) => !scope.canRecall ? definition : presentTool(definition, {
+        actions: ['list', 'inspect', 'stop'],
+        fields: ['action', 'scope', 'task_ids', 'node_ids', 'after', 'offset', 'limit'],
+        description: 'Manage owned task executions. list defaults to active or unresolved tasks; scope=all includes history. inspect reads results and progress; stop uses normal permissions. Both require task_ids. after skips unchanged results. Use await when blocked; avoid polling or restarting pending work. To page a child conversation or cancel a result subscription, load get_tool_schema(name="tasks") and use call_tool.',
+      }),
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',
       projectModelPage: (value, budget) => projectCatalogPage(value, budget, ['tasks'], 'total', page => ({ ...page,

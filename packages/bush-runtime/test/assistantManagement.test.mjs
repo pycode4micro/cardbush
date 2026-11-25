@@ -18,7 +18,7 @@ async function fixture(t, now) {
   await mkdir(join(root, 'skills', 'sheets'), { recursive: true });
   await writeFile(join(root, 'skills', 'sheets', 'SKILL.md'), '---\nname: sheets\ndescription: Build spreadsheet reports\n---\n# Instructions');
   registerSkillTools(registry, [join(root, 'skills')]);
-  let executed = 0, batch = [], sequence = 0;
+  let executed = 0, batch = [], followups = [], sequence = 0;
   for (const visible of [true, false]) registry.register({ definition: { name: `mcp__fixture__${visible ? 'report' : 'hidden'}`, description: 'Read report data', inputSchema: { type: 'object', properties: {} } },
     manifest, decodeInput: x => x, execute: () => { executed++; return {}; }, mcpHook: { server: 'fixture', tool: visible ? 'report' : 'hidden', modelVisible: visible, call: async () => ({}) } });
   const runs = [], requests = [], results = new Map(), hooks = [], faults = {}, persistence = new FileCoordinationPersistence({ root: join(root, 'coordination') });
@@ -30,7 +30,7 @@ async function fixture(t, now) {
     provider: { async *stream(request) {
       requests.push(request);
       for (const message of request.messages) if (message.role === 'tool') results.set(message.toolCallId, JSON.parse(message.content));
-      const calls = batch; batch = [];
+      const calls = batch; batch = followups.shift() ?? [];
       const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() }; let sequence = 0;
       yield { ...base, sequence: sequence++, kind: 'response_started' };
       if (!calls.length && faults.reply) { faults.reply = false; yield { ...base, sequence: sequence++, kind: 'response_failed', code: 'fixture_failure', message: 'Fixture reply interrupted', retryable: false }; return; }
@@ -46,8 +46,9 @@ async function fixture(t, now) {
   const events = payload => host.sendCommand({ kind: 'runtime.friends', payload });
   const configureEvents = () => events({ action: 'configure', parent: parent(), assistant: assistantProfileSchema.parse({}),
     profile: { name: 'Assistant', recognition: {}, language: 'en', timeZone: 'Asia/Shanghai', confirmedAt: new Date(0).toISOString() } });
-  const begin = async (name, args, patch = {}) => {
+  const begin = async (name, args, patch = {}, nextCalls = []) => {
     sequence++; const callId = `call-${sequence}`; batch = [{ id: callId, name, args }];
+    followups = nextCalls.map(({ name, args }, index) => [{ id: `${callId}-followup-${index}`, name, args }]);
     await command({ action: 'turn', entry: { id: `input-${sequence}`, content: 'Manage the requested work.', role: 'user', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() },
       parent: { ...parent(), ...patch }, profile: assistantProfileSchema.parse({}) }); return callId;
   };
@@ -250,7 +251,8 @@ test('assistant manages existing schedules using saved execution settings, reads
   const f = await fixture(t);
   const created = await seedExistingSchedule(f);
   assert.equal(created.state, 'active', JSON.stringify(created));
-  assert.equal((await f.invoke('schedule_task', { action: 'list' })).jobs[0].id, created.id);
+  const eventId = 'session-event:' + created.id;
+  assert.equal((await f.invoke('assistant_event', { action: 'list' }))[0].id, eventId);
   const schemas = f.requests[0].tools.map(tool => tool.name);
   for (const name of ASSISTANT_MANAGEMENT_TOOLS) assert.ok(schemas.includes(name), name);
   for (const name of ['call_tool', 'get_tool_schema']) assert.ok(schemas.includes(name), name);
@@ -259,23 +261,28 @@ test('assistant manages existing schedules using saved execution settings, reads
   assert.equal(saved.model, 'fixture-model'); assert.equal(saved.permissionMode, 'task_free'); assert.equal(saved.metadata.workspaceDir, f.root);
   assert.ok(saved.tools.some(tool => tool.name === 'mcp__fixture__report'), 'timer retains execution tools');
   assert.equal(saved.messages, undefined, 'timer does not inherit the conversational history');
-  assert.equal((await f.invoke('schedule_task', { action: 'get', job_id: created.id })).prompt, schedule.prompt);
-  assert.equal((await f.invoke('schedule_task', { action: 'pause', job_id: created.id })).state, 'paused');
-  assert.equal((await f.invoke('schedule_task', { action: 'resume', job_id: created.id })).state, 'active');
+  const detail = await f.invoke('assistant_event', { action: 'read', eventId });
+  assert.equal(detail.intent, schedule.prompt, JSON.stringify(detail));
+  await f.invoke('assistant_event', { action: 'pause', eventId });
+  assert.equal((await f.scheduler.list()).jobs[0].state, 'paused');
+  await f.invoke('assistant_event', { action: 'resume', eventId });
+  assert.equal((await f.scheduler.list()).jobs[0].state, 'active');
   const current = (await f.scheduler.list()).jobs[0];
-  const updated = await f.invoke('schedule_task', { ...schedule, action: 'update', job_id: created.id, expected_revision: current.revision, name: 'Updated report' });
-  assert.equal(updated.name, 'Updated report');
-  assert.equal((await f.invoke('schedule_task', { ...schedule, action: 'update', job_id: created.id, expected_revision: 1 })).status, 'failed');
-  await f.invoke('schedule_task', { action: 'run', job_id: created.id });
+  const updated = await f.invoke('assistant_event', { action: 'continue', eventId, expected_revision: current.revision, topic: 'Updated report' });
+  assert.equal(updated.eventId, eventId);
+  assert.equal((await f.scheduler.list()).jobs[0].name, 'Updated report');
+  assert.equal((await f.invoke('assistant_event', { action: 'continue', eventId, expected_revision: 1, text: 'Stale change' })).status, 'failed');
+  const queued = await f.invoke('assistant_event', { action: 'run', eventId });
+  assert.match(queued.runId, /^run_/);
   await until(async () => (await f.scheduler.list()).jobs[0].runs.at(-1)?.status === 'completed');
   assert.equal(f.runs.length, 1); assert.notEqual(f.runs[0].run.sessionId, id);
-  const inbox = await f.invoke('scheduled_results', {});
+  const inbox = await f.invoke('assistant_event', { action: 'results' });
   assert.equal(inbox.results.length, 1); assert.equal(inbox.results[0].status, 'completed');
   await f.command({ action: 'reset' });
   assert.equal((await f.scheduler.list()).jobs.length, 1, 'resetting conversation does not delete scheduled work');
   const foreign = await f.scheduler.manage({ action: 'create', definition: { name: 'Other', sessionId: id, prompt: 'Other task', timeZone: 'Asia/Shanghai', trigger: schedule.trigger } });
-  assert.equal((await f.invoke('schedule_task', { action: 'delete', job_id: 'foreign-or-missing' })).status, 'failed');
-  await f.invoke('schedule_task', { action: 'delete', job_id: created.id });
+  assert.equal((await f.invoke('assistant_event', { action: 'delete', eventId: 'session-event:foreign-or-missing' })).status, 'failed');
+  await f.invoke('assistant_event', { action: 'delete', eventId });
   assert.deepEqual((await f.scheduler.list()).jobs.map(job => job.id), [foreign.id]);
 });
 
@@ -297,12 +304,13 @@ test('new assistant reminders and subscriptions register only as events while a 
   const old = await seedExistingSchedule(f);
   const blocked = await f.invoke('schedule_task', schedule);
   assert.equal(blocked.status, 'failed');
-  assert.match(blocked.error, /assistant_event/);
-  const actions = f.requests[0].tools.find(tool => tool.name === 'schedule_task').inputSchema.properties.action.enum;
-  assert.ok(!actions.includes('create'));
-  assert.ok(!f.registry.resolve('schedule_task').definition.inputSchema.properties.action.enum.includes('create'), 'all new registrations use events');
+  assert.ok(!f.requests[0].tools.some(tool => ['schedule_task', 'scheduled_results'].includes(tool.name)));
+  assert.equal(f.registry.resolve('schedule_task'), undefined);
+  assert.equal(f.registry.resolve('scheduled_results'), undefined);
 
+  const beforeCreate = f.requests.length;
   const once = await f.invoke('assistant_event', reminder);
+  assert.equal(f.requests.length - beforeCreate, 2, 'one-time reminders execute directly and use one reply round');
   const recurring = { action: 'subscribe', text: 'Remind me to review the report every Friday at 10:00 Asia/Shanghai.', topic: 'Friday report', at: '2099-10-30T10:00:00+08:00' };
   const subscription = await f.invoke('assistant_event', recurring);
   assert.equal((await f.invoke('assistant_event', recurring)).eventId, subscription.eventId);
@@ -317,7 +325,19 @@ test('new assistant reminders and subscriptions register only as events while a 
   await f.scheduler.tick();
   assert.deepEqual(f.runs.map(run => run.job.id), [old.id]);
   assert.equal(f.runs[0].ctx.metadata.workspaceDir, f.root);
-  assert.equal((await f.invoke('scheduled_results', {})).results[0].jobId, old.id);
+  const beforeHistory = f.requests.length;
+  const loadId = await f.begin('get_tool_schema', { name: 'assistant_event' }, {}, [
+    { name: 'call_tool', args: { name: 'assistant_event', arguments: { action: 'results' } } },
+  ]);
+  const definition = await f.complete(loadId);
+  assert.ok(definition.matches[0].inputSchema.properties.action.enum.includes('results'));
+  const history = f.results.get(`${loadId}-followup-0`);
+  assert.equal(history.results?.[0]?.jobId, old.id, JSON.stringify(history));
+  const rounds = f.requests.slice(beforeHistory);
+  assert.equal(rounds.length, 3, 'reading history adds only its schema round');
+  const compact = rounds[0].tools.find(tool => tool.name === 'assistant_event');
+  assert.ok(!compact.inputSchema.properties.action.enum.includes('results'));
+  for (const request of rounds) assert.deepEqual(request.tools, rounds[0].tools);
 });
 
 test('assistant registers and edits a local calendar rule through ordinary tool admission', async t => {
@@ -348,9 +368,9 @@ test('capability discovery respects enabled tools and visibility without executi
   const metadata = { ...f.parent().metadata, disabledSkills: ['sheets'], builtinPluginCommandsAvailable: false };
   assert.deepEqual((await f.invoke('search_plugins', { mode: 'skill', query: '*' }, { metadata })).matches, []);
   assert.equal((await f.invoke('list_plugin_commands', {}, { metadata })).code, 'tool_unavailable');
-  assert.equal((await f.invoke('schedule_task', schedule, { tools: [] })).code, 'tool_unavailable');
-  assert.equal((await f.invoke('schedule_task', schedule, { metadata: { toolExecutionPolicy: 'none' } })).code, 'tool_unavailable');
-  assert.equal((await f.invoke('schedule_task', schedule, { metadata: { agentRole: 'child' } })).code, 'tool_unavailable');
+  assert.equal((await f.invoke('assistant_event', reminder, { tools: [] })).code, 'tool_unavailable');
+  assert.equal((await f.invoke('assistant_event', reminder, { metadata: { toolExecutionPolicy: 'none' } })).code, 'tool_unavailable');
+  assert.equal((await f.invoke('assistant_event', reminder, { metadata: { agentRole: 'child' } })).code, 'tool_unavailable');
   assert.equal((await f.scheduler.list()).jobs.length, 0);
 });
 

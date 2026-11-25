@@ -9,9 +9,11 @@ import { gunzipSync } from 'node:zlib';
 import ssh2 from 'ssh2';
 import { SshConnectionManager } from '../dist-electron/sshConnections.mjs';
 import { sshWorkspace } from '@cardbush/bush-protocol';
-import { ToolExecutionCoordinator, ToolRegistry, ToolExecutionStore, registerWorkspaceTools, registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from '@cardbush/bush-runtime';
+import { ToolExecutionCoordinator, ToolRegistry, ToolExecutionStore, registerWorkspaceTools, resolveFileMemo, validateFileMemoLinks } from '@cardbush/bush-runtime';
 
-import { registerSourceMemoTools, resolveSourceMemo } from '../packages/bush-runtime/dist/sourceMemo.js';
+import { resolveSourceMemo } from '../packages/bush-runtime/dist/sourceMemo.js';
+
+import { seedLegacyFileMemo, seedLegacySourceMemo } from '../packages/bush-runtime/test/helpers/legacyMemos.mjs';
 
 // A real loopback SSH transport, with deterministic remote SFTP/process fixtures.
 // This runs on Windows without requiring a Linux host or touching user SSH settings.
@@ -162,7 +164,6 @@ function runtimeTools(f) {
     throw Error('Unexpected bridge action: '+action);
   }};
   registerWorkspaceTools(registry,undefined,{remote});
-  registerFileMemoTools(registry,store,remote); registerSourceMemoTools(registry,store,remote);
   const coordinator=new ToolExecutionCoordinator({registry,permissions:{async request(input) {
     return {protocol:'bush.runtime_permission_answer.v1',permissionId:'permission',answerId:'answer',decision:'allow_once',grantedCapabilityIds:input.capabilityIds};
   }}});
@@ -491,12 +492,15 @@ test('disconnect marks running command uncertain without replaying it',async t=>
 test('SSH file references, source evidence and review share canonical remote identities', { timeout: 20_000 }, async t => {
   const f = await fixture(t); await f.trust(); const execute = runtimeTools(f);
   const local = join(f.directory, 'source-info.json'); await writeFile(local, '{"local":true}');
-  const localMemo = await execute('remember_source', { explanation: 'Local build information', sources: [{ target: local }] });
+  const identity = { sessionId: 'runtime-test', turnId: 'turn' };
+  const seedSource = async (toolCallId, args) => (await seedLegacySourceMemo(execute.store, { ...identity, toolCallId }, args, execute.remote)).result;
+  const seedFile = async (toolCallId, args) => (await seedLegacyFileMemo(execute.store, { ...identity, toolCallId }, args, execute.remote)).result;
+  const localMemo = await seedSource('legacy-local', { explanation: 'Local build information', sources: [{ target: local }] });
   assert.equal(localMemo.sources[0].target, local);
   const target = f.uri + '/file.txt';
-  const source = await execute('remember_source', { explanation: 'Remote evidence', sources: [{ target, locator: { line: 2 } }] });
+  const source = await seedSource('legacy-source', { explanation: 'Remote evidence', sources: [{ target, locator: { line: 2 } }] });
   assert.equal(source.sources[0].target, target); assert.match(source.sources[0].excerpt, /中文/);
-  const file = await execute('remember_file', { path: target, purpose: 'Remote result' });
+  const file = await seedFile('legacy-file', { path: target, purpose: 'Remote result' });
   assert.equal((await resolveFileMemo(execute.store, file.reference, {}, execute.remote)).status, 'available');
   assert.deepEqual((await resolveSourceMemo(execute.store, source.reference, execute.remote)).evidenceStatus, ['available']);
   assert.deepEqual((await validateFileMemoLinks(execute.store, file.markdown, { sessionId:'runtime-test', turnId:'turn' }, execute.remote)).invalid, []);
@@ -511,7 +515,7 @@ test('SSH file references, source evidence and review share canonical remote ide
   assert.deepEqual((await resolveSourceMemo(execute.store, source.reference, execute.remote)).evidenceStatus, ['changed']);
   assert.equal((await resolveFileMemo(execute.store, file.reference)).status, 'unavailable', 'no local fallback for SSH');
   f.files.set('/work/File.txt', Buffer.from('different case'));
-  const upper = await execute('remember_file', { path: f.uri + '/File.txt', purpose: 'Case-sensitive remote file' });
+  const upper = await seedFile('legacy-upper', { path: f.uri + '/File.txt', purpose: 'Case-sensitive remote file', id: 'file_2' });
   assert.notEqual(upper.id, file.id);
   f.files.delete('/work/file.txt');
   assert.equal((await resolveFileMemo(execute.store, file.reference, {}, execute.remote)).status, 'unavailable');

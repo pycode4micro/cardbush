@@ -109,6 +109,30 @@ test('Assistant projects the ordinary native definitions without changing memory
   console.log(JSON.stringify({ assistantToolsBefore: size(previous), assistantToolsAfter: size(tools), tokenEstimate: 'JSON characters / 4' }));
 });
 
+test('Assistant worker diagnostics are recalled and execute once through the shared tool path', async t => {
+  const connections = [];
+  const f = await fixture(t, { remoteAgents: {
+    list: async () => [],
+    connection: async input => { connections.push(input); return { state: 'connected' }; },
+  } });
+  const requests = await f.run([
+    [load('worker-schema', 'worker_connection')],
+    [invoke('verify-worker', 'worker_connection', { action: 'verify', connection_id: 'worker' })],
+  ]);
+  assert.equal(requests.length, 3);
+  for (const request of requests) assert.ok(!request.tools.some(tool => tool.name === 'worker_connection'));
+  const receipt = f.results.get('worker-schema');
+  assert.ok(receipt.matches?.length, JSON.stringify(receipt));
+  assert.deepEqual(receipt.matches[0].inputSchema.properties.action.enum, ['verify', 'reconnect']);
+  assert.deepEqual(connections, [{ action: 'verify', connectionId: 'worker' }]);
+  assert.equal(f.results.get('verify-worker').state, 'connected');
+  assert.ok(!requests[0].messages.some(message => message.role === 'system' && message.content.includes(renderPromptTemplate('assistant-plugin-management'))));
+  await f.run([[load('unavailable-worker-schema', 'worker_connection')]],
+    { tools: f.parent().tools.filter(tool => tool.name !== 'worker_connection') });
+  assert.equal(f.results.get('unavailable-worker-schema').code, 'tool_not_exposed');
+  assert.equal(connections.length, 1);
+});
+
 test('complete recalled schemas preserve employee and Team create/update/delete with one execution per outer call', async t => {
   const f = await fixture(t);
   const seen = await f.run([

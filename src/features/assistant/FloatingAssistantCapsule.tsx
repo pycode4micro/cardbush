@@ -3,9 +3,10 @@ import { useLayoutEffect, useRef } from 'react';
 import { ArrowUp, AudioLines, Bell, Circle, File, Film, Plus, SquarePen, X } from 'lucide-react';
 import { uiText } from '../../i18n';
 import { basename, fileUrl, isAudioPath, isImagePath, isVideoPath } from '../../shared/localPaths';
-import type { ConversationEntry } from '@cardbush/bush-protocol';
+import { PERSONAL_ASSISTANT_SESSION, type ConversationEntry } from '@cardbush/bush-protocol';
 import { assistantTimeLabel } from './assistantTimeline';
 import { MarkdownContent } from '../chatMessages/MessageBubble';
+import { FileMemoScope } from '../chatMessages/FileMemoScope';
 import { useVoiceComposer, VoiceComposerPanel } from '../voice/VoiceComposer';
 import './floatingAssistantCapsule.css';
 
@@ -96,7 +97,7 @@ export function FloatingAssistantCapsule(p: Props) {
         {!p.replies.length && !p.error && !failed && <p>{t('capsule.empty')}</p>}
         {p.replies.slice(-limit).reverse().map(reply => <article key={reply.id} data-reply-id={reply.id} className="assistant-bubble">
           <time dateTime={reply.createdAt}>{assistantTimeLabel(reply.createdAt,p.language)}</time>
-          <MarkdownContent content={reply.content} language={p.language}/>
+          <FileMemoScope sessionId={PERSONAL_ASSISTANT_SESSION}><MarkdownContent content={reply.content} language={p.language} sourceFootnotes/></FileMemoScope>
         </article>)}
         {p.replies.length > limit && <button type="button" onClick={() => setLimit(value => value + 30)}>{t('capsule.earlier')}</button>}
       </div>

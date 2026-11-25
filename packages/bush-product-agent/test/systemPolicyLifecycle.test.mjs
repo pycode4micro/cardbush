@@ -101,6 +101,24 @@ test('continuation, restart and fork retain the bound system and top-level defin
   assert.equal(store.modelContract('new').version, '10');
 });
 
+test('retired Memo and schedule declarations are removed from the provider view of a saved contract', async t => {
+  const f = fixture(t), { host, store, request } = f.open();
+  const current = request('continue-old');
+  const retired = ['remember_file', 'read_file_memos', 'remember_source', 'read_source_memos', 'schedule_task', 'scheduled_results'];
+  const obsoleteTools = retired.map(name => ({ name, description: 'Historical definition.', inputSchema: { type: 'object' } }));
+  store.ensureSession(current.sessionId);
+  const saved = store.bindModelContract(current.sessionId, { policyId: 'cardbush.product', version: '10',
+    system: { role: 'system', content: 'Saved system with old Memo guidance.' }, tools: [...current.tools, ...obsoleteTools] });
+  current.tools.push(...obsoleteTools);
+
+  assert.equal((await host.runSessionTurn(current)).payload.status, 'completed');
+  const observed = f.observed.at(-1);
+  assert.deepEqual(observed.tools.map(tool => tool.name), current.tools.filter(tool => !retired.includes(tool.name)).map(tool => tool.name));
+  assert.match(observed.messages.find(message => message.name === 'delivery_guidance' && message.content.includes('Markdown footnotes')).content,
+    /Memo tools have been retired/);
+  assert.deepEqual(store.modelContract(current.sessionId), saved);
+});
+
 test('the saved presentation survives changed client definitions, but never grants removed tools', async t => {
   const f = fixture(t), { host, store, request } = f.open();
   await host.runSessionTurn(request('first'));
@@ -147,7 +165,7 @@ test('delivery and continuation guidance reaches an old session without rewritin
   assert.match(guidance.content, /same assignment.*existing subagent task_id/);
   assert.match(guidance.content, /historical backtests must not inherit later evidence/);
   assert.match(guidance.content, /node_ids=.*nextCursor/);
-  assert.match(guidance.content, /read_source_memos must bind/);
+  assert.match(guidance.content, /self-contained Markdown footnotes/);
   assert.equal(guidance.visibility, 'internal');
   assert.equal(policyCount(dispatched, REPORT_DELIVERY_INSTRUCTIONS), 1);
   await host.runSessionTurn(request('continued_again'));

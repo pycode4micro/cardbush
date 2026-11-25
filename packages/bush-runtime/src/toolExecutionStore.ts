@@ -10,8 +10,6 @@ import {
   returnedToolError,
   savedUserMessagePrediction,
   WORKSPACE_REVIEW_TURN_LIMIT,
-  parseSourceMemoReference,
-  sourceMemoSchema,
   fileMemoSchema,
   toolExecutionRecordSchema,
   type ToolCall,
@@ -31,11 +29,9 @@ export interface ToolExecutionPersistence {
   load(sessionId: string): ToolExecutionRecord[];
   append(record: ToolExecutionRecord): void;
   loadFileMemoReferences?(): FileMemoLocator[];
-  appendFileMemoReference?(reference: FileMemoLocator): void;
 }
 
 export interface FileMemoLocator { number: number; sessionId: string; turnId: string; toolCallId: string; sourceNumber?: number }
-type MemoIdentity = Omit<FileMemoLocator, 'number' | 'sourceNumber'>;
 
 /** Small facts for loop guidance; no argument, result body or error prose. */
 export interface ToolExecutionSignal {
@@ -259,43 +255,6 @@ export class ToolExecutionStore {
       .filter((record) => turnIds.has(record.turnId))
       .sort((left, right) => left.round - right.round || left.ordinal - right.ordinal)
       .map((record) => structuredClone(toolExecutionSummary(record, this.#coldWorkspaceChanges)));
-  }
-
-  /** Reserve before returning the Tool result. Gaps after cancellation are never reused. */
-  reserveFileMemoReference(identity: MemoIdentity): number {
-    return this.#reserveMemoReference(identity, false).number;
-  }
-
-  reserveSourceMemoReference(identity: MemoIdentity): FileMemoLocator {
-    return this.#reserveMemoReference(identity, true);
-  }
-
-  #reserveMemoReference(identity: MemoIdentity, source: boolean): FileMemoLocator {
-    if (this.#persistence && (!this.#persistence.loadFileMemoReferences || !this.#persistence.appendFileMemoReference)) {
-      throw new Error('File memo references require durable locator storage.');
-    }
-    const references = this.#loadFileMemoReferences();
-    const existing = references.find(item => item.sessionId === identity.sessionId && item.turnId === identity.turnId && item.toolCallId === identity.toolCallId);
-    if (existing) return { ...existing };
-    const reference: FileMemoLocator = { ...identity, number: (references.at(-1)?.number ?? 0) + 1 };
-    if (reference.number > 999_999_999) throw new Error('File reference number limit reached.');
-    if (source) {
-      // Persist reservations, including cancelled writes, and continue inherited
-      // or legacy display numbers without rewriting their immutable references.
-      let previous = 0;
-      for (const item of references) if (item.sessionId === identity.sessionId) previous = Math.max(previous, item.sourceNumber ?? 0);
-      for (const record of this.#load(identity.sessionId)) {
-        if (record.toolCall.name !== 'remember_source' || record.outcome !== 'returned') continue;
-        const memo = sourceMemoSchema.safeParse(record.result);
-        if (memo.success) previous = Math.max(previous, parseSourceMemoReference(memo.data.reference)!);
-      }
-      reference.sourceNumber = previous + 1;
-      if (reference.sourceNumber > 999_999_999) throw new Error('Source number limit reached.');
-    }
-    try { this.#persistence?.appendFileMemoReference?.(reference); }
-    catch (error) { this.#fileMemoReferences = undefined; throw error; }
-    references.push(reference);
-    return { ...reference };
   }
 
   getFileMemoReference(number: number): FileMemoLocator | undefined {

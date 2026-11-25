@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { AgentWebFiles } from '../dist-electron/agentWebFiles.mjs';
 import { agentFileRead, agentFileUpload } from '../dist-electron/agentFiles.mjs';
 import { deliveredFilePaths } from '../dist-electron/agentFileTransfer.mjs';
@@ -405,21 +405,30 @@ test('gateway copies media both ways and serves authenticated byte ranges', asyn
   t.after(() => rm(root, { recursive:true, force:true, maxRetries:4 }));
   const files = new AgentWebFiles(personal), video = Buffer.alloc(1024 * 1024 + 101, 17); video.write('ftyp',4);
   const inputPath = join(personal,'workspaces','source.mp4'); await writeFile(inputPath,video);
-  const outputPath = join(workspace,'result.mp4'); await writeFile(outputPath,video);
+  const pluginOutput = join(root, 'plugin-result.mp4'); await writeFile(pluginOutput, video);
+  const outputPath = join(workspace,'result.mp4');
+  const evidencePath = join(workspace, 'source-notes.md'); await writeFile(evidencePath, 'Evidence only');
+  await assert.rejects(agentFileRead(workspace, { path: pluginOutput }), /outside this conversation workspace/);
+  const remoteReply = `[Video](<${outputPath.replaceAll('\\','/')}>) [^source]\n\n[^source]: [Evidence](<${evidencePath.replaceAll('\\','/')}>)`;
   let submitted, prepared, starts = 0;
   const client = {
     async info() { return {...info('instance-a'),capabilities:{delegation:true,fileTransfer:1}}; },close(){},
     async call(operation,input) {
       if(operation==='delegation.prepare') { prepared=input;return {sessionId:input.sessionId}; }
       if(operation==='files.upload') { assert.equal(input.sessionId,prepared.sessionId); return agentFileUpload(workspace,input); }
-      if(operation==='files.read') return agentFileRead(workspace,input);
+      if(operation==='files.read') {
+        assert.equal(resolve(input.path), outputPath, 'only the deliverable is transferred');
+        return agentFileRead(workspace,input);
+      }
       if(operation==='delegation.submit') {
         submitted=input;starts++;
         assert.equal(input.files.length,1);assert.notEqual(input.files[0],inputPath);
-        assert.deepEqual(await readFile(input.files[0]),video);return {id:input.taskId,status:'completed'};
+        assert.deepEqual(await readFile(input.files[0]),video);
+        await copyFile(pluginOutput, outputPath);
+        return {id:input.taskId,status:'completed'};
       }
       if(operation==='chat.jobs') return [{id:submitted.taskId,sessionId:submitted.sessionId,turnId:submitted.turnId,delegation:{parentSessionId:submitted.parentSessionId},status:'completed'}];
-      if(operation==='sessions.get') return {sessionId:submitted.sessionId,metadata:{delegationOwner:submitted.parentSessionId},turns:[{turnId:submitted.turnId,status:'completed',usage:{},messages:[{messageId:'final',turnId:submitted.turnId,message:{role:'assistant',content:`[Video](<${outputPath.replaceAll('\\','/')}>)`,toolCalls:[]}}]}]};
+      if(operation==='sessions.get') return {sessionId:submitted.sessionId,metadata:{delegationOwner:submitted.parentSessionId},turns:[{turnId:submitted.turnId,status:'completed',usage:{},messages:[{messageId:'final',turnId:submitted.turnId,message:{role:'assistant',content:remoteReply,toolCalls:[]}}]}]};
       assert.fail(operation);
     }, async *events() {},
   };
@@ -427,7 +436,8 @@ test('gateway copies media both ways and serves authenticated byte ranges', asyn
   const input={connectionId:'remote-test',agentId:'instance-a',parentSessionId:'parent-alice',parentTurnId:'turn',sessionId:'delegated-media',turnId:'turn-media',taskId:'media',prompt:'Return the video',files:[inputPath],permissionMode:'all_free',language:'en'};
   const result=await callWebRemoteAgent(f.configuration,'agents.delegate',input);
   assert.equal(starts,1);assert.match(result.finalResponse,/SHA-256/);
-  const [returned]=deliveredFilePaths(result.finalResponse);assert.ok(returned.startsWith(personal.replaceAll("\\", "/")));
+  const paths=deliveredFilePaths(result.finalResponse); assert.equal(paths.length,1);
+  const [returned]=paths;assert.ok(returned.startsWith(personal.replaceAll("\\", "/")));
   assert.deepEqual(await readFile(returned),video);
   const url=f.base+'/api/web/v1/files/view?path='+encodeURIComponent(returned)+'&owner=alice';
   assert.equal((await fetch(url)).status,401);

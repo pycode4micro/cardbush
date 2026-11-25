@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { AutomationDefinition, AutomationJob, AutomationOverview, EventRecurrence, FriendsWorkEvent } from '@cardbush/bush-protocol';
 import type { AutomationScheduler } from './automationScheduler.js';
 import { nextEventOccurrence } from './eventRecurrence.js';
+import { briefText, catalogPage } from './catalogPage.js';
 
 // A conversation event has one durable record. The scheduler already owns its
 // session snapshot, execution history and trusted plugin wakeups.
@@ -12,7 +13,25 @@ type EventInput = {
   action: string; eventId?: string; text?: string; topic?: string; at?: string; recurrence?: EventRecurrence;
   session_hook?: Omit<SessionHook, 'kind'>; include_archived?: boolean; destination?: 'here' | 'external';
   source_ref?: string; reminderText?: string | null; presentation?: unknown; trigger?: unknown;
+  expected_revision?: number; time_zone?: string; execution_mode?: AutomationDefinition['executionMode'];
+  query?: string; offset?: number; limit?: number;
 };
+
+export async function conversationEventResults(scheduler: AutomationScheduler, input: { run_ids?: string[]; offset?: number }) {
+  const offset = input.offset ?? 0;
+  const page = await scheduler.manage({ action: 'results', runIds: input.run_ids, offset }) as {
+    total: number; results: Array<AutomationJob['runs'][number] & { jobId: string; title: string }>;
+  };
+  if (input.run_ids) return { ...page, results: page.results.map(run =>
+    Object.fromEntries(Object.entries(run).filter(([, value]) => value !== undefined))) };
+  const results = catalogPage(page.results.map(({ jobId, title, id, status, finishedAt, readAt, summary, error }) => ({
+    jobId, title, id, status, ...(finishedAt ? { finishedAt } : {}), ...(readAt ? { readAt } : {}),
+    summary: briefText(summary ?? ''),
+    ...(error ? { error: briefText(error) } : {}),
+  }))).items;
+  const next = offset + results.length;
+  return { results, total: page.total, offset, next_offset: next < page.total ? next : null };
+}
 
 export function conversationEvent(job: AutomationJob, sourceTitle?: string): FriendsWorkEvent {
   const last = job.runs.at(-1);
@@ -26,8 +45,10 @@ export function conversationEvent(job: AutomationJob, sourceTitle?: string): Fri
     ...(job.trigger.kind !== 'once' ? { subscription: true } : {}),
     ...(job.trigger.kind === 'recurrence' ? { recurrence: job.trigger.rule } : {}),
     ...(last?.summary ? { result: { text: last.summary, turnId: last.turnId, createdAt: last.finishedAt ?? last.queuedAt } } : {}),
-    conversationExecution: { jobId: job.id, sessionId: job.sessionId, sourceTitle, pluginId: job.plugin?.id,
-      runs: job.runs.map(run => ({ id: run.id, at: run.finishedAt ?? run.queuedAt, status: run.status, summary: run.summary })) },
+    conversationExecution: { jobId: job.id, sessionId: job.sessionId,
+      ...(sourceTitle ? { sourceTitle } : {}), ...(job.plugin ? { pluginId: job.plugin.id } : {}),
+      runs: job.runs.map(run => ({ id: run.id, at: run.finishedAt ?? run.queuedAt, status: run.status,
+        ...(run.summary !== undefined ? { summary: run.summary } : {}) })) },
   };
 }
 
@@ -46,22 +67,34 @@ export async function manageConversationEvent(scheduler: AutomationScheduler, se
   if (input.source_ref || input.destination === 'external' || input.trigger || input.presentation || input.reminderText != null)
     throw Error('Conversation events execute in their source project. Use at, recurrence or session_hook and put the complete task in text.');
   const overview = await scheduler.list(sessionId);
-  if (input.action === 'list') return overview.jobs.filter(job => input.include_archived || !job.archived).map(job => {
-    const event = conversationEvent(job);
-    return { id: event.id, title: event.title, status: event.status, subscription: event.subscription, archived: event.archived };
-  });
+  if (input.action === 'list') {
+    const jobs = overview.jobs.filter(job => input.include_archived || !job.archived);
+    const summarize = (job: AutomationJob) => {
+      const { id, title, status, subscription, archived } = conversationEvent(job);
+      return { id, title, status, ...(subscription ? { subscription } : {}), archived };
+    };
+    if (input.query === undefined && input.offset === undefined && input.limit === undefined) return jobs.map(summarize);
+    const needle = input.query?.toLowerCase();
+    const matches = jobs.filter(job => !needle || `${job.id} ${job.name} ${job.prompt}`.toLowerCase().includes(needle));
+    const { items, ...page } = catalogPage(matches.map(summarize), { offset: input.offset, limit: input.limit });
+    return { ...page, events: items };
+  }
   const creating = input.action === 'create' || input.action === 'subscribe';
   const job = creating ? undefined : overview.jobs.find(item => item.id === conversationJobId(input.eventId));
   if (!creating) {
     if (!job) throw Error('Event not found in this conversation.');
-    if (input.action === 'read') return { ...conversationEvent(job), nextAt: job.nextRunAt ?? null };
+    if (input.action === 'read') return { ...conversationEvent(job), nextAt: job.nextRunAt ?? null,
+      trigger: job.trigger, timeZone: job.timeZone, ...(job.executionMode ? { executionMode: job.executionMode } : {}) };
     if (input.action !== 'continue') {
-      await scheduler.manage({ action: input.action, id: job.id }, sessionId, { cancelOnDelete: true });
-      return { eventId: input.eventId, status: input.action === 'delete' ? 'deleted' : 'accepted' };
+      const result = await scheduler.manage({ action: input.action, id: job.id, expectedRevision: input.expected_revision }, sessionId, { cancelOnDelete: true });
+      const runId = input.action === 'run' && 'runs' in result ? (result as AutomationJob).runs.at(-1)?.id : undefined;
+      return { eventId: input.eventId, status: input.action === 'delete' ? 'deleted' : 'accepted',
+        ...(runId ? { runId } : {}) };
     }
   }
   if (job?.plugin) throw Error('The plugin owns this hook definition.');
-  if (!input.text || input.action === 'subscribe' && !input.topic) throw Error('Provide text and a stable topic for a subscription.');
+  const text = input.text ?? job?.prompt;
+  if (!text || input.action === 'subscribe' && !input.topic) throw Error('Provide text and a stable topic for a subscription.');
   const subscription = input.action === 'subscribe';
   const key = (subscription ? 'topic:' : 'call:') + createHash('sha256').update(subscription ? input.topic! : callId).digest('hex');
   // A retry can arrive after a one-time event has fired. Its receipt still
@@ -78,12 +111,16 @@ export async function manageConversationEvent(scheduler: AutomationScheduler, se
     trigger = { ...input.session_hook, kind: 'event' };
   } else if (input.at) {
     if (Date.parse(input.at) <= now || input.action === 'subscribe') throw Error('Use a future at for create, or a recurrence for subscribe.');
-    trigger = { kind: 'once', at: input.at };
+    if (trigger?.kind === 'recurrence' || trigger?.kind === 'event') {
+      throw Error('Provide an updated recurrence or session_hook to change this event schedule.');
+    }
+    trigger = trigger?.kind === 'interval' ? { ...trigger, at: input.at } : { kind: 'once', at: input.at };
   }
   if (!trigger) throw Error('Specify at, recurrence or session_hook for a conversation event.');
-  const definition = { name: (input.topic ?? job?.name ?? input.text).slice(0, 120), prompt: input.text, sessionId, trigger,
-    timeZone: input.recurrence?.timeZone ?? job?.timeZone ?? 'UTC', executionMode: job?.executionMode ?? (trigger.kind === 'event' ? 'conversation' : 'isolated') };
+  const definition = { name: (input.topic ?? job?.name ?? text).slice(0, 120), prompt: text, sessionId, trigger,
+    timeZone: input.recurrence?.timeZone ?? input.time_zone ?? job?.timeZone ?? 'UTC',
+    executionMode: input.execution_mode ?? job?.executionMode ?? (trigger.kind === 'event' ? 'conversation' : 'isolated') };
   const saved = await scheduler.manage({ action: creating ? 'create' : 'update', definition, id: job?.id,
-    expectedRevision: creating ? undefined : job?.revision }, sessionId, creating ? { registrationKey: key } : { editKey: 'edit:' + key }) as AutomationJob;
+    expectedRevision: creating ? undefined : input.expected_revision ?? job?.revision }, sessionId, creating ? { registrationKey: key } : { editKey: 'edit:' + key }) as AutomationJob;
   return registrationReceipt(saved);
 }

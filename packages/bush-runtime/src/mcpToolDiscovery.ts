@@ -253,17 +253,33 @@ export function synchronizeMcpCatalog(registry: ToolRegistry, request: ModelRequ
   }) };
 }
 
+const retiredTools = new Set(['remember_file', 'read_file_memos', 'remember_source', 'read_source_memos', 'schedule_task', 'scheduled_results']);
+const recalledDiagnostics = new Set(['mcp_app_status', 'terminal_list']);
+
 /** Freeze only the provider projection. Execution always checks the authoritative live scope. */
 export function modelToolDefinitions(registry: ToolRegistry, request: ModelRequest): ToolDefinition[] {
   if (request.metadata.toolExecutionPolicy === 'none') return [];
   const saved = request.metadata.mcpModelToolSnapshot as { identity?: string; tools?: unknown[] } | undefined;
   if (saved?.identity === key(request) && Array.isArray(saved.tools)) {
     const parsed = toolDefinitionSchema.array().safeParse(saved.tools);
-    // A read must never upgrade or rewrite an established conversation contract.
-    if (parsed.success) return parsed.data;
+    if (parsed.success) {
+      // Project replacements without changing the conversation's saved contract.
+      const canRecall = ['get_tool_schema', 'call_tool'].every(name =>
+        parsed.data.some(tool => tool.name === name) && request.tools.some(tool => tool.name === name));
+      const eventTool = registry.resolve('assistant_event');
+      const event = request.tools.some(tool => tool.name === 'assistant_event') && eventTool?.modelAvailable?.(request) !== false
+        ? eventTool?.definition : undefined;
+      const tools = parsed.data.filter(tool => !retiredTools.has(tool.name) && (!canRecall || !recalledDiagnostics.has(tool.name)) &&
+        (tool.name !== 'assistant_event' || event));
+      if (!event || !parsed.data.some(tool => tool.name === 'schedule_task' || tool.name === 'scheduled_results')) return tools;
+      const replacement = withToolDisplayTitle(event);
+      return tools.some(tool => tool.name === event.name)
+        ? tools.map(tool => tool.name === event.name ? replacement : tool)
+        : [...tools, replacement];
+    }
   }
 
-  const tools = request.tools.filter(tool => registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
+  const tools = request.tools.filter(tool => !retiredTools.has(tool.name) && registry.resolve(tool.name)?.mcpHook?.modelVisible !== false &&
     !registry.resolve(tool.name)?.deferredSchema &&
     (!request.metadata.mcpToolDiscovery || !registry.resolve(tool.name)?.mcpHook)).map(withToolDisplayTitle);
   // Keep discovery entry points when the catalog is empty, so connect/disconnect preserves them.

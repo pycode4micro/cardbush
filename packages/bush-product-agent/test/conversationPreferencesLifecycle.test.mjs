@@ -181,7 +181,13 @@ test('Source toggles append user facts without changing frozen prefixes, tools o
     const latest = model.messages.filter(message => message.name === 'source_preference').at(-1);
     assert.equal(latest.role, 'user'); assert.equal(latest.visibility, 'internal');
     assert.match(latest.content, enabled === false ? /Source is disabled/ : /Source is enabled/);
-    assert.match(latest.content, enabled === false ? /Ordinary citations, file links and media references remain available/ : /useful reasons or evidence beyond its summary.*Skip notes that only repeat it/);
+    if (enabled === false) {
+      assert.match(latest.content, /Skip supplemental Source footnotes/);
+      assert.match(latest.content, /Ordinary citations, file links and media references remain available/);
+    } else {
+      assert.match(latest.content, /Place Markdown footnotes.*short rationale or evidence adds useful detail/);
+      assert.match(latest.content, /Define each footnote in the same reply.*skip footnotes that repeat it/);
+    }
     assert.equal(tracker.observe(model).frozenPrefixBreak, false);
     const wire = toResponsesCreateParams(model, { toolSearchMode: 'native', disableProviderState: true });
     assert.equal(tracker.observeProviderInput(responsesInputFingerprint(wire, wire, model.providerBinding)).frozenPrefixBreak, false);

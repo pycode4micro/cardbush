@@ -3,8 +3,10 @@ import test from 'node:test';
 import { mkdtemp, writeFile, readFile, appendFile, rm, realpath, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { FileToolExecutionPersistence, InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, ToolExecutionCoordinator, registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from '../dist/index.js';
-import { RESOLVE_FILE_MEMO_COMMAND, fileMemoReference, parseFileMemoReference, fileMemoResolutionSchema } from '@cardbush/bush-protocol';
+import { FileToolExecutionPersistence, InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, resolveFileMemo, validateFileMemoLinks } from '../dist/index.js';
+import { RESOLVE_FILE_MEMO_COMMAND, fileMemoReference, parseFileMemoReference, fileMemoResolutionSchema, fileMemoSchema } from '@cardbush/bush-protocol';
+
+import { persistLegacyMemoIndex, seedLegacyFileMemo, seedLegacyLocator } from './helpers/legacyMemos.mjs';
 
 test('memos reuse durable execution facts, update by file identity, and keep immutable references', async t => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-file-memo-'));
@@ -12,29 +14,18 @@ test('memos reuse durable execution facts, update by file identity, and keep imm
   const path = join(root, '商品 参考图.txt'); await writeFile(path, 'source');
   const rows = [], references = [];
   const persistence = { load: session => rows.filter(row => row.sessionId === session), append: row => rows.push(structuredClone(row)),
-    loadFileMemoReferences: () => structuredClone(references), appendFileMemoReference: reference => references.push(structuredClone(reference)) };
+    loadFileMemoReferences: () => structuredClone(references) };
   let store = new ToolExecutionStore({ persistence });
-  const registry = new ToolRegistry(); registerFileMemoTools(registry, store);
-  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: () => { throw Error('Unexpected prompt'); } } });
-  let counter = 0;
-  const run = async (name, args, sessionId = 's') => {
-    const identity = { sessionId, turnId: 't', requestId: 'r', round: ++counter, ordinal: 0 };
-    const call = { protocol: 'bush.tool_call.v1', id: 'call-' + counter, name, argumentsText: JSON.stringify(args) };
-    const outcome = await coordinator.execute(call, identity, undefined, { request: { tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } }, contextMessages: [] }); store.record(call, identity, outcome);
-    return outcome;
-  };
-  const first = await run('remember_file', { path, purpose: '商品参考', points: ['来自用户上传'] });
+  const save = (toolCallId, purpose, points) => seedLegacyFileMemo(store, { sessionId: 's', turnId: 't', toolCallId }, { path, purpose, points });
+  const first = await save('first', '商品参考', ['来自用户上传']);
   assert.equal(first.kind, 'returned');
   assert.equal(first.result.id, 'file_1');
   assert.equal(first.result.reference, 'cardbush-memo:1');
   assert.equal(first.result.markdown, '[商品 参考图.txt](cardbush-memo:1)');
-  const second = await run('remember_file', { path, purpose: '后续使用的商品参考' });
+  const second = await save('second', '后续使用的商品参考');
   assert.equal(second.result.id, first.result.id);
   assert.notEqual(second.result.reference, first.result.reference);
-  const listed = await run('read_file_memos', {});
-  assert.equal(listed.result.total, 1);
-  assert.equal(listed.result.memos[0].note.purpose, '后续使用的商品参考');
-  assert.equal((await run('read_file_memos', { id: first.result.id }, 'foreign')).kind, 'failed');
+  references.push(...store.fileMemoLocators());
   store = new ToolExecutionStore({ persistence });
   assert.equal((await resolveFileMemo(store, first.result.reference)).status, 'available');
   assert.equal((await resolveFileMemo(store, first.result.reference, { sessionId: 's' })).memo.note.purpose, '商品参考');
@@ -59,11 +50,11 @@ test('memos reuse durable execution facts, update by file identity, and keep imm
 });
 
 test('memo fields reject verbose/history-shaped payloads and arbitrary references', () => {
-  const registry = new ToolRegistry(); registerFileMemoTools(registry, new ToolExecutionStore());
-  const decode = registry.resolve('remember_file').decodeInput;
+  const decode = note => fileMemoSchema.parse({ protocol: 'bush.file_memo.v1', id: 'file_1', reference: 'cardbush-memo:1',
+    file: { path: '/a', name: 'a', size: 1, mtimeMs: 1 }, note });
   for (const extra of [{ purpose: 'x'.repeat(121) }, { purpose: 'first\nsecond' }, { points: ['a', 'b', 'c', 'd'] },
     { points: ['x'.repeat(161)] }, { history: 'tool trace' }, { verified: true }]) {
-    assert.throws(() => decode({ path: '/a', purpose: 'reference', ...extra }));
+    assert.throws(() => decode({ purpose: 'reference', ...extra }));
   }
   const reference = fileMemoReference({ sessionId: '会话', turnId: 't/1', toolCallId: 'x#?' });
   assert.deepEqual(parseFileMemoReference(reference), { sessionId: '会话', turnId: 't/1', toolCallId: 'x#?' });
@@ -74,29 +65,30 @@ test('a delivered memo resolves through the public runtime command after host re
   const root = await mkdtemp(join(tmpdir(), 'cardbush-memo-host-'));
   t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep)); await rm(root, { recursive: true }); });
   const path = join(root, 'delivery.txt'); await writeFile(path, 'Actual file');
-  const registry = new ToolRegistry(); let round = 0;
+  const registry = new ToolRegistry(), requests = [];
   const provider = { async *stream(request) {
-    assert.ok(!request.tools.some(tool => tool.name === 'present_artifact'), 'file delivery does not need a separate presentation tool');
+    requests.push(request);
     const event = (sequence, kind, fields = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId,
       createdAt: '2026-09-10T00:00:00Z', sequence, kind, ...fields });
     yield event(0, 'response_started');
-    if (round++ === 0) {
-      yield event(1, 'tool_call_delta', { index: 0, toolCallId: 'memo', nameDelta: 'remember_file',
-        argumentsDelta: JSON.stringify({ path, purpose: '交付文件' }) });
-      yield event(2, 'response_completed', { finishReason: 'tool_calls' });
-    } else {
-      const memo = JSON.parse(request.messages.at(-1).content);
-      yield event(1, 'text_delta', { delta: `[交付文件](${memo.reference})` });
-      yield event(2, 'response_completed', { finishReason: 'stop' });
-    }
+    yield event(1, 'text_delta', { delta: '交付 [报告](<' + path.replaceAll('\\', '/') + '>)。[^why]\n\n[^why]: Evidence.' });
+    yield event(2, 'response_completed', { finishReason: 'stop' });
   } };
   const persistedStore = () => new ToolExecutionStore({ persistence: new FileToolExecutionPersistence({ root: join(root, 'tool-executions') }) });
-  const host = new InMemoryRuntimeHost({ dataRoot: join(root, 'runtime'), toolExecutionStore: persistedStore(), toolRegistry: registry, provider });
-  assert.ok(registry.resolve('remember_file')); assert.ok(registry.resolve('read_file_memos'));
-  const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't',
-    model: 'offline-fixture', messages: [{ role: 'user', content: '记录文件' }], tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } });
+  const store = persistedStore();
+  const { result } = await seedLegacyFileMemo(store, { sessionId: 's', turnId: 't', toolCallId: 'memo' }, { path, purpose: '交付文件' });
+  const host = new InMemoryRuntimeHost({ dataRoot: join(root, 'runtime'), toolExecutionStore: store, toolRegistry: registry, provider });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const removed = ['remember_file', 'read_file_memos', 'remember_source', 'read_source_memos'];
+  const catalog = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
+  assert.ok(removed.every(name => !registry.resolve(name) && !catalog.some(tool => tool.name === name)));
+  const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 'new',
+    model: 'offline-fixture', messages: [{ role: 'user', content: '交付文件' }], tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } });
   assert.equal(terminal.payload.status, 'completed');
-  const reference = fileMemoReference({ sessionId: 's', turnId: 't', toolCallId: 'memo' });
+  assert.equal(requests.length, 1, 'Markdown links and footnotes finish in a single model request');
+  assert.ok(requests[0].tools.every(tool => !removed.includes(tool.name)));
+  const reference = result.reference;
+  persistLegacyMemoIndex(store, join(root, 'tool-executions'));
   const restarted = new InMemoryRuntimeHost({ dataRoot: join(root, 'runtime'), toolExecutionStore: persistedStore(), provider: { async *stream() { throw Error('No model call on reference lookup'); } } });
   const resolution = await restarted.sendCommand({ kind: RESOLVE_FILE_MEMO_COMMAND, payload: { reference } });
   assert.equal(resolution.status, 'available'); assert.equal(resolution.memo.file.path, await realpath(path));
@@ -107,16 +99,13 @@ test('a delivered memo resolves through the public runtime command after host re
 async function memoFixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-short-memo-'));
   t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep)); await rm(root, { recursive: true }); });
-  const store = new ToolExecutionStore(), registry = new ToolRegistry();
-  registerFileMemoTools(registry, store);
-  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: () => { throw Error('Unexpected prompt'); } } });
+  const store = new ToolExecutionStore(), ids = new Map();
   let calls = 0;
-  return { root, store, registry, async remember(name, sessionId = 'session', turnId = 'turn') {
+  return { root, store, async remember(name, sessionId = 'session', turnId = 'turn') {
     const path = join(root, name); await writeFile(path, name);
-    const call = { protocol: 'bush.tool_call.v1', id: `call_${++calls}`, name: 'remember_file', argumentsText: JSON.stringify({ path, purpose: name }) };
-    const identity = { sessionId, turnId, requestId: 'request', round: calls, ordinal: 0 };
-    const result = await coordinator.execute(call, identity, undefined, { request: { tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } }, contextMessages: [] }); assert.equal(result.kind, 'returned'); store.record(call, identity, result);
-    return result.result;
+    const sessionIds = ids.get(sessionId) ?? new Map(); ids.set(sessionId, sessionIds);
+    const id = sessionIds.get(name) ?? 'file_' + (sessionIds.size + 1); sessionIds.set(name, id);
+    return (await seedLegacyFileMemo(store, { sessionId, turnId, toolCallId: 'call_' + ++calls }, { path, purpose: name, id })).result;
   } };
 }
 
@@ -155,10 +144,8 @@ test('legacy transcription errors recover only with matching session, turn, file
     assert.equal((await resolveFileMemo(f.store, bad, wrong)).status, 'unresolved');
   }
   const updated = await f.remember('novel.md', 'legacy', 'next');
-  assert.equal(updated.id, 'file_1'); assert.equal(updated.reference, 'cardbush-memo:3');
-  const read = f.registry.resolve('read_file_memos');
-  const latest = await read.execute({ sessionId: 'legacy', input: { id: oldId, offset: 0 } });
-  assert.equal(latest.memo.reference, updated.reference);
+  assert.equal(updated.id, 'file_1');
+  assert.equal((await resolveFileMemo(f.store, legacy)).memo.id, oldId, 'looking up a legacy link does not rewrite its stored identity');
   append('call_00_mm82jUUllB1ZYq286dx2299');
   assert.equal((await resolveFileMemo(f.store, bad, scope)).reason, 'ambiguous_reference');
 });
@@ -227,28 +214,28 @@ test('final delivery gets one bounded correction without replaying successful fi
   assert.equal(failed.payload.reason, 'reference_invalid'); assert.equal(calls, 2);
 });
 
-test('host-issued numbers persist across sessions and restart, preserving reservations and detecting corruption', async t => {
+test('the read-only legacy index recovers persisted numbers after restart and detects corruption', async t => {
   const f = await memoFixture(t);
   const directory = join(f.root, 'journal');
   let persistence = new FileToolExecutionPersistence({ root: directory });
   let store = new ToolExecutionStore({ persistence });
   const parent = { sessionId: 'parent', turnId: 'turn', toolCallId: 'a' };
   const child = { sessionId: 'child', turnId: 'turn', toolCallId: 'b' };
-  assert.equal(store.reserveFileMemoReference(parent), 1);
-  assert.equal(store.reserveFileMemoReference(child), 2);
-  assert.equal(store.reserveFileMemoReference(parent), 1);
+  seedLegacyLocator(store, parent);
+  seedLegacyLocator(store, child);
+  persistLegacyMemoIndex(store, directory);
   persistence.close();
   const indexPath = join(directory, '.file-memo-references');
   await appendFile(indexPath, '{"partial":');
   persistence = new FileToolExecutionPersistence({ root: directory }); store = new ToolExecutionStore({ persistence });
   assert.deepEqual(store.getFileMemoReference(1), { ...parent, number: 1 });
   assert.deepEqual(store.getFileMemoReference(2), { ...child, number: 2 });
-  assert.equal(store.reserveFileMemoReference({ ...child, toolCallId: 'c' }), 3, 'cancelled/uncommitted references never get reused');
   persistence.close();
   const original = await readFile(indexPath, 'utf8');
+  assert.ok(original.endsWith('{"partial":'), 'lookup leaves the historical index bytes untouched');
   await rm(indexPath);
   persistence = new FileToolExecutionPersistence({ root: directory }); store = new ToolExecutionStore({ persistence });
-  assert.throws(() => store.reserveFileMemoReference({ ...child, toolCallId: 'd' }), /index is missing/, 'lost index must never restart numbering at 1');
+  assert.throws(() => store.getFileMemoReference(1), /index is missing/);
   persistence.close();
   await writeFile(indexPath, original.replace('"number":1', '"number":9'));
   persistence = new FileToolExecutionPersistence({ root: directory }); store = new ToolExecutionStore({ persistence });

@@ -54,6 +54,13 @@ test('only final delivery links are candidates; Windows, Unicode and reference l
   assert.deepEqual(deliveredFilePaths(text), ['D:/workspace/测试 视频.mp4', '/data/result.png', 'D:/workspace/a.wav']);
 });
 
+test('Markdown evidence footnotes do not transfer their cited files', () => {
+  const reply = '交付 [图表](/work/chart.html)。[^cause]\n\n[^cause]: ' +
+    '依据见[本地文件](/work/internal-notes.md)。\n\n    ![原始图片](/work/internal.png)\n\n' +
+    '下载[附表][data]。\n\n[data]: /work/result.csv';
+  assert.deepEqual(deliveredFilePaths(reply), ['/work/chart.html', '/work/result.csv']);
+});
+
 test('media ranges support seek, suffix, HEAD metadata and reject invalid/multiple ranges', () => {
   assert.deepEqual(fileRange('bytes=10-19', 100), { start: 10, end: 19, partial: true });
   assert.deepEqual(fileRange('bytes=-10', 100), { start: 90, end: 99, partial: true });

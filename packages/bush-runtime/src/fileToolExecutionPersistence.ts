@@ -100,13 +100,12 @@ export class FileToolExecutionPersistence implements ToolExecutionPersistence {
   loadFileMemoReferences(): FileMemoLocator[] {
     const path = resolve(this.#root, '.file-memo-references');
     if (!existsSync(path)) {
-      if (existsSync(resolve(this.#root, '.file-memo-references-created'))) throw new Error('The file reference index is missing; existing numbers cannot be reused.');
+      if (existsSync(resolve(this.#root, '.file-memo-references-created'))) throw new Error('The file reference index is missing.');
       return [];
     }
-    let bytes = readFileSync(path);
+    const bytes = readFileSync(path);
     const end = bytes.lastIndexOf(0x0a) + 1;
-    if (end < bytes.length) { truncateSync(path, end); bytes = bytes.subarray(0, end); }
-    return bytes.toString('utf8').split('\n').filter(Boolean).map((line, index) => {
+    return bytes.subarray(0, end).toString('utf8').split('\n').filter(Boolean).map((line, index) => {
       try {
         const row = JSON.parse(line);
         if (row.protocol !== 'bush.file_memo_locator.v1' || row.checksum !== checksum(JSON.stringify(row.reference))) throw new Error('File reference checksum mismatch.');
@@ -115,15 +114,6 @@ export class FileToolExecutionPersistence implements ToolExecutionPersistence {
         throw new ToolExecutionJournalCorruptionError(path, index + 1, error instanceof Error ? error.message : String(error));
       }
     });
-  }
-
-  appendFileMemoReference(reference: FileMemoLocator): void {
-    const descriptor = this.#descriptor(resolve(this.#root, '.file-memo-references'));
-    const row = { protocol: 'bush.file_memo_locator.v1', checksum: checksum(JSON.stringify(reference)), reference };
-    writeSync(descriptor, JSON.stringify(row) + '\n', undefined, 'utf8');
-    fsyncSync(descriptor);
-    const marker = this.#descriptor(resolve(this.#root, '.file-memo-references-created'));
-    fsyncSync(marker);
   }
 
   historySummaries(sessionId: string, signal?: AbortSignal) {

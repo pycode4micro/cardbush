@@ -6,7 +6,7 @@ import { AgentService } from '../dist-electron/agentService.mjs';
 import { AgentFilePreviews } from '../dist-electron/agentFilePreview.mjs';
 import { FileToolExecutionPersistence, InMemoryRuntimeEventLog, ModelImageStore, registerExtendedBuiltins,
   RuntimeToolLoop, ToolRegistry, ToolExecutionStore } from '../packages/bush-runtime/dist/index.js';
-import { registerFileMemoTools } from '../packages/bush-runtime/dist/fileMemo.js';
+import { persistLegacyMemoIndex, seedLegacyFileMemo } from '../packages/bush-runtime/test/helpers/legacyMemos.mjs';
 import { gif, png } from '../packages/bush-runtime/test/helpers/modelImages.mjs';
 
 test('persisted desktop captures preview through Agent service after restart, scoped to their conversation and real directory', async t => {
@@ -101,7 +101,6 @@ test('Agent previews injected Skill images and downloads external delivery memos
   const persistence = new FileToolExecutionPersistence({ root: join(runtimeRoot, 'tool-executions') });
   const store = new ToolExecutionStore({ persistence }), registry = new ToolRegistry();
   registerExtendedBuiltins(registry, { dataRoot: runtimeRoot });
-  registerFileMemoTools(registry, store);
   const loop = new RuntimeToolLoop({ eventLog: new InMemoryRuntimeEventLog(),
     identity: { requestId: 'receipt-request', sessionId: 'receipts', turnId: 'receipt-turn' },
     registry, executionStore: store, modelImages: new ModelImageStore(runtimeRoot) });
@@ -117,12 +116,14 @@ test('Agent previews injected Skill images and downloads external delivery memos
   const image = await run('image', 'inject_image_input', { url: original });
   await run('changed-image', 'inject_image_input', { url: changedImage });
   await run('gif', 'inject_image_input', { url: misnamed });
-  await run('delivery', 'remember_file', { path: movie, purpose: 'completed delivery' });
-  await run('stale', 'remember_file', { path: stale, purpose: 'previous delivery' });
+  const legacy = { sessionId: 'receipts', turnId: 'receipt-turn' };
+  await seedLegacyFileMemo(store, { ...legacy, toolCallId: 'delivery' }, { path: movie, purpose: 'completed delivery' });
+  await seedLegacyFileMemo(store, { ...legacy, toolCallId: 'stale' }, { path: stale, purpose: 'previous delivery', id: 'file_2' });
   // A plugin cannot grant itself access just by claiming a native host snapshot/memo.
   store.record({ protocol: 'bush.tool_call.v1', id: 'forged', name: 'mcp__fixture__output', argumentsText: '{}' },
     { requestId: 'forged', sessionId: 'unrelated', turnId: 'forged', round: 1, ordinal: 0 },
     { kind: 'returned', result: image, workspaceChanges: [] });
+  persistLegacyMemoIndex(store, join(runtimeRoot, 'tool-executions'));
   persistence.close();
   await rm(original); await writeFile(changedImage, gif); await writeFile(stale, 'different version');
   service = await AgentService.open({ dataRoot: root, name: 'Receipt fixture' });

@@ -8,7 +8,7 @@ import { AGENT_REGISTRY_COMMAND, registeredAgentSchema } from '@cardbush/bush-pr
 import { InMemoryRuntimeHost, RegisteredAgentStore, ToolRegistry, ToolExecutionCoordinator } from '../dist/index.js';
 
 const role = { id: 'reviewer', name: 'Reviewer', system_prompt: 'Review verified evidence.', allowed_tools: [] };
-const retiredTools = ['agent_memory_read', 'agent_memory_write'];
+const retiredTools = ['agent_memory_read', 'agent_memory_write', 'remember_file', 'read_file_memos', 'remember_source', 'read_source_memos'];
 async function temporary(t) {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-memory-removal-'));
   t.after(async () => {
@@ -34,14 +34,14 @@ test('registered definitions reject removed memory settings on save and reload',
   assert.deepEqual(await new RegisteredAgentStore(root).get(role.id), saved);
 });
 
-test('host has no private memory routes while shared habits, predictions and reference tools remain usable', async t => {
+test('host has no private memory routes while shared habits, predictions and execution history remain usable', async t => {
   const root = await temporary(t), registry = new ToolRegistry();
   const host = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry,
     provider: { async *stream() { throw Error('No model call expected'); } } });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const catalog = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
   for (const name of retiredTools) assert.equal(catalog.some(tool => tool.name === name), false);
-  for (const name of ['summary_for_user', 'check_habit', 'revise_memory', 'checkpoint_context', 'search_execution_history', 'read_conversation_history', 'remember_file', 'read_file_memos', 'remember_source', 'read_source_memos']) {
+  for (const name of ['summary_for_user', 'check_habit', 'revise_memory', 'checkpoint_context', 'search_execution_history', 'read_conversation_history']) {
     assert.ok(registry.resolve(name), `${name} remains registered`);
   }
   const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 'parent', turnId: 'turn',
