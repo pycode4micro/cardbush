@@ -2,7 +2,13 @@ import { resolve } from 'node:path';
 import { isWithin, normalizeIdentity } from './workspaceAccessPolicy.js';
 
 interface Resource { kind: 'path' | 'host'; value: string }
-interface Lease { owner: string; resources: Resource[] }
+interface Lease { owner: string; sessionId?: string; resources: Resource[]; workspace?: Resource; guarded: boolean }
+interface WorkspaceReservation {
+  paths?: readonly string[];
+  unscopedWorkspace?: string;
+  guardUnscoped?: boolean;
+  sessionId?: string;
+}
 
 export function decodeExclusiveResources(value: unknown): string[] {
   if (value === undefined) return [];
@@ -17,23 +23,30 @@ export function decodeExclusiveResources(value: unknown): string[] {
 export class ExclusiveResources {
   readonly #leases = new Set<Lease>();
 
-  acquire(owner: string, cwd: string, values: readonly string[], code = 'terminal_resource_busy'): () => void {
+  acquire(owner: string, cwd: string, values: readonly string[], code = 'terminal_resource_busy', scope: WorkspaceReservation = {}): () => void {
+    const pathResource = (value: string): Resource => ({ kind: 'path', value: normalizeIdentity(resolve(cwd, value)) });
     const resources = decodeExclusiveResources(values).map(value => {
       if (/^host:/i.test(value)) {
         if (!/^host:[a-z0-9][a-z0-9._:-]{0,127}$/i.test(value)) throw new Error('Invalid host resource label.');
         return { kind: 'host' as const, value: value.toLowerCase() };
       }
-      return { kind: 'path' as const, value: normalizeIdentity(resolve(cwd, value)) };
+      return pathResource(value);
     });
+    resources.push(...(scope.paths ?? []).map(pathResource));
+    const workspace = scope.unscopedWorkspace ? pathResource(scope.unscopedWorkspace) : undefined;
     // Check the entire request before reserving anything, so conflicts cannot leak partial leases.
     for (const lease of this.#leases) {
-      const conflict = resources.find(resource => lease.resources.some(held => overlaps(resource, held)));
+      const otherSessionWorkspace = lease.sessionId !== scope.sessionId ? lease.workspace : undefined;
+      const conflict = resources.find(resource => lease.resources.some(held => overlaps(resource, held)) ||
+        scope.guardUnscoped && otherSessionWorkspace && overlaps(resource, otherSessionWorkspace)) ??
+        (workspace && lease.guarded ? lease.resources.find(resource => overlaps(workspace, resource)) : undefined) ??
+        (workspace && otherSessionWorkspace && overlaps(workspace, otherSessionWorkspace) ? workspace : undefined);
       if (conflict) throw Object.assign(new Error(
         `Resource ${conflict.value} is held by ${lease.owner}. No operation was started. Wait for that operation to finish; do not bypass the lease or restart it.`,
-      ), { code, resource: conflict.value, owner: lease.owner });
+      ), { code, resource: conflict.value, owner: lease.owner, details: { path: conflict.value, owner: lease.owner, sessionId: lease.sessionId } });
     }
-    if (!resources.length) return () => {};
-    const lease = { owner, resources };
+    if (!resources.length && !workspace) return () => {};
+    const lease = { owner, sessionId: scope.sessionId, resources, workspace, guarded: scope.guardUnscoped === true };
     this.#leases.add(lease);
     return () => { this.#leases.delete(lease); };
   }

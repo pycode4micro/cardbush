@@ -10,7 +10,13 @@ export type SshConnectionInput = Omit<SshConnection, 'id' | 'hasPassword' | 'has
 };
 export interface SshTestResult { ok: boolean; error?: string; fingerprint?: string; needsTrust?: boolean; directory?: string }
 export type SshPlatform = 'windows' | 'posix';
-export type SshShell = 'cmd' | 'powershell' | 'posix';
+const windowsSshShells = ['powershell', 'cmd'] as const;
+const posixSshShells = ['posix'] as const;
+export const sshShellOptions = [...windowsSshShells, ...posixSshShells] as const;
+export type SshShell = typeof sshShellOptions[number];
+export function sshShells(platform: SshPlatform): readonly [SshShell, ...SshShell[]] {
+  return platform === 'windows' ? windowsSshShells : posixSshShells;
+}
 
 /** Windows OpenSSH's SFTP namespace is /C:/..., not a native shell cwd. */
 export function windowsSftpPath(value: string): string {

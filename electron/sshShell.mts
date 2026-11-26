@@ -1,4 +1,4 @@
-import { windowsShellPath, type SshPlatform, type SshShell } from '@cardbush/bush-protocol';
+import { sshShells, windowsShellPath, type SshPlatform, type SshShell } from '@cardbush/bush-protocol';
 import { gzipSync } from 'node:zlib';
 import { powerShellCommand } from '@cardbush/platform';
 
@@ -16,10 +16,10 @@ export const powershellCommand = (script: string) => {
 };
 
 export function remoteShell(platform: SshPlatform, requested?: string): SshShell {
-  const shells: SshShell[] = platform === 'windows' ? ['powershell', 'cmd'] : ['posix'];
-  const shell = requested || shells[0]!;
+  const shells = sshShells(platform);
+  const shell = requested || shells[0];
   if (!shells.includes(shell as SshShell)) throw Object.assign(
-    Error(`SSH host is ${platform}; use shell="${shells[0]}"${shells.length > 1 ? ' or shell="cmd"' : ''}. No user command was sent.`),
+    Error(`SSH host is ${platform}; use ${shells.map(name => 'shell="' + name + '"').join(' or ')}. No user command was sent.`),
     { code: 'ssh_shell_mismatch', details: { platform, supportedShells: shells, defaultShell: shells[0] } });
   return shell as SshShell;
 }

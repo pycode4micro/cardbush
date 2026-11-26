@@ -74,6 +74,22 @@ test('real sandbox execution and exact approvals preserve file boundaries and fu
   }
   if (windows) assert.equal((await run('echo automatic-cmd', undefined, 'task_free', 'cmd')).result.exitCode, 0);
 
+  if (windows) {
+    const legacy = await run('$PSVersionTable.PSVersion.ToString(); (Get-Location).ProviderPath; Set-Content -LiteralPath ./legacy.txt -Value "中文" -Encoding UTF8 -ErrorAction Stop; Get-Content ./legacy.txt', undefined, 'task_free', 'powershell5');
+    assert.equal(legacy.kind, 'returned', JSON.stringify(legacy));
+    assert.equal(legacy.result.exitCode, 0, JSON.stringify(legacy));
+    assert.equal(legacy.result.resolvedShell, 'powershell5');
+    assert.equal(legacy.result.sandbox.backend, 'windows-appcontainer');
+    assert.match(legacy.result.stdout, /^5\.1\./);
+    assert.ok(legacy.result.stdout.includes(work));
+    assert.match(legacy.result.stdout, /中文/);
+    const denied = await run(write(join(outside, 'legacy-must-not-exist.txt'), 'blocked'), undefined, 'task_free', 'powershell5');
+    assert.notEqual(denied.result.exitCode, 0);
+    assert.equal(denied.resultError.kind, 'permission');
+    await assert.rejects(readFile(join(outside, 'legacy-must-not-exist.txt')), { code: 'ENOENT' });
+    assert.equal(prompts.length, 0);
+  }
+
   const target = join(outside, 'target.txt');
   const blocked = await run(write(target, 'blocked'));
   assert.notEqual(blocked.result.exitCode, 0);

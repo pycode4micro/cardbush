@@ -1,4 +1,4 @@
-import { createPlatformContext, findExecutable, type PlatformContext } from '@cardbush/platform';
+import { createPlatformContext, findExecutable, isPowerShellExecutable, type PlatformContext } from '@cardbush/platform';
 import { posix, win32 } from 'node:path';
 
 export interface HostCommandLookup {
@@ -28,11 +28,12 @@ export function terminalEnvironmentDiagnostic(value: Record<string, unknown>, lo
   const denied = shell?.permissionDenied === true;
   const failed = value.state === 'failed' || typeof value.exitCode === 'number' && value.exitCode !== 0;
   const executable = typeof value.shellExecutable === 'string' ? value.shellExecutable : '';
-  const shellLaunchFailed = failed && value.commandStarted === false && win32.isAbsolute(executable) && /^pwsh\.exe$/i.test(win32.basename(executable));
+  const executableName = win32.basename(executable);
+  const shellLaunchFailed = failed && value.commandStarted === false && win32.isAbsolute(executable) && isPowerShellExecutable(executableName);
   if (shellLaunchFailed) {
     return {
       execution_boundary: isolated ? 'sandbox' : 'host', availability: 'shell_launch_failed',
-      host_command: { command: 'pwsh', status: 'found', path: executable }, installation: 'executable_found_on_host',
+      host_command: { command: win32.parse(executableName).name, status: 'found', path: executable }, installation: 'executable_found_on_host',
       command_started: false, access_granted: false,
       ...(typeof value.nativeErrorCode === 'number' ? { native_error_code: value.nativeErrorCode } : {}),
     };

@@ -87,6 +87,19 @@ test('a prepared turn keeps coordination when the original request omits optiona
   bus.close();
 });
 
+test('only active workspace writers contribute concurrent workspace roots', () => {
+  const { bus } = fixture();
+  bus.begin(request('assistant', { personalAssistant: true, workspaceDir: '/work/orchestrator' }));
+  bus.begin(request('disabled', { toolExecutionPolicy: 'none', workspaceDir: '/work/disabled' }));
+  bus.begin(request('reader', { registeredAgentReadOnly: true, workspaceDir: '/work/reader' }));
+  bus.begin(request('child', { parentSessionId: 'assistant', personalAssistant: true, projectDir: undefined, sessionWorkspaceDir: '/work/child' }));
+  bus.begin(request('other', { workspaceDir: '/work/other' }));
+  assert.deepEqual(bus.agents.activeWritableWorkspaces('other'), ['/work/child']);
+  bus.end('child', 't-child', false);
+  assert.deepEqual(bus.agents.activeWritableWorkspaces('other'), []);
+  bus.close();
+});
+
 test('room notices coalesce, wake active waits, and remain internal user data', () => {
   const f = fixture(); f.bus.begin(request());
   f.bus.notify('a', { key: 'plugin:room', content: 'first', wake: true });

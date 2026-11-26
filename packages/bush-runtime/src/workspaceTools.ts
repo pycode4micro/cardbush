@@ -1,8 +1,9 @@
 import { createDisplayDiff } from './workspaceDiff.js';
-import { defaultCommandShell } from '@cardbush/platform';
+import { commandShells, defaultCommandShell } from '@cardbush/platform';
+import { sshShellOptions } from '@cardbush/bush-protocol';
 import { withToolFailureFacts } from './toolFailureFacts.js';
 import { applyFilePatch, parseWorkspacePatch, type FilePatch } from './workspacePatch.js';
-import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, normalizeIdentity, usesAssistantWorkspaceApproval } from './workspaceAccessPolicy.js';
+import { authorizePath, resolveToolPath, workspaceRoot, protectedProjectRoots, isWithin, normalizeIdentity, usesAssistantWorkspaceApproval } from './workspaceAccessPolicy.js';
 import { TerminalSessionManager, type TerminalShell } from './terminalSessionManager.js';
 // Preserve existing Runtime consumers while the implementations remain independent.
 export { authorizePath } from './workspaceAccessPolicy.js';
@@ -10,10 +11,10 @@ export { TerminalSessionManager } from './terminalSessionManager.js';
 import { createHash, randomUUID } from "node:crypto";
 import { bindWorkspaceFileAuthorization, createWorkspaceParent, persistAfterWorkspaceFileAccess, writeWorkspaceFile as writeFile, unlinkWorkspaceFile as unlink } from './workspaceFileAccess.js';
 import { readFileSync } from "node:fs";
-import { mkdir, rename, rm, writeFile as writeState } from 'node:fs/promises';
+import { mkdir, realpath, rename, rm, writeFile as writeState } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { projectFileSourceResult } from './fileSourceReceipt.js';
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   localCommandExecutionChannel,
@@ -55,6 +56,7 @@ interface TerminalInput {
   shell: TerminalShell;
   additionalPermissions?: AdditionalCommandPermissions;
   justification?: string;
+  writePaths?: Array<{ path: string; expectedSha256: string }>;
 }
 
 interface TerminalSessionInput { sessionId: string }
@@ -113,8 +115,9 @@ export class WorkspaceObservationStore {
     this.#observations.get(sessionId)?.delete(normalizeIdentity(path));
   }
 
-  acquireMutation(path: string): () => void {
-    return runtimeExclusiveResources.acquire('workspace edit', dirname(path), [path], 'workspace_resource_busy');
+  acquireMutation(path: string, sessionId?: string): () => void {
+    return runtimeExclusiveResources.acquire(sessionId ?? 'workspace edit', dirname(path), [path], 'workspace_resource_busy',
+      { guardUnscoped: true, sessionId });
   }
 
   #load(): void {
@@ -184,13 +187,14 @@ export function registerWorkspaceTools(
   options: { createChangeId?: () => string; terminals?: TerminalSessionManager;
     onTerminalStarted?: (context: ToolHandlerContext<any>, result: Record<string, unknown>) => string | undefined;
     ownsFileVersion?: (sessionId: string, path: string) => Promise<boolean>; remote?: RemoteWorkspaceBridge;
-    commandSandbox?: CommandSandboxConfiguration; loadCommandSandbox?: () => Promise<CommandSandboxConfiguration> } = {},
+    commandSandbox?: CommandSandboxConfiguration; loadCommandSandbox?: () => Promise<CommandSandboxConfiguration>;
+    activeWorkspaces?: (excludingSessionId: string) => string[] } = {},
 ): WorkspaceObservationStore {
   const createChangeId = options.createChangeId ?? (() => `change_${randomUUID()}`);
   const terminals = options.terminals ?? new TerminalSessionManager();
   const searches = new Map<string, Promise<Awaited<ReturnType<typeof searchWorkspaceContent>>>>();
   const commandSandbox = snapshotCommandSandbox(options.commandSandbox);
-  const admittedCommands = new WeakMap<TerminalInput, Awaited<ReturnType<typeof commandSandboxPlan>>>();
+  const admittedCommands = new WeakMap<TerminalInput, { plan: Awaited<ReturnType<typeof commandSandboxPlan>>; scoped: boolean }>();
   // One immutable policy per decoded invocation, including time spent awaiting approval.
   const sandboxInvocations = new WeakMap<TerminalInput, Promise<CommandSandboxConfiguration>>();
   const sandboxFor = (input: TerminalInput) => {
@@ -200,6 +204,50 @@ export function registerWorkspaceTools(
       sandboxInvocations.set(input, policy);
     }
     return policy;
+  };
+  const workspaceState = async (context: ToolAdmissionContext<unknown>) => {
+    const root = workspaceRoot(context);
+    if (!root || root.startsWith('ssh:')) return;
+    const canonical = await realpath(root).catch(() => undefined);
+    if (!canonical) return;
+    const activePeers = () => options.activeWorkspaces?.(context.sessionId) ?? [];
+    const peers = new Map(await Promise.all(activePeers().map(async path => [path, await realpath(path).catch(() => undefined)] as const)));
+    // A newly admitted peer may have arrived while physical paths were being resolved.
+    const shared = activePeers().some(path => {
+      if (!peers.has(path)) return true;
+      const peer = peers.get(path);
+      return !!peer && (isWithin(peer, canonical) || isWithin(canonical, peer));
+    });
+    return { root: canonical, shared };
+  };
+  const acquireWrites = (context: ToolAdmissionContext<unknown>, paths: string[]) => {
+    return runtimeExclusiveResources.acquire(context.sessionId, dirname(paths[0]!), [], 'workspace_resource_busy',
+      { paths, guardUnscoped: true, sessionId: context.sessionId });
+  };
+  const terminalPlan = async (context: ToolAdmissionContext<TerminalInput>, cwd: string, retainScope = false) => {
+    const configuration = await sandboxFor(context.input), workspace = await workspaceState(context);
+    if (!retainScope && !workspace?.shared && context.input.writePaths === undefined) {
+      return { plan: await commandSandboxPlan(configuration, context, cwd), workspace, files: undefined };
+    }
+    if (!workspace || !isWithin(workspace.root, cwd)) {
+      throw withToolFailureFacts(codedError('terminal_workspace_write_scope_required',
+        'Scoped terminal execution requires a local workspace and cwd inside it. No command was started.'), { dispatch: 'not_started', effects: 'none', result: 'known' });
+    }
+    if (process.platform !== 'win32' && process.platform !== 'linux') {
+      throw withToolFailureFacts(codedError('terminal_workspace_isolation_unavailable',
+        'This host cannot isolate terminal writes in a shared workspace. Use the built-in file tools or a separate working copy. No command was started.'), { dispatch: 'not_started', effects: 'none', result: 'known' });
+    }
+    const files = await Promise.all((context.input.writePaths ?? []).map(async file => {
+      const path = await resolveToolPath(context, resolve(cwd, file.path), true);
+      if (!isWithin(workspace.root, path) || normalizeIdentity(workspace.root) === normalizeIdentity(path)) {
+        throw withToolFailureFacts(codedError('terminal_workspace_write_scope_required',
+          'Every write_paths entry must be a file inside the selected local workspace. No command was started.'), { dispatch: 'not_started', effects: 'none', result: 'known' });
+      }
+      return { ...file, path };
+    }));
+    if (new Set(files.map(file => normalizeIdentity(file.path))).size !== files.length) throw Error('Each terminal write path must be unique.');
+    const plan = await commandSandboxPlan(configuration, context, cwd, { root: workspace.root, files: files.map(file => file.path) });
+    return { plan, workspace, files };
   };
   function registerIfMissing<T>(targetRegistry: ToolRegistry, registration: ToolRegistration<T>) {
     if (targetRegistry.resolve(registration.definition.name)) return;
@@ -258,12 +306,13 @@ export function registerWorkspaceTools(
     resources: async context => Promise.all(context.input.files.flatMap(file => [file.path, ...(file.moveTo ? [file.moveTo] : [])]).map(async path =>
       ({ key: `file:${normalizeIdentity(await resolveToolPath(context, path, true))}`, mode: 'write' as const }))),
     execute: async context => {
-      const releases: Array<() => void> = [], changes: Array<{ path: string; before?: Buffer; after?: Buffer; versioned: boolean }> = [], applied: typeof changes = [];
+      const changes: Array<{ path: string; before?: Buffer; after?: Buffer; versioned: boolean }> = [], applied: typeof changes = [];
+      let release: (() => void) | undefined;
       const identities = new Set<string>();
       const stage = async (path: string, before: Buffer | undefined, after: Buffer | undefined) => {
         const identity = normalizeIdentity(path);
         if (identities.has(identity)) throw new Error('Each path may appear only once in a patch, including move targets.');
-        identities.add(identity); releases.push(observations.acquireMutation(path));
+        identities.add(identity);
         assertObservedIfExisting(context, observations, path, before);
         changes.push({ path, before, after, versioned: await options.ownsFileVersion?.(context.sessionId, path) ?? false });
         if (changes.reduce((size, change) => size + (change.before?.length ?? 0) + (change.after?.length ?? 0), 0) > 32 * 1024 * 1024) throw new Error('Patch staging exceeds 32 MiB. Split this into smaller related batches.');
@@ -281,17 +330,20 @@ export function registerWorkspaceTools(
         return changeResult(context, change.path, change.before, change.after, !change.after ? 'deleted' : change.before ? 'modified' : 'added', 'utf8', createChangeId(), change.versioned);
       };
       try {
+        const entries = await Promise.all(context.input.files.map(async file => ({ file,
+          path: await resolveToolPath(context, file.path, true),
+          target: file.moveTo ? await resolveToolPath(context, file.moveTo, true) : undefined })));
+        release = acquireWrites(context, entries.flatMap(({ path, target }) => target ? [path, target] : [path]));
         // Validate all content, paths and revisions before the first filesystem mutation.
-        for (const file of context.input.files) {
+        for (const { file, path, target } of entries) {
           context.signal?.throwIfAborted();
-          const path = await resolveToolPath(context, file.path, true), before = await optionalBytes(path);
+          const before = await optionalBytes(path);
           if (file.kind === 'add' ? before !== undefined : before === undefined) throw new Error(`Patch ${file.kind} target ${file.path} has an unexpected existence state.`);
           if (before?.includes(0)) throw new Error('apply_patch requires UTF-8 text without NUL bytes. Use an encoding-aware file tool for this file.');
           const content = before ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(before) : '';
           const after = file.kind === 'delete' ? undefined : Buffer.from(applyFilePatch(file, content), 'utf8');
           if (after) assertInProcessFileSize(after.length);
-          if (file.moveTo) {
-            const target = await resolveToolPath(context, file.moveTo, true);
+          if (target) {
             if (await optionalBytes(target)) throw new Error('Move target already exists.');
             await stage(path, before, undefined); await stage(target, undefined, after);
           } else await stage(path, before, after);
@@ -305,6 +357,8 @@ export function registerWorkspaceTools(
         }
         return { applied: true, files: await Promise.all(changes.map(change => receipt(change, true))) };
       } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'workspace_resource_busy')
+          throw withToolFailureFacts(error, { dispatch: 'not_started', effects: 'none', result: 'known' });
         const remaining: string[] = [];
         for (const change of applied.reverse()) {
           try {
@@ -322,7 +376,7 @@ export function registerWorkspaceTools(
         // Only preflight proves no mutation was attempted. A rollback may leave
         // directories or other effects, so retain conservative facts after writes.
         throw applied.length ? failure : withToolFailureFacts(failure, { effects: 'none', result: 'known' });
-      } finally { releases.reverse().forEach(release => release()); }
+      } finally { release?.(); }
     },
   }, commandSandbox.linuxExecutable));
 
@@ -421,7 +475,7 @@ export function registerWorkspaceTools(
     authorize: authorizePath("write"),
     execute: async (context: ToolHandlerContext<WriteFileInput>) => {
       const path = await resolveToolPath(context, context.input.path, true);
-      const release = observations.acquireMutation(path);
+      const release = acquireWrites(context, [path]);
       try {
         assertInProcessFileSize(Buffer.byteLength(context.input.content, context.input.encoding));
         const before = await optionalBytes(path);
@@ -468,7 +522,7 @@ export function registerWorkspaceTools(
     authorize: authorizePath("write"),
     execute: async (context: ToolHandlerContext<EditFileInput>) => {
       const path = await resolveToolPath(context, context.input.path);
-      const release = observations.acquireMutation(path);
+      const release = acquireWrites(context, [path]);
       try {
         const before = await readFileBounded(path, context.signal);
         assertObservedIfExisting(context, observations, path, before);
@@ -528,10 +582,12 @@ export function registerWorkspaceTools(
     },
   });
 
+  const localShells = commandShells(process.platform);
+  const terminalShells = options.remote ? [...new Set([...localShells, ...sshShellOptions])] : localShells;
   registerIfMissing(registry, {
     definition: {
       name: "terminal_exec",
-      description: terminalToolDescription() + ' On Windows the native default is PowerShell 7 (pwsh) when available and cmd otherwise. An explicit PowerShell command requires pwsh; command syntax is never translated.' + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. All commands use the conversation\'s selected host.' : ''),
+      description: terminalToolDescription() + (options.remote ? ' SSH detects the remote OS: omit shell for its default, or use powershell/cmd on Windows and posix on Linux. Windows remote paths accept C:\\Users\\name or /C:/Users/name. All commands use the conversation\'s selected host.' : ''),
       inputSchema: objectSchema({
         command: { type: "string", minLength: 1 },
         cwd: {
@@ -543,6 +599,10 @@ export function registerWorkspaceTools(
           type: 'array', maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 4096 },
           description: 'Cooperative exclusive resources on this Runtime host. For parallel builds/tests, declare the same absolute project/output path (directories include descendants); for GPU or browser profiles use the same host:gpu or host:browser-profile label. Relative paths resolve against cwd. Leases last until the process tree exits, including after this call returns. A conflict returns terminal_resource_busy without starting the command; coordinate with the owning task before retrying. Does not grant permissions or lock external processes. Direct SSH is unsupported; use a CardBush Agent there.',
         },
+        write_paths: {
+          type: 'array', maxItems: 16, description: 'Exact existing files this command may modify in a local workspace. Read each file first and supply its SHA-256. In a shared workspace, omitting this field makes the project read-only to this terminal. Use an independent working copy for build, format or other commands with unknown output paths.',
+          items: objectSchema({ path: { type: 'string', minLength: 1 }, expected_sha256: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' } }, ['path', 'expected_sha256']),
+        },
         yield_time_ms: {
           type: "integer",
           minimum: 1,
@@ -551,9 +611,8 @@ export function registerWorkspaceTools(
         },
         shell: {
           type: "string",
-          enum: options.remote ? ['cmd', 'powershell', 'posix'] : availableTerminalShells(),
-          ...(options.remote ? {} : { default: defaultCommandShell() }),
-          description: "Explicit command interpreter. powershell means PowerShell 7 (pwsh), not Windows PowerShell 5. When omitted, uses the selected environment's native default. Runtime never rewrites commands between shell syntaxes.",
+          enum: localShells,
+          description: "Choose the interpreter matching the command and environment. powershell is PowerShell 7 (pwsh), powershell5 is Windows PowerShell 5.1 on the local host, cmd is Command Prompt, and posix uses /bin/sh. When omitted, uses the selected environment's default.",
         },
         notify_on_exit: { type: 'boolean', default: true, description: 'After yielding a running command, Runtime delivers one completion notification during this turn and waits before ending it. Do other independent work; do not repeatedly poll. Set false for persistent servers or interactive processes that should outlive the task. Notifications stop when the turn is stopped; the command is not restarted.' },
         additional_permissions: {
@@ -572,7 +631,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.execute", "process_execution", true),
     executionChannel: localCommandExecutionChannel,
-    decodeInput: input => decodeTerminal(input, Boolean(options.remote)),
+    decodeInput: input => decodeTerminal(input, terminalShells),
     renderModelResult: renderTerminalResult,
     projectModelResult: projectTerminalResult,
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
@@ -599,15 +658,18 @@ export function registerWorkspaceTools(
           },
         };
       }
-      const plan = await commandSandboxPlan(await sandboxFor(context.input), context, cwd);
-      admittedCommands.set(context.input, plan);
+      const { plan, files } = await terminalPlan(context, cwd);
+      admittedCommands.set(context.input, { plan, scoped: files !== undefined });
       return plan.admission;
     },
     execute: async (context: ToolHandlerContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
-      const plan = await commandSandboxPlan(await sandboxFor(context.input), context, cwd);
       const admitted = admittedCommands.get(context.input);
-      if (plan.policy && (!admitted?.policy || JSON.stringify(admitted.policy) !== JSON.stringify(plan.policy))) {
+      const { plan, workspace, files } = await terminalPlan(context, cwd, admitted?.scoped);
+      if (admitted?.scoped === false && files || !files && (await workspaceState(context))?.shared) throw withToolFailureFacts(
+        codedError('terminal_workspace_scope_changed', 'The workspace became shared during admission. Retry as a read-only command or declare write_paths.'),
+        { dispatch: 'not_started', effects: 'none', result: 'known' });
+      if (JSON.stringify(admitted?.plan.policy) !== JSON.stringify(plan.policy)) {
         throw Object.assign(Error('An authorized command directory or file changed before execution. No command was started.'), { code: 'sandbox_approval_changed' });
       }
       registry.assertLocalCommandAllowed(context);
@@ -621,6 +683,17 @@ export function registerWorkspaceTools(
         shell: context.input.shell,
         sandbox: authorizedCommandSandbox(plan, context.capabilityIds),
         exclusiveResources: context.input.exclusiveResources,
+        ...(!files && workspace ? { unscopedWorkspace: workspace.root } : {}),
+        ...(files ? { workspaceWrites: { paths: files.map(file => file.path), validate: async () => {
+          for (const file of files) {
+            const current = await optionalBytes(file.path);
+            assertObservedIfExisting(context, observations, file.path, current);
+            if (!current || digest(current) !== file.expectedSha256) throw workspaceWriteFailure(
+              Object.assign(Error('A terminal write path changed before launch. Read its current revision.'), {
+                code: 'workspace_revision_conflict', details: { path: file.path, expectedSha256: file.expectedSha256, currentSha256: current ? digest(current) : null },
+              }), 'validation_rejected', file.path);
+          }
+        } } } : {}),
       });
     },
   });
@@ -898,7 +971,7 @@ function decodeSearch(input: unknown): SearchInput {
   };
 }
 
-function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput {
+function decodeTerminal(input: unknown, shells: readonly TerminalShell[]): TerminalInput {
   const object = objectInput(input);
   const yieldTime = object.yield_time_ms;
   if (!Number.isInteger(yieldTime) || Number(yieldTime) < 1) {
@@ -908,11 +981,13 @@ function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput 
     throw new Error(`yield_time_ms must not exceed ${MAX_TERMINAL_YIELD_MS}.`);
   }
   const shell = object.shell === undefined ? defaultCommandShell() : String(object.shell);
-  if (!(remoteAvailable ? ['cmd', 'powershell', 'posix'] : availableTerminalShells()).includes(shell as TerminalShell)) {
+  if (!shells.includes(shell as TerminalShell)) {
     throw new Error(
-      `shell must be one of: ${availableTerminalShells().join(", ")}.`,
+      `shell must be one of: ${shells.join(", ")}.`,
     );
   }
+  const paths = object.write_paths;
+  if (paths !== undefined && (!Array.isArray(paths) || paths.length > 16)) throw Error('write_paths must be an array of at most 16 files.');
   return {
     command: requiredString(object.command, "command", false),
     exclusiveResources: decodeExclusiveResources(object.exclusive_resources),
@@ -920,6 +995,12 @@ function decodeTerminal(input: unknown, remoteAvailable = false): TerminalInput 
     cwd: typeof object.cwd === "string" ? object.cwd.trim() : "",
     yieldTimeMs: Number(yieldTime),
     shell: shell as TerminalShell,
+    ...(paths === undefined ? {} : { writePaths: (paths as unknown[]).map(item => {
+      const file = objectInput(item), path = requiredString(file.path, 'write_paths.path');
+      if (typeof file.expected_sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(file.expected_sha256) ||
+          Object.keys(file).some(key => !['path', 'expected_sha256'].includes(key))) throw Error('Each write_paths entry requires path and expected_sha256 from read_file.');
+      return { path, expectedSha256: file.expected_sha256.toLowerCase() };
+    }) }),
     additionalPermissions: decodeAdditionalCommandPermissions(object.additional_permissions),
     justification: typeof object.justification === 'string' ? object.justification.trim().slice(0, 2000) : undefined,
   };
@@ -1018,20 +1099,13 @@ function occurrences(value: string, search: string): number {
 }
 
 
-function availableTerminalShells(): TerminalShell[] {
-  return process.platform === "win32"
-    ? ["powershell", "cmd"]
-    : ["posix"];
-}
-
 function terminalToolDescription(): string {
-  const shells = availableTerminalShells().join(", ");
   return [
     "Run one command in cwd.",
     "Sandbox PATH, HOME and file visibility can differ from the host. Command-not-found, false Test-Path or a venv 'No Python' error does not prove an uninstalled or broken host toolchain. Inspect environmentDiagnostic and sandbox scope; request narrow additional_permissions for required interpreter/tool directories. A host lookup is metadata only and grants no execution access. Do not switch launchers or install replacements to evade isolation.",
     `Required yield_time_ms <= ${MAX_TERMINAL_YIELD_MS} bounds waiting, not execution; use 1000 for long tasks and continue independent work. completion_notification=true delivers completion automatically. Use await with completion_task_id when blocked and available; terminal_poll reads new output by terminalSessionId. Never restart a running command. Prefer search_file_content for content search.`,
     "Sessions survive turns until terminal_stop, exit or a resource limit. Windows task trees share memory/CPU budgets; detached children end with the session. Reduce workload after resource-limit failures; do not bypass limits or repeat unchanged commands.",
     "Never launch user browsers through the terminal: process cleanup can close them. Use open_external_url to keep a page open, Browser Use for control, or return a link if unavailable.",
-    `Use ${shells} syntax matching shell (local default ${defaultCommandShell()}); Runtime never rewrites commands.`,
+    "Use the latest runtime_environment terminal.availableShells to choose the matching interpreter. recommendedShell is a preference; choose explicitly when syntax or a dependency requires it. Discovery describes host executables; the command still needs its own authorization and sandbox access. Runtime never rewrites commands.",
   ].join(" ");
 }

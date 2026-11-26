@@ -62,7 +62,9 @@ export interface RuntimeToolLoopOptions {
 
 export interface RuntimeToolRoundResult {
   messages: ModelMessage[];
-  commitDeliveries?: () => void;
+  requiresDeliveryCheckpoint?: boolean;
+  commitDeliveries?: () => Promise<void>;
+  releaseDeliveries?: () => void;
   taskResultReferences?: TaskResultReference[][];
   hookStopTurn?: string;
   childApprovals?: string[];
@@ -452,15 +454,18 @@ export class RuntimeToolLoop {
     const approvals = outcomes.map((outcome, index) => executedCalls[index]?.name === 'subagent' &&
       outcome.kind === 'returned' && !outcome.resultError && !outcome.rejectToolResult && outcome.hookFeedback === undefined
       ? silentChildApproval(outcome.result) : undefined);
+    const delivered = outcomes.map(outcome => outcome.kind === 'returned' && !outcome.resultError &&
+      !outcome.rejectToolResult && outcome.hookFeedback === undefined ? resultDelivery(outcome.result) : undefined);
     return {
       messages: [...toolMessages, ...hookMessages],
       ...(approvals.length && !hookMessages.length && approvals.every((id): id is string => id !== undefined) ? { childApprovals: approvals } : {}),
-      taskResultReferences: outcomes.map((outcome, index) => outcome.kind === 'returned'
-        ? resultDelivery(outcome.result)?.references(String(toolMessages[index]?.content ?? '')) ?? [] : []),
-      commitDeliveries: () => {
-        try { outcomes.forEach((outcome, index) => {
-          if (outcome.kind === 'returned') resultDelivery(outcome.result)?.commit(String(toolMessages[index]?.content ?? ''));
-        }); } finally { for (const delivery of pendingDeliveries) delivery.release(); }
+      taskResultReferences: delivered.map((delivery, index) => delivery?.references(String(toolMessages[index]?.content ?? '')) ?? []),
+      requiresDeliveryCheckpoint: delivered.some(delivery => delivery?.requiresCheckpoint === true),
+      releaseDeliveries: () => { for (const delivery of pendingDeliveries) delivery.release(); },
+      commitDeliveries: async () => {
+        try {
+          await Promise.all(delivered.map((delivery, index) => delivery?.commit(String(toolMessages[index]?.content ?? ''))));
+        } finally { for (const delivery of pendingDeliveries) delivery.release(); }
       },
       hookStopTurn: outcomes.find(outcome => outcome.hookStopTurn)?.hookStopTurn,
     };

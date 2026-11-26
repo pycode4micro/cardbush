@@ -43,7 +43,7 @@ export function projectTerminalResult(result: unknown, maxChars: number): string
   const full = renderTerminalResult(result);
   if (full === undefined || full.length <= maxChars) return full;
   const value = result as Record<string, unknown>;
-  const essentials: Record<string, unknown> = Object.fromEntries(['terminalSessionId', 'state', 'exitCode', 'signal', 'errorCode', 'nativeErrorCode', 'commandStarted', 'supervisorExitCode', 'cwd'].flatMap(key => {
+  const essentials: Record<string, unknown> = Object.fromEntries(['terminalSessionId', 'state', 'exitCode', 'signal', 'errorCode', 'nativeErrorCode', 'commandStarted', 'supervisorExitCode', 'cwd', 'resolvedShell'].flatMap(key => {
     const item = value[key];
     return item === null || typeof item === 'number' || typeof item === 'string' || typeof item === 'boolean'
       ? [[key, typeof item === 'string' ? item.slice(0, 160) : item]] : [];

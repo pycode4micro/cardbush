@@ -157,6 +157,12 @@ test('Windows SSH routes native paths, binds permissions and leaves tool schemas
   assert.equal(setup.permissions.at(-1).targets[0].value, workspace);
   const dispatched = () => requests.filter(item => item.action === 'execute').length;
   const before = dispatched();
+  if (process.platform === 'win32') {
+    const observed = requests.length;
+    const legacy = await setup.execute('terminal_exec', { ...base, shell: 'powershell5' });
+    assert.equal(legacy.error.code, 'ssh_shell_mismatch');
+    assert.equal(requests.length, observed, 'local-only choices never open a remote channel');
+  }
   const blocked = await setup.execute('terminal_exec', { ...base, command: 'Remove-Item C:\\Users\\111 -Recurse' });
   assert.equal(blocked.error.code, 'protected_path_delete_denied');
   assert.notEqual((await setup.execute('terminal_exec', { ...base, shell: 'posix' })).kind, 'returned');
@@ -259,7 +265,7 @@ test('local to SSH to local changes actual provider schemas, blocks stale tools 
   const turn=turnId=>host.runSessionTurn({protocol:'bush.session_turn_request.v1',requestId:'r-'+turnId,
     sessionId:'switching',turnId,model:'fixture',tools,
     prefixMessages:[{role:'system',content:'Fixture system policy.'}],
-    metadata:{workspaceDir:work,systemPolicy:{id:'fixture',version:'1'},mcpCatalogUpdates:'additions'},
+    metadata:{workspaceDir:work,systemPolicy:{id:'fixture',version:'1'},mcpCatalogUpdates:'additions',environmentContext:true},
     inputMessages:[{messageId:'u-'+turnId,message:{role:'user',content:'Continue.'}}]});
   const switchTo=async projectDir=>command('switch_workspace',{sessionId:'switching',
     expectedRevision:(await command('get_session',{sessionId:'switching'})).revision,projectDir,projectId:projectDir});
@@ -271,8 +277,12 @@ test('local to SSH to local changes actual provider schemas, blocks stale tools 
   assert.equal(pluginLoads,loadsBefore,'SSH must not load or execute local plugin hooks/commands');
   const sshRequests=seen.filter(request=>request.turnId==='ssh');
   assert.equal(sshRequests.length,2);
-  for(const request of sshRequests)assert.deepEqual(request.tools.map(tool=>tool.name).sort(),
-    ['terminal_exec','terminal_list','terminal_poll','terminal_stop','terminal_write']);
+  for(const request of sshRequests){
+    assert.deepEqual(request.tools.map(tool=>tool.name).sort(), ['terminal_exec','terminal_list','terminal_poll','terminal_stop','terminal_write']);
+    assert.deepEqual(request.tools.find(tool=>tool.name==='terminal_exec').inputSchema.properties.shell.enum, ['powershell','cmd','posix']);
+    const snapshot=request.messages.findLast(message=>message.name==='runtime_environment' && Object.hasOwn(JSON.parse(message.content).sections,'terminal'));
+    assert.equal(JSON.parse(snapshot.content).sections.terminal,null);
+  }
   assert.match(JSON.stringify(sshRequests[1].messages),/tool_not_exposed/);
   await assert.rejects(readFile(join(work,'blocked.txt')), {code:'ENOENT'});
   assert.ok(!remoteCalls.some(call=>call.action==='execute'));

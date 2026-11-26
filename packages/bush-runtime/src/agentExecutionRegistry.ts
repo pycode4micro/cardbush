@@ -10,6 +10,7 @@ const active = (fact: RuntimeAgentFact) => ['queued', 'running', 'waiting'].incl
 /** Live host facts, shared by every execution adapter. No prompts or tool results. */
 export class AgentExecutionRegistry {
   private facts = new Map<string, RuntimeAgentFact>();
+  private readonly withoutWorkspaceWrites = new WeakSet<RuntimeAgentFact>();
   private closed = false;
   constructor(private now: () => string = () => new Date().toISOString(), private retained = 256) {}
   private key(session: string, turn: string) { return JSON.stringify([session, turn]); }
@@ -22,7 +23,7 @@ export class AgentExecutionRegistry {
     const fact: RuntimeAgentFact = {
       agentId: input.sessionId, executionId: input.turnId, role,
       ...(parentAgentId ? { parentAgentId } : {}),
-      projectDir: text(metadata.projectDir), workspaceDir: text(metadata.workspaceDir) ?? text(metadata.projectDir),
+      projectDir: text(metadata.projectDir), workspaceDir: text(metadata.workspaceDir) ?? text(metadata.projectDir) ?? text(metadata.sessionWorkspaceDir),
       status: previous && active(previous) && status === 'queued' ? previous.status : status,
       readOnly: metadata.shadowReadOnly === true || metadata.shadowMode === 'readonly' || metadata.registeredAgentReadOnly === true,
       canDelegate: role === 'root' && metadata.runtimeTask !== 'internal',
@@ -32,6 +33,9 @@ export class AgentExecutionRegistry {
         !metadata.shadowMode && metadata.runtimeTask !== 'internal' && !metadata.personalAssistant,
       startedAt: previous?.startedAt ?? now, updatedAt: now,
     };
+    // The Assistant's orchestration turn delegates workspace operations; its
+    // children have their own executions and count as potential writers.
+    if ((role === 'root' && metadata.personalAssistant === true) || metadata.toolExecutionPolicy === 'none') this.withoutWorkspaceWrites.add(fact);
     if (!this.closed) this.facts.set(this.key(input.sessionId, input.turnId), fact);
     this.prune();
     return structuredClone(fact);
@@ -58,6 +62,10 @@ export class AgentExecutionRegistry {
     } else if (['turn_started', 'model_request_started', 'tool_running', 'permission_answered', 'solution_selection_answered'].includes(event.kind)) {
       this.update(event.sessionId, event.turnId, 'running');
     }
+  }
+  activeWritableWorkspaces(excludingSessionId: string): string[] {
+    return [...new Set([...this.facts.values()].flatMap(fact => fact.agentId !== excludingSessionId && active(fact) &&
+      !fact.readOnly && !this.withoutWorkspaceWrites.has(fact) && fact.workspaceDir ? [fact.workspaceDir] : []))];
   }
   list(): RuntimeAgentFact[] {
     const latest = new Map<string, RuntimeAgentFact>();

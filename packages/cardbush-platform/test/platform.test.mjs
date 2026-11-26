@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
-import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, defaultCommandShell, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes, localPath, decodeCommandOutput } from '../dist/index.js';
+import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, discoverCommandShells, defaultCommandShell, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes, localPath, decodeCommandOutput } from '../dist/index.js';
 
 test('Windows output decoding preserves Unicode cmd built-ins and native UTF-8/legacy output', () => {
   for (const text of ['中文目录.txt\r\n', '中文\r\n', 'plain\r\n']) {
@@ -73,14 +73,28 @@ test('Windows automatic terminal prefers pwsh and uses native cmd syntax on a fi
   assert.equal(terminalInvocation('cmd', undefined, undefined, both).command, cmd);
 });
 
-test('Windows requires pwsh and never substitutes Windows PowerShell 5', () => {
+test('Windows reports native command shells and requires the selected PowerShell edition', () => {
   const old='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-  const missing=context('win32',[old],{PATH:path.win32.dirname(old)});
-  assert.throws(()=>commandInvocation('powershell','Write-Output ok',missing),/PowerShell 7.*Ask the user to install/);
+  const cmd='C:\\Windows\\System32\\cmd.exe';
+  const missing=context('win32',[old, cmd],{SystemRoot:'C:\\Windows', PATH:path.win32.dirname(old)});
+  assert.equal(defaultCommandShell(missing), 'cmd');
+  assert.deepEqual(discoverCommandShells(missing), { availableShells: ['cmd', 'powershell5'], recommendedShell: 'cmd' });
+  assert.throws(()=>commandInvocation('powershell','Write-Output ok',missing), error => {
+    assert.equal(error.code, 'powershell_not_found');
+    assert.deepEqual(error.details.availableShells, ['cmd', 'powershell5']);
+    return true;
+  });
   assert.throws(()=>terminalInvocation('powershell',undefined,undefined,missing),/PowerShell 7.*unsupported/);
   const pwsh='C:\\Program Files\\PowerShell\\7\\pwsh.exe';
-  const installed=context('win32',[old,pwsh],{ProgramFiles:'C:\\Program Files',PATH:path.win32.dirname(old)});
+  const wsl='C:\\Windows\\System32\\wsl.exe';
+  const installed=context('win32',[old,pwsh,cmd,wsl],{SystemRoot:'C:\\Windows',ProgramFiles:'C:\\Program Files',PATH:path.win32.dirname(cmd)});
+  assert.deepEqual(discoverCommandShells(installed), { availableShells: ['powershell', 'cmd', 'powershell5'], recommendedShell: 'powershell' });
   assert.equal(commandInvocation('powershell','Write-Output ok',installed).executable,pwsh);
+  const legacy = commandInvocation('powershell5', 'Write-Output ok', installed);
+  assert.equal(legacy.executable, old);
+  assert.match(legacy.args.at(-1), /PSVersionTable.PSVersion.Minor -ne 1/);
+  assert.throws(() => commandInvocation('powershell5', 'Write-Output ok', context('win32', [cmd], {SystemRoot:'C:\\Windows'})),
+    { code: 'terminal_shell_unavailable', details: { shell: 'powershell5', availableShells: ['cmd'], recommendedShell: 'cmd' } });
   const override=context('win32',[old,pwsh],{ProgramFiles:'C:\\Program Files',CARDBUSH_TERMINAL_SHELL:old});
   assert.throws(()=>terminalInvocation('powershell',undefined,'Write-Output ok',override),/PowerShell 5 is unsupported/);
   assert.throws(()=>commandInvocation('powershell','Write-Output ok',override), { code: 'terminal_shell_override_invalid' });
@@ -94,6 +108,8 @@ test('commands and paths remain separate arguments and keep literal metacharacte
   const windows=context('win32');
   assert.deepEqual(terminalInvocation('wsl',cwd,command,windows),{command:'wsl.exe',args:['--cd',cwd,'--','sh','-lc',command]});
   const linux=context('linux',['/bin/sh']);
+  assert.deepEqual(discoverCommandShells(linux), { availableShells: ['posix'], recommendedShell: 'posix' });
+  assert.deepEqual(discoverCommandShells(context('linux')), { availableShells: [], recommendedShell: null });
   assert.deepEqual(commandInvocation('posix',command,linux),{executable:'/bin/sh',args:['-c',command]});
   assert.throws(()=>commandInvocation('cmd',command,linux),/unavailable/);
   assert.throws(()=>commandInvocation('powershell',command,linux),/PowerShell 7.*required/);

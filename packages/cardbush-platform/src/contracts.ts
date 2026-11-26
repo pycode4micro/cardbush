@@ -1,6 +1,14 @@
 /** Browser-safe contracts. Native discovery belongs in the Node entry point. */
 export type TerminalRuntime = 'auto' | 'powershell' | 'cmd' | 'wsl' | 'git_bash' | 'bash';
-export type CommandShell = 'powershell' | 'cmd' | 'posix';
+const windowsCommandShells = ['powershell', 'cmd', 'powershell5'] as const;
+const posixCommandShells = ['posix'] as const;
+export type CommandShell = typeof windowsCommandShells[number] | typeof posixCommandShells[number];
+export function commandShells(platform: string): readonly CommandShell[] {
+  return platform === 'win32' ? windowsCommandShells : posixCommandShells;
+}
+export function isPowerShellExecutable(executableName: string): boolean {
+  return /^(?:pwsh|powershell)\.exe$/i.test(executableName);
+}
 export function defaultTerminalRuntime(platform: string): TerminalRuntime {
   return platform === 'win32' ? 'auto' : 'bash';
 }

@@ -5,8 +5,9 @@ export const taskResultReferenceSchema = z.object({ sessionId: z.string(), taskI
 export type TaskResultReference = z.infer<typeof taskResultReferenceSchema>;
 
 export interface ResultDelivery {
+  requiresCheckpoint?: boolean;
   references(presented: string): TaskResultReference[];
-  commit(presented: string): void;
+  commit(presented: string): void | Promise<void>;
   release(): void;
 }
 

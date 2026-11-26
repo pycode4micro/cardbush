@@ -2,7 +2,7 @@ import { firstTitleSource, summarizeConversationTitle } from './conversationTitl
 import { collectTurnAttachments, createTurnTimeContext } from '@cardbush/bush-protocol';
 import { normalizeIdentity } from './workspaceAccessPolicy.js';
 import type { RuntimeGuidanceRequest } from '@cardbush/bush-protocol';
-import { remoteAgentFacts, registerSandboxEnvironment } from './environmentResources.js';
+import { remoteAgentFacts, registerSandboxEnvironment, registerTerminalEnvironment } from './environmentResources.js';
 import { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import { ASSISTANT_CONVERSATION_COMMAND, assistantConversationRequestSchema } from '@cardbush/bush-protocol';
 import { readUserPrompt, promptContextMetadata, OUTCOME_VERIFICATION_INSTRUCTIONS, OUTCOME_VERIFICATION_MESSAGE, REPORT_DELIVERY_INSTRUCTIONS } from '@cardbush/bush-protocol';
@@ -11,7 +11,7 @@ import { RegisteredAgentStore, registeredAgentProfile, validateRegisteredHooks }
 import { TeamWorkflowManager } from './teamWorkflow.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
 import { AssistantConversation } from './assistantConversation.js';
-import { taskResultReferenceSchema } from './taskResultDelivery.js';
+import { bindResultDelivery, taskResultReferenceSchema } from './taskResultDelivery.js';
 import { registerWorkerConnectionTool } from './workerConnectionTool.js';
 import { AssistantEvents } from './assistantEvents.js';
 import { EventCollector } from './eventCollector.js';
@@ -205,7 +205,7 @@ import { AttachmentStore } from './attachmentStore.js';
 import { randomUUID } from 'node:crypto';
 import { PluginHookRunner, type PluginHookObservation } from './pluginHookRunner.js';
 import { PluginTerminalHooks } from './pluginToolHooks.js';
-import { registerPluginCommandTools, parsePluginCommandInvocation } from './pluginCommandTools.js';
+import { pluginCommandDeniesTool, registerPluginCommandTools, parsePluginCommandInvocation } from './pluginCommandTools.js';
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools, resolvePluginForkRole, PLUGIN_AGENT_DEFAULT_MAX_TURNS, PLUGIN_INVOCATION_MAX_DEPTH } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery, synchronizeMcpCatalog } from './mcpToolDiscovery.js';
@@ -494,6 +494,7 @@ export class InMemoryRuntimeHost {
       signal: (sessionId, turnId) => this.#turnSignals.wake(sessionId, turnId, 'peer_message'),
       run: request => this.runSessionTurn(request),
       error: error => options.onRecoveryError?.(error instanceof Error ? error : new Error(String(error))),
+      canCoordinate: request => this.#canUseAgentChatroom(request),
     }, this.#agentExecutions);
     this.#remoteWorkspace = options.remoteWorkspace;
     this.#remoteAgents = options.remoteAgents;
@@ -746,6 +747,7 @@ export class InMemoryRuntimeHost {
     if (options.registerDefaultWorkspaceTools !== false) {
       registerDesignTool(this.#toolRegistry);
       registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals, remote: options.remoteWorkspace, commandSandbox: options.commandSandbox, loadCommandSandbox: options.loadCommandSandbox,
+        activeWorkspaces: sessionId => this.#agentExecutions.activeWritableWorkspaces(sessionId).filter(path => !path.startsWith('ssh:')),
         onTerminalStarted: (context, result) => this.#terminalNotifications.watch(context, result),
         ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
     }
@@ -933,6 +935,7 @@ export class InMemoryRuntimeHost {
       return { bots, registeredMcpServers, apps: this.#mcpApps.environment(request.sessionId) };
     });
     registerSandboxEnvironment(this.#environment, options);
+    if (this.#toolRegistry.resolve('terminal_exec')) registerTerminalEnvironment(this.#environment);
     this.#environment.register('processes', ({ request }) => ({
       terminals: this.#workspaceTerminals.list(request.sessionId).map(({ terminalSessionId, state, pid, cwd }) => ({ terminalSessionId, state, pid, cwd })),
       background: this.#backgroundTools.list(request.sessionId, request.turnId).map(job => ({ id: job.id, name: job.name, status: job.status })),
@@ -1159,6 +1162,7 @@ export class InMemoryRuntimeHost {
       onError: this.#onRecoveryError,
       api: {
         withToolFailureFacts,
+        bindResultDelivery,
         environment: { read: (sessionId, signal) => this.readEnvironment(sessionId, signal) },
         wait: (id, turn, event, signal) => this.#turnSignals.wait(id, turn, [event], 'any', signal),
         subagentTasks: this.#subagentTasks,
@@ -4235,7 +4239,17 @@ export class InMemoryRuntimeHost {
             ...(references?.length ? { metadata: { taskResultReferences: references } } : {}),
           });
         });
-        toolRound.commitDeliveries?.();
+        try {
+          if (toolRound.requiresDeliveryCheckpoint) {
+            input.signal?.throwIfAborted();
+            this.#recovery.save({ request, messages, nextRound: round + 1,
+              cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
+          }
+        } catch (error) {
+          toolRound.releaseDeliveries?.();
+          throw error;
+        }
+        await toolRound.commitDeliveries?.();
         if (toolRound.hookStopTurn) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: toolRound.hookStopTurn } });
         if (completedRound.finishReason === 'length' && !input.signal?.aborted) {
           // Real tool receipts precede this notification. Never rewrite the
@@ -4322,6 +4336,18 @@ export class InMemoryRuntimeHost {
     // declarations. Keep the durable contract intact for subsequent local input.
     return request.metadata.userQuestionDelivery === 'final_reply'
       ? tools.filter(tool => tool.name !== 'request_user_input_async') : tools;
+  }
+
+  #canUseAgentChatroom(turn: RuntimeSessionTurnRequest) {
+    if (['none', 'web_restricted'].includes(String(turn.metadata.toolExecutionPolicy)) || isSshExecution(turn.metadata)) return false;
+    const request: ModelRequest = { ...turn, protocol: 'bush.model_request.v1', messages: [] };
+    return ['agentchatroom', 'get_tool_schema', 'call_tool'].every(name => {
+      const registration = this.#toolRegistry.resolve(name);
+      return !!registration && request.tools.some(tool => tool.name === name) &&
+        (!registration.sessionScope || request.sessionId === registration.sessionScope) &&
+        registration.modelAvailable?.(request) !== false &&
+        !childAgentToolDenial(request, registration) && !pluginCommandDeniesTool(request, name);
+    });
   }
 
   #sessionModelToolDefinitions(request: ModelRequest) {

@@ -1,4 +1,4 @@
-import { commandInvocation, decodeCommandOutput as decodeProcessOutput } from '@cardbush/platform';
+import { commandInvocation, decodeCommandOutput as decodeProcessOutput, type CommandShell } from '@cardbush/platform';
 import { randomUUID } from 'node:crypto';
 import { spawnResourceManagedProcess, reserveProcessResources, isResourceAdmissionError, type ProcessResourceGovernor, type GuardedProcess } from './processResourceGuard.js';
 import { withToolFailureFacts } from './toolFailureFacts.js';
@@ -9,7 +9,7 @@ import { WindowsSandboxScopePool } from './windowsSandboxScope.js';
 import { TerminalDiagnosticStream, type TerminalShellDiagnostic } from './terminalDiagnostics.js';
 import { inspectHostCommand, terminalEnvironmentDiagnostic, type HostCommandLookup } from './terminalEnvironmentDiagnostic.js';
 
-export type TerminalShell = 'cmd' | 'powershell' | 'posix';
+export type TerminalShell = CommandShell;
 interface TerminalPollInput { sessionId: string; yieldTimeMs: number }
 interface TerminalWriteInput extends TerminalPollInput { chars: string }
 const MAX_TERMINAL_OUTPUT_BYTES = 1024 * 1024;
@@ -101,6 +101,8 @@ export class TerminalSessionManager {
     shell: TerminalShell;
     sandbox?: ExecutionSandboxPolicy;
     exclusiveResources?: string[];
+    workspaceWrites?: { paths: string[]; validate: () => Promise<void> };
+    unscopedWorkspace?: string;
   }): Promise<Record<string, unknown>> {
     if (this.#closing) throw codedError('terminal_manager_closed', 'The terminal host is shutting down.');
     let started!: () => void;
@@ -112,7 +114,7 @@ export class TerminalSessionManager {
   }
 
   async #start(input: Parameters<TerminalSessionManager['start']>[0], ready: () => void): Promise<Record<string, unknown>> {
-    const diagnosticToken = input.shell === 'powershell' ? randomUUID().replaceAll('-', '') : undefined;
+    const diagnosticToken = input.shell === 'powershell' || input.shell === 'powershell5' ? randomUUID().replaceAll('-', '') : undefined;
     let invocation: ReturnType<typeof commandInvocation>;
     try {
       if (input.signal?.aborted) throw abortReason(input.signal);
@@ -125,7 +127,19 @@ export class TerminalSessionManager {
     }
     const sessionId = `terminal_${randomUUID()}`;
     const exclusiveResources = decodeExclusiveResources(input.exclusiveResources);
-    const releaseResources = runtimeExclusiveResources.acquire(sessionId, input.cwd, exclusiveResources);
+    let releaseResources: () => void;
+    try {
+      releaseResources = runtimeExclusiveResources.acquire(sessionId, input.cwd, exclusiveResources, 'terminal_resource_busy', {
+        paths: input.workspaceWrites?.paths,
+        guardUnscoped: input.workspaceWrites !== undefined,
+        unscopedWorkspace: input.unscopedWorkspace,
+        sessionId: input.ownerSessionId,
+      });
+    } catch (error) {
+      throw withToolFailureFacts(error instanceof Error ? error : new Error(String(error)), {
+        dispatch: 'not_started', effects: 'none', result: 'known',
+      });
+    }
     const commandKey = JSON.stringify([input.ownerSessionId, normalizeIdentity(input.cwd), input.shell, input.command]);
     const existingId = this.#runningCommands.get(commandKey);
     if (existingId) {
@@ -138,6 +152,7 @@ export class TerminalSessionManager {
     let guarded: GuardedProcess;
     let admitted = false;
     try {
+      await input.workspaceWrites?.validate();
       // Reserve through the existing governor before spawn, so an admission
       // rejection is distinguishable from a process that ran and then failed.
       const resourceLease = this.#resourceGovernor
@@ -375,6 +390,7 @@ export class TerminalSessionManager {
       pid: terminal.pid,
       state: terminal.state,
       cwd: terminal.cwd,
+      resolvedShell: terminal.shell,
       shellExecutable: terminal.shellExecutable,
       ...(terminal.exclusiveResources.length ? { exclusiveResources: terminal.exclusiveResources } : {}),
       sandbox: terminal.guarded.sandbox ?? null,

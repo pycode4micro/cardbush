@@ -5,15 +5,16 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import create from '../assets/plugins/agentchatroom/runtime/index.mjs';
-import { ToolRegistry, InMemoryRuntimeHost, SessionStore, ToolExecutionCoordinator, SubagentTaskStore } from '@cardbush/bush-runtime';
+import { ToolRegistry, InMemoryRuntimeHost, InMemoryRuntimeEventLog, RuntimeToolLoop, SessionStore, ToolExecutionCoordinator, SubagentTaskStore } from '@cardbush/bush-runtime';
 import { modelToolDefinitions } from '../packages/bush-runtime/dist/mcpToolDiscovery.js';
 import { synchronizeBuiltinSchemas } from '../packages/bush-runtime/dist/builtinToolDisclosure.js';
+import { bindResultDelivery, resultDelivery } from '../packages/bush-runtime/dist/taskResultDelivery.js';
 import { PERSONAL_ASSISTANT_SESSION, assistantProfileSchema } from '@cardbush/bush-protocol';
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'cardbush-chatroom-'));
   const facts = new Map(), notifications = [], registry = new ToolRegistry();
-  const api = { tools: registry, dataDirectory: directory, conversations: {
+  const api = { tools: registry, dataDirectory: directory, bindResultDelivery, conversations: {
     list: () => [...facts.values()], notify: (id, notice) => { notifications.push({ id, ...notice }); return true; },
     dismiss: (id, key) => { const index = notifications.findIndex(item => item.id === id && item.key === key); if (index >= 0) notifications.splice(index, 1); },
     wait: async (_id, _turn, pending) => { await pending; return 'task_completed'; },
@@ -25,8 +26,12 @@ async function fixture(t) {
   };
   const call = async (agent, action, input = {}, options = {}) => {
     const tool = api.tools.resolve('agentchatroom');
-    return tool.execute({ sessionId: agent, turnId: facts.get(agent)?.turnId ?? `turn-${agent}`, input: tool.decodeInput({ action, ...input }),
+    const result = await tool.execute({ sessionId: agent, turnId: facts.get(agent)?.turnId ?? `turn-${agent}`, input: tool.decodeInput({ action, ...input }),
       toolCall: { id: 'current-call' }, turn: { request: { metadata: options.metadata ?? {} } }, signal: options.signal });
+    const delivery = resultDelivery(result);
+    try { await delivery?.commit(options.presented ?? JSON.stringify(result)); }
+    finally { delivery?.release(); }
+    return result;
   };
   const reload = async () => {
     const previous = plugin; api.tools = new ToolRegistry(); plugin = create(api); previous.dispose();
@@ -55,6 +60,219 @@ test('same-project discovery is minimal and does not reveal unrelated or unjoine
   assert.doesNotMatch(JSON.stringify(result), /elsewhere|member_token|cursor|prompt/);
   await f.plugin.conversationChanged(a); assert.deepEqual(f.notifications.map(item => item.id), ['b']);
 });
+
+test('a withheld room receipt leaves the handoff unread until a complete delivery commits', async t => {
+  const f = await fixture(t), a = f.add('a'); f.add('b');
+  await f.plugin.conversationChanged(a);
+  const { room_id } = (await f.call('a', 'discover')).coordination;
+  await f.call('a', 'join', { room_id }); await f.call('b', 'join', { room_id });
+  await f.call('a', 'send', { room_id, text: 'Hand off style.css after revision A.', client_message_id: 'handoff' });
+  const identity = { requestId: 'withheld', sessionId: 'b', turnId: 'turn-b' };
+  const request = { ...identity, protocol: 'bush.model_request.v1', model: 'fixture', messages: [], tools: f.api.tools.definitions(),
+    metadata: {}, permissionMode: 'all_free' };
+  let rejected = true;
+  const loop = new RuntimeToolLoop({ registry: f.api.tools, eventLog: new InMemoryRuntimeEventLog(), identity, hooks: {
+    before: async () => ({ messages: [] }),
+    after: async () => ({ messages: [], ...(rejected ? { rejectToolResult: true, toolFeedback: 'Withheld by fixture policy' } : {}) }),
+  } });
+  const read = (round, modelContextIngressBudgetTokens) => loop.execute([{ protocol: 'bush.tool_call.v1', id: `read-${round}`,
+    name: 'agentchatroom', argumentsText: JSON.stringify({ action: 'read', room_id }) }],
+  { request, contextMessages: [], round, assistantMessageId: `answer-${round}`, modelContextIngressBudgetTokens });
+  const blocked = await read(1);
+  assert.doesNotMatch(blocked.messages[0].content, /Hand off style/);
+  assert.match(blocked.messages[0].content, /Withheld by fixture policy/);
+  await blocked.commitDeliveries();
+  rejected = false;
+  const clipped = await read(2, 0);
+  assert.doesNotMatch(clipped.messages[0].content, /Hand off style/);
+  await clipped.commitDeliveries();
+  const next = await read(3);
+  assert.equal(next.requiresDeliveryCheckpoint, true);
+  assert.deepEqual(JSON.parse(next.messages[0].content).messages.map(message => message.text), ['Hand off style.css after revision A.']);
+  await next.commitDeliveries();
+  assert.deepEqual((await f.call('b', 'read', { room_id })).messages, []);
+});
+
+test('a same-project turn without the room tool does not receive or create an invitation', async t => {
+  const base = await realpath(tmpdir()), directory = await mkdtemp(join(base, 'cardbush-room-eligibility-'));
+  const project = join(directory, 'project');
+  await mkdir(project);
+  const registry = new ToolRegistry(), requests = new Map();
+  const first = Promise.withResolvers(), release = Promise.withResolvers();
+  const host = new InMemoryRuntimeHost({ dataRoot: join(directory, 'runtime'), toolRegistry: registry,
+    provider: { async *stream(request) {
+      requests.set(request.sessionId, request);
+      const event = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+      yield { ...event, sequence: 0, kind: 'response_started' };
+      if (request.sessionId === 'eligible') { first.resolve(); await release.promise; }
+      yield { ...event, sequence: 1, kind: 'text_delta', delta: 'Fixture done.' };
+      yield { ...event, sequence: 2, kind: 'response_completed', finishReason: 'stop' };
+    } } });
+  host.installExtension(create, { id: 'agentchatroom', enabled: true, dataDirectory: join(directory, 'plugin') });
+  const run = (id, tools) => host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'r-' + id, sessionId: id,
+    turnId: 't-' + id, model: 'fixture', prefixMessages: [{ role: 'system', content: 'Eligibility fixture.' }],
+    inputMessages: [{ messageId: 'u-' + id, message: { role: 'user', content: 'Fixture.' } }], tools,
+    metadata: { projectDir: project, workspaceDir: project, environmentContext: true } });
+  t.after(async () => {
+    release.resolve();
+    await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    assert.equal(resolve(directory, '..'), base);
+    assert.ok(directory.startsWith(join(base, 'cardbush-room-eligibility-')));
+    await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+  });
+  const eligible = run('eligible', registry.definitions());
+  await Promise.race([first.promise, eligible]);
+  try {
+    const result = await run('excluded', registry.definitions().filter(tool => tool.name !== 'agentchatroom'));
+    assert.equal(result.payload.status, 'completed');
+    assert.ok(requests.has('excluded'));
+    assert.ok(!requests.get('excluded').messages.some(message => message.name === 'workspace_agents' ||
+      message.name === 'agent_peer_context' && message.content.includes('same_project_coordination')));
+  } finally { release.resolve(); await eligible; }
+  assert.equal(requests.size, 2);
+});
+
+test('A, B and C share an actual workspace: terminal and file writes arbitrate by path and revision',
+  { skip: process.platform !== 'win32', timeout: 45_000 }, async t => {
+    const base = await realpath(tmpdir()), directory = await mkdtemp(join(base, 'cardbush-abc-coordination-'));
+    const work = join(directory, 'work'), overlap = join(work, 'style.css'), separate = join(work, 'main.js');
+    await mkdir(work);
+    await Promise.all([writeFile(overlap, 'style-baseline'), writeFile(separate, 'script-baseline')]);
+    const expected = createHash('sha256').update('style-baseline').digest('hex');
+    const registry = new ToolRegistry(), counts = new Map(), outcome = new Map();
+    const aRead = Promise.withResolvers(), bRead = Promise.withResolvers(), aHeld = Promise.withResolvers(),
+      bBlocked = Promise.withResolvers(), cWrote = Promise.withResolvers(), aDone = Promise.withResolvers(), bDone = Promise.withResolvers();
+    const gates = [aRead, bRead, aHeld, bBlocked, cWrote, aDone, bDone];
+    const timeout = AbortSignal.timeout(35_000), providerFailure = Promise.withResolvers();
+    const awaitGate = async gate => {
+      const expired = Promise.withResolvers();
+      const abort = () => expired.reject(timeout.reason);
+      timeout.throwIfAborted();
+      timeout.addEventListener('abort', abort, { once: true });
+      try { await Promise.race([gate.promise, expired.promise, providerFailure.promise.then(error => { throw error; })]); }
+      finally { timeout.removeEventListener('abort', abort); }
+    };
+    const roomId = request => {
+      const message = request.messages.findLast(item => item.name === 'agent_peer_context' && item.content.includes('Workspace agent context.'));
+      return message && JSON.parse(message.content.split('\n').at(-1)).coordination?.room_id;
+    };
+    const terminal = (command, extra = {}) => ({ command, cwd: work, shell: 'powershell', yield_time_ms: 10_000, ...extra });
+    const declared = [{ path: 'style.css', expected_sha256: expected }];
+    let aHandle, bRoom;
+    const host = new InMemoryRuntimeHost({ dataRoot: join(directory, 'runtime'), toolRegistry: registry,
+      commandSandbox: { mode: 'auto', network: 'disabled', readableRoots: [], writableRoots: [] },
+      provider: { async *stream(request) {
+        try { yield* stream(request); }
+        catch (error) { providerFailure.resolve(error); throw error; }
+      } } });
+    async function* stream(request) {
+        const agent = request.sessionId, round = (counts.get(agent) ?? 0) + 1;
+        counts.set(agent, round);
+        const event = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+        const rawReceipt = request.messages.findLast(item => item.role === 'tool')?.content ?? '';
+        const receipt = () => {
+          const blocks = rawReceipt.split('\n\n');
+          return JSON.parse(blocks[0].startsWith('{"runtimeError":') ? blocks[1] : blocks[0]);
+        };
+        const call = (name, args) => ({ name, args });
+        let next;
+        yield { ...event, sequence: 0, kind: 'response_started' };
+        if (agent === 'a') {
+          if (round === 1) next = call('read_file', { path: overlap });
+          if (round === 2) {
+            aRead.resolve();
+            await awaitGate(bRead);
+            next = call('terminal_exec', terminal(
+              "[IO.File]::WriteAllText('style.css', 'style-from-A'); [void][Console]::ReadLine()",
+              { write_paths: declared, yield_time_ms: 20, notify_on_exit: false }));
+          }
+          if (round === 3) {
+            const running = receipt();
+            assert.equal(running.state, 'running', rawReceipt);
+            aHandle = running.terminalSessionId;
+            aHeld.resolve();
+            await Promise.all([awaitGate(bBlocked), awaitGate(cWrote)]);
+            next = call('terminal_write', { session_id: aHandle, chars: '\n', yield_time_ms: 10_000 });
+          }
+          if (round > 3) {
+            const done = receipt();
+            if (done.state === 'running') next = call('terminal_poll', { session_id: aHandle, yield_time_ms: 1000 });
+            else {
+              assert.equal(done.exitCode, 0, rawReceipt);
+              aDone.resolve();
+            }
+          }
+        } else if (agent === 'b') {
+          if (round === 1) { bRoom = roomId(request); assert.ok(bRoom); next = call('read_file', { path: overlap }); }
+          if (round === 2) {
+            bRead.resolve();
+            await awaitGate(aHeld);
+            next = call('write_file', { path: overlap, content: 'style-from-B' });
+          }
+          if (round === 3) {
+            assert.match(rawReceipt, /workspace_resource_busy/);
+            outcome.set('busy', rawReceipt);
+            next = call('terminal_exec', terminal("[IO.File]::WriteAllText('style.css', 'style-from-B')", { write_paths: declared }));
+          }
+          if (round === 4) {
+            assert.match(rawReceipt, /terminal_resource_busy/);
+            bBlocked.resolve();
+            await awaitGate(aDone);
+            next = call('terminal_exec', terminal("[IO.File]::WriteAllText('style.css', 'style-from-B')", { write_paths: declared }));
+          }
+          if (round === 5) {
+            assert.match(rawReceipt, /workspace_revision_conflict/);
+            outcome.set('stale', rawReceipt);
+            next = call('terminal_exec', terminal("[IO.File]::WriteAllText('main.js', 'undeclared-from-B')"));
+          }
+          if (round === 6) {
+            const denied = receipt();
+            assert.equal(denied.sandbox?.backend, 'windows-appcontainer', rawReceipt);
+            assert.equal(denied.commandStarted, true, rawReceipt);
+            assert.match(rawReceipt, /terminal_permission_denied/);
+            assert.ok(Number.isInteger(denied.exitCode) && denied.exitCode !== 0, rawReceipt);
+            bDone.resolve();
+          }
+        } else {
+          if (round === 1) { assert.equal(roomId(request), bRoom); next = call('read_file', { path: separate }); }
+          if (round === 2) next = call('write_file', { path: separate, content: 'script-from-C' });
+          if (round === 3) {
+            assert.equal(await readFile(separate, 'utf8'), 'script-from-C');
+            outcome.set('parallel', rawReceipt);
+            cWrote.resolve();
+            await awaitGate(bDone);
+          }
+        }
+        if (next) {
+          yield { ...event, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: `${agent}-${round}`,
+            nameDelta: next.name, argumentsDelta: JSON.stringify(next.args) };
+        } else yield { ...event, sequence: 1, kind: 'text_delta', delta: 'Fixture completed.' };
+        yield { ...event, sequence: 2, kind: 'response_completed', finishReason: next ? 'tool_calls' : 'stop' };
+    }
+    host.installExtension(create, { id: 'agentchatroom', enabled: true, dataDirectory: join(directory, 'plugin') });
+    const run = id => host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: `r-${id}`, sessionId: id, turnId: `t-${id}`,
+      model: 'fixture', prefixMessages: [{ role: 'system', content: 'Isolated coordination fixture.' }],
+      inputMessages: [{ messageId: `u-${id}`, message: { role: 'user', content: 'Run the fixture.' } }],
+      tools: registry.definitions(), permissionMode: 'all_free', metadata: { workspaceDir: work, projectDir: work, environmentContext: true },
+    }, { signal: timeout });
+    t.after(async () => {
+      gates.forEach(gate => gate.resolve());
+      await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+      assert.equal(resolve(directory, '..'), base);
+      assert.ok(directory.startsWith(join(base, 'cardbush-abc-coordination-')));
+      await rm(directory, { recursive: true, force: true, maxRetries: 5 });
+    });
+    const a = run('a');
+    await awaitGate(aRead);
+    const b = run('b');
+    await awaitGate(aHeld);
+    const c = run('c');
+    const completed = await Promise.race([Promise.all([a, b, c]), providerFailure.promise.then(error => { throw error; })]);
+    assert.ok(completed.every(result => result.payload.status === 'completed'), JSON.stringify(completed));
+    assert.deepEqual([...outcome.keys()].sort(), ['busy', 'parallel', 'stale']);
+    assert.equal(await readFile(overlap, 'utf8'), 'style-from-A');
+    assert.equal(await readFile(separate, 'utf8'), 'script-from-C');
+  });
 
 test('concurrent same-project turns reuse one temporary room and admit a late third participant', async t => {
   const f = await fixture(t), a = f.add('a'), b = f.add('b');
@@ -278,6 +496,7 @@ test('room wait wakes for committed messages, cancellation, departure and plugin
   const waiting = f.call('a', 'read', { room_id, wait_ms: 30000 });
   await f.call('b', 'send', { room_id, text: 'ready', client_message_id: 'ready' });
   assert.equal((await waiting).messages[0].text, 'ready'); await f.call('b', 'read', { room_id });
+  assert.deepEqual((await f.call('a', 'read', { room_id })).messages, []);
   const controller = new AbortController();
   const cancelled = f.call('a', 'read', { room_id, wait_ms: 30000 }, { signal: controller.signal }); controller.abort();
   assert.equal((await cancelled).status, 'cancelled');

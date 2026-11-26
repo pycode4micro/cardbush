@@ -1,4 +1,4 @@
-import { parseSshWorkspace, sshWorkspace, windowsShellPath, workspaceChangeSchema } from '@cardbush/bush-protocol';
+import { parseSshWorkspace, sshShellOptions, sshShells, sshWorkspace, windowsShellPath, workspaceChangeSchema, type SshShell } from '@cardbush/bush-protocol';
 import { posix } from 'node:path';
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistration } from './toolRegistry.js';
 import type { RemoteWorkspaceBridge, TerminalSessionManager } from './workspaceTools.js';
@@ -7,6 +7,7 @@ import { resolveToolPath, normalizeIdentity } from './workspaceAccessPolicy.js';
 import { sandboxError } from './executionSandbox.js';
 import { commandPermission, terminalInputPermission } from './commandPermission.js';
 import { uiText } from '@cardbush/platform/i18n';
+import { commandShells, type CommandShell } from '@cardbush/platform';
 import { executionWorkspace } from './workspaceExecutionMode.js';
 
 type Context<T> = ToolAdmissionContext<T> | ToolHandlerContext<T>;
@@ -116,8 +117,8 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       if (name === 'terminal_list') return { kind: 'allow' as const };
       if (!uri) {
         if (name === 'terminal_exec') {
-          const shells = process.platform === 'win32' ? ['powershell', 'cmd'] : ['posix'];
-          if (!shells.includes(String((context.input as RoutedInput).shell))) throw Error(`Local terminals require shell=${shells.join(' or ')} on ${process.platform}.`);
+          const shells = commandShells(process.platform);
+          if (!shells.includes((context.input as RoutedInput).shell as CommandShell)) throw Error(`Local terminals require shell=${shells.join(' or ')} on ${process.platform}.`);
         }
         const decision = registration.authorize ? await registration.authorize(localContext(context)) : { kind: 'allow' as const };
         return decision.kind === 'ask' ? { ...decision, request: { ...decision.request, reason: `Local host: ${decision.request.reason}` } } : decision;
@@ -125,6 +126,14 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
       if (!remote) throw Error('SSH execution is unavailable in this host. No local operation was performed.');
       enforceRemoteSandbox();
       const input = context.input as RoutedInput;
+      if (name === 'terminal_exec' && input.writePaths !== undefined) throw Object.assign(
+        Error('write_paths is supported only in the local workspace. No remote command was sent.'),
+        { code: 'terminal_remote_write_scope_unavailable' });
+      if (name === 'terminal_exec' && input.shellSpecified && !sshShellOptions.includes(input.shell as SshShell)) {
+        throw Object.assign(Error('This shell is unavailable through SSH. No remote command was sent.'), {
+          code: 'ssh_shell_mismatch', details: { shell: input.shell, supportedShells: sshShellOptions },
+        });
+      }
       if (name === 'terminal_poll') return { kind: 'allow' as const };
       if (name === 'terminal_write') return terminalInputPermission({ sessionId: String(input.sessionId),
         chars: String(input.chars ?? ''), environment: uri });
@@ -154,8 +163,9 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
         const extra = input.additionalPermissions as { readRoots: string[]; writeRoots: string[]; readFiles?: string[]; writeFiles?: string[]; network: boolean } | undefined;
         if (extra && (extra.readRoots.length || extra.writeRoots.length || extra.readFiles?.length || extra.writeFiles?.length || extra.network)) throw sandboxError('sandbox_remote_unavailable', 'Direct SSH cannot enforce sandbox extensions. Connect to a CardBush Agent with its own execution policy. No remote command was sent.');
         const windows = resolved.platform === 'windows';
-        const shell = input.shellSpecified ? String(input.shell) : windows ? 'powershell' : 'posix';
-        if (!(windows ? ['cmd', 'powershell'] : ['posix']).includes(shell)) throw Error(`SSH host is ${windows ? 'Windows; use shell="powershell" or shell="cmd"' : 'POSIX; use shell="posix"'}. No user command was sent.`);
+        const allowedShells = sshShells(windows ? 'windows' : 'posix');
+        const shell = input.shellSpecified ? input.shell as SshShell : allowedShells[0];
+        if (!allowedShells.includes(shell)) throw Error(`SSH host is ${windows ? 'Windows' : 'POSIX'}; use ${allowedShells.map(name => 'shell="' + name + '"').join(' or ')}. No user command was sent.`);
         input.shell = shell;
         for (const root of [parseSshWorkspace(resolved.root)!.path, target.path]) {
           const denied = windows

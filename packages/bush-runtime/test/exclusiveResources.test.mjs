@@ -27,6 +27,24 @@ test('project leases prevent edits in other observation stores until released', 
   store.acquireMutation(join(root, 'src', 'capture.cs'))();
 });
 
+test('a terminal started before a peer arrives blocks later overlapping writes across sessions', () => {
+  const leases = new ExclusiveResources(), root = resolve('shared-scope-fixture');
+  const running = leases.acquire('old-terminal', root, [], 'terminal_resource_busy', { unscopedWorkspace: root, sessionId: 'a' });
+  const writes = { paths: ['src/style.css'], guardUnscoped: true, sessionId: 'b' };
+  assert.throws(() => leases.acquire('b-edit', root, [], 'workspace_resource_busy', writes), error =>
+    error.code === 'workspace_resource_busy' && error.details.sessionId === 'a');
+  assert.throws(() => leases.acquire('b-unscoped', root, [], 'terminal_resource_busy', { unscopedWorkspace: root, sessionId: 'b' }),
+    { code: 'terminal_resource_busy' });
+  assert.throws(() => leases.acquire('b-hidden', root, [], 'workspace_resource_busy', { ...writes, paths: ['..config'] }),
+    { code: 'workspace_resource_busy' });
+  leases.acquire('other', resolve('independent-worktree'), [], 'workspace_resource_busy', writes)();
+  running();
+  const held = leases.acquire('b-edit', root, [], 'workspace_resource_busy', writes);
+  assert.throws(() => leases.acquire('a-late', root, [], 'terminal_resource_busy', { unscopedWorkspace: root, sessionId: 'a' }),
+    { code: 'terminal_resource_busy' });
+  held();
+});
+
 const shell = process.platform === 'win32' ? 'powershell' : 'posix';
 const command = script => process.platform === 'win32'
   ? `& '${process.execPath.replaceAll("'", "''")}' -e '${script.replaceAll("'", "''")}'`

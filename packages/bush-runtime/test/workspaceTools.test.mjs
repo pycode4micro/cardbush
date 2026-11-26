@@ -629,17 +629,16 @@ test("publishes an explicit platform shell contract and rejects unavailable shel
   const setup = tools(root);
   const definition = setup.registry.resolve("terminal_exec").definition;
   const shellSchema = definition.inputSchema.properties.shell;
-  const expected = process.platform === "win32" ? ["powershell", "cmd"] : ["posix"];
+  const expected = process.platform === "win32" ? ["powershell", "cmd", "powershell5"] : ["posix"];
   assert.deepEqual(shellSchema.enum, expected);
-  const { defaultCommandShell } = await import('@cardbush/platform');
-  assert.equal(shellSchema.default, defaultCommandShell());
+  assert.equal(shellSchema.default, undefined, 'host preferences are runtime observations, not frozen in the schema');
   assert.deepEqual(definition.inputSchema.required, ["command", "cwd", "yield_time_ms", "shell"]);
   assert.equal(definition.inputSchema.properties.yield_time_ms.maximum, 30_000);
   assert.match(definition.inputSchema.properties.cwd.description, /absolute path/i);
   assert.match(definition.description, /never rewrites commands/i);
-  assert.match(definition.description, /PowerShell 7 \(pwsh\)/);
-  assert.match(definition.description, /when available and cmd otherwise/);
-  assert.match(shellSchema.description, /not Windows PowerShell 5/);
+  assert.match(definition.description, /runtime_environment terminal\.availableShells/);
+  assert.match(definition.description, /recommendedShell is a preference/);
+  assert.match(shellSchema.description, /powershell is PowerShell 7 \(pwsh\), powershell5 is Windows PowerShell 5\.1/);
 
   const unavailable = await setup.execute("session", "terminal_exec", {
     command: "echo blocked",
@@ -649,6 +648,28 @@ test("publishes an explicit platform shell contract and rejects unavailable shel
   });
   assert.equal(unavailable.kind, "failed");
   assert.match(unavailable.error.message, /shell must be one of/);
+});
+
+test('terminal_exec starts the selected interpreter and reports it in its receipt', async t => {
+  const { defaultCommandShell, discoverCommandShells } = await import('@cardbush/platform');
+  const root = temporaryRoot(t), setup = tools(root);
+  const probes = {
+    powershell: ['$PSVersionTable.PSVersion.Major', /^7$/],
+    powershell5: ['$PSVersionTable.PSVersion.ToString(); Write-Output "中文"', /^5\.1\..*\r?\n中文$/],
+    cmd: ['echo %ComSpec%', /cmd\.exe$/i],
+    posix: ["printf '%s' POSIX", /^POSIX$/],
+  };
+  const run = (shell, command) => setup.execute('session', 'terminal_exec', { shell, command, cwd: root, yield_time_ms: 10000 });
+  const { availableShells } = discoverCommandShells();
+  for (const shell of [...availableShells, undefined]) {
+    const expected = shell ?? defaultCommandShell();
+    const [command, stdout] = probes[expected];
+    const result = await run(shell, command);
+    assert.equal(result.kind, 'returned', JSON.stringify(result));
+    assert.equal(result.result.exitCode, 0, JSON.stringify(result));
+    assert.equal(result.result.resolvedShell, expected);
+    assert.match(result.result.stdout.trim(), stdout);
+  }
 });
 
 test("returns a session handle at the bounded yield point and later reports exit", async (t) => {

@@ -12,6 +12,7 @@ export interface RuntimeConversation {
   delegated?: boolean;
   /** Internal, automation, shadow and unowned registry turns cannot start automatic project coordination. */
   projectCoordinationAvailable?: false;
+  roomToolAvailable?: false;
   status: 'running' | 'idle' | 'stopped';
 }
 export interface ConversationNotice {
@@ -26,7 +27,7 @@ export interface RuntimeConversationsApi {
   dismiss(agentId: string, key: string): void;
   wait(agentId: string, turnId: string, event: Promise<unknown>, signal?: AbortSignal): Promise<string>;
 }
-type Entry = { request: RuntimeSessionTurnRequest; childProjectCoordination: boolean;
+type Entry = { request: RuntimeSessionTurnRequest; coordinationRequest: RuntimeSessionTurnRequest; childProjectCoordination: boolean;
   notices: Map<string, ConversationNotice & { childApproval: boolean }>; wakes: number; scheduled?: boolean };
 
 /** Reuses session admission/model execution; never runs a second kind of agent loop. */
@@ -38,17 +39,20 @@ export class RuntimeConversations {
     signal: (sessionId: string, turnId: string) => void;
     run: (request: RuntimeSessionTurnRequest) => Promise<unknown>;
     error: (error: unknown) => void;
+    canCoordinate?: (request: RuntimeSessionTurnRequest) => boolean;
   }, readonly agents = new AgentExecutionRegistry()) {}
 
   list(): RuntimeConversation[] {
     return this.closed ? [] : this.agents.list().map(fact => {
       const entry = this.entries.get(fact.agentId);
+      const hasRoomTool = entry?.request.turnId === fact.executionId && (this.host.canCoordinate?.(entry.coordinationRequest) ?? true);
       const available = entry?.request.turnId === fact.executionId && entry.request.metadata?.peerMessageWake !== true &&
-        (fact.canWake || entry.childProjectCoordination);
+        (fact.canWake || entry.childProjectCoordination) && hasRoomTool;
       return {
         agentId: fact.agentId, turnId: fact.executionId, projectDir: fact.projectDir, workspaceDir: fact.workspaceDir,
         ...(fact.role === 'child' ? { delegated: true } : {}),
         ...(!available ? { projectCoordinationAvailable: false as const } : {}),
+        ...(!hasRoomTool ? { roomToolAvailable: false as const } : {}),
         status: ['queued', 'running', 'waiting'].includes(fact.status) ? 'running' : fact.status === 'completed' ? 'idle' : 'stopped',
       };
     });
@@ -67,7 +71,8 @@ export class RuntimeConversations {
     for (const [id, entry] of this.entries) if (!this.agents.get(id, entry.request.turnId)) this.entries.delete(id);
     // Re-enter the ordinary admission path with the original input. Reusing the
     // prepared request would append workspace/subagent context a second time.
-    this.entries.set(request.sessionId, { request: structuredClone(executionTemplate), childProjectCoordination, notices: previous?.notices ?? new Map(),
+    this.entries.set(request.sessionId, { request: structuredClone(executionTemplate), coordinationRequest: request,
+      childProjectCoordination, notices: previous?.notices ?? new Map(),
       wakes: request.metadata.peerMessageWake === true ? previous?.wakes ?? 0 : 0 });
     return this.list().find(fact => fact.agentId === request.sessionId);
   }

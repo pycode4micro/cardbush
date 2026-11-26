@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { PERSONAL_ASSISTANT_SESSION } from '@cardbush/bush-protocol';
 import type { ToolAdmissionContext, ToolPermissionRequest } from './toolRegistry.js';
 
@@ -164,7 +164,7 @@ export function normalizeIdentity(path: string): string {
 
 export function isWithin(root: string, path: string): boolean {
   const value = relative(resolve(root), resolve(path));
-  return value === "" || (!value.startsWith("..") && !isAbsolute(value));
+  return value !== '..' && !value.startsWith(`..${sep}`) && !isAbsolute(value);
 }
 
 function capability(action: string, path: string): string {

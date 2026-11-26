@@ -4,6 +4,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
+import { isPowerShellExecutable } from '@cardbush/platform';
 
 const execFileAsync = promisify(execFile);
 export interface WindowsSandboxScopeReference { policyPath: string; processId: number }
@@ -165,11 +166,13 @@ function within(root: string, path: string): boolean {
  * permissions or host execution are needed. Bootstrap errors stop user code.
  */
 export function sandboxPowerShellArgs(executable: string, args: string[]): string[] {
-  if (!/^pwsh\.exe$/i.test(basename(executable))) return args;
+  if (!isPowerShellExecutable(basename(executable))) return args;
   const command = args.findIndex(arg => /^-command$/i.test(arg));
   if (command < 0 || command !== args.length - 2) return args;
   const bootstrap = [
+    '$cardbushProgressPreference = $ProgressPreference',
     'try {',
+    "  $ProgressPreference = 'SilentlyContinue'",
     '  $cardbushWorkingDirectory = [Environment]::CurrentDirectory',
     '  $cardbushPaths = $ExecutionContext.SessionState.Path',
     '  if ($cardbushPaths.CurrentLocation.ProviderPath.TrimEnd([char]92) -ine $cardbushWorkingDirectory.TrimEnd([char]92)) {',
@@ -182,14 +185,18 @@ export function sandboxPowerShellArgs(executable: string, args: string[]): strin
     // Import-Module is a core cmdlet. Load only the installed shell's own
     // foundational assemblies when manifest discovery cannot resolve a drive.
     // Assembly loading still runs inside the same AppContainer and file ACLs.
-    "  if ($PSVersionTable.PSEdition -eq 'Core') {",
     "    foreach ($cardbushModule in @(@('Get-Location', 'Management'), @('ConvertTo-Json', 'Utility'))) {",
     '      if ($null -eq $ExecutionContext.InvokeCommand.GetCommand($cardbushModule[0], [System.Management.Automation.CommandTypes]::Cmdlet)) {',
-    "        Import-Module -Assembly ([Reflection.Assembly]::LoadFrom([IO.Path]::Combine($PSHOME, ('Microsoft.PowerShell.Commands.' + $cardbushModule[1] + '.dll')))) -ErrorAction Stop",
+    "        $cardbushModuleName = 'Microsoft.PowerShell.' + $cardbushModule[1]",
+    "        if ($PSVersionTable.PSEdition -eq 'Core') {",
+    "          Import-Module -Assembly ([Reflection.Assembly]::LoadFrom([IO.Path]::Combine($PSHOME, ('Microsoft.PowerShell.Commands.' + $cardbushModule[1] + '.dll')))) -ErrorAction Stop",
+    '        } else {',
+    "          Import-Module -Name ([IO.Path]::Combine($PSHOME, 'Modules', $cardbushModuleName, ($cardbushModuleName + '.psd1'))) -ErrorAction Stop",
+    '        }',
     '      }',
     '    }',
-    '  }',
     '} catch { [Console]::Error.WriteLine("Sandbox working directory initialization failed: " + $_.Exception.Message); exit 1 }',
+    'finally { $ProgressPreference = $cardbushProgressPreference }',
   ].join('\n');
   return [...args.slice(0, -1), bootstrap + '\n' + args.at(-1)];
 }

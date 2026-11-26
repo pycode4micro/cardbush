@@ -27,17 +27,25 @@ Source projects and their Git worktrees share a coordination scope via the canon
 
 The `workspace_agents` context is already a discovery snapshot. `agentchatroom(action="join")` voluntarily joins the project room. `action="invite"` targets one exact agent ID from the user's context or an existing relationship. Cross-project invitations reveal no room messages and cause no idle wake. Acceptance with `action="join", room_id` links the projects for discovery. There is no automatic global project association.
 
-Child conversations use the same project scope and room membership rules as independent conversations. Active children of different parents can discover and join the same project's temporary room. Cross-project joins continue to require invitation and acceptance. The legacy `user_authorized` join field is accepted for existing callers and has no effect. Child tool allowlists and execution policy still apply. Shadow and automation turns remain excluded.
+Child conversations use the same project scope and room membership rules as independent conversations. Active children of different parents can discover and join the same project's temporary room. Runtime checks whether the current turn can load and invoke `agentchatroom` before inviting it. Cross-project joins continue to require invitation and acceptance. The legacy `user_authorized` join field is accepted for existing callers and has no effect. Child tool allowlists and execution policy still apply. Shadow and automation turns remain excluded.
 
 Children receive room notifications while running and still report results to their parent. They never get automatic idle response turns. Completion, continuation and cancellation remain controlled by the parent task lifecycle.
 
 An automatic room has one Runtime-issued `room_id`. Joining without an ID uses the current offer when available. An unknown ID returns `room_id_invalid`; a retained ID from a retired room returns `room_ended`, including after a Runtime restart. Only recent issued IDs are retained for this distinction. Temporary messages and memberships stay in memory.
+
+## Shared workspace writes
+
+File tools and terminal commands use the same path locks for a shared local checkout within one Runtime. A conflict identifies the holder. Read the current revision after the holder finishes before writing the same file. Distinct files can be updated in parallel, and separate worktrees can still join the same project room.
+
+`terminal_exec` has read-only project access by default in a shared workspace. To update existing files in place, read them with `read_file` and declare them in `write_paths` with `expected_sha256`. Before launching the command, Runtime acquires the path locks and checks the revisions. The sandbox restricts project writes to the declared files, and Runtime holds those locks until the process tree exits. Use built-in file tools or a separate working copy for file creation, directory writes, or editors that replace files through temporary names. Direct SSH and external processes are outside this protection.
 
 ## Message delivery
 
 The original AgentChatroom 0.1.1 `RoomStore` supplies the durable journal, single-writer lock, idempotent message IDs, signed per-member cursors and asynchronous waits. Host-bound memberships and cursors are saved atomically in the plugin's own data directory. Tokens remain private to the plugin. A hot replacement shares the writer until prior calls settle.
 
 `send` never advances a read cursor. Notifications carry the room/sender identity; `read` retrieves ordered unread content and `has_more` indicates another page. Optional `read.wait_ms` waits once only when there is no unread page, then returns messages directly. There is no separate current wait tool or mandatory wait-then-read sequence. The shared Runtime wait service lets new user/peer guidance wake the observer. No transaction lock is held while waiting.
+
+The cursor advances after the complete receipt enters the conversation context. If a hook withholds the response or projection truncates it, the page remains unread. Use a smaller `limit` to retry an oversized page.
 
 A waiting read returns `status: peer_left` with `departed_peers` when a joined peer leaves. This includes a temporary-room member whose Runtime turn ends. An unread page remains available through the same cursor.
 

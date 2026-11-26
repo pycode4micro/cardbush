@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createConnection, createServer } from 'node:net';
 import test from 'node:test';
@@ -93,9 +93,9 @@ test('PowerShell 7 uses the admitted cwd for relative IO and native child comman
   assert.equal((await readFile(join(work, 'relative.txt'), 'utf8')).trim(), 'inside');
 });
 
-test('PowerShell bootstrap works before filesystem drives and Core modules are available', { skip: !windows, timeout: 30_000 }, async t => {
-  const f = await fixture(t), executable = commandInvocation('powershell', '').executable;
-  const command = `Set-Content './bootstrapped.txt' 'ok' -ErrorAction Stop; @{cwd=(Get-Location).ProviderPath} | ConvertTo-Json -Compress`;
+for (const shell of ['powershell', 'powershell5']) test(`${shell} bootstrap works before filesystem drives and modules are available`, { skip: !windows, timeout: 30_000 }, async t => {
+  const f = await fixture(t), executable = commandInvocation(shell, '').executable;
+  const command = `Set-Content './bootstrapped.txt' 'ok' -ErrorAction Stop; @{cwd=(Get-Location).ProviderPath; progress=[string]$ProgressPreference} | ConvertTo-Json -Compress`;
   const bootstrap = sandboxPowerShellArgs(executable, ['-Command', command]).at(-1);
   const reset = String.raw`
 $null = $ExecutionContext.SessionState.Path.SetLocation('Env:\')
@@ -104,10 +104,14 @@ foreach ($drive in $ExecutionContext.SessionState.Drive.GetAll()) {
 }
 Remove-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -Force -ErrorAction SilentlyContinue
 $env:PSModulePath = ''
+$ProgressPreference = 'Continue'
 `;
   const result = await runResourceManagedCommand({ executable, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(reset + bootstrap, 'utf16le').toString('base64')], cwd: f.work,
     sandbox: { writableRoots: [f.work], readableRoots: windowsInterpreterRoots(executable), network: 'disabled' }, timeoutMs: 20000 });
   assert.equal(result.exitCode, 0, JSON.stringify(result)); assert.equal(result.stderr, '');
+  const observed = JSON.parse(result.stdout);
+  assert.equal(resolve(observed.cwd), f.work);
+  assert.equal(observed.progress, 'Continue');
   assert.equal((await readFile(join(f.work, 'bootstrapped.txt'), 'utf8')).trim(), 'ok');
 });
 

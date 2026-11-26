@@ -13,6 +13,7 @@ import { readFileBounded } from "./workspaceFileRead.js";
 import { trustedGit } from './trustedGit.js';
 import { withWorkspaceFileAccess, openWorkspaceFile, recordWorkspaceRead, writeWorkspaceFile, unlinkWorkspaceFile, createWorkspaceParent } from './workspaceFileAccess.js';
 import { WorkspacePathGuard } from './workspacePathGuard.js';
+import { runtimeExclusiveResources } from './exclusiveResources.js';
 
 const exec = promisify(execFile);
 type Entry = GitFileEntry;
@@ -444,21 +445,25 @@ export class TaskWorkspaceManager {
       Number(Boolean(after[a])) - Number(Boolean(after[b])) ||
       (after[a] ? a.split('/').length - b.split('/').length : b.split('/').length - a.split('/').length));
     this.#assertRestorableEntries(paths.flatMap(path => [before[path], after[path]]));
-    for (const path of paths) if (!equal(await this.#readEntry(state, root, path), before[path])) {
-      throw problem("workspace_revision_conflict", `${path} has changed in the destination. No files were applied.`);
-    }
-    const versions = await this.#store(state).blobs(paths.flatMap(path => [before[path]?.hash, after[path]?.hash].filter((id): id is string => Boolean(id))));
-    state.pending = { root, before: await this.#saveSnapshot(state, before), after: await this.#saveSnapshot(state, after), paths };
-    await this.#save(state);
+    const release = runtimeExclusiveResources.acquire(state.sessionId, root, [], 'workspace_resource_busy',
+      { paths, guardUnscoped: true, sessionId: state.sessionId });
     try {
-      for (const path of paths) {
-        if (!equal(await this.#readEntry(state, root, path), before[path])) throw problem("workspace_revision_conflict", `${path} changed while preparing the restore.`);
-        await this.#writeEntry(state, root, path, after[path], after[path] ? versions.get(after[path].hash) : undefined, before[path]);
+      for (const path of paths) if (!equal(await this.#readEntry(state, root, path), before[path])) {
+        throw problem("workspace_revision_conflict", `${path} has changed in the destination. No files were applied.`);
       }
-    } catch (error) {
-      await this.#recover(state);
-      throw error;
-    }
+      const versions = await this.#store(state).blobs(paths.flatMap(path => [before[path]?.hash, after[path]?.hash].filter((id): id is string => Boolean(id))));
+      state.pending = { root, before: await this.#saveSnapshot(state, before), after: await this.#saveSnapshot(state, after), paths };
+      await this.#save(state);
+      try {
+        for (const path of paths) {
+          if (!equal(await this.#readEntry(state, root, path), before[path])) throw problem("workspace_revision_conflict", `${path} changed while preparing the restore.`);
+          await this.#writeEntry(state, root, path, after[path], after[path] ? versions.get(after[path].hash) : undefined, before[path]);
+        }
+      } catch (error) {
+        await this.#recover(state, true);
+        throw error;
+      }
+    } finally { release(); }
   }
 
   async #commitTransaction(state: State) { delete state.pending; await this.#save(state); }
@@ -468,7 +473,7 @@ export class TaskWorkspaceManager {
       'Restoring symbolic links requires a checked link backend. No workspace files were changed and no host fallback was used.');
   }
 
-  async #recover(state: State) {
+  async #recover(state: State, heldWrites = false) {
     if (state.disposal) {
       let exists = true;
       try { await lstat(state.workspaceDir); }
@@ -491,21 +496,25 @@ export class TaskWorkspaceManager {
     const before = await this.#snapshot(state, transaction.before), after = await this.#snapshot(state, transaction.after);
     this.#assertRestorableEntries(transaction.paths.flatMap(path => [before[path], after[path]]));
     const versions = await this.#store(state).blobs(transaction.paths.flatMap(path => before[path] ? [before[path].hash] : []));
-    // A crash before the state commit rolls back only bytes we still own.
-    for (const path of transaction.paths) {
-      const current = await this.#readEntry(state, transaction.root, path);
-      if (!equal(current, before[path]) && !equal(current, after[path])) {
-        throw problem("workspace_recovery_conflict", `${path} changed outside the pending restore. Preserve it and resolve the conflict before continuing.`);
+    const release = heldWrites ? undefined : runtimeExclusiveResources.acquire(state.sessionId, transaction.root, [], 'workspace_resource_busy',
+      { paths: transaction.paths, guardUnscoped: true, sessionId: state.sessionId });
+    try {
+      // A crash before the state commit rolls back only bytes we still own.
+      for (const path of transaction.paths) {
+        const current = await this.#readEntry(state, transaction.root, path);
+        if (!equal(current, before[path]) && !equal(current, after[path])) {
+          throw problem("workspace_recovery_conflict", `${path} changed outside the pending restore. Preserve it and resolve the conflict before continuing.`);
+        }
       }
-    }
-    for (const path of [...transaction.paths].reverse()) {
-      const current = await this.#readEntry(state, transaction.root, path);
-      if (equal(current, before[path])) continue;
-      if (!equal(current, after[path])) throw problem("workspace_recovery_conflict", `${path} changed during recovery.`);
-      await this.#writeEntry(state, transaction.root, path, before[path], before[path] ? versions.get(before[path].hash) : undefined, after[path]);
-    }
-    delete state.pending;
-    await this.#save(state);
+      for (const path of [...transaction.paths].reverse()) {
+        const current = await this.#readEntry(state, transaction.root, path);
+        if (equal(current, before[path])) continue;
+        if (!equal(current, after[path])) throw problem("workspace_recovery_conflict", `${path} changed during recovery.`);
+        await this.#writeEntry(state, transaction.root, path, before[path], before[path] ? versions.get(before[path].hash) : undefined, after[path]);
+      }
+      delete state.pending;
+      await this.#save(state);
+    } finally { release?.(); }
   }
 
   async #capture(state: State, root: string, known: Snapshot, enrolled: string[] = []): Promise<Snapshot> {

@@ -29,6 +29,18 @@ for (const permissionMode of ['all_free', 'task_free']) {
     const root = await realpath(await mkdtemp(join(temporary, 'assistant-workspace-approval-')));
     const workspace = join(root, 'task'), desktop = join(root, 'Desktop'), project = join(desktop, 'agent-collab-test');
     const readme = join(project, 'README.md'), source = join(desktop, 'log.md');
+    const shell = windows ? 'powershell' : 'posix';
+    const setupCommand = windows ? `New-Item -ItemType Directory -Path ${quote(project)} -ErrorAction Stop | Out-Null` : `mkdir ${quote(project)}`;
+    const expectedRequests = {
+      'setup:terminal_exec': { actions: windows ? ['execute', 'write'] : ['execute'], paths: windows ? [workspace, desktop] : [workspace] },
+      'setup:write_file': { actions: ['write'], paths: [readme] },
+      'setup:read_file': { actions: ['read'], paths: [source] },
+      'setup:host_confirmation': { actions: ['confirm'], paths: [] },
+      'editor-a:read_file': { actions: ['read'], paths: [readme] },
+      'editor-a:write_file': { actions: ['write'], paths: [join(project, 'editor-a.md')] },
+      'editor-b:read_file': { actions: ['read'], paths: [readme] },
+      'editor-b:write_file': { actions: ['write'], paths: [join(project, 'editor-b.md')] },
+    };
     await Promise.all([mkdir(workspace), mkdir(desktop)]);
     await writeFile(source, 'Existing desktop file');
     const registry = new ToolRegistry(), sessions = new SessionStore(), tasks = new SubagentTaskStore();
@@ -38,14 +50,15 @@ for (const permissionMode of ['all_free', 'task_free']) {
       decodeInput: input => input, authorize: () => ({ kind: 'ask', request: { reason: 'Host requires this exact confirmation',
         actions: ['confirm'], targets: [{ kind: 'opaque', value: 'fixture:host-confirmation' }], capabilityIds: ['fixture:host-confirmation'], requiresHuman: true } }),
       execute: () => assert.fail('The host confirmation was denied') });
-    const desktopRequests = [], parentRequests = new Map(), childRounds = new Map();
+    const legacyRequests = [], humanRequests = new Map(), parentRequests = new Map(), attention = [], childRounds = new Map();
     let dispatched = false, editorsStarted = false;
-    const allow = permissionMode === 'all_free';
+    const delegateWorkspace = permissionMode === 'all_free';
     const host = new InMemoryRuntimeHost({ dataRoot: join(root, 'runtime'), toolRegistry: registry, sessionStore: sessions, subagentTaskStore: tasks,
       commandSandbox: { mode: windows ? 'auto' : 'off', network: 'disabled', readableRoots: [], writableRoots: [] },
+      onAssistantAttention: notice => { if (notice.interaction) attention.push(notice.id); },
       requestBackgroundPermission: async request => {
-        desktopRequests.push({ actions: request.actions, target: basename(request.targets.find(item => item.kind === 'filesystem_path')?.value ?? '') });
-        return request.actions.includes('confirm') ? 'deny' : 'allow_once';
+        legacyRequests.push(request);
+        return 'deny';
       },
       provider: { async *stream(request) {
         if (request.metadata.agentRole === 'child') {
@@ -56,8 +69,7 @@ for (const permissionMode of ['all_free', 'task_free']) {
           const isSetup = name === 'setup';
           if (isSetup && round === 2) assert.ok((await stat(project)).isDirectory(), 'the approved terminal created the project');
           const steps = isSetup ? [
-            [call('terminal_exec', { shell: windows ? 'powershell' : 'posix', cwd: workspace, yield_time_ms: 10_000,
-              command: windows ? `New-Item -ItemType Directory -Path ${quote(project)} -ErrorAction Stop | Out-Null` : `mkdir ${quote(project)}`,
+            [call('terminal_exec', { shell, cwd: workspace, yield_time_ms: 10_000, command: setupCommand,
               ...(windows ? { additional_permissions: { write_roots: [desktop] } } : {}) })],
             [call('write_file', { path: readme, content: 'Project ready' }), call('read_file', { path: source })],
             [call('host_confirmation', {})],
@@ -71,7 +83,7 @@ for (const permissionMode of ['all_free', 'task_free']) {
         if (notices.length) {
           const noticesToAnswer = notices.map(notice => {
             assert.equal(notice.authority, 'parent_delegate');
-            parentRequests.set(notice.interactionId, notice.operations);
+            parentRequests.set(notice.interactionId, notice);
             return call('subagent', { task_id: notice.taskId, response: { kind: 'permission', interactionId: notice.interactionId,
               actionDigest: notice.actionDigest, decision: 'allow_once' } });
           });
@@ -102,24 +114,75 @@ for (const permissionMode of ['all_free', 'task_free']) {
     while (Date.now() < deadline && !(tasks.list(sessionId).length === 3 && tasks.list(sessionId).every(task => task.status === 'completed'))) {
       const snapshot = await command({ action: 'read' });
       assert.equal(snapshot.error, '');
-      assert.deepEqual(snapshot.management.permissions, []);
+      for (const pending of snapshot.management.permissions) {
+        const child = tasks.get(sessionId, pending.subagentTaskId);
+        assert.ok(child, 'the card belongs to an Assistant-owned child');
+        assert.deepEqual([pending.sessionId, pending.turnId, pending.sourceSessionId, pending.sourceTurnId],
+          [child.childSessionId, child.childTurnId, child.childSessionId, child.childTurnId]);
+        const request = host.events(child.childSessionId, child.childTurnId).find(event =>
+          event.kind === 'permission_requested' && event.payload.permissionId === pending.permissionId);
+        assert.equal(request?.payload.permissionRouting, 'user', 'parent-delegated requests never appear as user cards');
+        assert.equal(pending.toolCallId, request.payload.toolCallId);
+        const { actions, targets, requestedCapabilityIds, reason, scope } = request.payload;
+        assert.deepEqual(pending.request, { actions, targets, requestedCapabilityIds, reason, scope });
+        const confirmation = actions.includes('confirm');
+        assert.ok(confirmation || !delegateWorkspace, 'all_free workspace approvals must stay with the parent model');
+        assert.ok(!humanRequests.has(pending.permissionId), 'an answered card does not reappear');
+        humanRequests.set(pending.permissionId, request.eventId);
+        await host.sendCommand({ kind: 'runtime.answer_permission', payload: { protocol: 'bush.runtime_permission_answer.v1',
+          permissionId: pending.permissionId, answerId: randomUUID(), decision: confirmation ? 'deny' : 'allow_once',
+          grantedCapabilityIds: confirmation ? [] : pending.request.requestedCapabilityIds } });
+      }
       await delay(45);
     }
     assert.deepEqual(tasks.list(sessionId).map(task => task.status), ['completed', 'completed', 'completed']);
+    assert.deepEqual((await command({ action: 'read' })).management.permissions, []);
     const events = tasks.list(sessionId).flatMap(task => host.events(task.childSessionId, task.childTurnId));
     assert.equal(events.filter(event => event.kind === 'tool_returned' && event.payload.toolName === 'read_file' && !event.payload.resultError).length, 3);
     for (const [file, value] of [['README.md', 'Project ready'], ['editor-a.md', 'editor-a'], ['editor-b.md', 'editor-b']])
       assert.equal(await readFile(join(project, file), 'utf8'), value);
-    const parentActions = [...parentRequests.values()];
-    assert.equal(parentActions.length, allow ? 7 : 0);
-    if (allow) assert.ok(parentActions.some(actions => actions.includes('execute')));
-    assert.equal(desktopRequests.filter(request => request.actions.includes('confirm')).length, 1);
-    const workspaceRequests = desktopRequests.filter(request => !request.actions.includes('confirm'));
-    assert.equal(workspaceRequests.length, allow ? 0 : 7);
-    if (!allow) {
-      assert.ok(workspaceRequests.some(request => request.actions.includes('execute')));
-      assert.ok(workspaceRequests.some(request => request.target === 'log.md' && request.actions.includes('read')));
-      assert.ok(workspaceRequests.some(request => request.target === 'README.md' && request.actions.includes('write')));
+    const seen = [];
+    for (const child of tasks.list(sessionId)) {
+      const journal = host.events(child.childSessionId, child.childTurnId);
+      const toolNames = new Map(journal.filter(event => event.kind === 'tool_queued').map(({ payload }) => [payload.toolCallId, payload.toolName]));
+      for (const request of journal.filter(event => event.kind === 'permission_requested')) {
+        const { permissionId, toolCallId, actions, targets, permissionRouting } = request.payload;
+        const toolName = toolNames.get(toolCallId);
+        const operation = `${child.agentName}:${toolName}`;
+        const expected = expectedRequests[operation];
+        assert.ok(expected, `unexpected request ${operation}`);
+        seen.push(operation);
+        assert.deepEqual(actions, expected.actions, operation);
+        assert.deepEqual(targets.filter(target => target.kind === 'filesystem_path').map(target => target.value), expected.paths, operation);
+        const additionalTargets = targets.filter(target => target.kind !== 'filesystem_path').map(({ kind, value }) => ({ kind, value }));
+        const confirmation = toolName === 'host_confirmation';
+        if (toolName === 'terminal_exec') {
+          assert.deepEqual(additionalTargets.map(target => target.kind), ['process']);
+          assert.deepEqual(JSON.parse(additionalTargets[0].value).slice(0, 3), [shell, workspace, setupCommand]);
+        } else assert.deepEqual(additionalTargets, confirmation ? [{ kind: 'opaque', value: 'fixture:host-confirmation' }] : []);
+
+        const parentOwnsRequest = delegateWorkspace && !confirmation;
+        assert.equal(permissionRouting, parentOwnsRequest ? 'parent' : 'user', operation);
+        assert.equal(humanRequests.get(permissionId), parentOwnsRequest ? undefined : request.eventId, operation);
+        const modelNotice = parentRequests.get(permissionId);
+        if (parentOwnsRequest) {
+          assert.equal(modelNotice?.taskId, child.taskId);
+          assert.deepEqual(modelNotice.operations, actions);
+          assert.deepEqual(modelNotice.resources, targets.map(({ kind, value }) => ({ kind, value })));
+        } else assert.equal(modelNotice, undefined, operation);
+        const answers = journal.filter(event => ['permission_answered', 'permission_rejected'].includes(event.kind) && event.payload.permissionId === permissionId);
+        assert.deepEqual(answers.map(event => event.kind), [confirmation ? 'permission_rejected' : 'permission_answered'], operation);
+        assert.equal(answers[0].payload.permissionRouting, permissionRouting, operation);
+        if (confirmation) {
+          assert.ok(journal.some(event => event.kind === 'tool_failed' && event.payload.toolCallId === toolCallId && event.payload.error.code === 'permission_rejected'));
+          assert.ok(!journal.some(event => event.kind === 'tool_running' && event.payload.toolCallId === toolCallId));
+        } else assert.deepEqual(answers[0].payload.grantedCapabilityIds, request.payload.requestedCapabilityIds, operation);
+      }
     }
+    assert.deepEqual(seen.sort(), Object.keys(expectedRequests).sort());
+    assert.equal(parentRequests.size, delegateWorkspace ? 7 : 0);
+    assert.equal(humanRequests.size, delegateWorkspace ? 1 : 8);
+    assert.deepEqual([...attention].sort(), [...humanRequests.values()].sort());
+    assert.deepEqual(legacyRequests, []);
   });
 }

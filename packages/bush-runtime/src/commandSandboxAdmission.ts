@@ -1,4 +1,4 @@
-import { commandInvocation } from '@cardbush/platform';
+import { commandInvocation, type CommandShell } from '@cardbush/platform';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { stat } from 'node:fs/promises';
@@ -18,7 +18,7 @@ export interface AdditionalCommandPermissions {
   network: boolean;
 }
 interface CommandInput {
-  command: string; shell: 'cmd' | 'powershell' | 'posix';
+  command: string; shell: CommandShell;
   additionalPermissions?: AdditionalCommandPermissions;
   justification?: string;
 }
@@ -41,15 +41,10 @@ export function decodeAdditionalCommandPermissions(value: unknown): AdditionalCo
 
 /** Requested extensions never become execution policy without an exact grant. */
 export async function commandSandboxPlan(configuration: CommandSandboxConfiguration,
-  context: ToolAdmissionContext<CommandInput>, cwd: string,
+  context: ToolAdmissionContext<CommandInput>, cwd: string, writeScope?: { root: string; files: readonly string[] },
 ): Promise<{ admission: ToolAdmissionDecision; policy?: ExecutionSandboxPolicy; requiredGrant?: string }> {
-  const base = commandSandboxPolicy(configuration, context);
+  const base = commandSandboxPolicy(writeScope ? { ...configuration, mode: 'required' } : configuration, context);
   const assistantApproval = usesAssistantWorkspaceApproval(context);
-  if (!base) {
-    const mode = permissionBoundaryMode(context);
-    return { admission: commandPermission({ ...context.input, cwd, scope: { mode, roots: allowedRoots(context, mode) },
-      outsideParentScope: assistantApproval && context.parentWorkspaceAuthority?.permissionMode !== 'all_free' }) };
-  }
   // The selected host interpreter must be readable, including user-installed
   // PowerShell. No model-supplied executable or PATH entry is trusted here.
   let executable: string;
@@ -60,7 +55,12 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
       dispatch: 'not_started', effects: 'none', result: 'known', recovery: 'correct_input',
     });
   }
-  const interpreterRoots = configuration.mode === 'auto' ? windowsInterpreterRoots(executable) : [];
+  if (!base) {
+    const mode = permissionBoundaryMode(context);
+    return { admission: commandPermission({ ...context.input, cwd, scope: { mode, roots: allowedRoots(context, mode) },
+      outsideParentScope: assistantApproval && context.parentWorkspaceAuthority?.permissionMode !== 'all_free' }) };
+  }
+  const interpreterRoots = configuration.mode === 'auto' || writeScope ? windowsInterpreterRoots(executable) : [];
   const [baseWritableRoots, readableRoots, configuredWriteRoots, cwdRoots] = await Promise.all([
     canonicalSandboxRoots(base.writableRoots), canonicalSandboxRoots([...(base.readableRoots ?? []), ...interpreterRoots]),
     canonicalSandboxRoots(configuration.writableRoots), canonicalSandboxRoots([cwd]),
@@ -73,7 +73,7 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   // A broad implicit workspace (notably a Windows home directory) can contain
   // the supervisor's TEMP directory. A narrower cwd must actually narrow this
   // grant. Explicit host roots and requested extensions are never dropped.
-  const writableRoots = baseWritableRoots.map(root => {
+  const writableRoots = writeScope ? [] : baseWritableRoots.map(root => {
     if (workspacePath && normalizeIdentity(root) === normalizeIdentity(workspacePath) &&
         !configuredWriteRoots.some(configured => normalizeIdentity(configured) === normalizeIdentity(root)) && isWithin(root, privateArea) &&
         isWithin(root, commandDirectory) && !isWithin(commandDirectory, privateArea)) {
@@ -82,12 +82,16 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
     return root;
   });
   const requested = context.input.additionalPermissions;
+  if (writeScope && (requested?.writeRoots.length || requested?.writeFiles?.length)) return { admission: { kind: 'deny',
+    code: 'terminal_workspace_write_scope_required',
+    message: 'Use write_paths for exact writes in this workspace. Use an independent worktree for commands that create files or need writable directories.' } };
   const [read, write] = await Promise.all([
     canonicalSandboxRoots(requested?.readRoots ?? []), canonicalSandboxRoots(requested?.writeRoots ?? []),
   ]);
+  if (writeScope) readableRoots.push(writeScope.root);
   const covered = (path: string, roots: readonly string[]) => roots.some(root => isWithin(root, path));
   const extraWrite = write.filter(path => !covered(path, writableRoots));
-  if (!covered(cwd, [...writableRoots, ...readableRoots, ...read, ...write])) extraWrite.push(cwd);
+  if (!writeScope && !covered(cwd, [...writableRoots, ...readableRoots, ...read, ...write])) extraWrite.push(cwd);
   const extraRead = read.filter(path => !covered(path, [...writableRoots, ...readableRoots, ...extraWrite]));
   const [readFiles, writeFiles] = await Promise.all([canonicalSandboxFiles(requested?.readFiles ?? []), canonicalSandboxFiles(requested?.writeFiles ?? [])]);
   const extraWriteFiles = writeFiles.filter(path => !covered(path, [...writableRoots, ...extraWrite]));
@@ -96,12 +100,13 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   const expanded = extraRead.length > 0 || extraWrite.length > 0 || extraReadFiles.length > 0 || extraWriteFiles.length > 0 || network;
   if (expanded && configuration.mode === 'required') return { admission: { kind: 'deny', code: 'sandbox_host_limit',
     message: 'The requested file, directory or network access exceeds the host-enforced sandbox. A user approval cannot override this deployment policy.' } };
-  const expectedIdentities = Object.fromEntries(await Promise.all([...new Set([...writableRoots, ...readableRoots, ...extraRead, ...extraWrite, ...extraReadFiles, ...extraWriteFiles])].sort().map(async path => {
+  const writableFiles = [...new Set([...extraWriteFiles, ...(writeScope?.files ?? [])])].sort();
+  const expectedIdentities = Object.fromEntries(await Promise.all([...new Set([...writableRoots, ...readableRoots, ...extraRead, ...extraWrite, ...extraReadFiles, ...writableFiles])].sort().map(async path => {
     const info = await stat(path, { bigint: true }); return [path, `${info.dev}:${info.ino}`];
   })));
   const policy: ExecutionSandboxPolicy = { ...base, network: network ? 'enabled' : base.network,
     readableRoots: [...new Set([...readableRoots, ...extraRead])].sort(), writableRoots: [...new Set([...writableRoots, ...extraWrite])].sort(),
-    ...(extraReadFiles.length ? { readableFiles: extraReadFiles.sort() } : {}), ...(extraWriteFiles.length ? { writableFiles: extraWriteFiles.sort() } : {}),
+    ...(extraReadFiles.length ? { readableFiles: extraReadFiles.sort() } : {}), ...(writableFiles.length ? { writableFiles } : {}),
     ...(Object.keys(expectedIdentities).length ? { expectedIdentities } : {}),
     requireCanonicalRoots: true };
   if (policy.writableRoots.length + policy.readableRoots!.length > 64) throw sandboxError('sandbox_policy_invalid', 'Too many sandbox roots.');

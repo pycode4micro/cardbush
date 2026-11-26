@@ -1,6 +1,16 @@
 import { subagentExecutionQueued, type RuntimeAgentFact, type SubagentTask } from '@cardbush/bush-protocol';
+import { discoverCommandShells } from '@cardbush/platform';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
 import { commandSandboxPolicyForRequest, snapshotCommandSandbox, type CommandSandboxConfiguration } from './commandSandboxPolicy.js';
+import { isSshExecution } from './workspaceExecutionMode.js';
+
+export function registerTerminalEnvironment(environment: RuntimeEnvironment) {
+  environment.register('terminal', ({ request }) => {
+    if (isSshExecution(request.metadata) || request.metadata.toolExecutionPolicy === 'none' ||
+        request.tools && !request.tools.some(tool => tool.name === 'terminal_exec')) return null;
+    return discoverCommandShells();
+  });
+}
 
 /** Projects the delegation owner's ledger. Reading never polls or connects a remote Worker. */
 export function remoteAgentFacts(tasks: SubagentTask[]): RuntimeAgentFact[] {

@@ -572,7 +572,7 @@ export class AssistantConversation {
           const previous = history.read().messages.reverse().find(item => item.role === 'user' && item.name === 'individuation_preference');
           if (previous?.content !== preference) history.append([{ role: 'user', name: 'individuation_preference', visibility: 'internal', content: preference }]);
         }
-        const environment = await this.deps.environment?.message(parent, history.read().messages, signal);
+        const environment = await this.deps.environment?.message({ ...parent, tools: modelTools }, history.read().messages, signal);
         signal.throwIfAborted();
         if (environment) history.append([environment]);
         const state = history.read();
@@ -875,7 +875,7 @@ export class AssistantConversation {
         const deliveries = [...nativeResults].flatMap(([ordinal, output]) => resultDelivery(output)?.references(String(results[ordinal]?.content ?? '')) ?? []);
         const hooks = toolHookMessages([...outcomes].sort(([a], [b]) => a - b).map(([, outcome]) => outcome));
         history.append([...results, ...hooks], [], deliveries);
-        for (const [ordinal, output] of nativeResults) resultDelivery(output)?.commit(String(results[ordinal]?.content ?? ''));
+        for (const [ordinal, output] of nativeResults) await resultDelivery(output)?.commit(String(results[ordinal]?.content ?? ''));
         const approvals = toolCalls.map((_call, ordinal) => executedNames.get(ordinal) === 'subagent' ? silentChildApproval(nativeResults.get(ordinal)) : undefined);
         if (!hooks.length && !failures.size && approvals.every((id): id is string => id !== undefined)) {
           approvals.forEach(id => approvedInteractions.add(id));

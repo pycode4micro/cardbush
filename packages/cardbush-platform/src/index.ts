@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultTerminalRuntime, normalizeTerminalRuntime, type TerminalRuntime, type CommandShell } from './contracts.js';
+import { commandShells, defaultTerminalRuntime, normalizeTerminalRuntime, type TerminalRuntime, type CommandShell } from './contracts.js';
 import { inspectExecutableFile, type ExecutableInspection } from './executableLookup.js';
 export * from './contracts.js';
 export * from './windowsSupport.js';
@@ -107,7 +107,7 @@ export function powerShellExecutable(context = createPlatformContext()): string 
     const blocked = failures.length > 0;
     throw Object.assign(new Error(blocked
       ? 'PowerShell 7 lookup could not verify an executable on this host. Installation is unknown; inspect the candidate paths and access errors before changing the installation. No command was started.'
-      : 'PowerShell 7 (pwsh) is required. Ask the user to install PowerShell 7 on this host and make pwsh available. Windows PowerShell 5 is unsupported.'), {
+      : 'PowerShell 7 (pwsh) is required for this selection. Ask the user to install it if the command needs PowerShell 7. Windows PowerShell 5 is unsupported by this selection.'), {
       code: blocked ? 'powershell_lookup_failed' : 'powershell_not_found',
       details: { shell: 'powershell', reason: blocked ? 'lookup_failed' : 'not_found', candidates: failures.slice(0, 8) },
     });
@@ -118,7 +118,7 @@ function terminalOverrideExecutable(override: string, context: PlatformContext):
   const executable = findExecutable(override, context);
   if (!executable) throw Object.assign(new Error('CARDBUSH_TERMINAL_SHELL must name an available executable, without command arguments.'), { code: 'terminal_shell_override_invalid' });
   if (context.platform === 'win32' && path.win32.basename(executable).toLowerCase() !== 'pwsh.exe') {
-    throw Object.assign(new Error('Windows terminal overrides must select PowerShell 7 (pwsh.exe); Windows PowerShell 5 is unsupported.'), { code: 'terminal_shell_override_invalid' });
+    throw Object.assign(new Error('Windows terminal overrides must select PowerShell 7 (pwsh.exe); Windows PowerShell 5 is unsupported as an override.'), { code: 'terminal_shell_override_invalid' });
   }
   return executable;
 }
@@ -132,7 +132,7 @@ export function terminalRuntimes(context = createPlatformContext()): TerminalRun
   return ['auto', ...(defaultCommandShell(context) === 'powershell' ? ['powershell' as const] : []), 'cmd',
     ...(findExecutable('wsl.exe',context) ? ['wsl' as const] : []), ...(gitBashExecutable(context) ? ['git_bash' as const] : [])];
 }
-export function defaultCommandShell(context = createPlatformContext()): CommandShell {
+export function defaultCommandShell(context = createPlatformContext()): Exclude<CommandShell, 'powershell5'> {
   if (context.platform !== 'win32') return 'posix';
   // An explicit host override still validates at launch, with its original error.
   return environment(context, 'CARDBUSH_TERMINAL_SHELL')?.trim() || powershell(context) ? 'powershell' : 'cmd';
@@ -163,10 +163,13 @@ export function terminalInvocation(runtime?: TerminalRuntime, cwd?: string, comm
   if (!executable) throw new Error('Git Bash is unavailable. Install Git for Windows or select PowerShell.');
   return {command:executable,args:command === undefined ? (context.platform === 'win32' ? ['--login','-i'] : []) : ['-lc',command]};
 }
-export function powerShellCommand(command: string, diagnosticToken?: string) {
+export function powerShellCommand(command: string, diagnosticToken?: string, shell: 'powershell' | 'powershell5' = 'powershell') {
   if (diagnosticToken && !/^[a-f0-9]{32}$/.test(diagnosticToken)) throw new Error('Invalid terminal diagnostic token.');
   // Inspect status in the user's scope, including trailing comments and cmdlet errors.
-  return ['if ($PSVersionTable.PSVersion.Major -lt 7) { [Console]::Error.WriteLine("PowerShell 7 (pwsh) is required; ask the user to install it. Windows PowerShell 5 is unsupported."); exit 2 }', '[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)',
+  const versionCheck = shell === 'powershell5'
+    ? 'if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { [Console]::Error.WriteLine("This command requires Windows PowerShell 5.1."); exit 2 }'
+    : 'if ($PSVersionTable.PSVersion.Major -lt 7) { [Console]::Error.WriteLine("This command requires PowerShell 7 (pwsh)."); exit 2 }';
+  return [versionCheck, '[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)',
     '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)', '$OutputEncoding = [Console]::OutputEncoding',
     '$cardbushPhase = "working_directory"', '$Error.Clear()',
     'try {',
@@ -196,20 +199,51 @@ export function powerShellCommand(command: string, diagnosticToken?: string) {
       '}'] : []),
   ].join('\n');
 }
+function resolveCommandExecutable(shell: CommandShell, context: PlatformContext): string {
+  if (shell === 'powershell') return powerShellExecutable(context);
+  const windows = context.platform === 'win32';
+  const systemRoot = windows ? environment(context, 'SystemRoot') : undefined;
+  const legacyPowerShell = systemRoot && path.win32.isAbsolute(systemRoot)
+    ? path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : undefined;
+  const candidate = shell === 'posix' && !windows ? '/bin/sh' :
+    shell === 'cmd' && windows ? cmdExecutable(context) :
+    shell === 'powershell5' ? legacyPowerShell : undefined;
+  const executable = candidate && findExecutable(candidate, context);
+  if (executable) return executable;
+  throw Object.assign(new Error(`The selected shell "${shell}" is unavailable on this host. No command was started.`), {
+    code: 'terminal_shell_unavailable', details: { shell },
+  });
+}
+
+/** Executable discovery only. Authorization and sandbox launch still apply to each command. */
+export function discoverCommandShells(context = createPlatformContext()) {
+  const availableShells = commandShells(context.platform).filter(shell => {
+    try { return Boolean(resolveCommandExecutable(shell, context)); }
+    catch { return false; }
+  });
+  return { availableShells, recommendedShell: availableShells[0] ?? null };
+}
+
 export function commandInvocation(shell: CommandShell, command: string, context = createPlatformContext(), diagnosticToken?: string): {executable:string;args:string[]} {
-  if (shell === 'powershell') {
-    const executable = powerShellExecutable(context);
-    return {executable,args:['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command, diagnosticToken)]};
+  let executable: string;
+  try { executable = resolveCommandExecutable(shell, context); }
+  catch (error) {
+    if (error instanceof Error) {
+      const previous = (error as Error & { details?: object }).details;
+      Object.assign(error, { details: { shell, ...previous, ...discoverCommandShells(context) } });
+    }
+    throw error;
+  }
+  if (shell === 'powershell' || shell === 'powershell5') {
+    return {executable,args:['-NoLogo','-NoProfile','-NonInteractive','-Command',powerShellCommand(command, diagnosticToken, shell)]};
   }
   if (shell === 'cmd') {
-    if (context.platform !== 'win32') throw new Error('cmd is unavailable on this host.');
     // /u affects only cmd built-ins. Mixing their UTF-16 with a native tool's
     // byte output in the same pipe corrupts decoding (and even model JSON).
     // Keep cmd's normal code-page output; PowerShell explicitly uses UTF-8.
-    return {executable:cmdExecutable(context),args:['/d','/a','/s','/c',command]};
+    return {executable,args:['/d','/a','/s','/c',command]};
   }
-  if (context.platform === 'win32') throw new Error('POSIX shell is unavailable in the native Windows runtime.');
-  return {executable:'/bin/sh',args:['-c',command]};
+  return {executable,args:['-c',command]};
 }
 
 function cmdExecutable(context: PlatformContext): string {

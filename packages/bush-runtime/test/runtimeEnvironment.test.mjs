@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentExecutionRegistry, RuntimeEnvironment, InMemoryRuntimeHost, SessionStore } from '../dist/index.js';
+import { AgentExecutionRegistry, RuntimeEnvironment, InMemoryRuntimeHost, SessionStore, ToolRegistry } from '../dist/index.js';
+import { discoverCommandShells } from '@cardbush/platform';
 import { ConversationJournal } from '../dist/conversationJournal.js';
 import { AssistantConversation } from '../dist/assistantConversation.js';
 import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION, runtimeEnvironmentSnapshotSchema } from '@cardbush/bush-protocol';
@@ -82,6 +83,24 @@ test('environment scopes agents to the project or family and emits only changed 
   remove();
   assert.deepEqual(JSON.parse((await env.message(root, [first, second])).content).sections, { bridge: null }, 'removed sources invalidate old observations');
   env.close(); assert.equal(registry.get('root').status, 'running', 'closing observation does not own agent lifetime');
+});
+
+test('local terminal choices are delivered in the first request only to a turn with terminal execution', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-terminal-environment-'));
+  const requests = [], registry = new ToolRegistry();
+  const host = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry,
+    provider: { async *stream(req) { requests.push(req); yield* answer(req); } } });
+  t.after(async () => { await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); await rm(root, { recursive: true, force: true }); });
+  const terminal = registry.resolve('terminal_exec').definition;
+  const run = (sessionId, metadata, tools) => host.runSessionTurn({ ...request(sessionId, metadata), tools });
+  await run('local-shells', { workspaceDir: root }, [terminal]);
+  await run('terminal-disabled', { workspaceDir: root }, []);
+  assert.equal(requests.length, 2);
+  const section = observed => JSON.parse(observed.messages.find(m => m.name === 'runtime_environment').content).sections.terminal;
+  assert.deepEqual(section(requests[0]), discoverCommandShells());
+  assert.ok(section(requests[0]).availableShells.every(shell =>
+    requests[0].tools.find(tool => tool.name === 'terminal_exec').inputSchema.properties.shell.enum.includes(shell)));
+  assert.equal(section(requests[1]), null);
 });
 
 test('source failures cannot fail a turn, while cancellation remains cancellation', async () => {

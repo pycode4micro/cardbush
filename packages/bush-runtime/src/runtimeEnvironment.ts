@@ -2,7 +2,7 @@ import type { ModelMessage, ModelRequest, RuntimeEnvironmentSnapshot } from '@ca
 import type { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 
-export type EnvironmentRequest = Pick<ModelRequest, 'sessionId' | 'turnId' | 'metadata'> & Partial<Pick<ModelRequest, 'permissionMode' | 'requestCapabilities'>>;
+export type EnvironmentRequest = Pick<ModelRequest, 'sessionId' | 'turnId' | 'metadata'> & Partial<Pick<ModelRequest, 'permissionMode' | 'requestCapabilities' | 'tools'>>;
 export interface EnvironmentReadContext { request: EnvironmentRequest; signal?: AbortSignal }
 export type EnvironmentSource = (context: EnvironmentReadContext) => unknown | Promise<unknown>;
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)

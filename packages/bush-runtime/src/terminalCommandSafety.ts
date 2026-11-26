@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import type { CommandShell } from '@cardbush/platform';
 import {
   posix,
   win32,
@@ -19,7 +20,7 @@ export interface ProtectedTerminalDeletion {
 interface TerminalCommandSafetyInput {
   command: string;
   cwd: string;
-  shell: TerminalCommandShell;
+  shell: CommandShell;
   projectRoots?: string[];
   remoteWindows?: { home: string };
 }
@@ -83,6 +84,7 @@ const powershellOptionsWithValues = new Set([
 export function protectedTerminalDeletion(
   input: TerminalCommandSafetyInput,
 ): ProtectedTerminalDeletion | null {
+  const shell = input.shell === 'powershell5' ? 'powershell' : input.shell;
   const segments = commandSegments(input.command);
   const paths: SafetyPaths = input.remoteWindows ? { path: win32, home: input.remoteWindows.home, caseInsensitive: true } : localPaths();
   let currentDirectory = paths.path.resolve(input.cwd);
@@ -90,7 +92,7 @@ export function protectedTerminalDeletion(
   for (const segment of segments) {
     const directoryChange = workingDirectoryChange(
       segment,
-      input.shell,
+      shell,
       currentDirectory,
       paths,
     );
@@ -107,7 +109,7 @@ export function protectedTerminalDeletion(
       currentDirectory = directoryStack.pop() ?? currentDirectory;
       continue;
     }
-    const invocation = deletionInvocation(segment, input.shell);
+    const invocation = deletionInvocation(segment, shell);
     if (!invocation) continue;
     for (const candidate of deletionTargets(invocation.args, invocation.shell)) {
       const target = resolveDeletionTarget(candidate, currentDirectory, paths);
