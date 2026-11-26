@@ -90,7 +90,7 @@ export class RuntimeTaskTools {
       projectModelDefinition: (definition, scope) => !scope.canRecall ? definition : presentTool(definition, {
         actions: ['list', 'inspect', 'stop'],
         fields: ['action', 'scope', 'task_ids', 'node_ids', 'after', 'offset', 'limit'],
-        description: 'Manage owned task executions. list defaults to active or unresolved tasks; scope=all includes history. inspect reads results and progress; stop uses normal permissions. Both require task_ids. after skips unchanged results. Use await when blocked; avoid polling or restarting pending work. To page a child conversation or cancel a result subscription, load get_tool_schema(name="tasks") and use call_tool.',
+        description: 'Manage owned task executions. Creates no work. list defaults to active or unresolved tasks; scope=all includes history. inspect reads results and progress; stop uses normal permissions. Both require task_ids. after skips unchanged results. Use await when blocked; avoid polling or restarting pending work. To page a child conversation or cancel a result subscription, load get_tool_schema(name="tasks") and use call_tool.',
       }),
       manifest: { effect_kind: 'delegation', operation: 'tasks.manage', risk: 'low', owner: 'runtime', dispatch_scope: 'session', mutating: true },
       delegatesToolExecution: true, nestedCallable: false, executionChannel: 'runtime:tasks',

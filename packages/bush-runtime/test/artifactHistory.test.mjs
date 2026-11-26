@@ -39,7 +39,7 @@ test('removed presentation tools retain their original attachments through durab
     provider: { async *stream() { throw Error('History must not invoke a model or replay a tool'); } },
   });
   assert.equal(registry.resolve('present_artifact'), undefined);
-  assert.ok(registry.resolve('remember_file'));
+  assert.equal(registry.resolve('remember_file'), undefined, 'legacy history reads must not require the retired file Memo tool');
   assert.ok(registry.resolve('mcp_app_status'));
   const persistedRecord = JSON.parse(JSON.stringify(record));
   assert.deepEqual(await host.sendCommand({ kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,

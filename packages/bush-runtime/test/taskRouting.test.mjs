@@ -186,8 +186,12 @@ test('routing descriptions and ID guidance are available without changing frozen
     assert.equal(JSON.stringify(modelToolDefinitions(f.registry, f.request)), prefix);
   }
   const child = await f.call('call_tool', { name: 'subagent', arguments: { prompt: 'Check the fixture.' } });
-  await f.call('call_tool', { name: 'tasks', arguments: { action: 'inspect', task_ids: [child.taskId] } });
+  const existingTasks = f.store.list('parent');
+  const inspected = await f.call('call_tool', { name: 'tasks', arguments: { action: 'inspect', task_ids: [child.taskId] } });
+  assert.equal(inspected.tasks[0].task_id, child.taskId);
   await f.reject('tasks', { action: 'stop', task_ids: ['employee-review'] }, /tasks list/);
+  assert.deepEqual(f.store.list('parent'), existingTasks);
+  assert.equal(f.executions.length, 1, 'task lookup and control must never dispatch a child');
   assert.equal(JSON.stringify(modelToolDefinitions(f.registry, f.request)), prefix);
   f.messages.length = 0; synchronizeBuiltinSchemas(f.registry, f.request, []);
   assert.equal(JSON.stringify(modelToolDefinitions(f.registry, f.request)), prefix, 'clearing recalled receipts preserves the provider contract');
