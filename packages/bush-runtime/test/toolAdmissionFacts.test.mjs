@@ -106,7 +106,7 @@ test('PowerShell lookup failures report no command execution through native and 
       assert.equal(terminals.hasActiveProcesses(), false);
     }
     await assert.rejects(commandSandboxPlan({ mode: 'auto', network: 'disabled', readableRoots: [], writableRoots: [] },
-      { input, sessionId: 'admission-s', turn: { request: { permissionMode: 'task_free', metadata: { workspaceDir: process.cwd() } } } }, process.cwd()), error => {
+      { input, sessionId: 'admission-s', turn: { request: { permissionMode: 'ask_for_approval', metadata: { workspaceDir: process.cwd() } } } }, process.cwd()), error => {
       assert.equal(error.code, code);
       assert.deepEqual(toolFailureFacts(error), expected, 'sandbox admission and revalidation also precede command execution');
       return true;

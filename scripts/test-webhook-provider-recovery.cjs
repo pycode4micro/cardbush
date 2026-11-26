@@ -61,7 +61,7 @@ async function run() {
     await bridge.command('runtime.create_session', { sessionId });
     const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'bound', turnId: 'bound', sessionId, model: first.model,
       providerBinding: first.binding, tools: [], prefixMessages: [], inputMessages: [{ messageId: 'bound', message: { role: 'user', content: 'bound' } }],
-      metadata: { uiLanguage: 'zh', childAgentPolicy: { model: { mode: 'fixed', modelId: 'child', model: child.model, providerBinding: child.binding } } }, permissionMode: 'task_free' };
+      metadata: { uiLanguage: 'zh', childAgentPolicy: { model: { mode: 'fixed', modelId: 'child', model: child.model, providerBinding: child.binding } } }, permissionMode: 'ask_for_approval' };
     const binding = { kind: 'assistant', sessionId, title: 'Assistant', parent, generation: 0, profile: assistantProfileSchema.parse({}) };
     const message = { messageId: 'in-1', senderId: 'owner', conversationId: 'wechat-owner', text: 'Please reply.' };
     controller.stop();

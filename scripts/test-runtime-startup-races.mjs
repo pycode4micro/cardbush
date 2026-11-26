@@ -271,12 +271,12 @@ test('desktop Webhook model preparation waits for the active Product Host and pr
   const f = fixture(); f.gates.worker = deferred();
   await f.invoke('webhooks:command', { action: 'read', sessionId: 'existing' });
   const parent = { model: 'old-model', providerBinding: { bindingId: 'chosen', revision: 'old-revision' },
-    metadata: { uiLanguage: 'zh', botSourceRef: 'webhook:original' }, permissionMode: 'task_free' };
+    metadata: { uiLanguage: 'zh', botSourceRef: 'webhook:original' }, permissionMode: 'ask_for_approval' };
   const prepared = f.context.webhookHosts[0].runtime.prepareParent(parent, new AbortController().signal);
   await flush(); assert.equal(f.products[0]?.resolutions, undefined);
   f.gates.worker.resolve(); const result = await prepared;
   assert.equal(result.providerBinding.revision, 'current-revision');
-  assert.equal(result.metadata.botSourceRef, 'webhook:original'); assert.equal(result.permissionMode, 'task_free');
+  assert.equal(result.metadata.botSourceRef, 'webhook:original'); assert.equal(result.permissionMode, 'ask_for_approval');
   assert.equal(parent.providerBinding.revision, 'old-revision');
   assert.equal(f.products[0].resolutions[0].id, 'chosen'); assert.equal(f.products[0].resolutions[0].language, 'zh');
 });

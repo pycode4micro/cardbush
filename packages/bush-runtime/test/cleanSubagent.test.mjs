@@ -9,6 +9,7 @@ import {
   ToolExecutionCoordinator, ToolRegistry,
 } from '../dist/index.js';
 import { PluginAgentEnvironment } from '../dist/pluginAgentEnvironment.js';
+import { CLEAN_AGENT_SETTINGS_SCHEMA, decodeCleanAgentSettings } from '../dist/cleanAgentSettings.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture.read', risk: 'low', owner: 'fixture', dispatch_scope: 'turn', mutating: false };
 const registration = (name, overrides = {}) => ({ definition: { name, description: name, inputSchema: { type: 'object', properties: {} } }, manifest, decodeInput: value => value, execute: () => ({ ok: true }), ...overrides });
@@ -41,6 +42,12 @@ const build = (f, overrides = {}) => buildChildTurnRequest({
   context: { sessionId: f.request.sessionId, turnId: f.request.turnId, turn: { request: f.request, contextMessages: f.request.messages } },
   registry: f.registry, ids: { requestId: 'child-r', sessionId: 'child-s', turnId: 'child-t', messageId: 'child-m' },
   prompt: clean.prompt, cleanSystemPrompt: clean.system_prompt, inherited: [], metadata: {}, ...overrides,
+});
+
+test('clean mode offers two permission choices and decodes the historical approval name', () => {
+  assert.deepEqual(CLEAN_AGENT_SETTINGS_SCHEMA.properties.permission_mode.enum, ['ask_for_approval', 'all_free']);
+  assert.deepEqual(decodeCleanAgentSettings({ permission_mode: 'task_free' }), { permission_mode: 'ask_for_approval' });
+  assert.throws(() => decodeCleanAgentSettings({ permission_mode: 'unsupported' }), /Invalid clean permission_mode/);
 });
 
 for (const routing of ['parent', 'user']) test(`user-selected ${routing} approval overrides a clean role default`, () => {
@@ -96,7 +103,7 @@ test('clean parent selections reach the child model, generation, skills, limits 
   const outcome = await invoke(f.registry, f.request, 'subagent', {
     ...clean, allowed_tools: ['read_file', 'terminal_exec'], settings: {
       model_id: 'reviewer', reasoning_effort: 'high', max_context_tokens: 48000, max_output_tokens: 8000,
-      temperature: 0, top_p: 1, max_turns: 7, permission_mode: 'task_free', permission_routing: 'parent',
+      temperature: 0, top_p: 1, max_turns: 7, permission_mode: 'ask_for_approval', permission_routing: 'parent',
       disabled_tools: ['terminal_exec'], allowed_skills: ['review', 'outside-parent'], disabled_skills: ['format'],
     },
   });
@@ -111,7 +118,7 @@ test('clean parent selections reach the child model, generation, skills, limits 
   assert.equal(child.temperature, 0);
   assert.equal(child.topP, 1);
   assert.equal(child.metadata.pluginAgentMaxTurns, 7);
-  assert.equal(child.permissionMode, 'task_free');
+  assert.equal(child.permissionMode, 'ask_for_approval');
   assert.equal(child.metadata.permissionRouting, 'parent');
   assert.equal(child.metadata.permissionScopeSessionId, child.sessionId);
   assert.deepEqual(child.metadata.allowedSkills, ['review']);
@@ -165,11 +172,11 @@ test('unadvertised inherit_context is rejected rather than retaining a second mo
 test('clean cannot raise its permission ceiling by changing routing or override a profile execution limit', () => {
   const f = fixture();
   f.request.permissionMode = 'user_free';
-  f.request.metadata.childAgentPolicy = { permissionRouting: 'parent', childPermissionMode: 'task_free' };
+  f.request.metadata.childAgentPolicy = { permissionRouting: 'parent', childPermissionMode: 'ask_for_approval' };
   assert.throws(() => build(f, { cleanSettings: { permission_mode: 'all_free', permission_routing: 'user' } }), /permission ceiling/);
   assert.throws(() => build(f, { cleanSettings: { permission_mode: 'user_free', permission_routing: 'user' } }), /permission ceiling/);
   const child = build(f, { cleanSettings: { max_turns: 50, permission_routing: 'user' }, metadata: { pluginAgentMaxTurns: 3 } });
-  assert.equal(child.permissionMode, 'task_free');
+  assert.equal(child.permissionMode, 'ask_for_approval');
   assert.equal(child.metadata.pluginAgentMaxTurns, 3);
   assert.deepEqual(build(f, { allowedToolNames: ['read_file'], toolAllowlist: ['read_file', 'write_file'] }).tools.map(tool => tool.name), ['read_file']);
 });

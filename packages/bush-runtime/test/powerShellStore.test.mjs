@@ -42,7 +42,7 @@ test('installed Store PowerShell runs on the host and sandbox launch failures ne
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => {
     approvals++; throw new Error('the fixture must never expand its sandbox');
   } } });
-  const run = async (command, permissionMode = 'task_free') => {
+  const run = async (command, permissionMode = 'ask_for_approval') => {
     const identity = { requestId: 'store-r', sessionId: 'store-s', turnId: 'store-t', round: 1, ordinal: ++serial };
     const outcome = await coordinator.execute({ protocol: 'bush.tool_call.v1', id: `store-${serial}`, name: 'terminal_exec',
       argumentsText: JSON.stringify({ command, cwd: work, shell: 'powershell', yield_time_ms: 1000 }) }, identity, undefined,

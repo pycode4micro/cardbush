@@ -70,7 +70,7 @@ for (const [platform, next] of [
         decision:'allow_once',grantedCapabilityIds:event.payload.requestedCapabilityIds});
     }
   })();
-  await host.runSessionTurn({protocol:'bush.session_turn_request.v1',requestId:'request',sessionId:'chat',turnId:'after-switch',model:'fixture',tools,permissionMode:'task_free',
+  await host.runSessionTurn({protocol:'bush.session_turn_request.v1',requestId:'request',sessionId:'chat',turnId:'after-switch',model:'fixture',tools,permissionMode:'ask_for_approval',
     metadata:{workspaceDir:remote,projectDir:remote},inputMessages:[{messageId:'user',message:{role:'user',content:'Read the selected project.'}}]});
   await permissions;
   assert.equal(reads.length,1);assert.equal(reads[0].uri,next);

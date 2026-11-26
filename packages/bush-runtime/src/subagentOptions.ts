@@ -1,4 +1,4 @@
-import { DEFAULT_CHILD_AGENT_DISABLED_TOOLS, type SubagentInteractionCapabilities } from '@cardbush/bush-protocol';
+import { approvalMode, DEFAULT_CHILD_AGENT_DISABLED_TOOLS, type SubagentInteractionCapabilities } from '@cardbush/bush-protocol';
 import { resolveSubagentPermissions, type SubagentPermissionPolicy } from './childTurn.js';
 import { childAgentToolDenial } from './childAgentPolicy.js';
 import type { SubagentModelCatalog } from './cleanAgentSettings.js';
@@ -133,7 +133,7 @@ export function registerSubagentOptions(registry: ToolRegistry, options: Options
           reasoning_effort: modelPolicy.mode === 'fixed' ? modelPolicy.reasoningEffort : request.reasoningEffort, max_output_tokens: modelPolicy.maxOutputTokens ?? request.maxOutputTokens,
           max_context_tokens: modelPolicy.maxContextTokens ?? request.metadata.contextWindowTokens, temperature: request.temperature, top_p: request.topP,
           permission_routing: permissionRouting,
-          permission_ceiling: permissionCeiling,
+          permission_ceiling: approvalMode(permissionCeiling),
           disabled_tools: disabledTools, allowed_skills: request.metadata.allowedSkills, disabled_skills: request.metadata.disabledSkills ?? [],
         },
         hooks: hooks.filter(hook => hook.trusted === true).map(({ id, event, matcher }) => ({ id, event, matcher })),

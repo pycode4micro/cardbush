@@ -1,4 +1,5 @@
 import type {
+  ApprovalMode,
   PluginProxySettings,
   ReasoningEffort,
   RuntimePermissionRequest,
@@ -62,7 +63,7 @@ export type AppLanguageMode = 'system' | AppLanguage;
 export type ReferencePlanMode = 'off' | 'auto';
 export type TaskPlanStatus = 'pending' | 'in_progress' | 'waiting' | 'completed';
 type ProxyMode = 'none' | 'system' | 'manual';
-export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
+export type PermissionMode = ApprovalMode;
 export type SubagentPermissionRouting = 'user' | 'parent';
 export type ReasoningLevel = ReasoningEffort | 'default';
 export type TerminalRuntime = import('@cardbush/platform/contracts').TerminalRuntime;

@@ -17,7 +17,7 @@ const request = (id, options = {}) => createProductAgentTurnRequest({
   requestId: id, sessionId: 'preferences', turnId: id, messageId: `user_${id}`,
   createdAt: now,
   userText: `Continue ${id}.`, uiLanguage: 'zh', model: 'fixture', tools: [orderedCheckpointTool],
-  permissionMode: 'task_free', planEnabled: false, maxOutputTokens: 1000, maxContextTokens: 100000,
+  permissionMode: 'ask_for_approval', planEnabled: false, maxOutputTokens: 1000, maxContextTokens: 100000,
   conversationStyle: { mode: 'natural', customTone: '' }, ...options,
 });
 

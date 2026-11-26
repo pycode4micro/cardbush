@@ -257,7 +257,7 @@ function ConnectedRuntimeLivePreTest({
         vision: false,
         interactiveRequests: true,
       },
-      permissionMode: 'task_free',
+      permissionMode: 'ask_for_approval',
       metadata: {},
       });
     } catch (caught) {

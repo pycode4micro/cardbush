@@ -10,14 +10,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
     window.saveInputStyle=(style, selected) => views.setComposerStyle(selected ?? style);
     saveInputStyle('simple');
     updateChat({loading:false,historyLoading:false,language:'zh',activeConversationId:'presentation',welcomeEnabled:true,
-      messages:[],draft:'第一条消息',sending:false,activeTurnId:'',permissionMode:'task_free',
+      messages:[],draft:'第一条消息',sending:false,activeTurnId:'',permissionMode:'ask_for_approval',
       availableModels:[{id:'fixture',modelName:'Test model',provider:'fixture',apiProtocol:'openai_responses',enabled:true}],
       onDraftChange:draft=>updateChat({draft}),onPermissionModeChange:permissionMode=>{presentationPermissions.push(permissionMode);updateChat({permissionMode});},
       onSend:async text=>{presentationSends.push(text);updateChat({draft:'',sending:true,activeTurnId:'presentation-turn',messages:[{id:'presentation-user',role:'user',content:text,turnId:'presentation-turn'}]});},
       onCancel:async()=>updateChat({sending:false,activeTurnId:''})});
   `);
   await until('!!document.querySelector(".welcome-composer .composer-stack.simple")','welcome uses saved simple style');
-  assert.equal(await run('chatProps.permissionMode'),'task_free','changing presentation preserves the permission choice');
+  assert.equal(await run('chatProps.permissionMode'),'ask_for_approval','changing presentation preserves the permission choice');
   const checkSimpleWelcome = async () => {
     assert.equal(await run('getComputedStyle(document.querySelector(".new-chat-input")).boxShadow'),'none','simple welcome has no painted outer card');
     assert.equal(await run('getComputedStyle(document.querySelector(".new-chat-input")).backgroundColor'),'rgba(0, 0, 0, 0)','simple layout spacing is transparent');
@@ -32,14 +32,14 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await run('updateChat({draft:"第一条消息"});document.querySelector(".app").classList.replace("theme-light","theme-dark");');
   await checkSimpleWelcome();
   // A later explicit permission choice must survive the first-message remount.
-  await run('updateChat({permissionMode:"task_free"});document.querySelector(".send-button").click()');
+  await run('updateChat({permissionMode:"ask_for_approval"});document.querySelector(".send-button").click()');
   await until('!document.querySelector(".welcome-composer") && !!document.querySelector(".composer-dock .composer-stack.simple")','sending preserves simple style in actual ChatPanel');
   await until('!!document.querySelector(".send-button .lucide-square")','running turn exposes stop');
   assert.deepEqual(await run('presentationSends'),['第一条消息']);
   assert.equal(await run('document.querySelector("[data-composer-input]").placeholder'),"let's talk");
   assert.equal(await run('getComputedStyle(document.querySelector(".composer-surface")).display'),'grid');
   assert.ok(await run('document.querySelector(".composer-surface").getBoundingClientRect().height<85'),'continuing composer retains capsule height');
-  assert.equal(await run('chatProps.permissionMode'),'task_free','conversation transition preserves explicit permission');
+  assert.equal(await run('chatProps.permissionMode'),'ask_for_approval','conversation transition preserves explicit permission');
   await run('document.querySelector(".model-select").click()');
   await until('!!document.querySelector(".model-picker-menu")','model menu opens');
   assert.equal(await run('document.querySelectorAll(".model-context-section,.model-reasoning-section,.model-picker-row.secondary").length'),0,'continuing simple menu only shows models');

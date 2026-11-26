@@ -14,7 +14,7 @@ function fixture() {
     authorize: () => ({ kind: 'ask', request: { reason: 'Read pages', actions: ['read'], targets: [], capabilityIds: ['pages'] } }),
     execute: () => { state.executed++; if (state.failure) throw state.failure; return { pages: [] }; },
     mcpHook: { server: 'browser_fixture', tool: 'list_pages', call: async () => ({}) } });
-  const request = { requestId: 'r', sessionId: 's', turnId: 't', permissionMode: 'task_free', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
+  const request = { requestId: 'r', sessionId: 's', turnId: 't', permissionMode: 'ask_for_approval', tools: registry.definitions(), metadata: { mcpToolDiscovery: true } };
   const store = new ToolExecutionStore(), messages = [];
   const loop = new RuntimeToolLoop({ registry, executionStore: store, eventLog: new InMemoryRuntimeEventLog(),
     identity: { requestId: 'r', sessionId: 's', turnId: 't' },

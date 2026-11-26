@@ -240,7 +240,7 @@ test('history tool is available through the normal model tool loop and returns o
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'history', sessionId: 'one', turnId: 'search_turn', model: 'fixture',
     prefixMessages: [{ role: 'system', content: 'Use available tools.' }], inputMessages: [{ messageId: 'user', message: { role: 'user', content: '之前什么时候检查过？' } }],
-    tools: registry.definitions().filter(tool => tool.name === EXECUTION_HISTORY_TOOL), permissionMode: 'task_free', requestCapabilities: {}, metadata: {} });
+    tools: registry.definitions().filter(tool => tool.name === EXECUTION_HISTORY_TOOL), permissionMode: 'ask_for_approval', requestCapabilities: {}, metadata: {} });
   assert.equal(terminal.payload.status, 'completed');
   const result = JSON.parse(seen.at(-1).messages.find(message => message.role === 'tool' && message.toolCallId === 'search').content);
   assert.equal(result.results[0].recorded_at, now);

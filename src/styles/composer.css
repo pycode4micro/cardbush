@@ -957,10 +957,6 @@
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-.permission-center-button.mode-user_free {
-  color: color-mix(in srgb, #6fbaff 84%, var(--text));
-}
-
 .permission-center-button.mode-all_free {
   color: color-mix(in srgb, #ff9b45 88%, var(--text));
 }

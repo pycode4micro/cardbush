@@ -21,7 +21,7 @@ function request(overrides = {}) {
     requestId: 'request', sessionId: 'language', turnId: 'turn', messageId: 'human',
     createdAt: '2026-09-08T00:00:00Z',
     userText: '帮我安装blender的官方mcp，并且下载一点素材下来',
-    uiLanguage: 'zh', model: 'fixture', tools: [], permissionMode: 'task_free',
+    uiLanguage: 'zh', model: 'fixture', tools: [], permissionMode: 'ask_for_approval',
     planEnabled: false, ...overrides,
   });
 }

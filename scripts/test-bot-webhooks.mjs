@@ -254,7 +254,7 @@ test('Assistant identifies local input after webhook history and refreshes live 
   const latest = () => JSON.parse(calls.at(-1).messages.filter(m => m.name === 'bot_context').at(-1).content.split('\n').at(-1));
   const settled = async () => { await until(() => !assistant.command({ action: 'read', sessionId }).busy);
     assert.equal(assistant.command({ action: 'read', sessionId }).error, ''); };
-  const parent = { ...request(sessionId), permissionMode: 'task_free', metadata: { botSourceRef: ref } }, profile = assistantProfileSchema.parse({});
+  const parent = { ...request(sessionId), permissionMode: 'ask_for_approval', metadata: { botSourceRef: ref } }, profile = assistantProfileSchema.parse({});
   try {
     assistant.command({ action: 'turn', sessionId, parent, profile, entry: { id: 'old-webhook', role: 'user', source: 'text',
       visibility: 'conversation', createdAt: new Date().toISOString(), content: 'Hello from the bot.', botSourceRef: ref } });
@@ -270,7 +270,7 @@ test('Assistant identifies local input after webhook history and refreshes live 
     assert.deepEqual(latest().messageSource, { kind: 'local' }); assert.equal(latest().source, undefined);
     assert.equal(latest().connections[0].status, 'offline');
     assert.equal(calls.at(-1).metadata.botSourceRef, undefined); assert.deepEqual(calls.at(-1).metadata.botSourceRefs, []);
-    assert.equal(calls.at(-1).permissionMode, 'task_free', 'a later local message keeps local permissions');
+    assert.equal(calls.at(-1).permissionMode, 'ask_for_approval', 'a later local message keeps local permissions');
     assert.ok(!calls.at(-1).messages[0].content.includes('question in your final reply'));
     online = true; disconnectDuringRound = true;
     const before = calls.length;
@@ -304,7 +304,7 @@ test('file forwarding enforces filesystem permission and rejects a redirected pa
   const run = file => coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'send-' + prompts, name: toolName,
     argumentsText: JSON.stringify({ source_ref: 'webhook:a', request_id: 'forward', file }) },
     { requestId: 'r', sessionId: 's', turnId: 't', ordinal: prompts + 1, round: 1 }, undefined,
-    { request: { ...request('s'), messages: [], tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: work } }, contextMessages: [] });
+    { request: { ...request('s'), messages: [], tools: registry.definitions(), permissionMode: 'ask_for_approval', metadata: { workspaceDir: work } }, contextMessages: [] });
   try {
     assert.equal((await run(join(outside, 'file.txt'))).error.code, 'permission_rejected'); assert.equal(prompts, 1); assert.equal(sends, 0);
     redirect = true;

@@ -51,7 +51,7 @@ module.exports = async ({ router, ui, call, success, failure, guest, pageId, url
       entry: { id: 'selected-page', role: 'user', content: referenced.metadata.composerReferenceContent, source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() },
       profile: assistantProfileSchema.parse({}), parent: { protocol: 'bush.session_turn_request.v1', requestId: 'browser-assistant', sessionId: parentId, turnId: 'browser-assistant-turn', model: 'fixture',
         prefixMessages: [], inputMessages: [{ messageId: 'selected-page', message: { role: 'user', content: referenced.content } }],
-        tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' } } });
+        tools: registry.definitions(), metadata: {}, permissionMode: 'ask_for_approval' } } });
     await until(() => tasks.list(parentId).some(task => task.status !== 'running'), 'assistant child completion');
     assert.equal(inspected, true, JSON.stringify(tasks.list(parentId)));
     assert.equal(tasks.list(parentId)[0].status, 'completed');

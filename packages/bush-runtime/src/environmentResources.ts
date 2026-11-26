@@ -32,7 +32,7 @@ export function registerSandboxEnvironment(environment: RuntimeEnvironment, opti
   environment.register('sandbox', async ({ request }) => {
     const configuration = options.loadCommandSandbox ? await options.loadCommandSandbox() : snapshotCommandSandbox(options.commandSandbox);
     if (configuration.mode === 'auto' && !request.permissionMode) return { mode: configuration.mode, active: null, reason: 'request_policy_unknown' };
-    const policy = commandSandboxPolicyForRequest(configuration, { metadata: request.metadata, permissionMode: request.permissionMode ?? 'task_free' });
+    const policy = commandSandboxPolicyForRequest(configuration, { metadata: request.metadata, permissionMode: request.permissionMode ?? 'ask_for_approval' });
     return { mode: configuration.mode, active: !!policy, network: policy?.network ?? 'host',
       readableRoots: policy?.readableRoots ?? [], writableRoots: policy?.writableRoots ?? [] };
   });

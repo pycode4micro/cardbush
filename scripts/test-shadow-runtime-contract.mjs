@@ -29,7 +29,7 @@ assert.match(shadow, /CHILD_AGENT_SYSTEM_PROMPT/);
 assert.match(shadow, /fail closed on revision conflicts/);
 assert.doesNotMatch(shadow, /turn\.declare_outcome/);
 assert.match(shadow, /never inherit user_free\/all_free/);
-assert.match(shadow, /permissionMode: 'task_free'/);
+assert.match(shadow, /permissionMode: 'ask_for_approval'/);
 assert.match(shadow, /shadowReadOnly: readOnly/);
 assert.match(shadow, /shadowWorkspaceDir: workspaceDir/);
 assert.match(shadow, /currently a child Agent/);

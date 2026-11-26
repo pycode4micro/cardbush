@@ -47,7 +47,7 @@ function fixture({ required = false, sandboxMode, decision = 'allow_session', re
     } },
   });
   let serial = 0;
-  const run = (name, input, { mode = 'task_free', owner = 'owner', workspace = root } = {}) => {
+  const run = (name, input, { mode = 'ask_for_approval', owner = 'owner', workspace = root } = {}) => {
     const identity = { requestId: 'r', sessionId: owner, turnId: 't', round: 1, ordinal: ++serial };
     return coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${serial}`, name, argumentsText: JSON.stringify(input) },
       identity, undefined, { contextMessages: [], request: { protocol: 'bush.model_request.v1', ...identity,
@@ -148,7 +148,7 @@ test('an outside cwd is granted as an exact writable scope; required host limits
   assert.ok(f.prompts[0].targets.some(target => target.label === `Write: ${paths.write}`));
   assert.ok(f.starts[0].sandbox.writableRoots.includes(paths.write));
   const required = fixture({ required: true });
-  for (const mode of ['task_free', 'all_free']) {
+  for (const mode of ['ask_for_approval', 'all_free']) {
     for (const command of [input, exec('echo network', { cwd: paths.work, additional_permissions: { network: true } })]) {
       assert.equal((await required.run('terminal_exec', command, { workspace: paths.work, mode })).error.code, 'sandbox_host_limit');
     }

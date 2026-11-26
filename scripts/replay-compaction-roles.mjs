@@ -71,7 +71,7 @@ async function replay(mode) {
   const seed = createProductAgentTurnRequest({ requestId: `role-replay-${mode}`, sessionId, turnId,
     messageId: 'fixture', createdAt: current.createdAt, userText: 'Only replay context maintenance.', model, tools: [],
     workspaceDir: before.metadata.workspace_dir,
-    maxOutputTokens: 128000, maxContextTokens: 400000, permissionMode: 'task_free', planEnabled: true });
+    maxOutputTokens: 128000, maxContextTokens: 400000, permissionMode: 'ask_for_approval', planEnabled: true });
   const seenCalls = [];
   let previousNative, previousWire, originalSources, acceptedSources = [], normalContinuations = 0, restoredBoundaries = 0;
   let emitted = 0;

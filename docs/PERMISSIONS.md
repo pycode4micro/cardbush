@@ -59,11 +59,12 @@ it does not rewrite the system prompt or introduce a new loop-abort threshold.
 
 ## Compatibility and cache
 
-The wire values remain `task_free` and `all_free` so desktop requests remain
-readable by existing Agent services. Saved UI `user_free` choices normalize to
-`task_free`; saved full access remains full access. The legacy `user_free`
-protocol value is still accepted for old API clients and child configurations.
-Historical session messages and tool definitions are not rewritten.
+Runtime and model controls use `ask_for_approval` and `all_free`. Saved `task_free`
+values decode to `ask_for_approval`. Agent HTTP v1 and shared configuration use the
+legacy spelling at the transport boundary, allowing independent upgrades. Saved
+UI `user_free` preferences normalize to Ask for approval. Explicit user-root grants
+from older API clients and child configurations are still honored. Historical session
+messages and tool definitions are not rewritten.
 
 Permissions are requested by the concrete invocation after validating its
 arguments and canonical scope. The legacy `request_permission` pre-approval

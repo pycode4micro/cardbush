@@ -42,7 +42,7 @@ for (const [format, meta] of [
   const registration = registry.resolve('mcp__fixture__studio_prepare');
   assert.equal(registration.mcpHook.appCallable, true);
   if (format === 'MCP Apps') assert.equal(registration.mcpHook.modelVisible, false);
-  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'task_free', tools: [registration.definition], messages: [], metadata: {} };
+  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'ask_for_approval', tools: [registration.definition], messages: [], metadata: {} };
   executions.record({ protocol: 'bush.tool_call.v1', id: 'initial', name: registration.definition.name, argumentsText: '{}' },
     { ...request, round: 1, ordinal: 0 }, { kind: 'returned', result: native, workspaceChanges: [] });
   await host.remember(request);

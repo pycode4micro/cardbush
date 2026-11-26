@@ -89,7 +89,7 @@ const permissionFixture: PendingInteraction = {
       value: 'C:\\Users\\fixture\\Desktop\\release-report.md',
     }],
     requestedCapabilityIds: ['write:C:\\Users\\fixture\\Desktop\\release-report.md'],
-    scope: { mode: 'task_free', roots: ['C:\\workspace'] },
+    scope: { mode: 'ask_for_approval', roots: ['C:\\workspace'] },
   },
   questions: [{
     id: 'permission',

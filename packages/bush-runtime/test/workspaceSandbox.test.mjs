@@ -26,7 +26,7 @@ function fixture(t, options) {
   t.after(() => { assert.equal(dirname(root), realpathSync(tmpdir())); assert.ok(basename(root).startsWith('cardbush-file-sandbox-')); rmSync(root, { recursive: true, force: true, maxRetries: 10 }); });
   const registry = new ToolRegistry(); registerWorkspaceTools(registry, undefined, options);
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { async request(request) { return { decision: 'allow_once', grantedCapabilityIds: request.capabilityIds }; } } });
-  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'task_free', tools: registry.definitions(), messages: [], metadata: { workspaceDir: work } };
+  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'ask_for_approval', tools: registry.definitions(), messages: [], metadata: { workspaceDir: work } };
   let ordinal = 0;
   return { root, work, external, host, path, sibling, request, run(name, input, signal) {
     return coordinator.execute({ protocol: 'bush.tool_call.v1', id: `c${++ordinal}`, name, argumentsText: JSON.stringify(input) },
@@ -330,7 +330,7 @@ test('terminal file extensions approve exact files and invalidate the grant on s
 test('Assistant can approve sandbox access within its own scope, with host limits still enforced', async t => {
   const f = fixture(t);
   const config = { mode: 'auto', network: 'disabled', readableRoots: [], writableRoots: [] };
-  const parent = { sessionId: PERSONAL_ASSISTANT_SESSION, permissionMode: 'task_free', metadata: { workspaceDir: f.external } };
+  const parent = { sessionId: PERSONAL_ASSISTANT_SESSION, permissionMode: 'ask_for_approval', metadata: { workspaceDir: f.external } };
   const context = { sessionId: 's', input: { command: 'echo fixture', shell: process.platform === 'win32' ? 'cmd' : 'posix',
     additionalPermissions: decodeAdditionalCommandPermissions({ write_files: [f.path] }) },
     turn: { request: { ...f.request, metadata: { workspaceDir: f.work, agentRole: 'child', permissionRouting: 'parent',

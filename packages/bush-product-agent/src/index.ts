@@ -9,6 +9,7 @@ import { CONVERSATION_STYLE_INSTRUCTIONS, conversationStyleContext, type Convers
 export { normalizeConversationStyle, type ConversationStyleMode, type ConversationStyleSettings } from "./conversationStyle.js";
 import {
   runtimeSessionTurnRequestSchema,
+  permissionModeSchema,
   type ReasoningEffort,
   type RuntimeProviderBindingRef,
   type RuntimeSessionTurnRequest,
@@ -171,7 +172,7 @@ function createBaseProductAgentTurnRequest(
         sessionWorkspaceDir: workspaceDir,
         taskRoots: [workspaceDir],
       } : {}),
-      permissionMode: input.permissionMode,
+      permissionMode: permissionModeSchema.parse(input.permissionMode),
       subagentPermissionRouting: input.subagentPermissionRouting ?? "user",
       ...(input.childAgentPolicy ? { childAgentPolicy: input.childAgentPolicy } : {}),
       mcpContext: {

@@ -27,7 +27,7 @@ function runner(f, registry, onRunning, permissions) {
   let ordinal = 0, prompts = 0;
   const coordinator = new ToolExecutionCoordinator({ registry, observer: { running: () => onRunning?.() },
     permissions: { async request(request) { prompts++; return permissions ? permissions(request) : { decision: 'deny', grantedCapabilityIds: [] }; } } });
-  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'test', tools: registry.definitions(), messages: [], permissionMode: 'task_free', metadata: { workspaceDir: f.work } };
+  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'test', tools: registry.definitions(), messages: [], permissionMode: 'ask_for_approval', metadata: { workspaceDir: f.work } };
   return { get prompts() { return prompts; }, async run(name, input) {
     const toolCall = { protocol: 'bush.tool_call.v1', id: `c${++ordinal}`, name, argumentsText: JSON.stringify(input) };
     const identity = { requestId: 'r', sessionId: 's', turnId: 't', ordinal, round: 1 };
@@ -162,7 +162,7 @@ test('Git helpers never execute a cwd or relative-PATH Git and explicit invalid 
 test('directory replacement invalidates both explicit terminal approval and implicit workspace admission', async t => {
   const f = fixture(t), target = join(f.root, 'approved'); mkdirSync(target);
   const config = { mode: 'auto', network: 'disabled', readableRoots: [], writableRoots: [] };
-  const context = { sessionId: 's', input: { command: 'echo fixture', shell: process.platform === 'win32' ? 'cmd' : 'posix', additionalPermissions: { readRoots: [target], writeRoots: [], network: false } }, turn: { request: { permissionMode: 'task_free', metadata: { workspaceDir: f.work } } } };
+  const context = { sessionId: 's', input: { command: 'echo fixture', shell: process.platform === 'win32' ? 'cmd' : 'posix', additionalPermissions: { readRoots: [target], writeRoots: [], network: false } }, turn: { request: { permissionMode: 'ask_for_approval', metadata: { workspaceDir: f.work } } } };
   const admitted = await commandSandboxPlan(config, context, f.work);
   renameSync(target, join(f.root, 'previous')); mkdirSync(target);
   const changed = await commandSandboxPlan(config, context, f.work);

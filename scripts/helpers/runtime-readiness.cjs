@@ -10,7 +10,7 @@ module.exports = async ({ run, until, pause }) => {
     };
     window.startupProps={compact:true,language:'zh',draft:'继续对话',sending:false,
       selectedModel:'fixture',availableModels:[{id:'fixture',modelName:'Fixture',provider:'custom',apiKey:'',baseUrl:'https://fixture.invalid'}],
-      referencePlanAvailable:false,referencePlanMode:'off',permissionMode:'task_free',subagentPermissionRouting:'user',
+      referencePlanAvailable:false,referencePlanMode:'off',permissionMode:'ask_for_approval',subagentPermissionRouting:'user',
       reasoningLevelAvailable:false,reasoningLevel:'default',reasoningLevels:[],disabledSkillNames:new Set(),
       onDraftChange:()=>{},onModelChange:()=>{},onReferencePlanModeChange:()=>{},onPermissionModeChange:()=>{},
       onSubagentPermissionRoutingChange:()=>{},onReasoningLevelChange:()=>{},onConfigureModels:()=>{},onToggleSkill:()=>{},

@@ -54,7 +54,7 @@ test('failed worker retires an attached local host; reconnect elects one healthy
     await client.call('product.command', { kind:'models.update',config:{defaultModelId:'fixture',models:[{
       id:'fixture',provider:'openai',model:'fixture',apiKey:'isolated-test-secret',baseURL:`http://127.0.0.1:${model.address().port}/v1`,
     }]} });
-    await client.call('chat.send', { sessionId:session.sessionId,requestId:'interrupted-once',text:'wait for the fixture',modelId:'fixture',permissionMode:'task_free',language:'en' });
+    await client.call('chat.send', { sessionId:session.sessionId,requestId:'interrupted-once',text:'wait for the fixture',modelId:'fixture',permissionMode:'ask_for_approval',language:'en' });
     await until(() => generations === 1);
     await writeFile(trigger, 'terminate this fixture worker');
     await until(() => !alive(owner.pid)); // Keep the lease attached throughout.

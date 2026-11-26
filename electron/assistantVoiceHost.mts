@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { assistantProfileSchema, PERSONAL_ASSISTANT_SESSION, type RuntimeSessionTurnRequest, type SubagentTask, type ConversationEntry } from '@cardbush/bush-protocol';
+import { assistantProfileSchema, permissionModeSchema, PERSONAL_ASSISTANT_SESSION, type RuntimeSessionTurnRequest, type SubagentTask, type ConversationEntry } from '@cardbush/bush-protocol';
 import { createProductAgentTurnRequest, type AgentInstructionDocument } from '@cardbush/bush-product-agent';
 import { RealtimeAgentBridge, realtimeConversationRecord, type RealtimeConversationExecutor } from '@cardbush/bush-runtime/realtime-conversation';
 import type { ElectronProductHostController } from './productHostController.mjs';
@@ -13,7 +13,7 @@ import { writePrivateJson } from './atomicJsonFile.mjs';
 export const assistantHostSettingsSchema = z.object({
   profile: assistantProfileSchema.default(() => assistantProfileSchema.parse({})),
   modelId: z.string().max(200).default(''),
-  permissionMode: z.enum(['task_free', 'user_free', 'all_free']).default('task_free'),
+  permissionMode: permissionModeSchema.default('ask_for_approval'),
   subagentPermissionRouting: z.enum(['user', 'parent']).optional(),
   planEnabled: z.boolean().default(true),
   language: z.enum(['zh', 'en']).default('zh'), voice: z.enum(['female', 'male']).default('female'),

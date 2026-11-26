@@ -112,7 +112,7 @@ test('actual headless Assistant isolates CLI history and preserves its selected 
     await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture-model', apiKey: 'fixture-secret', baseURL: `http://127.0.0.1:${model.address().port}/v1` }] } });
     await service.call('sessions.create', { sessionId: 'current', title: 'Current CLI session' });
     await service.call('sessions.create', { sessionId: 'other' });
-    await service.call('chat.send', { requestId: 'prior', sessionId: 'current', text: 'Remember olive.', ...settings, permissionMode: 'task_free' });
+    await service.call('chat.send', { requestId: 'prior', sessionId: 'current', text: 'Remember olive.', ...settings, permissionMode: 'ask_for_approval' });
     await until(async () => (await service.call('chat.jobs', { sessionId: 'current' })).some(j => j.id === 'prior' && j.status === 'completed'));
     assert.equal((await service.call('webhooks.command', { action: 'read', sessionId: 'personal-assistant' })).enabled, false);
     await service.call('webhooks.command', { action: 'start', sessionId: 'personal-assistant' }); assert.equal(service.keepAlive, true);
@@ -122,7 +122,7 @@ test('actual headless Assistant isolates CLI history and preserves its selected 
     const pairing = await fetch(base + '/pairings', { method: 'POST', headers: pairHeaders, body: JSON.stringify({ requestId, name: 'Generic bridge', replyUrl: `http://127.0.0.1:${callback.address().port}/reply`, replyHeaders: { Authorization: 'Bearer ' + callbackToken } }) });
     const pending = await pairing.json(); assert.equal(pending.status, 'pending', JSON.stringify(pending));
     const before = await service.call('webhooks.command', { action: 'read', sessionId: 'personal-assistant' }); assert.equal(before.pairings[0].requestId, requestId);
-    await service.call('webhooks.command', { action: 'connect', id: requestId, sessionId: 'personal-assistant', settings: { ...settings, permissionMode: 'task_free' } });
+    await service.call('webhooks.command', { action: 'connect', id: requestId, sessionId: 'personal-assistant', settings: { ...settings, permissionMode: 'ask_for_approval' } });
     const paired = await (await fetch(base + '/pairings/' + requestId, { headers: pairHeaders })).json();
     const connection = paired.connection, headers = { Authorization: 'Bearer ' + connection.token, 'Content-Type': 'application/json' };
     const caps = await fetch(connection.endpoint.replace(/\/messages$/, '/capabilities'), { method: 'POST', headers, body: JSON.stringify({ protocol, capabilities: { text: true, files: true }, plugins: [fixturePlugin] }) });
@@ -140,10 +140,10 @@ test('actual headless Assistant isolates CLI history and preserves its selected 
     assert.match(JSON.stringify(modelCalls[1].input), /question in your final reply/);
     const jobs = await service.call('chat.jobs', { sessionId: 'current' }); assert.ok(jobs.every(job=>!job.botSourceRef));
     assert.equal(jobs.length,1,'no incoming bot job enters the ordinary conversation');
-    assert.equal(jobs.find(job => job.id === 'prior').permissionMode, 'task_free');
+    assert.equal(jobs.find(job => job.id === 'prior').permissionMode, 'ask_for_approval');
     await until(()=>modelCalls.some(c=>JSON.stringify(c.input).includes('cli-file-call')));
     const beforeLocal = modelCalls.length;
-    await service.call('chat.send', { requestId: 'local-after', sessionId: 'current', text: 'Continue locally.', ...settings, permissionMode: 'task_free' });
+    await service.call('chat.send', { requestId: 'local-after', sessionId: 'current', text: 'Continue locally.', ...settings, permissionMode: 'ask_for_approval' });
     await until(async () => (await service.call('chat.jobs', { sessionId: 'current' })).some(j => j.id === 'local-after' && j.status === 'completed'));
     assert.ok(modelCalls.slice(beforeLocal).some(c=>c.tools.some(t => t.name === 'request_user_input_async')), 'local input restores its normal question tools');
     assert.equal((await service.call('chat.jobs', { sessionId: 'other' })).length, 0);

@@ -24,7 +24,7 @@ function fixture(run, { autoAccept = true, control } = {}) {
     wait: signal => tasks.waitForCompletion(context.sessionId, task.taskId, signal) })));
   observer.register(registry);
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('unexpected permission'); } } });
-  const request = { protocol: 'bush.model_request.v1', requestId: 'parent-request', sessionId: 'parent-session', turnId: 'parent-turn', model: 'local-model', permissionMode: 'task_free',
+  const request = { protocol: 'bush.model_request.v1', requestId: 'parent-request', sessionId: 'parent-session', turnId: 'parent-turn', model: 'local-model', permissionMode: 'ask_for_approval',
     messages: [], tools: registry.definitions(), metadata: { uiLanguage: 'en', secret: 'never-forward' } };
   let calls = 0;
   const invoke = (name, args, parent = request, signal) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${++calls}`, name, argumentsText: JSON.stringify(args) },
@@ -40,7 +40,7 @@ test('Assistant full access does not remove remote subagent model approval', asy
     metadata: { ...f.request.metadata, subagentPermissionRouting: 'parent' } };
   const result = await f.invoke('subagent', { prompt: 'Read the workspace', target_agent: f.target.id }, parent);
   assert.equal(result.kind, 'returned');
-  assert.equal(f.requests[0].permissionMode, 'task_free');
+  assert.equal(f.requests[0].permissionMode, 'ask_for_approval');
   assert.equal(f.requests[0].permissionRouting, 'parent');
 });
 
@@ -101,7 +101,7 @@ for (const scenario of [
   t.after(async () => { finish.resolve(result); releaseReply.resolve(); await host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); });
   const turn = turnId => ({ protocol: 'bush.session_turn_request.v1', requestId: `request-${turnId}`, sessionId: 'parent', turnId,
     model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: `input-${turnId}`, message: { role: 'user', content: 'Check the probe' } }],
-    tools: registry.definitions(), permissionMode: 'task_free', metadata: {} });
+    tools: registry.definitions(), permissionMode: 'ask_for_approval', metadata: {} });
   const pending = host.runSessionTurn(turn('first'));
   await replyStarted.promise;
   const receipt = JSON.parse(requests[1].messages.find(message => message.toolCallId === 'probe').content);
@@ -141,7 +141,7 @@ test('tasks inspect preserves a rejected submission without querying a nonexiste
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const result = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: 'parent', turnId: 'turn',
     model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Delegate only' } }],
-    tools: registry.definitions(), permissionMode: 'task_free', metadata: {} });
+    tools: registry.definitions(), permissionMode: 'ask_for_approval', metadata: {} });
   assert.equal(result.payload.status, 'completed');
   assert.equal(round, 3);
   assert.equal(observations, 0);
@@ -207,10 +207,10 @@ test('an unconfirmed remote cancellation is a failure, not a false stopped resul
 
 test('remote delegation respects the configured child permission ceiling', async () => {
   const f = fixture(async () => completed('done'));
-  const request = { ...f.request, permissionMode: 'user_free', metadata: { ...f.request.metadata, subagentPermissionRouting: 'parent', childAgentPolicy: { childPermissionMode: 'task_free' } } };
+  const request = { ...f.request, permissionMode: 'user_free', metadata: { ...f.request.metadata, subagentPermissionRouting: 'parent', childAgentPolicy: { childPermissionMode: 'ask_for_approval' } } };
   const result = await f.invoke('subagent', { prompt: 'x', target_agent: f.target.id }, request);
   await f.results.get(result.result.taskId);
-  assert.equal(f.requests[0].permissionMode, 'task_free');
+  assert.equal(f.requests[0].permissionMode, 'ask_for_approval');
   assert.equal(f.requests[0].permissionRouting, 'parent');
   const resumed = await f.invoke('subagent', { prompt: 'Continue', task_id: result.result.taskId }, request);
   await f.results.get(resumed.result.taskId);

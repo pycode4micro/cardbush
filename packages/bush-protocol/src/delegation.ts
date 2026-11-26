@@ -3,6 +3,7 @@ import { teamSubmissionSchema, childExecutionFactsSchema } from './teamSubmissio
 
 import { sessionUsageSchema } from "./session.js";
 import { remoteObservationSchema } from './remoteInteraction.js';
+import type { RuntimePermissionMode } from './permissionMode.js';
 
 export const BUSH_SUBAGENT_TASK_PROTOCOL = "bush.subagent_task.v1" as const;
 export const BUSH_SUBAGENT_EVENT_PROTOCOL = "bush.subagent_event.v1" as const;
@@ -72,7 +73,7 @@ export function subagentExecutionQueued(task: { status: unknown; queuedAfterTask
 export interface RemoteSubagentRequest {
   connectionId: string; agentId?: string; taskId: string;
   parentSessionId: string; parentTurnId: string; sessionId: string; turnId: string;
-  prompt: string; permissionMode: 'task_free' | 'user_free' | 'all_free'; language: string;
+  prompt: string; permissionMode: RuntimePermissionMode; language: string;
   permissionRouting?: 'user' | 'parent';
   worker?: z.infer<typeof remoteWorkerSchema>;
   queue?: boolean;

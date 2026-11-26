@@ -21,7 +21,7 @@ function fixture(t, stream, terminal=false, delegate) {
   journal.append(id,original); journal.append(id,other); journal.modelHistory(id).append([], [original.id,other.id]);
   const task={taskId:'task-a',parentSessionId:id,parentTurnId:'p',childSessionId:'c',childTurnId:'t',createdAt:original.createdAt,
     status:terminal?'completed':'running',finalResponse:'Child final report',originMessageIds:[original.id],resultWatched:true};
-  const parent={protocol:'bush.session_turn_request.v1',requestId:'r',sessionId:id,turnId:'p',model:'fixture',permissionMode:'task_free',tools:[],prefixMessages:[],inputMessages:[],metadata:{}};
+  const parent={protocol:'bush.session_turn_request.v1',requestId:'r',sessionId:id,turnId:'p',model:'fixture',permissionMode:'ask_for_approval',tools:[],prefixMessages:[],inputMessages:[],metadata:{}};
   if(delegate)parent.tools.push({name:'tasks',description:'Read execution facts',inputSchema:{type:'object'}});
   const assistant=new AssistantConversation(journal,{exists:()=>true,tasks:()=>[task],checkpoint:()=>({}),delegate:delegate ?? (async()=>assert.fail('no forced actions')),
     ...(delegate ? { delegationTools:()=>[{name:'tasks',description:'Read execution facts',inputSchema:{type:'object'}}] } : {}),

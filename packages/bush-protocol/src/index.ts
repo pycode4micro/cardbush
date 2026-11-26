@@ -13,6 +13,7 @@ export * from './mcpAppReference.js';
 export * from "./openai.js";
 export * from './siwc.js';
 export * from "./model.js";
+export * from './permissionMode.js';
 export * from './modelLimits.js';
 export * from './contextBudget.js';
 export * from "./providerBinding.js";

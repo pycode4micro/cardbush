@@ -23,7 +23,7 @@ async function fixture(t, { language = 'en', collector } = {}) {
   const configuration = { action: 'configure', assistant: { name: 'Assistant' },
     profile: { name: 'Assistant', language, timeZone: 'UTC', confirmedAt: '2026-11-15T00:00:00Z', recognition: {} },
     parent: { protocol: 'bush.session_turn_request.v1', sessionId, requestId: 'config', turnId: 'config', model: 'fixture',
-      tools: [], metadata: { uiLanguage: language }, permissionMode: 'task_free', prefixMessages: [],
+      tools: [], metadata: { uiLanguage: language }, permissionMode: 'ask_for_approval', prefixMessages: [],
       inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } };
   const open = async () => {
     registry = new ToolRegistry();

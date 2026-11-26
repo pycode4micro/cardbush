@@ -7,7 +7,7 @@ import { InMemoryRuntimeHost, InMemoryRuntimeEventLog, InMemoryRuntimeCheckpoint
 
 const request = (id = 'task') => ({ protocol: 'bush.model_request.v1', requestId: id, sessionId: `internal-${id}`, turnId: id,
   model: 'fixture', reasoningEffort: 'xhigh', maxOutputTokens: 128000, metadata: { contextWindowTokens: 400000 },
-  tools: [], messages: [{ role: 'developer', content: 'Return the structured result.' }, { role: 'user', content: 'source snapshot' }], permissionMode: 'task_free' });
+  tools: [], messages: [{ role: 'developer', content: 'Return the structured result.' }, { role: 'user', content: 'source snapshot' }], permissionMode: 'ask_for_approval' });
 const event = (r, sequence, kind, extra = {}) => ({ protocol: 'bush.model_event.v1', requestId: r.requestId,
   sequence, createdAt: new Date().toISOString(), kind, ...extra });
 async function fixture(t, provider, options = {}) {

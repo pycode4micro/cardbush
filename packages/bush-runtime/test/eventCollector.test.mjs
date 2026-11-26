@@ -8,7 +8,7 @@ function fixture(cold = false) {
   const registry = new ToolRegistry(), executions = new ToolExecutionStore(), calls = [];
   const definition = { name: 'mcp__fixture__read', description: 'Read a source.', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } };
   const task = { parentSessionId: PERSONAL_ASSISTANT_SESSION, parentTurnId: 'user', taskId: 'verified', status: 'completed', childSessionId: 'child', childTurnId: 'sample' };
-  const parent = { sessionId: PERSONAL_ASSISTANT_SESSION, tools: [definition], permissionMode: 'task_free', inputMessages: [], metadata: {} };
+  const parent = { sessionId: PERSONAL_ASSISTANT_SESSION, tools: [definition], permissionMode: 'ask_for_approval', inputMessages: [], metadata: {} };
   const saved = { ...parent, sessionId: 'child', turnId: 'sample', metadata: { agentRole: 'child' } };
   const settings = { withhold: false, allow: true };
   const register = () => registry.register({ definition, manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'fixture', dispatch_scope: 'session', mutating: false },

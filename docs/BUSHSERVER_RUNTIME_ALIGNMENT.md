@@ -40,7 +40,7 @@ as disabled or installable Built-ins.
   the next provider round. It does not create a hidden replacement Turn.
 - Request capabilities default off and keep vision and interactive permission
   requests distinct. `request_permission` owns the pending/reply lifecycle.
-- Permission modes are `task_free`, `user_free` and `all_free`; grants bind exact
+- Permission modes are `ask_for_approval`, `user_free` and `all_free`; grants bind exact
   actions, resources and capability IDs. UI modes do not silently enable
   `all_free`. Once explicitly selected, `all_free` applies to the full nested and
   child execution tree: ordinary asks are resolved inside Runtime while hard

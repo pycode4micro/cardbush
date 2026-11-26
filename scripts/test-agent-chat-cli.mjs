@@ -653,7 +653,7 @@ test('CLI help and argument errors do not need a server or credentials', async t
   const missing = await cli(t, ['--url', 'http://127.0.0.1:1', '--prompt', 'test']).result;
   assert.equal(missing.code, 1); assert.match(missing.stderr, /Remote chat has been removed/);
   for (const args of [['resume'], ['--resume'], ['--resume', ''], ['--resume', 's', 'extra'], ['unknown'], ['--resume', 's', '--session', 's'], ['resume', 's', '--resume', 's'],
-    ['--resume', 's', '--project', 'p'], ['--full-access', '--permission', 'task_free'], ['--local', '--url', 'http://127.0.0.1:1'], ['--local', '--token-file', 'token']]) {
+    ['--resume', 's', '--project', 'p'], ['--full-access', '--permission', 'ask_for_approval'], ['--local', '--url', 'http://127.0.0.1:1'], ['--local', '--token-file', 'token']]) {
     assert.equal((await cli(t, args).result).code, 1, JSON.stringify(args));
   }
 });
@@ -870,7 +870,7 @@ test('session switching restores model and effort, clears empty-session override
   const empty = await f.service.call('sessions.create', { projectId: project.id });
   for (const [session, modelId, reasoningEffort] of [[first, 'fixture', 'high'], [second, 'second', null]]) {
     const saved = await f.service.call('chat.send', { requestId: `saved-${modelId}`, turnId: `turn-${modelId}`,
-      sessionId: session.sessionId, text: 'Saved question', modelId, reasoningEffort, permissionMode: 'task_free', language: 'en' });
+      sessionId: session.sessionId, text: 'Saved question', modelId, reasoningEffort, permissionMode: 'ask_for_approval', language: 'en' });
     await until(() => f.service.call('chat.jobs', { sessionId: session.sessionId }), jobs => jobs.some(job => job.id === saved.id && job.status === 'completed'));
   }
   const child = cli(t, ['--resume', first.sessionId], { env: f.env, cwd: f.cwd, interactive: true });
@@ -944,7 +944,7 @@ test('resuming an active session replays committed replies and follows the exist
   const session = (await f.service.call('sessions.list', { projection: 'summary' }))[0];
   f.block(true);
   const active = await f.service.call('chat.send', { requestId: 'resume-existing-job', sessionId: session.sessionId,
-    turnId: 'resume-existing-turn', text: 'Already running', modelId: 'fixture', permissionMode: 'task_free' });
+    turnId: 'resume-existing-turn', text: 'Already running', modelId: 'fixture', permissionMode: 'ask_for_approval' });
   await until(() => f.calls.length, value => value === 2);
   const child = cli(t, ['--resume', session.sessionId], { env: f.env, cwd: f.root, interactive: true });
   await until(() => child.combined, text => text.includes('fixture-answer-1'));
@@ -1343,7 +1343,7 @@ test('resumed observer never stops another CLI queued successor during the hando
   const f = await fixture(t), gate = join(f.root, 'foreign-handoff-gate'), stops = [], call = f.service.call.bind(f.service);
   f.service.call = (operation, input, ...rest) => { if (operation === 'chat.stop') stops.push(input.id); return call(operation, input, ...rest); };
   const session = await call('sessions.create', {});
-  const send = id => call('chat.send', { requestId: id, sessionId: session.sessionId, text: id, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  const send = id => call('chat.send', { requestId: id, sessionId: session.sessionId, text: id, modelId: 'fixture', permissionMode: 'ask_for_approval', language: 'en' });
   f.block(true); await send('peer-first'); await until(() => f.calls.length, count => count === 1); await send('peer-next');
   process = cli(t, ['--resume', session.sessionId], { env: { ...f.env, CARDBUSH_TEST_HANDOFF_GATE: gate }, cwd: f.cwd, interactive: true });
   await until(() => process.stderr, text => text.includes('Working'));
@@ -1394,7 +1394,7 @@ test('two CLI approval pickers racing on Enter produce one decision and one tool
     catch (error) { if (error.code === 'permission_not_pending') conflicts++; throw error; }
   };
   f.setTool({ name: 'read_file', arguments: { path: outside } });
-  const job = await call('chat.send', { requestId: 'shared-approval', sessionId: session.sessionId, text: 'read fixture', modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  const job = await call('chat.send', { requestId: 'shared-approval', sessionId: session.sessionId, text: 'read fixture', modelId: 'fixture', permissionMode: 'ask_for_approval', language: 'en' });
   for (let index = 0; index < 2; index++) processes.push(cli(t, ['--resume', session.sessionId], { env: f.env, cwd: f.cwd, interactive: true }));
   await Promise.all(processes.map(process => until(() => process.stderr, text => text.includes('Choose an approval'))));
   for (const process of processes) process.child.stdin.write('\x1b[B\r');
@@ -1442,7 +1442,7 @@ test('a second CLI submission observes the earlier pending approval before its o
   // chat input, otherwise the fixture can put its message into an approval.
   await until(() => process.stderr, text => text.includes('[Test: chat input ready]'));
   f.setTool({ name: 'read_file', arguments: { path: outside } });
-  const first = await f.service.call('chat.send', { requestId: 'peer-approval', sessionId: session.sessionId, text: 'read fixture', modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  const first = await f.service.call('chat.send', { requestId: 'peer-approval', sessionId: session.sessionId, text: 'read fixture', modelId: 'fixture', permissionMode: 'ask_for_approval', language: 'en' });
   await until(() => f.service.call('runtime.command', { kind: 'runtime.list_turn_events', payload: { sessionId: session.sessionId, turnId: first.turnId } }), events => events.some(event => event.kind === 'permission_requested'));
   process.child.stdin.write('second CLI message\r');
   await until(() => process.stderr, text => text.includes('Choose an approval'));
@@ -1512,7 +1512,7 @@ test('explicit CLI exit stops its queued messages before the active turn and pre
   process.child.stdin.write('queued owned task\r');
   const jobs = await until(() => call('chat.jobs', {}), jobs => jobs.length === 2);
   const first = jobs[0], queued = jobs[1];
-  const peer = await call('chat.send', { requestId: 'peer-survives-exit', sessionId: first.sessionId, text: 'peer task', modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+  const peer = await call('chat.send', { requestId: 'peer-survives-exit', sessionId: first.sessionId, text: 'peer task', modelId: 'fixture', permissionMode: 'ask_for_approval', language: 'en' });
   process.child.stdin.write('/exit\r'); assert.equal((await process.result).code, 0);
   const after = await call('chat.jobs', {});
   assert.equal(after.find(job => job.id === queued.id).status, 'stopped');
@@ -1683,7 +1683,7 @@ test('local CLI starts without a service or token, owns cwd, resumes and preserv
   let state = JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8'));
   const sessionId = state.jobs[0].sessionId;
   assert.equal(state.projects[0].path, await realpath(f.cwd));
-  assert.equal(state.jobs[0].input.permissionMode, 'task_free');
+  assert.equal(state.jobs[0].input.permissionMode, 'ask_for_approval');
   assert.match(first.stderr, new RegExp(`cardbush --resume ${sessionId}`));
   await assert.rejects(readFile(join(dataRoot, 'access-token')), { code: 'ENOENT' });
   await assert.rejects(readFile(env.CARDBUSH_CLI_CONFIG), { code: 'ENOENT' });
@@ -1700,7 +1700,7 @@ test('local CLI starts without a service or token, owns cwd, resumes and preserv
   const local = await cli(t, ['--local', '--prompt', 'local again'], { env: { ...env, CARDBUSH_AGENT_URL: 'http://127.0.0.1:1', CARDBUSH_AGENT_TOKEN: 'never-send-me' }, cwd: f.cwd }).result;
   assert.equal(local.code, 0, local.stderr);
   state = JSON.parse(await readFile(join(dataRoot, 'agent.json'), 'utf8'));
-  assert.equal(state.jobs.at(-1).input.permissionMode, 'task_free');
+  assert.equal(state.jobs.at(-1).input.permissionMode, 'ask_for_approval');
   assert.doesNotMatch(first.stdout + first.stderr + resumed.stdout + resumed.stderr + local.stdout + local.stderr, /fixture-model-secret|never-send-me/);
 });
 
@@ -1794,7 +1794,7 @@ test('simultaneous local windows share one host, run independent sessions, and f
   assert.equal(forked.metadata.runtimeWorkspace.workspaceDir, await realpath(f.cwd));
   f.block(true);
   const send = index => client.call('chat.send', { requestId: `fork-${index}`, sessionId: forked.sessionId,
-    turnId: `fork-turn-${index}`, text: `fork request ${index}`, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+    turnId: `fork-turn-${index}`, text: `fork request ${index}`, modelId: 'fixture', permissionMode: 'ask_for_approval', language: 'en' });
   await Promise.all([send(1), send(2)]);
   await until(() => f.calls.length, n => n === 3);
   const queued = await client.call('chat.jobs', { sessionId: forked.sessionId });

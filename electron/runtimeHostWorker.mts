@@ -776,10 +776,10 @@ function readSubagentPermissionPolicy(path: string | undefined): SubagentPermiss
   if (JSON.stringify(payload) !== JSON.stringify(config)) {
     writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   }
-  if (config.permissionRouting === 'parent' && config.childPermissionMode !== 'task_free') {
+  if (config.permissionRouting === 'parent' && config.childPermissionMode !== 'ask_for_approval') {
     process.stderr.write(`${JSON.stringify({
       code: 'subagent_elevated_permission_mode',
-      message: `Subagent childPermissionMode is ${config.childPermissionMode}; child Agents may operate beyond project-scoped task_free boundaries.`,
+      message: `Subagent childPermissionMode is ${config.childPermissionMode}; child Agents may operate beyond project-scoped ask_for_approval boundaries.`,
     })}\n`);
   }
   return {

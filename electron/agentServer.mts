@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { AgentService } from './agentService.mjs';
 import { AgentBusyError, AgentWebFileUnavailableError } from './agentErrors.mjs';
 import { agentApiPath, agentOperations, type AgentEventFrame } from './agentTypes.js';
+import { encodeAgentPermissionEvent, encodeAgentPermissionReply } from './agentPermissionWire.mjs';
 
 class HttpError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -25,9 +26,10 @@ async function body(request: IncomingMessage) {
   catch { throw new HttpError(400, 'invalid_json', 'Invalid JSON request.'); }
 }
 function encodeFrame(frame: AgentEventFrame, sse: boolean) {
-  if (!sse) return JSON.stringify(frame) + '\n';
+  const wireFrame = frame.type === 'event' ? { ...frame, event: encodeAgentPermissionEvent(frame.event) } : frame;
+  if (!sse) return JSON.stringify(wireFrame) + '\n';
   if (frame.type === 'heartbeat') return ': heartbeat\n\n';
-  return `${frame.type === 'event' ? `id: ${frame.event.sequence}\n` : ''}event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`;
+  return `${frame.type === 'event' ? `id: ${frame.event.sequence}\n` : ''}event: ${frame.type}\ndata: ${JSON.stringify(wireFrame)}\n\n`;
 }
 async function writeFrame(response: ServerResponse, frame: AgentEventFrame, sse: boolean, signal: AbortSignal) {
   signal.throwIfAborted();
@@ -71,7 +73,7 @@ export async function serveAgentHttp(service: AgentService, options: { host?: st
         const input = z.object({ operation: z.enum(agentOperations), input: z.record(z.string(), z.unknown()).default({}) }).strict().parse(await body(request));
         // Losing this HTTP request never cancels a submitted task or replays it.
         const result = await service.call(input.operation, input.input, abort.signal);
-        if (!abort.signal.aborted) json(response, 200, { result: result ?? null });
+        if (!abort.signal.aborted) json(response, 200, { result: encodeAgentPermissionReply(input.operation, input.input, result) ?? null });
         return;
       }
       const rawCursor = url.searchParams.get('afterSequence') ?? request.headers['last-event-id'];

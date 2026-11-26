@@ -201,7 +201,7 @@ for (const assistant of [true, false]) test(`${assistant ? 'Assistant' : 'ordina
     await manager.apply({ protocol: 'bush.mcp_snapshot.v2', snapshotId: 'excel-attachment-replay', revision: 1, servers: [server] });
     assert.ok(registry.resolve(inspect));
     const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'document-request', sessionId, turnId: 'document-turn',
-      model: 'fixture', prefixMessages: [], permissionMode: assistant ? 'all_free' : 'task_free', tools: registry.definitions(),
+      model: 'fixture', prefixMessages: [], permissionMode: assistant ? 'all_free' : 'ask_for_approval', tools: registry.definitions(),
       inputMessages: [{ messageId: 'user-file', message: { role: 'user', content }, metadata: { attachments: [attachment] } }],
       metadata: { subagentPermissionRouting: 'parent', assistantOutputMode: 'text', individuation: { habits: false, predictions: false } } };
     if (assistant) {

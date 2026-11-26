@@ -23,7 +23,7 @@ function fixture(t, provider, wait, deps = {}) {
     entry: { id: 'user-input', role: 'user', content: 'Inspect the files', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() },
     profile: assistantProfileSchema.parse({}), parent: parent = { protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: id,
       turnId: 'turn', model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Inspect the files' } }],
-      tools: [], metadata: {}, permissionMode: 'task_free', ...options } });
+      tools: [], metadata: {}, permissionMode: 'ask_for_approval', ...options } });
   return { assistant, journal, delegated, send, retry: options => assistant.command({ action: 'retry', sessionId: id,
     parent: { ...parent, ...options }, profile: assistantProfileSchema.parse({}) }), read: () => assistant.command({ action: 'read', sessionId: id }) };
 }

@@ -85,7 +85,7 @@ for (const item of cases) for (let repeat = 1; repeat <= repeatCount; repeat++) 
   await mkdir(directory);
   const sessionId = `skill-audit-${randomUUID()}`, turnId = `turn_${randomUUID()}`, createdAt = new Date().toISOString();
   const seed = createProductAgentTurnRequest({ requestId: runId, sessionId, turnId, messageId: 'fixture-user', createdAt,
-    localDate: createdAt.slice(0, 10), userText: item.request, model: model.model, permissionMode: 'task_free',
+    localDate: createdAt.slice(0, 10), userText: item.request, model: model.model, permissionMode: 'ask_for_approval',
     tools, maxOutputTokens: model.maxOutputTokens, maxContextTokens: model.maxContextTokens, reasoningEffort: model.reasoningEffort });
   const prefix = seed.prefixMessages;
   const snapshot = snapshots.get(item.id);

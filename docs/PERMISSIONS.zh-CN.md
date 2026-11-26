@@ -25,7 +25,7 @@
 
 ## 兼容与缓存
 
-线协议保留 `task_free`、`all_free`。旧 UI 保存的 `user_free` 归一为 `task_free`，已有完全访问保留；旧 API 客户端和子代理配置仍接受协议值 `user_free`。历史消息和工具定义不改写。
+Runtime 和模型使用 `ask_for_approval`（申请批准）与 `all_free`（完全访问）。旧配置里的 `task_free` 读取后转为 `ask_for_approval`。Agent HTTP v1 和设置同步在传输边界仍沿用旧值，支持桌面与服务器分别升级。旧界面偏好里的 `user_free` 归到申请批准，旧 API 和子代理配置中明确授予的用户目录权限仍受支持。历史消息和工具定义不改写。
 
 权限在校验具体调用参数与规范范围后申请。旧 `request_permission` 预授权工具及兼容处理器已经移除；直接调用实际操作，由执行边界请求必要批准。旧工具合同不迁移或重放，见[工具交互](TOOL_INTERACTION.md)。
 

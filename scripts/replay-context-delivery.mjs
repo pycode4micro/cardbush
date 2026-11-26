@@ -29,7 +29,7 @@ for (const turn of turns) {
     const sources = item.message.images.map(image => image.url);
     const request = createProductAgentTurnRequest({ requestId: 'replay', sessionId, turnId: turn.turnId,
       messageId: item.messageId, createdAt: item.createdAt, localDate: '2026-09-10', sessionEnvironmentLocalDate: '2026-09-10',
-      userText: item.message.content, model: 'offline-fixture', tools: [], images: sources, permissionMode: 'task_free', planEnabled: true });
+      userText: item.message.content, model: 'offline-fixture', tools: [], images: sources, permissionMode: 'ask_for_approval', planEnabled: true });
     const text = request.inputMessages.map(item => item.message.content).join('\n');
     const pathsVisible = sources.filter(source => !source.startsWith('data:')).every(source => text.includes(JSON.stringify(source)));
     assert.ok(pathsVisible);

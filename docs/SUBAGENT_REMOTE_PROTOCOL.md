@@ -87,12 +87,12 @@ The remote administrator controls:
 
 ```sh
 # Default execution ceiling:
-CARDBUSH_REMOTE_PERMISSION_MODE=task_free
+CARDBUSH_REMOTE_PERMISSION_MODE=ask_for_approval
 # Optional administrator override; omit to follow authenticated task routing:
 # CARDBUSH_REMOTE_PARENT_APPROVAL=0
 ```
 
-The requested task mode is intersected with `task_free`, `user_free`, or `all_free` configured as the remote ceiling. Required sandbox policy and process protections remain in force. `all_free` means the host's allowed scope, not universal access.
+The requested task mode is intersected with `ask_for_approval`, `user_free`, or `all_free` configured as the remote ceiling. Required sandbox policy and process protections remain in force. `all_free` means the host's allowed scope, not universal access.
 
 Updated workers advertise `workerInteraction.permissionRouting: true`. The authenticated delegation carries `permissionRouting: parent | user`, persisted per task and retained for queued continuations. `parent` permits exact one-use parent approval without a duplicate human card; `user` remains human-required. Explicit `CARDBUSH_REMOTE_PARENT_APPROVAL=0` overrides parent routing with `human_required` and `escalationReason: remote_policy_requires_human`, displayed in the human approval card. `1` also enables parent approval for old clients that omit routing; otherwise omitted routing defaults to human approval. A model-approval dispatch to an old worker without this capability fails before submission with an upgrade explanation. Denial remains possible. Human-only approval uses the worker owner's existing trusted approval interface; this preview does not implement cross-host human attestation. A parent cannot declare itself human in JSON. No authorized approval path means wait, deny or cancel, never implicit allow.
 

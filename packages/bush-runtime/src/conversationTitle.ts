@@ -21,7 +21,7 @@ export async function summarizeConversationTitle(provider: ModelProvider, reques
       model: request.model, providerBinding: request.providerBinding, maxOutputTokens: 256,
       messages: [{ role: 'system', content: renderPromptTemplate('conversation-title', { limit: conversationTitleLimit }) },
         { role: 'user', content: source.slice(0, 12000) }],
-      tools: [], permissionMode: 'task_free', requestCapabilities: { vision: false, interactiveRequests: false },
+      tools: [], permissionMode: 'ask_for_approval', requestCapabilities: { vision: false, interactiveRequests: false },
       metadata: { runtimeMaintenance: 'conversation_title' },
     }, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
     if (result.status === 'completed' && !result.toolCalls.length) {

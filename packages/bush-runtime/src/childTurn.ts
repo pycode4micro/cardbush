@@ -10,6 +10,8 @@ import {
   modelMessageSchema,
   runtimeProviderBindingRefSchema,
   reasoningEffortSchema,
+  capPermissionMode,
+  permissionModeSchema,
   type ModelMessage,
   type ModelRequest,
   type RuntimeEvent,
@@ -52,7 +54,7 @@ export const DEFAULT_SUBAGENT_DISABLED_TOOLS = DEFAULT_CHILD_AGENT_DISABLED_TOOL
 
 export const DEFAULT_SUBAGENT_PERMISSION_POLICY: SubagentPermissionPolicy = {
   permissionRouting: "user",
-  childPermissionMode: "task_free",
+  childPermissionMode: "ask_for_approval",
   model: { mode: "inherit" },
   disabledTools: [...DEFAULT_SUBAGENT_DISABLED_TOOLS],
 };
@@ -67,9 +69,9 @@ export function resolveSubagentPermissions(parent: ModelRequest, configured = DE
   // Assistant model approval keeps the child's workspace boundary even when
   // the parent is authorized for full access.
   const permissionCeiling = parent.sessionId === PERSONAL_ASSISTANT_SESSION && permissionRouting === 'parent'
-    ? 'task_free'
+    ? 'ask_for_approval'
     : parent.permissionMode === 'all_free' || defaultRouting === 'user'
-      ? parent.permissionMode ?? 'task_free'
+      ? parent.permissionMode ?? 'ask_for_approval'
       : policy.childPermissionMode ?? configured.childPermissionMode;
   return { permissionRouting, permissionCeiling };
 }
@@ -141,8 +143,7 @@ export function buildChildTurnRequest(input: {
   if (submissionTool && !childTools.some(tool => tool.name === submissionTool.name)) childTools.push(structuredClone(submissionTool));
   const { permissionRouting, permissionCeiling } = resolveSubagentPermissions(parentRequest, configuredPolicy, settings.permission_routing);
   const permissionMode = settings.permission_mode ?? permissionCeiling;
-  const levels = ['task_free', 'user_free', 'all_free'];
-  if (levels.indexOf(permissionMode) > levels.indexOf(permissionCeiling)) throw new Error('Clean permission_mode exceeds the configured child permission ceiling.');
+  if (capPermissionMode(permissionMode, permissionCeiling) !== permissionMode) throw new Error('Clean permission_mode exceeds the configured child permission ceiling.');
   const permissionScopeSessionId = permissionRouting === "user"
     ? input.context.sessionId
     : input.ids.sessionId;
@@ -311,14 +312,12 @@ function childAgentPolicy(input: unknown): MetadataChildAgentPolicy {
   ) {
     throw new Error("Child Agent permissionRouting must be user or parent.");
   }
-  if (
-    value.childPermissionMode !== undefined &&
-    !["task_free", "user_free", "all_free"].includes(String(value.childPermissionMode))
-  ) {
+  const mode = permissionModeSchema.optional().safeParse(value.childPermissionMode);
+  if (!mode.success) {
     throw new Error("Child Agent childPermissionMode is invalid.");
   }
   const permissionRouting = value.permissionRouting as "user" | "parent" | undefined;
-  const childPermissionMode = value.childPermissionMode as RuntimePermissionMode | undefined;
+  const childPermissionMode = mode.data;
   const disabledTools = value.disabledTools === undefined
     ? undefined
     : parseDisabledTools(value.disabledTools);

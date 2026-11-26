@@ -23,8 +23,8 @@ function* response(request, calls, text) {
   yield { ...base, sequence, kind: 'response_completed', finishReason: calls.length ? 'tool_calls' : 'stop' };
 }
 
-for (const permissionMode of ['all_free', 'task_free']) {
-  test(`desktop project setup and two Assistant children route workspace approvals under ${permissionMode}`, { timeout: 45_000 }, async t => {
+for (const [permissionMode, modeLabel] of [['all_free', 'Full access'], ['ask_for_approval', 'Ask for approval'], ['task_free', 'a saved legacy approval setting']]) {
+  test(`desktop project setup and two Assistant children route workspace approvals under ${modeLabel}`, { timeout: 45_000 }, async t => {
     const temporary = await realpath(tmpdir());
     const root = await realpath(await mkdtemp(join(temporary, 'assistant-workspace-approval-')));
     const workspace = join(root, 'task'), desktop = join(root, 'Desktop'), project = join(desktop, 'agent-collab-test');
@@ -62,7 +62,7 @@ for (const permissionMode of ['all_free', 'task_free']) {
       },
       provider: { async *stream(request) {
         if (request.metadata.agentRole === 'child') {
-          assert.equal(request.permissionMode, 'task_free');
+          assert.equal(request.permissionMode, 'ask_for_approval');
           const name = request.metadata.subagentName;
           const round = (childRounds.get(name) ?? 0) + 1;
           childRounds.set(name, round);

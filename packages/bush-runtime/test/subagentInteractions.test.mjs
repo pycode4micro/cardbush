@@ -129,7 +129,7 @@ function* respond(request, name, args) {
   yield { ...base, sequence: 2, kind: 'response_completed', finishReason: name ? 'tool_calls' : 'stop' };
 }
 const parentRequest = registry => ({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn', model: 'fixture',
-  prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Work' } }], tools: registry.definitions(), permissionMode: 'task_free',
+  prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Work' } }], tools: registry.definitions(), permissionMode: 'ask_for_approval',
   metadata: { individuation: { habits: false, predictions: false } } });
 
 for (const [routing, requiresHuman] of [['parent', false], ['user', false], ['parent', true]]) test(`local ${routing} permission authority (requires human: ${requiresHuman}) is enforced through the real broker`, { timeout: 15000 }, async t => {
@@ -155,7 +155,7 @@ for (const [routing, requiresHuman] of [['parent', false], ['user', false], ['pa
     if (task.status === 'running') yield* respond(request, 'await', { mode: 'all' }); else yield* respond(request);
   } };
   const host = new InMemoryRuntimeHost({ provider, toolRegistry: registry, subagentTaskStore: tasks,
-    subagentPermissionPolicy: { permissionRouting: routing === 'parent' ? 'user' : 'parent', childPermissionMode: 'task_free' } });
+    subagentPermissionPolicy: { permissionRouting: routing === 'parent' ? 'user' : 'parent', childPermissionMode: 'ask_for_approval' } });
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const request = parentRequest(registry);
   request.metadata.subagentPermissionRouting = routing;

@@ -27,7 +27,7 @@ function fixture(t) {
     permissions: { async request(request) { prompts.push(request); return { decision: answer, grantedCapabilityIds: answer === 'allow_once' ? request.capabilityIds : [] }; } },
   });
   const metadata = { workspaceDir: work };
-  const turn = { request: { protocol: 'bush.model_request.v1', requestId: 'replay', sessionId: 'replay', turnId: 'turn', model: 'fixture', tools: registry.definitions(), messages: [], permissionMode: 'task_free', metadata }, contextMessages: [] };
+  const turn = { request: { protocol: 'bush.model_request.v1', requestId: 'replay', sessionId: 'replay', turnId: 'turn', model: 'fixture', tools: registry.definitions(), messages: [], permissionMode: 'ask_for_approval', metadata }, contextMessages: [] };
   const run = (name, input) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `replay-${++ordinal}`, name, argumentsText: JSON.stringify(input) },
     { requestId: 'replay', sessionId: 'replay', turnId: 'turn', round: 1, ordinal }, undefined, turn);
   t.after(async () => { await terminals.close(); assert.equal(dirname(root), realpathSync.native(tmpdir())); await rmSync(root, { recursive: true, force: true }); });

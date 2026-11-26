@@ -14,7 +14,7 @@ test('one subagent entry guides the current child and rejects stale names and fo
     guideChild: async input => { assert.deepEqual(browserScopes.at(-1), ['parent', input.sessionId], 'new browser selection is available before guidance is delivered'); guidance.push(input); return { status: 'queued' }; },
     loadPluginAgents: async () => [{ id: 'fixture:reviewer', description: 'Read only', mcpServers: ['docs'] }],
   });
-  const request = { requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' };
+  const request = { requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'ask_for_approval' };
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('unexpected permission'); } } });
   const invoke = (name, args, sessionId = 'parent') => coordinator.execute(
     { protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name, argumentsText: JSON.stringify(args) },
@@ -142,7 +142,7 @@ test('resume refuses other owners and running children, and concurrent requests 
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('unexpected'); } } });
   const run = (args, sessionId = 'parent') => coordinator.execute({ protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name: 'subagent', argumentsText: JSON.stringify(args) },
     { requestId: 'r', sessionId, turnId: 't', round: 1, ordinal: 0 }, undefined,
-    { request: { requestId: 'r', sessionId, turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' }, contextMessages: [{ role: 'system', content: 'prefix' }] });
+    { request: { requestId: 'r', sessionId, turnId: 't', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'ask_for_approval' }, contextMessages: [{ role: 'system', content: 'prefix' }] });
   assert.equal((await run({ prompt: 'one' })).kind, 'returned');
   assert.equal((await run({ prompt: 'steal', task_id: 'task1' }, 'other')).kind, 'failed');
   const pair = await Promise.all([run({ prompt: 'continue', task_id: 'task1' }), run({ prompt: 'duplicate', task_id: 'task1' })]);
@@ -174,12 +174,12 @@ test('resume preserves clean configuration while intersecting current permission
   assert.equal(first.kind, 'returned', JSON.stringify(first));
   const resumed = await run({ prompt: 'continue', task_id: 'task1' },
     { contextWindowTokens: 32768, pluginAgentMaxTurns: 2, allowedSkills: ['b', 'c'], disabledSkills: ['new-disabled'],
-      childAgentPolicy: { disabledTools: ['delete_file'] } }, registry.definitions().filter(tool => tool.name !== 'write_file'), 'task_free', 'new-parent-model');
+      childAgentPolicy: { disabledTools: ['delete_file'] } }, registry.definitions().filter(tool => tool.name !== 'write_file'), 'ask_for_approval', 'new-parent-model');
   assert.equal(resumed.kind, 'returned', JSON.stringify(resumed));
   const child = requests[1];
   assert.equal(child.model, 'fixture', 'explicit clean configuration remains independent');
   assert.equal(child.metadata.contextWindowTokens, 8192); assert.equal(child.maxOutputTokens, 512);
-  assert.equal(child.metadata.pluginAgentMaxTurns, 2); assert.equal(child.permissionMode, 'task_free');
+  assert.equal(child.metadata.pluginAgentMaxTurns, 2); assert.equal(child.permissionMode, 'ask_for_approval');
   assert.equal(child.metadata.permissionScopeSessionId, child.sessionId);
   assert.deepEqual(child.tools.map(tool => tool.name), ['read_file']);
   assert.deepEqual(child.metadata.allowedSkills, ['b']);
@@ -187,7 +187,7 @@ test('resume preserves clean configuration while intersecting current permission
   assert.deepEqual(child.metadata.disabledSkills, ['old-disabled', 'new-disabled']);
   assert.deepEqual(child.prefixMessages, [{ role: 'system', content: 'private instructions' }, OUTCOME_VERIFICATION_MESSAGE]);
   assert.deepEqual(child.prefixMessages, requests[0].prefixMessages);
-  assert.equal((await run({ prompt: 'continue again', task_id: 'task2' }, { contextWindowTokens: 32768 }, registry.definitions(), 'task_free', 'third-model')).kind, 'returned');
+  assert.equal((await run({ prompt: 'continue again', task_id: 'task2' }, { contextWindowTokens: 32768 }, registry.definitions(), 'ask_for_approval', 'third-model')).kind, 'returned');
   assert.equal(requests[2].model, 'fixture');
   assert.equal(requests[2].maxOutputTokens, 512);
   assert.equal(requests[2].metadata.subagentMode, 'clean', 'repeated continuations retain the original explicit mode');

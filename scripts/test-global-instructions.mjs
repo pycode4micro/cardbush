@@ -55,7 +55,7 @@ test('invalid or unreadable AGENTS.md fails explicitly instead of silently dropp
 const turn = overrides => createProductAgentTurnRequest({
   requestId: 'request-global', sessionId: 'session-one', turnId: 'turn-one', messageId: 'message-one',
   createdAt: '2026-09-09T00:00:00Z', localDate: '2026-09-09', userText: '检查当前项目',
-  model: 'fixture', tools: [], permissionMode: 'task_free', planEnabled: true,
+  model: 'fixture', tools: [], permissionMode: 'ask_for_approval', planEnabled: true,
   instructionDocuments: [{ path: 'C:/CardBush/AGENTS.md', scope: 'global', content: '# 工作偏好\n先核对事实，再执行修改。' }],
   ...overrides,
 });

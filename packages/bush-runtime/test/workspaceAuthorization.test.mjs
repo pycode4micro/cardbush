@@ -23,7 +23,7 @@ function fixture(t, options = {}) {
     observer: { running() { const action = nextAction; nextAction = undefined; action?.(); } },
     permissions: { async request(request) { prompts++; onApproval?.(); return { decision: onApproval ? 'allow_once' : 'deny', grantedCapabilityIds: onApproval ? request.capabilityIds : [] }; } },
   });
-  const turn = { request: { protocol: 'bush.model_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'fixture', tools: registry.definitions(), messages: [], permissionMode: 'task_free', metadata: { workspaceDir: work } }, contextMessages: [] };
+  const turn = { request: { protocol: 'bush.model_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'fixture', tools: registry.definitions(), messages: [], permissionMode: 'ask_for_approval', metadata: { workspaceDir: work } }, contextMessages: [] };
   return { root, work, safe, outside, link, registry, get prompts() { return prompts; },
     beforeExecute(action) { nextAction = action; }, onApproval(action) { onApproval = action; },
     redirect() { renameSync(link, join(work, 'old-link')); symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); },

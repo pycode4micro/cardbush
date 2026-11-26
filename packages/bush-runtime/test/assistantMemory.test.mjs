@@ -21,7 +21,7 @@ const gate = () => { let release; const promise = new Promise(r => { release = r
 const input = (key, content, source = 'text') => ({ id: key, content, role: 'user', source, visibility: source === 'voice' ? 'internal' : 'conversation', createdAt: new Date().toISOString() });
 const parent = (key, text, settings = on) => ({ protocol: 'bush.session_turn_request.v1', requestId: key, sessionId: id,
   turnId: key, model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: key, message: { role: 'user', content: text } }],
-  tools: [], metadata: { individuation: settings }, permissionMode: 'task_free' });
+  tools: [], metadata: { individuation: settings }, permissionMode: 'ask_for_approval' });
 async function* response(request, { text = '已了解。', calls = [] } = {}) {
   const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
   let sequence = 0;

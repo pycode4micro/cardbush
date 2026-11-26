@@ -15,7 +15,7 @@ const context = request => request.inputMessages.find(entry => entry.message.nam
 function request(root, id, input = {}) {
   return createProductAgentTurnRequest({ requestId: id, sessionId: 'attachments', turnId: id, messageId: `user-${id}`,
     createdAt: now, userText: 'Use these attachments.', model: 'fixture', tools: [], workspaceDir: join(root, 'workspace'),
-    permissionMode: 'task_free', planEnabled: false, visionEnabled: true, maxOutputTokens: 1000, ...input });
+    permissionMode: 'ask_for_approval', planEnabled: false, visionEnabled: true, maxOutputTokens: 1000, ...input });
 }
 function setup(root) {
   const dataRoot = join(root, 'runtime');

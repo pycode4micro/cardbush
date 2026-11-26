@@ -16,7 +16,7 @@ import { TaskWorkspaceManager } from '../dist/taskWorkspace.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture.read', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false };
 const agent = { id: 'demo:reviewer', pluginId: 'demo', root: '.', name: 'reviewer', description: 'Review', prompt: 'Review files' };
-const request = (registry, overrides = {}) => ({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'task_free', tools: registry.definitions(), messages: [], metadata: {}, requestCapabilities: { vision: false, interactiveRequests: false }, ...overrides });
+const request = (registry, overrides = {}) => ({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'ask_for_approval', tools: registry.definitions(), messages: [], metadata: {}, requestCapabilities: { vision: false, interactiveRequests: false }, ...overrides });
 const coordinator = (registry, ask = async () => { throw Error('Unexpected permission'); }) => new ToolExecutionCoordinator({ registry, permissions: { request: ask } });
 let serial = 0;
 const call = (coordinator, req, name, input) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${++serial}`, name, argumentsText: JSON.stringify(input) }, { ...req, round: 1, ordinal: serial }, undefined, { request: req, contextMessages: req.messages });

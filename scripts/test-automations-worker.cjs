@@ -73,7 +73,7 @@ async function run() {
     const generation = { temperature: 0, topP: 0.73, maxOutputTokens: 4096, reasoningEffort: 'high' };
     const result = await command('runtime.run_session_turn', { protocol: 'bush.session_turn_request.v1', requestId: 'human', sessionId: 'session', turnId: 'human', model: 'fixture', providerBinding: binding,
       tools, ...generation, prefixMessages: [{ role: 'system', content: '使用中文，按用户请求执行。' }], inputMessages: [{ messageId: 'human', message: { role: 'user', content: '建立会话。' } }],
-      metadata: {}, sessionMetadata: { title: 'Fixture schedule' }, permissionMode: 'task_free' });
+      metadata: {}, sessionMetadata: { title: 'Fixture schedule' }, permissionMode: 'ask_for_approval' });
     assert.equal(result.payload.status, 'completed');
     const job = await automate({ action: 'create', definition: { name: '项目检查', prompt: '检查最新结果。', sessionId: 'session', timeZone: 'Asia/Shanghai', trigger: { kind: 'once', at: new Date(Date.now()+3600000).toISOString() } } });
     assert.equal((await automate({ action: 'list' })).sessions[0].title, 'Fixture schedule');
@@ -111,7 +111,7 @@ async function run() {
     // Binding refreshed by the restarted worker; retrieve its current reference.
     const currentBinding = (await bind()).binding;
     const followup = (id, sessionId = executed.sessionId) => command('runtime.run_session_turn', { protocol: 'bush.session_turn_request.v1', requestId: id, sessionId, turnId: id, model: 'fixture', providerBinding: currentBinding,
-      tools, ...generation, prefixMessages: [{ role: 'system', content: '使用中文，按用户请求执行。' }], inputMessages: [{ messageId: id, message: { role: 'user', content: '继续解释结果。' } }], metadata: {}, permissionMode: 'task_free' });
+      tools, ...generation, prefixMessages: [{ role: 'system', content: '使用中文，按用户请求执行。' }], inputMessages: [{ messageId: id, message: { role: 'user', content: '继续解释结果。' } }], metadata: {}, permissionMode: 'ask_for_approval' });
     await followup('follow-up');
     assert.match(JSON.stringify(requests[2]), /automation_unread_reminder/);
     const followed = await command('runtime.get_session', { sessionId: executed.sessionId });

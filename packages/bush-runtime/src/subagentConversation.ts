@@ -1,6 +1,6 @@
 import type { RuntimeSessionTurnRequest, SessionSnapshot, SessionMessage, ChildExecutionFacts } from '@cardbush/bush-protocol';
 import { childExecutionFacts } from './teamSubmission.js';
-import { childAgentAssignmentText } from '@cardbush/bush-protocol';
+import { capPermissionMode, childAgentAssignmentText } from '@cardbush/bush-protocol';
 
 export function childConversationReadHint(taskId?: string): string {
   const target = taskId ? JSON.stringify(taskId) : 'task_id';
@@ -11,13 +11,12 @@ export function childConversationReadHint(taskId?: string): string {
 export function continueChildConversation(input: RuntimeSessionTurnRequest, saved: RuntimeSessionTurnRequest): RuntimeSessionTurnRequest {
   if (saved.sessionId !== input.sessionId || saved.metadata.agentRole !== 'child') throw new Error('The original child execution configuration is unavailable.');
   const originalTools = new Set(saved.tools.map(tool => tool.name));
-  const levels = ['task_free', 'user_free', 'all_free'];
   return { ...saved, requestId: input.requestId, turnId: input.turnId,
     model: input.model, providerBinding: input.providerBinding, reasoningEffort: input.reasoningEffort,
     inputMessages: input.inputMessages.map(entry => ({ ...entry, metadata: { ...entry.metadata, subagentAuthor: 'user' } })),
     supersession: input.supersession,
     tools: input.tools.filter(tool => originalTools.has(tool.name)),
-    permissionMode: levels[Math.min(levels.indexOf(saved.permissionMode), levels.indexOf(input.permissionMode))] as RuntimeSessionTurnRequest['permissionMode'],
+    permissionMode: capPermissionMode(input.permissionMode, saved.permissionMode),
     sessionMetadata: { ...saved.sessionMetadata, agentRole: 'child' },
     metadata: { ...saved.metadata, individuation: input.metadata.individuation, subagentUserContinuation: true,
       // A human follow-up belongs to this new turn; never publish approval events

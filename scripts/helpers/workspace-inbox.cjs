@@ -5,7 +5,7 @@ const path = require('node:path');
 exports.seed = (root, sessionId) => {
   const at = new Date().toISOString(), folder = path.join(root, 'runtime-state', 'scheduler');
   fs.mkdirSync(folder, { recursive: true });
-  const context = {title:'Inbox source',model:'fixture',prefixMessages:[],tools:[],permissionMode:'task_free',metadata:{},requestCapabilities:{interactiveRequests:true,vision:false}};
+  const context = {title:'Inbox source',model:'fixture',prefixMessages:[],tools:[],permissionMode:'ask_for_approval',metadata:{},requestCapabilities:{interactiveRequests:true,vision:false}};
   fs.writeFileSync(path.join(folder, 'automations.json'), JSON.stringify({ version: 1, contexts: { [sessionId]: context }, jobs: [{
     id: 'event-job', sessionId, name: 'Inbox event', prompt: 'Check', executionMode: 'isolated', trigger: {kind:'once', at},
     timeZone:'UTC', revision:1, state:'completed', createdAt:at, lastEventIds:[], runs:[{

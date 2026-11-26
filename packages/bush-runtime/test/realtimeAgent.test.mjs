@@ -71,7 +71,7 @@ test('realtime parent dispatches parallel children while text turn is busy, read
     } } });
   const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'voice-request', sessionId: 'parent', turnId: 'voice_turn_call', model: 'fixture',
     tools: registry.definitions(), prefixMessages: [{ role: 'system', content: 'configured agent role' }],
-    inputMessages: [{ messageId: 'voice-input', message: { role: 'user', content: 'voice context' } }], metadata: {}, permissionMode: 'task_free' };
+    inputMessages: [{ messageId: 'voice-input', message: { role: 'user', content: 'voice context' } }], metadata: {}, permissionMode: 'ask_for_approval' };
   const invoke = payload => host.sendCommand({ kind: 'runtime.realtime_agent_tool', payload: { sessionId: 'parent', ...payload } });
   const textTurn = host.runSessionTurn({ ...parent, requestId: 'text-r', turnId: 'text-turn' });
   try {
@@ -91,7 +91,7 @@ test('realtime parent dispatches parallel children while text turn is busy, read
     assert.deepEqual(await invoke(firstInput), first, 'a repeated receipt does not duplicate execution');
     await assert.rejects(invoke({ ...firstInput, prompt: 'changed' }), /reused/);
     await until(() => new Set(seen.filter(r => r.metadata.agentRole === 'child').map(r => r.sessionId)).size === 2);
-    assert.ok(seen.filter(r => r.metadata.agentRole === 'child').every(r => r.permissionMode === 'task_free' && r.messages.some(m => m.content === 'configured agent role')));
+    assert.ok(seen.filter(r => r.metadata.agentRole === 'child').every(r => r.permissionMode === 'ask_for_approval' && r.messages.some(m => m.content === 'configured agent role')));
     const guide = await invoke({ callId: 'guide', action: 'subagent', taskId: first.taskId, parent, prompt: 'only inspect, do not change files' });
     assert.equal(guide.status, 'message_queued');
     const live = await invoke({ callId: 'read-live', action: 'read_subagent_conversation', taskId: first.taskId });
@@ -108,7 +108,7 @@ test('realtime parent dispatches parallel children while text turn is busy, read
     assert.ok(history.messages.some(m => m.role === 'assistant' && m.content === 'verified child answer'));
     const last = seen.filter(r => r.sessionId === first.childSessionId).at(-1);
     assert.ok(last.messages.some(m => m.content === 'verified child answer'), 'resumption retains child history');
-    assert.equal(last.permissionMode, 'task_free');
+    assert.equal(last.permissionMode, 'ask_for_approval');
   } finally {
     childGate.resolve(); parentGate.resolve(); await textTurn;
     await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
@@ -157,7 +157,7 @@ test('manual background session approval is reused for the exact action in the s
     const parent = { protocol: 'bush.session_turn_request.v1', requestId: `request-${index}`, sessionId,
       turnId: `turn-${index}`, model: 'fixture', tools: registry.definitions(), prefixMessages: [],
       inputMessages: [{ messageId: `input-${index}`, message: { role: 'user', content: 'Read fixture.' } }],
-      permissionMode: 'task_free', metadata: { subagentPermissionRouting: 'user', individuation: { habits: false, predictions: false } } };
+      permissionMode: 'ask_for_approval', metadata: { subagentPermissionRouting: 'user', individuation: { habits: false, predictions: false } } };
     const receipt = await host.sendCommand({ kind: 'runtime.realtime_agent_tool', payload: {
       sessionId, callId: `dispatch-${index}`, action: 'subagent', parent, prompt: 'Read fixture.',
       ...(previous ? { taskId: previous.taskId } : {}),
@@ -175,7 +175,7 @@ test('manual background session approval is reused for the exact action in the s
   assert.deepEqual(executions, ['first-resource', 'first-resource', 'second-resource']);
 });
 
-for (const [permissionMode, routing] of [['all_free','user'], ['all_free','parent'], ['task_free','user']]) {
+for (const [permissionMode, routing] of [['all_free','user'], ['all_free','parent'], ['ask_for_approval','user']]) {
   test(`voice dispatch needs no confirmation; child respects ${permissionMode}/${routing}`, async () => {
     const tasks = new SubagentTaskStore(), registry = new ToolRegistry(), rounds = new Map();
     let executed = 0, permissionRequests = 0;
@@ -203,7 +203,7 @@ for (const [permissionMode, routing] of [['all_free','user'], ['all_free','paren
     try {
       const parent={protocol:'bush.session_turn_request.v1',requestId:'voice-request',sessionId:'parent',turnId:'voice_turn_permission',model:'fixture',
         tools:registry.definitions(),prefixMessages:[],inputMessages:[{messageId:'input',message:{role:'user',content:'inspect'}}],permissionMode,
-        metadata:{subagentPermissionRouting:routing,childAgentPolicy:{permissionRouting:routing,childPermissionMode:'task_free'}}};
+        metadata:{subagentPermissionRouting:routing,childAgentPolicy:{permissionRouting:routing,childPermissionMode:'ask_for_approval'}}};
       const receipt=await host.sendCommand({kind:'runtime.realtime_agent_tool',payload:{sessionId:'parent',callId:'dispatch',action:'subagent',parent,prompt:'inspect'}});
       assert.equal(receipt.status,'running');
       await until(()=>tasks.get('parent',receipt.taskId)?.status!=='running');

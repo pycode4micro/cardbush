@@ -31,7 +31,7 @@ export async function compactRealtimeContext(provider: ModelProvider, input: Rea
     sources: [{ target: 'source 0', turnId: job.jobId, startMessage: 1, endMessageExclusive: 2 }],
     state: { revision: job.revision, totalTurns: 1, unsummarizedTurnIds: [job.jobId] },
     pressure: estimateContextPressure({ ...model, protocol: 'bush.model_request.v1', requestId: job.jobId, sessionId: job.sessionId,
-      turnId: job.jobId, messages, tools: [checkpoint], maxOutputTokens: outputTokens, permissionMode: 'task_free',
+      turnId: job.jobId, messages, tools: [checkpoint], maxOutputTokens: outputTokens, permissionMode: 'ask_for_approval',
       requestCapabilities: { vision: false, interactiveRequests: false }, metadata: { ...model.metadata, contextWindowTokens: contextTokens } }, messages)!,
     outputTokens, maximumOutputTokens: outputTokens, inputFormat: 'incremental',
   });
@@ -42,7 +42,7 @@ export async function compactRealtimeContext(provider: ModelProvider, input: Rea
       protocol: 'bush.model_request.v1', requestId: randomUUID(), sessionId: job.sessionId, turnId: `${options.maintenance === 'assistant_context_compaction' ? 'assistant' : 'voice'}_memory_${job.jobId}`,
       model: model.model, providerBinding: model.providerBinding, reasoningEffort: model.reasoningEffort,
       messages: work.messages, tools: [checkpoint], maxOutputTokens: work.outputTokens,
-      permissionMode: 'task_free', requestCapabilities: { vision: false, interactiveRequests: false },
+      permissionMode: 'ask_for_approval', requestCapabilities: { vision: false, interactiveRequests: false },
       metadata: { ...model.metadata, runtimeMaintenance: options.maintenance ?? 'realtime_context_compaction' },
     }, { signal: bounded });
     if (result.status !== 'completed') throw Object.assign(Error('Context checkpoint request failed; original history retained.'), { code: result.error.code });

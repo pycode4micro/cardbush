@@ -29,7 +29,7 @@ test('auto follows the user mode while the backend path remains host-owned', () 
   const config = commandSandboxConfiguration({ CARDBUSH_EXECUTION_SANDBOX: 'auto', CARDBUSH_BWRAP_PATH: executable });
   const call = context();
   assert.equal(commandSandboxPolicy(config, call), undefined);
-  call.turn.request.permissionMode = 'task_free';
+  call.turn.request.permissionMode = 'ask_for_approval';
   call.turn.request.metadata.linuxExecutable = resolve('untrusted-bwrap');
   assert.equal(commandSandboxPolicy(config, call).linuxExecutable, executable);
 });
@@ -70,7 +70,7 @@ test('a narrower cwd recovers an implicit workspace that contains supervisor sta
   const work = await realpath(await mkdtemp(join(temporary, 'cardbush-admission-')));
   t.after(async () => { assert.equal(dirname(work), temporary); await rm(work, { recursive: true, force: true }); });
   const config = commandSandboxConfiguration({ CARDBUSH_EXECUTION_SANDBOX: 'auto' });
-  const call = context(temporary); call.turn.request.permissionMode = 'task_free';
+  const call = context(temporary); call.turn.request.permissionMode = 'ask_for_approval';
   call.input = { command: 'echo fixture', shell: process.platform === 'win32' ? 'cmd' : 'posix' };
   await assert.rejects(commandSandboxPlan(config, call, temporary), { code: 'sandbox_policy_invalid' });
   const plan = await commandSandboxPlan(config, call, work);

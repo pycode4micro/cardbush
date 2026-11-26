@@ -268,7 +268,7 @@ for (const assistant of [true, false]) test(`${assistant ? 'Assistant' : 'ordina
     const createdAt = new Date().toISOString();
     const parent = { protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL, requestId: id, sessionId, turnId: id, model: 'fixture',
       prefixMessages: [], inputMessages: [{ messageId: id, message: { role: 'user', content: text } }],
-      tools: registry.definitions(), requestCapabilities: { interactiveRequests: true }, metadata: {}, permissionMode: 'task_free' };
+      tools: registry.definitions(), requestCapabilities: { interactiveRequests: true }, metadata: {}, permissionMode: 'ask_for_approval' };
     if (!assistant) {
       const terminal = await host.runSessionTurn(parent);
       assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));

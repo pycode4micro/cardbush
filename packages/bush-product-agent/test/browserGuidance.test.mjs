@@ -5,7 +5,7 @@ import { createProductAgentTurnRequest } from '../dist/index.js';
 test('root and inherited child prompts use local first-use consent and reserve codes for manual or remote pairing', () => {
   const request = createProductAgentTurnRequest({ requestId: 'r', sessionId: 's', turnId: 't', messageId: 'm',
     createdAt: '2026-10-25T01:00:00Z', userText: '用 Edge 查看网页', model: 'fixture', tools: [],
-    permissionMode: 'task_free', planEnabled: false });
+    permissionMode: 'ask_for_approval', planEnabled: false });
   for (const messages of [request.prefixMessages, request.metadata.subagentChildPrefixMessages]) {
     const prompt = messages.map(message => message.content).join('\n');
     assert.match(prompt, /Local Chrome\/Edge first connects via user consent in the system dialog and extension, no pairing codes/);

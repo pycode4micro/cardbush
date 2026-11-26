@@ -2068,7 +2068,7 @@ export class InMemoryRuntimeHost {
   async #withAuxiliaryExecution<T>(sessionId: string, turnId: string, run: (executionId: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
     this.#agentExecutions.begin({ sessionId, turnId,
       metadata: { ...this.#sessions.snapshot(sessionId)?.metadata, runtimeTask: 'internal' },
-      permissionMode: 'task_free', requestCapabilities: { vision: false, interactiveRequests: false } }, 'running');
+      permissionMode: 'ask_for_approval', requestCapabilities: { vision: false, interactiveRequests: false } }, 'running');
     try { const result = await run(turnId); this.#agentExecutions.update(sessionId, turnId, 'completed'); return result; }
     catch (error) { this.#agentExecutions.update(sessionId, turnId, signal?.aborted ? 'stopped' : 'failed'); throw error; }
   }

@@ -83,7 +83,7 @@ test('a delivered memo resolves through the public runtime command after host re
   const catalog = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
   assert.ok(removed.every(name => !registry.resolve(name) && !catalog.some(tool => tool.name === name)));
   const terminal = await host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 'new',
-    model: 'offline-fixture', messages: [{ role: 'user', content: '交付文件' }], tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: root } });
+    model: 'offline-fixture', messages: [{ role: 'user', content: '交付文件' }], tools: registry.definitions(), permissionMode: 'ask_for_approval', metadata: { workspaceDir: root } });
   assert.equal(terminal.payload.status, 'completed');
   assert.equal(requests.length, 1, 'Markdown links and footnotes finish in a single model request');
   assert.ok(requests[0].tools.every(tool => !removed.includes(tool.name)));

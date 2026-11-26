@@ -109,7 +109,7 @@ export async function prepareRuntimeAgentRequest(request: ChatStreamRequest, run
   options.stageFinished?.('catalog-and-session');
   await prepareRuntimePluginTurn(request, catalog.map(entry => entry.definition));
   options.stageFinished?.('renderer-plugins');
-  const permissionMode = request.permissionMode ?? 'task_free';
+  const permissionMode = request.permissionMode ?? 'ask_for_approval';
   const interactiveRequests = request.interactiveRequestsEnabled === true;
   const vision = request.standardImageInputEnabled === true;
   const goalAvailable = Boolean(goalCommand || activeGoal?.status === 'active');

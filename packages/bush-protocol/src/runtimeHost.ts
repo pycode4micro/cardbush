@@ -4,6 +4,7 @@ import { cacheChainObservationPayloadSchema, providerInputObservationSchema } fr
 import { toolDisplaySchema, toolErrorKindSchema, runtimeToolErrorSchema } from "./tool.js";
 import { modelEventSchema, modelFailureDiagnosticsSchema, providerCompatibilityDiagnosticSchema, providerStreamDiagnosticSchema } from "./model.js";
 import { runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema } from './solutionSelection.js';
+import { permissionModeSchema } from './permissionMode.js';
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
@@ -160,7 +161,7 @@ export const runtimePermissionTargetSchema = z.object({
 });
 
 export const runtimePermissionScopeSchema = z.object({
-  mode: z.enum(["task_free", "user_free", "all_free"]),
+  mode: permissionModeSchema,
   roots: z.array(z.string().min(1)),
 });
 

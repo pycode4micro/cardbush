@@ -49,7 +49,7 @@ async function fixture(t, handle, options = {}) {
   const configure = (profile = {}, parent = {}) => command({ action: 'configure', profile: { name: 'Fixture friend', language: 'zh', timeZone: 'Asia/Shanghai', recognition: { context: 'Only fixture work.' }, confirmedAt: now(), ...profile },
     parent: { protocol: 'bush.session_turn_request.v1', requestId: 'configuration', sessionId: FRIENDS_SESSION, turnId: 'configuration',
       model: 'fixture', tools: registry.definitions().filter(tool => !tool.name.startsWith('friends_')), prefixMessages: [],
-      inputMessages: [{ messageId: 'old-input', message: { role: 'user', content: 'UNRELATED_CHAT_MUST_NOT_BE_INHERITED' } }], metadata: {}, permissionMode: 'task_free',
+      inputMessages: [{ messageId: 'old-input', message: { role: 'user', content: 'UNRELATED_CHAT_MUST_NOT_BE_INHERITED' } }], metadata: {}, permissionMode: 'ask_for_approval',
       requestCapabilities: { interactiveRequests: true, vision: false }, ...parent } });
   const send = (id, text = 'Do this event', relatesTo) => command({ action: 'submit', input: { id, text, createdAt: '2026-11-06T02:00:00.000Z', ...(relatesTo ? { relatesTo } : {}) } });
   const close = () => host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
@@ -304,7 +304,7 @@ test('recovery freezes an interrupted bridge receipt; explicit local resume neve
   await restarted.configure(); assert.deepEqual(await restarted.command(input), interrupted); assert.equal(restarted.requests.length, 0);
   await restarted.command({ action: 'resume', eventId: id });
   await until(restarted.read, s => s.events.find(e => e.id === id)?.status === 'completed');
-  assert.equal(restarted.requests[0].permissionMode, 'task_free');
+  assert.equal(restarted.requests[0].permissionMode, 'ask_for_approval');
   assert.deepEqual(restarted.requests[0].metadata.botSourceRefs, [`webhook:${receiptId}`]);
   assert.deepEqual(await restarted.command({ action: 'read_webhook', receiptId }), interrupted);
 });
@@ -413,7 +413,7 @@ test('Assistant-owned event pins the selected notification account even after it
     proactive: { recognition: {}, beforeExecution: 'ask', report: 'always', notificationSourceRef: ref } },
     profile: { name: 'Assistant', recognition: {}, language: 'en', timeZone: 'UTC', confirmedAt: now() },
     parent: { protocol: 'bush.session_turn_request.v1', requestId: 'setup', sessionId: 'personal-assistant', turnId: 'setup',
-      model: 'fixture', tools: [], prefixMessages: [], inputMessages: [{ messageId: 'private-chat', message: { role: 'user', content: 'Secret chat context' } }], metadata: {}, permissionMode: 'task_free' } });
+      model: 'fixture', tools: [], prefixMessages: [], inputMessages: [{ messageId: 'private-chat', message: { role: 'user', content: 'Secret chat context' } }], metadata: {}, permissionMode: 'ask_for_approval' } });
   await configure('webhook:work'); assert.equal(f.requests.length, 0, 'preparing the Assistant does not invent a user event');
   await f.send('pinned'); await until(f.read, s => s.events.find(e => e.id === 'pinned')?.status === 'watching');
   await configure('webhook:personal'); await f.command({ action: 'resume', eventId: 'pinned' });
@@ -428,7 +428,7 @@ test('Assistant-owned event pins the selected notification account even after it
 const assistantConfiguration = () => ({ action: 'configure', assistant: { name: 'Assistant' },
     profile: { name: 'Assistant', language: 'en', timeZone: 'UTC', confirmedAt: now(), recognition: {} },
     parent: { protocol: 'bush.session_turn_request.v1', sessionId: PERSONAL_ASSISTANT_SESSION, requestId: 'config', turnId: 'config',
-      model: 'fixture', tools: [], metadata: {}, permissionMode: 'task_free', prefixMessages: [], inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } });
+      model: 'fixture', tools: [], metadata: {}, permissionMode: 'ask_for_approval', prefixMessages: [], inputMessages: [{ messageId: 'config', message: { role: 'user', content: 'configure' } }] } });
 
 test('native Assistant event execution appears in activity and the journal until it completes', async t => {
   const release = Promise.withResolvers();

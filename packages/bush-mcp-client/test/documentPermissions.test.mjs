@@ -18,7 +18,7 @@ test('file operations bind paths and host code for every document format, regard
   await writeFile(source, 'fixture');
   const resource = 'mcp://fixture/tools/create_artifact';
   const authority = { sessionId: PERSONAL_ASSISTANT_SESSION, permissionMode: 'all_free', metadata: {} };
-  const context = { turn: { request: { permissionMode: 'task_free', metadata: {
+  const context = { turn: { request: { permissionMode: 'ask_for_approval', metadata: {
     workspaceDir: workspace, agentRole: 'child', permissionRouting: 'parent', parentSessionId: PERSONAL_ASSISTANT_SESSION,
   } } }, input: { code: 'return 1', inputs: [{ path: source }], outputs: [join(root, 'export.pdf')] } };
   const manifest = async (kind) => (JSON.parse(await readFile(
@@ -30,7 +30,7 @@ test('file operations bind paths and host code for every document format, regard
     assert.equal(inherited.parentApproval, true);
     assert.equal(inherited.request.requiresHuman, false);
     assert.equal(inherited.request.outsideParentScope, undefined);
-    assert.equal((await fileOperationPermission({ ...context, parentWorkspaceAuthority: { ...authority, permissionMode: 'task_free' } },
+    assert.equal((await fileOperationPermission({ ...context, parentWorkspaceAuthority: { ...authority, permissionMode: 'ask_for_approval' } },
       resource, operation)).request.requiresHuman, true);
     assert.equal((await fileOperationPermission({ ...context, input: { path: source } }, resource, read)).request.requiresHuman, false);
   }

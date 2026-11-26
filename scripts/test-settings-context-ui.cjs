@@ -188,7 +188,7 @@ app.whenReady().then(async () => {
       }
       window.renderSettings = () => reactRoot.render(h(SettingsLayout));
       window.composerProps = { language: 'zh', draft: '', onDraftChange: noop, sending: false, selectedModel: 'fixture', availableModels: [fixtureModel],
-        referencePlanAvailable: true, referencePlanMode: 'auto', permissionMode: 'task_free', subagentPermissionRouting: 'user', reasoningLevelAvailable: false, reasoningLevel: 'high', reasoningLevels: [],
+        referencePlanAvailable: true, referencePlanMode: 'auto', permissionMode: 'ask_for_approval', subagentPermissionRouting: 'user', reasoningLevelAvailable: false, reasoningLevel: 'high', reasoningLevels: [],
         onModelChange: noop, onReferencePlanModeChange: value => { composerProps.referencePlanMode = value; renderComposer(); }, onPermissionModeChange: noop, onSubagentPermissionRoutingChange: noop,
         onReasoningLevelChange: noop, onSend: async () => {}, onCancel: async () => {}, skills: [{ name: 'Fixture skill', path: 'C:/fixture/skills/fixture/SKILL.md', description: 'Retained skill', descriptionZh: '保留的技能' }], disabledSkillNames: new Set(), onConfigureModels: noop, onToggleSkill: noop };
       window.styleFixture = views; window.composerSession = ''; window.composerHost = undefined;

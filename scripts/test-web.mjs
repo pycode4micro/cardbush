@@ -446,7 +446,7 @@ test('native Office inspection gives the agent a bounded readable attachment',as
 });
 
 
-test('native read admission accepts personal uploads outside the conversation workspace in task_free mode',async t=>{
+test('native read admission accepts personal uploads outside the conversation workspace in ask_for_approval mode',async t=>{
  const f=await fixture(t,'read'),a=await f.login('alice');
  const session=await(await a.request('/sessions','POST',{requestId:randomUUID()})).json();
  const path=join(f.root,'usr_alice','workspaces','uploads');await mkdir(path,{recursive:true});await writeFile(join(path,'native.txt'),'PERSONAL_NATIVE_READ_724');

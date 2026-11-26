@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { MESSAGE_ATTACHMENT_LIMIT } from "./fileTransfer.js";
 import { toolDefinitionSchema } from "./tool.js";
+import { permissionModeSchema } from './permissionMode.js';
 import { runtimeProviderBindingRefSchema, type ModelApiProtocol } from "./providerBinding.js";
 
 export const BUSH_MODEL_REQUEST_PROTOCOL = "bush.model_request.v1" as const;
@@ -81,14 +82,7 @@ export const requestCapabilitiesSchema = z.object({
   interactiveRequests: z.boolean().default(false),
 });
 
-export const permissionModeSchema = z.enum([
-  "task_free",
-  "user_free",
-  "all_free",
-]);
-
 export type RequestCapabilities = z.infer<typeof requestCapabilitiesSchema>;
-export type RuntimePermissionMode = z.infer<typeof permissionModeSchema>;
 
 export const reasoningEffortSchema = z.enum([
   "none",
@@ -173,7 +167,7 @@ export const modelRequestSchema = z.object({
     vision: false,
     interactiveRequests: false,
   }),
-  permissionMode: permissionModeSchema.default("task_free"),
+  permissionMode: permissionModeSchema.default("ask_for_approval"),
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
 

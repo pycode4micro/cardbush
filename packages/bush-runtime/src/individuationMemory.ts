@@ -100,7 +100,7 @@ export class IndividuationMemory {
               if(attempt)messages.splice(1,0,{role:'developer',content:'Correct only the remaining rejected items. Already accepted results are saved. Keep any unsupported candidate out. Reasons: '+JSON.stringify(corrections.map(item=>item.reason))});
               const {terminal}=await this.runTask({
                 protocol:'bush.model_request.v1',requestId:`memory-${id}`,sessionId:`internal-memory-${id}`,turnId:`memory-${id}`,
-                model:model.model,providerBinding:model.providerBinding,tools:[],permissionMode:'task_free',reasoningEffort,
+                model:model.model,providerBinding:model.providerBinding,tools:[],permissionMode:'ask_for_approval',reasoningEffort,
                 requestCapabilities:{vision:false,interactiveRequests:false},maxOutputTokens:budget.outputTokens,messages,
                 metadata:{runtimeMaintenance:'personalization_summary',memoryStage:stage,memoryPhase:reviewOnly?'review':'consolidate',contextWindowTokens:context},
               },{

@@ -4,7 +4,7 @@ import { dirname, join, sep } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { unprotectConfiguration, writeProtectedJson } from '@cardbush/platform/credentials';
-import { networkProxySchema } from '@cardbush/bush-protocol';
+import { agentV1PermissionMode, networkProxySchema } from '@cardbush/bush-protocol';
 import { ProductModelConfigStore, ProductMcpConfigStore, decodeProductSubagentConfig } from '@cardbush/product-host';
 import { replaceFileWithRetry, writePrivateJson as writeJson } from './atomicJsonFile.mjs';
 import { redactTroubleshootingText } from './pluginTroubleshooting.mjs';
@@ -71,8 +71,9 @@ export async function packSharedConfiguration(input: Pick<SharedConfiguration, '
   }
   // Retain the v2 wire shape for settings-only peers. Never read plugin roots or
   // export plugin settings, enabled state, standalone skills or local MCP entries.
+  const subagents = input.subagents;
   const snapshot = payloadSchema.parse({ protocol, sourceId, sourcePlatform: process.platform,
-    models: input.models, subagents: input.subagents, instructions: input.instructions, network: input.network, sandbox: input.sandbox,
+    models: input.models, subagents: { ...subagents, childPermissionMode: agentV1PermissionMode(subagents.childPermissionMode) }, instructions: input.instructions, network: input.network, sandbox: input.sandbox,
     roots: [], apps: {}, mcp: {}, syncPlugins: false, packages: [] });
   const data = gzipSync(JSON.stringify(snapshot));
   if (data.length > maximumBytes) throw new Error('Shared configuration archive exceeds 64 MiB.');

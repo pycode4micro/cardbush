@@ -75,7 +75,7 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
         yield { ...base, sequence: 2, kind: 'response_completed', finishReason: 'stop' };
       }
     } } });
-  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'task_free',
+  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'ask_for_approval',
     messages: [{ role: 'user', content: 'Perform one write.' }], tools: registry.definitions(), metadata: { workspaceDir: workspace } };
   const terminal = await host.runModelTurn(request);
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));

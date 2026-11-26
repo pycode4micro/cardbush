@@ -28,7 +28,7 @@ test('individuation changes append user context without altering system/tools or
   for (const [index, individuation] of states.entries()) {
     const request = createProductAgentTurnRequest({ requestId: `r${index}`, turnId: `t${index}`, messageId: `u${index}`,
       sessionId: 'prefs', createdAt: '2026-09-30T00:00:00Z', userText: 'continue', model: 'model', tools: registry.definitions(),
-      permissionMode: 'task_free', planEnabled: false, individuation });
+      permissionMode: 'ask_for_approval', planEnabled: false, individuation });
     requests.push(request);
     assert.equal((await host.runSessionTurn(request)).payload.status, 'completed', 'ordinary conversation completes without summary');
     assert.equal(seen.length, index + 1, 'one direct model response per turn; no extra round to require summary');
@@ -98,7 +98,7 @@ test('missing the instructed final-display signal does not create a host-enforce
   t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const request = createProductAgentTurnRequest({ requestId: 'tool-choice', sessionId: 'tool-choice', turnId: 'work', messageId: 'user',
     createdAt: '2026-09-30T00:00:00Z', userText: 'Read the test value', model: 'model', tools: registry.definitions(),
-    permissionMode: 'task_free', planEnabled: false, individuation: { habits: true, predictions: true } });
+    permissionMode: 'ask_for_approval', planEnabled: false, individuation: { habits: true, predictions: true } });
   assert.equal((await host.runSessionTurn(request)).payload.status, 'completed');
   assert.equal(executions, 1); assert.equal(rounds, 2);
   assert.deepEqual(host.events('tool-choice', 'work').filter(event => event.kind === 'tool_returned').map(event => event.payload.toolName), ['read_fixture']);

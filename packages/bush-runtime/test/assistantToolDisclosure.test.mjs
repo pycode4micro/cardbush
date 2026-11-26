@@ -59,7 +59,7 @@ async function fixture(t, { child, remoteAgents, root: existingRoot, hooks } = {
   const parent = () => ({ protocol: 'bush.session_turn_request.v1', requestId: `r-${turns}`, sessionId, turnId: `turn-${turns}`, model: 'fixture',
     tools: registry.definitions(), prefixMessages: [{ role: 'system', content: 'Stable fixture policy.' }],
     inputMessages: [{ messageId: `input-${turns}`, message: { role: 'user', content: 'Manage the requested work.' } }],
-    metadata: { planEnabled: true, workspaceDir: root, mcpToolDiscovery: true, individuation: { habits: false, predictions: false } }, permissionMode: 'task_free' });
+    metadata: { planEnabled: true, workspaceDir: root, mcpToolDiscovery: true, individuation: { habits: false, predictions: false } }, permissionMode: 'ask_for_approval' });
   const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId, ...payload } });
   const read = () => command({ action: 'read' });
   const close = () => host.sendCommand({ kind: 'runtime.shutdown', payload: {} });

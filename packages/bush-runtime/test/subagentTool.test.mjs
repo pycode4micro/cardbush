@@ -45,7 +45,7 @@ for (const clean of [false, true]) test(`ordinary conversation ${clean ? 'recall
   const result = await host.runSessionTurn(createProductAgentTurnRequest({
     requestId: 'ordinary-request', sessionId: 'ordinary', turnId: 'ordinary-turn', messageId: 'ordinary-input', createdAt: new Date().toISOString(),
     userText: 'Delegate the inventory check.', model: 'fixture', tools: registry.definitions(), workspaceDir: root,
-    permissionMode: 'task_free', planEnabled: false, individuation: { habits: false, predictions: false },
+    permissionMode: 'ask_for_approval', planEnabled: false, individuation: { habits: false, predictions: false },
   }));
   assert.equal(result.payload.status, 'completed', JSON.stringify(result));
   const completionRequests = parents.filter(request => request.messages.some(message => message.name === 'subagent_result'));
@@ -200,7 +200,7 @@ test("a child Turn cannot invoke a root-only tool even by fabricating its name",
 test("freezes the configured parent/child permission route into each child Turn", async () => {
   for (const fixture of [
     {
-      policy: { permissionRouting: "user", childPermissionMode: "task_free" },
+      policy: { permissionRouting: "user", childPermissionMode: "ask_for_approval" },
       parentMode: "all_free",
       expectedMode: "all_free",
       expectedScope: "parent_session",
@@ -222,7 +222,7 @@ test("freezes the configured parent/child permission route into each child Turn"
       expectedRouting: "user",
     },
     {
-      policy: { permissionRouting: "user", childPermissionMode: "task_free" },
+      policy: { permissionRouting: "user", childPermissionMode: "ask_for_approval" },
       requestedRouting: "parent",
       parentMode: "all_free",
       expectedMode: "all_free",
@@ -234,13 +234,13 @@ test("freezes the configured parent/child permission route into each child Turn"
       policy: { permissionRouting: 'user', childPermissionMode: 'all_free' },
       requestedRouting: 'parent',
       parentMode: 'all_free',
-      expectedMode: 'task_free',
+      expectedMode: 'ask_for_approval',
       expectedScope: 'child_session',
       expectedRouting: 'parent',
     },
     {
       sessionId: PERSONAL_ASSISTANT_SESSION,
-      policy: { permissionRouting: 'parent', childPermissionMode: 'task_free' },
+      policy: { permissionRouting: 'parent', childPermissionMode: 'ask_for_approval' },
       requestedRouting: 'user',
       parentMode: 'all_free',
       expectedMode: 'all_free',
@@ -305,7 +305,7 @@ test("freezes the configured parent/child permission route into each child Turn"
   }
 });
 
-test("tunnels a child permission request through the active parent Turn", async () => {
+test("tunnels a child permission request through the active parent Turn", async t => {
   let parentRounds = 0;
   let childRounds = 0;
   const provider = {
@@ -376,9 +376,10 @@ test("tunnels a child permission request through the active parent Turn", async 
     createPermissionId: () => "permission_child",
     subagentPermissionPolicy: {
       permissionRouting: "parent",
-      childPermissionMode: "task_free",
+      childPermissionMode: "ask_for_approval",
     },
   });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
   const tools = await host.sendCommand({ kind: "runtime.get_tool_catalog", payload: {} });
   const running = host.runModelTurn({
     protocol: "bush.model_request.v1",
@@ -388,7 +389,7 @@ test("tunnels a child permission request through the active parent Turn", async 
     model: "fixture",
     messages: [{ role: "user", content: "delegate" }],
     tools,
-    permissionMode: "task_free",
+    permissionMode: "ask_for_approval",
   });
   let requested;
   for (let attempt = 0; attempt < 100 && !requested; attempt += 1) {
@@ -403,7 +404,7 @@ test("tunnels a child permission request through the active parent Turn", async 
   const taskTool = registry.resolve('tasks');
   const readTasks = scope => taskTool.execute({ sessionId: 'parent', turnId: 'parent_turn', input: taskTool.decodeInput({ action: 'list', ...(scope ? { scope } : {}) }) });
   const pendingTask = (await readTasks()).tasks.find(task => task.kind === 'subagent');
-  assert.equal(pendingTask.progress.phase, 'waiting_user', 'parent-routed approvals remain visible in child progress');
+  assert.equal(pendingTask.progress.phase, 'waiting_parent', 'child progress identifies the parent as the approval authority');
   assert.equal(pendingTask.progress.active_tool_calls, 1);
   await host.sendCommand({
     kind: "runtime.answer_permission",

@@ -32,7 +32,7 @@ import { mkdir, open, readFile, realpath, rename, rm, stat } from 'node:fs/promi
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { runtimeSessionReadRequestSchema, networkProxySchema } from '@cardbush/bush-protocol';
+import { runtimeSessionReadRequestSchema, networkProxySchema, capPermissionMode, permissionModeSchema, type RuntimePermissionMode } from '@cardbush/bush-protocol';
 import { PluginNetwork } from './pluginNetwork.mjs';
 import { createHeadlessProxySession } from './headlessProxySession.mjs';
 import { createProductAgentTurnRequest, GOAL_CONTINUATION_PROMPT } from '@cardbush/bush-product-agent';
@@ -69,7 +69,7 @@ const sendSchema = z.object({
   conversationStyle: z.object({ mode: z.enum(['natural', 'professional', 'concise', 'custom']), customTone: z.string().max(100_000) }).strict().optional(),
   turnId: id.optional(), supersession: sessionSupersessionSchema.extend({ expectedRevision: z.number().int().nonnegative() }).optional(), files: z.array(z.string()).optional(), images: z.array(z.string()).optional(), goalObjective: z.string().trim().min(1).optional(),
   requestId: id, sessionId: id, text: z.string().trim().min(1).max(1_000_000), modelId: id,
-  permissionMode: z.enum(['task_free', 'user_free', 'all_free']).default('task_free'),
+  permissionMode: permissionModeSchema.default('ask_for_approval'),
   language: z.string().trim().min(1).max(64).refine(value => {
     try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; }
   }, 'Invalid language tag').default('zh'),
@@ -105,7 +105,7 @@ export class AgentService {
   }
   readonly #remotePermissionAuthority: 'parent_delegate' | 'human_required';
   readonly #legacyPermissionRouting: 'user' | 'parent';
-  readonly #remotePermissionCeiling: 'task_free' | 'user_free' | 'all_free';
+  readonly #remotePermissionCeiling: RuntimePermissionMode;
   readonly bundledRoot: string;
   readonly runtime: AgentRuntimeHost;
   readonly product: ElectronProductHostController;
@@ -150,7 +150,7 @@ export class AgentService {
     // administrator prohibition remains a hard ceiling; old clients keep their default.
     this.#remotePermissionAuthority = parentApproval === '0' ? 'human_required' : 'parent_delegate';
     this.#legacyPermissionRouting = parentApproval === '1' ? 'parent' : 'user';
-    this.#remotePermissionCeiling = z.enum(['task_free', 'user_free', 'all_free']).parse(options.env?.CARDBUSH_REMOTE_PERMISSION_MODE ?? process.env.CARDBUSH_REMOTE_PERMISSION_MODE ?? 'task_free');
+    this.#remotePermissionCeiling = permissionModeSchema.default('ask_for_approval').parse(options.env?.CARDBUSH_REMOTE_PERMISSION_MODE ?? process.env.CARDBUSH_REMOTE_PERMISSION_MODE);
     this.#desktop = desktop;
     const runtimeRoot = join(root, 'runtime-state');
     this.#modelImages = new ModelImageStore(runtimeRoot);
@@ -291,6 +291,7 @@ export class AgentService {
       if (!existing && await stat(join(root, 'runtime-state')).then(() => true, () => false)) throw new Error('Use a separate data directory for this Agent; this directory already contains Runtime data.');
       const state: AgentState = existing ? JSON.parse(existing) : { version: 1, id: `agent-${randomUUID()}`, name: options.name?.trim() || 'CardBush Agent', revision: 0, projects: [], defaultProjectId: null, jobs: [] };
       if (state.version !== 1 || !state.id || !Array.isArray(state.jobs) || !Array.isArray(state.projects)) throw new Error('Unsupported or corrupt Agent data.');
+      for (const job of state.jobs) job.input.permissionMode = sendSchema.shape.permissionMode.parse(job.input.permissionMode);
       const configurationRoot = options.localProfileRoot ? join(options.localProfileRoot, 'product-host') : root;
       const sandbox = new SandboxSetup({ path: join(configurationRoot, 'config', 'sandbox.json'), env: options.env });
       await recoverSharedConfiguration(root);
@@ -687,8 +688,7 @@ export class AgentService {
           prompt: z.string().trim().min(1).max(1_000_000), permissionMode: sendSchema.shape.permissionMode, language: sendSchema.shape.language,
           worker: remoteWorkerSchema.optional(), queue: z.boolean().optional(), permissionRouting: z.enum(['user', 'parent']).optional(), files: z.array(z.string().min(1).max(4000)).max(32).optional() }).strict().parse(data);
         const permissionRouting = value.permissionRouting ?? this.#legacyPermissionRouting;
-        const levels = ['task_free', 'user_free', 'all_free'] as const;
-        value.permissionMode = levels[Math.min(levels.indexOf(value.permissionMode), levels.indexOf(this.#remotePermissionCeiling))]!;
+        value.permissionMode = capPermissionMode(value.permissionMode, this.#remotePermissionCeiling);
         if (value.turnId !== `turn-${value.taskId}` || !value.sessionId.startsWith('delegated-')) throw new Error('Invalid delegated task identity.');
         const existing = this.#state.jobs.find(job => job.id === value.taskId);
         if (existing) {

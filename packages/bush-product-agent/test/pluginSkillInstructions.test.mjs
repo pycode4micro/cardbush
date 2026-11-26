@@ -45,7 +45,7 @@ test('plugin Skill rules stay in a stable system prefix while real hook feedback
       createdAt: '2026-09-18T08:00:00Z',
       userText: 'Continue.', model: 'fixture',
       tools: registry.definitions().filter(tool => ['run_skill', 'search_plugins'].includes(tool.name)),
-      permissionMode: 'task_free', planEnabled: false });
+      permissionMode: 'ask_for_approval', planEnabled: false });
     assert.equal((await host.runSessionTurn(request)).payload.status, 'completed');
     const current = observed.at(-1);
     assert.ok(current.tools.some(tool => tool.name === 'run_skill'));

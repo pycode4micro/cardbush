@@ -1,4 +1,4 @@
-import { reasoningEffortSchema, type ReasoningEffort, type RuntimePermissionMode, type RuntimeProviderBindingRef } from '@cardbush/bush-protocol';
+import { approvalModes, permissionModeSchema, reasoningEffortSchema, type RuntimePermissionMode, type ReasoningEffort, type RuntimeProviderBindingRef } from '@cardbush/bush-protocol';
 
 export interface SubagentModelOption {
   id: string;
@@ -44,7 +44,7 @@ export const CLEAN_AGENT_SETTINGS_SCHEMA = {
     temperature: { type: 'number', minimum: 0, maximum: 2 },
     top_p: { type: 'number', minimum: 0, maximum: 1 },
     max_turns: { type: 'integer', minimum: 1, description: 'Maximum model rounds for this child; an explicit plugin Agent limit still applies.' },
-    permission_mode: { type: 'string', enum: ['task_free', 'user_free', 'all_free'], description: 'Must not exceed the displayed child permission ceiling.' },
+    permission_mode: { type: 'string', enum: approvalModes, description: 'Must not exceed the displayed child permission ceiling.' },
     permission_routing: { type: 'string', enum: ['user', 'parent'], description: 'Default when the user has not selected a per-turn routing mode. user shares the parent permission scope; parent uses a separate child scope. This does not raise the permission ceiling.' },
     disabled_tools: { ...names, description: 'Additional runtime-denied tools; declarations need not be removed.' },
     allowed_skills: { ...names, description: 'Optional exact Skill names/ids from search_plugins within the displayed host scope; [] allows none. When the host provides an allowlist, select from those exact values.' },
@@ -65,9 +65,11 @@ export function decodeCleanAgentSettings(value: unknown): CleanAgentSettings {
   }
   if (input.model_id !== undefined && (typeof input.model_id !== 'string' || !input.model_id.trim())) throw new Error('model_id must be a non-empty configured model id.');
   if (input.reasoning_effort !== undefined) reasoningEffortSchema.parse(input.reasoning_effort);
-  if (input.permission_mode !== undefined && !['task_free', 'user_free', 'all_free'].includes(String(input.permission_mode))) throw new Error('Invalid clean permission_mode.');
+  const mode = permissionModeSchema.optional().safeParse(input.permission_mode);
+  if (!mode.success) throw new Error('Invalid clean permission_mode.');
   if (input.permission_routing !== undefined && !['user', 'parent'].includes(String(input.permission_routing))) throw new Error('Invalid clean permission_routing.');
   const result = { ...input };
+  if (mode.data !== undefined) result.permission_mode = mode.data;
   if (typeof input.model_id === 'string') result.model_id = input.model_id.trim();
   for (const key of ['disabled_tools', 'allowed_skills', 'disabled_skills']) {
     if (input[key] !== undefined) result[key] = decodeToolOrSkillNames(input[key], key);

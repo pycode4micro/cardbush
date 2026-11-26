@@ -131,7 +131,7 @@ export async function commandSandboxPlan(configuration: CommandSandboxConfigurat
   return { policy, requiredGrant, admission: { kind: 'ask', request: {
     reason: `Additional sandbox access for this command and its child processes only. Isolation remains enabled.${context.input.justification ? ` Reason: ${context.input.justification}` : ''}`,
     actions: ['execute', ...[...extraRead, ...extraReadFiles].map(() => 'read'), ...[...extraWrite, ...extraWriteFiles].map(() => 'write'), ...(network ? ['network'] : [])],
-    targets, capabilityIds: [requiredGrant], scope: { mode: 'task_free', roots: writableRoots },
+    targets, capabilityIds: [requiredGrant], scope: { mode: 'ask_for_approval', roots: writableRoots },
     ...(assistantApproval ? { outsideParentScope }
       : (extraWrite.length || extraWriteFiles.length) && isParentApprovedChild(context) ? { requiresHuman: true } : {}),
   } } };

@@ -198,9 +198,9 @@ app.whenReady().then(async () => {
     await openPermissions();
     assert.equal(await read('!!document.querySelector(".permission-mode-row.mode-all_free.active")'), true);
     assert.equal(await read('document.querySelector(".subagent-routing-switch").classList.contains("mode-parent")'), true);
-    await click('.permission-mode-row.mode-task_free');
+    await click('.permission-mode-row.mode-ask_for_approval');
     await openPermissions();
-    assert.equal(await read('!!document.querySelector(".permission-mode-row.mode-task_free.active")'), true);
+    assert.equal(await read('!!document.querySelector(".permission-mode-row.mode-ask_for_approval.active")'), true);
     await click('.subagent-routing-switch button:first-child');
     await until('document.querySelector(".subagent-routing-switch").classList.contains("mode-user")');
     await click('.subagent-routing-switch button:last-child');

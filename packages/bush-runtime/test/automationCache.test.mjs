@@ -38,7 +38,7 @@ async function fixture(t, recoveredEvents = []) {
   };
   f.close = async () => { await f.host.sendCommand({ kind: 'runtime.shutdown', payload: {} }); f.persistence.close(); };
   f.run = (id, overrides = {}) => f.host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: `request-${id}`, sessionId: 'session', turnId: id, model: 'offline-fixture',
-    prefixMessages: [{ role: 'system', content: 'Follow the user.' }], inputMessages: [{ messageId: `input-${id}`, message: { role: 'user', content: `Continue ${id}` } }], tools: f.tools, metadata: {}, permissionMode: 'task_free', ...overrides });
+    prefixMessages: [{ role: 'system', content: 'Follow the user.' }], inputMessages: [{ messageId: `input-${id}`, message: { role: 'user', content: `Continue ${id}` } }], tools: f.tools, metadata: {}, permissionMode: 'ask_for_approval', ...overrides });
   f.open();
   t.after(async () => { await f.close(); assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-automation-cache-')); await rm(root, { recursive: true, force: true }); });
   return f;

@@ -43,7 +43,7 @@ test('CLI-style requests discover installed Skills while explicit restrictions s
   const tool = registry.resolve('search_skills');
   const base = { requestId: 'cli-skills', sessionId: 'cli-skills', turnId: 'cli-skills', messageId: 'cli-skills',
     createdAt: '2026-10-23T00:00:00Z',
-    userText: 'Make an animation', model: 'fixture', tools: registry.definitions(), permissionMode: 'task_free', planEnabled: true };
+    userText: 'Make an animation', model: 'fixture', tools: registry.definitions(), permissionMode: 'ask_for_approval', planEnabled: true };
   for (const [filters, count] of [[{}, 1], [{ disabledSkills: [] }, 1], [{ disabledSkills: ['visualize'] }, 0], [{ allowedSkills: [] }, 0]]) {
     const request = createProductAgentTurnRequest({ ...base, ...filters });
     const result = await tool.execute({ sessionId: base.sessionId, input: tool.decodeInput({ query: '*' }), turn: { request } });
@@ -75,11 +75,11 @@ test("builds one stable explicit product Turn for desktop and transport callers"
       { id: "home", name: "Home", path: "C:\\Users\\fixture" },
       { id: "desktop", name: "Desktop", path: "C:\\Users\\fixture\\Desktop" },
     ],
-    permissionMode: "task_free",
+    permissionMode: "ask_for_approval",
     subagentPermissionRouting: "user",
     childAgentPolicy: {
       permissionRouting: "user",
-      childPermissionMode: "task_free",
+      childPermissionMode: "ask_for_approval",
       model: { mode: "inherit" },
       disabledTools: ["subagent"],
     },
@@ -130,7 +130,7 @@ test("builds one stable explicit product Turn for desktop and transport callers"
     model: "fixture",
     tools: [],
     projectDir: "D:\\next-workspace",
-    permissionMode: "task_free",
+    permissionMode: "ask_for_approval",
     planEnabled: true,
   });
   assert.equal(nextRequest.prefixMessages[0].content, request.prefixMessages[0].content);
@@ -152,7 +152,7 @@ test("time snapshots append as internal user inputs across midnight without chan
     tools: [],
     projectDir: "C:\\workspace",
     instructionDocuments: [{ path: "C:/CardBush/AGENTS.md", scope: "global", content: "Prefer concise, verified results." }],
-    permissionMode: "task_free",
+    permissionMode: "ask_for_approval",
     planEnabled: true,
   });
   const first = create("2026-08-29T15:59:59Z", "turn_before_midnight");
@@ -192,7 +192,7 @@ test("visual inputs carry ordered source facts without injecting data URLs or ch
   const sources = ['\\\\nas\\共享\\中文 图.png', 'C:\\images\\one.png', 'data:image/png;base64,TEST_BYTES', 'https://example.test/image.png', 'C:\\images\\omitted.png'];
   const create = images => createProductAgentTurnRequest({ requestId: 'r', sessionId: 's', turnId: 't', messageId: 'u',
     createdAt: '2026-09-10T00:00:00Z', localDate: '2026-09-10', sessionEnvironmentLocalDate: '2026-09-10',
-    userText: '看看这些图片', model: 'fixture', tools: [], images, permissionMode: 'task_free', planEnabled: true });
+    userText: '看看这些图片', model: 'fixture', tools: [], images, permissionMode: 'ask_for_approval', planEnabled: true });
   const request = create(sources);
   assert.deepEqual(request.inputMessages.at(-1).message.images.map(image => image.url), sources.slice(0, 4));
   const context = request.inputMessages.map(item => item.message.content).join('\n');
@@ -222,7 +222,7 @@ test("product requests append attachment facts while keeping the prefix and tool
       filesystemLocations: [
         { id: "desktop", name: "Desktop", path: "C:\\Users\\fixture\\Desktop" },
       ],
-      permissionMode: "task_free",
+      permissionMode: "ask_for_approval",
       planEnabled: true,
     });
   const first = create({
@@ -278,7 +278,7 @@ test("legacy date fields cannot replace the submission snapshot or alter dates a
   const userText = '我在 2026-09-17 修改过文件，今天请核对。';
   const request = createProductAgentTurnRequest({ requestId: 'legacy', sessionId: 'legacy', turnId: 'legacy', messageId: 'legacy',
     createdAt: '2026-09-18T08:00:00Z', timeZone: 'UTC', localDate: '2020-01-01', sessionEnvironmentLocalDate: '2020-01-02',
-    userText, model: 'fixture', tools: [], permissionMode: 'task_free', planEnabled: false });
+    userText, model: 'fixture', tools: [], permissionMode: 'ask_for_approval', planEnabled: false });
   assert.deepEqual(request.inputMessages.at(-1).message, { role: 'user', content: userText });
   assert.match(request.inputMessages[0].message.content, /Current date: 2026-09-18/);
   assert.doesNotMatch(request.inputMessages[0].message.content, /2020-01/);
@@ -298,7 +298,7 @@ test("keeps a projectless task workspace as an execution root, not a project ide
     model: "fixture",
     tools: [],
     workspaceDir: taskWorkspace,
-    permissionMode: "task_free",
+    permissionMode: "ask_for_approval",
     planEnabled: false,
   });
 

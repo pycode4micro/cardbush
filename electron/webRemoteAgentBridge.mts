@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
-import { remoteControlSchema, remoteObservationSchema, remoteWorkerSchema, supportsRemoteInteraction, type RemoteSubagentRequest, type SessionSnapshot } from '@cardbush/bush-protocol';
+import { permissionModeSchema, remoteControlSchema, remoteObservationSchema, remoteWorkerSchema, supportsRemoteInteraction, type RemoteSubagentRequest, type SessionSnapshot } from '@cardbush/bush-protocol';
 import type { AgentJob } from './agentTypes.js';
 import type { WebStore } from './webStore.mjs';
 import { equalSecret, json, readJson, WebError } from './webCommon.mjs';
@@ -15,7 +15,7 @@ const common = { connectionId: id, agentId: id.optional(), parentSessionId: id, 
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('agents.list'), input: z.object({}).strict() }).strict(),
   z.object({ operation: z.literal('agents.delegate'), input: z.object({ ...common, taskId: id, turnId: id, parentTurnId: id,
-    prompt: z.string().min(1).max(100_000), files: z.array(z.string().min(1).max(4000)).max(32).optional(), queue: z.boolean().optional(), worker: remoteWorkerSchema.optional(), permissionRouting: z.enum(['user', 'parent']).optional(), permissionMode: z.enum(['task_free', 'user_free', 'all_free']), language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
+    prompt: z.string().min(1).max(100_000), files: z.array(z.string().min(1).max(4000)).max(32).optional(), queue: z.boolean().optional(), worker: remoteWorkerSchema.optional(), permissionRouting: z.enum(['user', 'parent']).optional(), permissionMode: permissionModeSchema, language: z.string().trim().min(1).max(64).refine(value => { try { return Intl.getCanonicalLocales(value).length === 1; } catch { return false; } }, 'Invalid language tag') }).strict() }).strict(),
   z.object({ operation: z.literal('agents.control'), input: z.object({ connectionId: id, agentId: id, parentSessionId: id,
     worker: remoteWorkerSchema.optional(), control: remoteControlSchema }).strict().transform(value => ({ ...value, sessionId: value.control.contextId })) }).strict(),
   z.object({ operation: z.literal('agents.read-child'), input: z.object(common).strict() }).strict(),
@@ -71,7 +71,7 @@ export class WebRemoteAgentBridge {
           const nextTaskId = taskIdFor(nextId);
           const queued = await client.call('delegation.submit', { taskId: nextTaskId, sessionId, turnId: `turn-${nextTaskId}`,
             parentSessionId, parentTurnId: original.delegation!.parentTurnId, prompt: control.text, queue: true,
-            permissionMode: original.permissionMode ?? 'task_free', language: original.language ?? 'en', worker: session.metadata?.remoteWorker }) as AgentJob;
+            permissionMode: original.permissionMode ?? 'ask_for_approval', language: original.language ?? 'en', worker: session.metadata?.remoteWorker }) as AgentJob;
           json(response, 200, { accepted: true, contextId: input.sessionId, taskId: nextId, state: queued.status }); return;
         }
         const mapped = { ...control, contextId: sessionId, taskId, ...('messageId' in control ? {

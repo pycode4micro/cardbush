@@ -293,7 +293,7 @@ export async function streamRuntimeShadowConversationMessage(
       projectDir: workspaceDir,
       // Human-opened Forks are intentionally narrower than the parent. They may
       // mutate the project workspace, but never inherit user_free/all_free.
-      permissionMode: 'task_free',
+      permissionMode: 'ask_for_approval',
       planEnabled: false,
       maxOutputTokens: resolved.maxOutputTokens,
       maxContextTokens: resolved.maxContextTokens,

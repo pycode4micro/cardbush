@@ -8,7 +8,7 @@ import { PluginHookRunner } from '../dist/pluginHookRunner.js';
 
 const context = (sessionId = 'session') => ({ protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId, turnId: 'human-turn', model: 'fixture',
   prefixMessages: [{ role: 'system', content: 'Follow the user.' }], inputMessages: [{ messageId: 'human-input', message: { role: 'user', content: 'Hello' } }],
-  tools: [], metadata: {}, permissionMode: 'task_free', requestCapabilities: { interactiveRequests: true, vision: false }, sessionMetadata: { title: 'Fixture' } });
+  tools: [], metadata: {}, permissionMode: 'ask_for_approval', requestCapabilities: { interactiveRequests: true, vision: false }, sessionMetadata: { title: 'Fixture' } });
 const definition = (trigger, sessionId = 'session') => ({ name: 'Review', sessionId, prompt: 'Review the project.', timeZone: 'Asia/Shanghai', trigger });
 const until = async check => { const deadline = Date.now() + 3000; while (!await check()) { if (Date.now() > deadline) throw Error('Condition timed out'); await new Promise(resolve => setTimeout(resolve, 10)); } };
 async function fixture(t, overrides = {}) {
@@ -29,7 +29,7 @@ test('one-time jobs wait for runtime admission, run once and survive reload with
   f.setIdle(true); await f.scheduler.tick();
   await until(async () => (await f.scheduler.list()).jobs[0].state === 'completed');
   await Promise.all(Array.from({ length: 8 }, () => f.scheduler.tick())); assert.equal(f.calls.length, 1);
-  assert.equal(f.calls[0].ctx.permissionMode, 'task_free');
+  assert.equal(f.calls[0].ctx.permissionMode, 'ask_for_approval');
   await f.scheduler.close();
   const reloaded = new AutomationScheduler(f.options); t.after(() => reloaded.close());
   await reloaded.tick(); assert.equal(f.calls.length, 1);
@@ -71,7 +71,7 @@ test('temporary timers keep owned settings across source deletion, collection, r
   await reloaded.manage({ action: 'run', id: job.id });
   await until(async () => (await reloaded.list()).jobs[0].runs.at(-1)?.status === 'completed');
   const first = f.calls[0]; assert.notEqual(first.run.sessionId, 'session'); assert.equal(first.ctx.model, 'saved-model');
-  assert.equal(first.ctx.permissionMode, 'task_free'); assert.equal(first.ctx.temperature, 0); assert.equal(first.ctx.topP, 0.8);
+  assert.equal(first.ctx.permissionMode, 'ask_for_approval'); assert.equal(first.ctx.temperature, 0); assert.equal(first.ctx.topP, 0.8);
   assert.equal(first.job.prompt, 'Updated self-contained task.');
   const result = await reloaded.manage({ action: 'conversation', id: job.id, runIds: [first.run.id] });
   assert.equal(result.sourceSession, undefined); assert.equal(result.job.sessionId, 'session');
@@ -281,7 +281,7 @@ test('real runtime turns and event registration share context, events and permis
   assert.equal(events.events.find(e => e.id === receipt.eventId).conversationExecution.sessionId, 'session');
   await host.runSessionTurn({ ...context(), turnId: 'human-turn-2', requestId: 'request-2', inputMessages: [{ messageId: 'human-input-2', message: { role: 'user', content: 'Next task' } }] });
   await f.scheduler.tick(); await until(async () => (await f.scheduler.list()).jobs[0].runs.at(-1)?.status === 'completed');
-  assert.equal(seen.length, 3); assert.equal(seen[2].permissionMode, 'task_free');
+  assert.equal(seen.length, 3); assert.equal(seen[2].permissionMode, 'ask_for_approval');
   await f.scheduler.tick(); assert.equal((await f.scheduler.list()).jobs[0].runs.length, 1, 'scheduled turns cannot activate their own Stop rule');
   const session = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: 'session' } });
   assert.equal(session.turns.length, 3);

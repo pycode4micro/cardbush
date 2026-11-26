@@ -28,7 +28,7 @@ test('missing or invalid client zones fall back explicitly to the host without e
 
 test('remote metadata supplies the user zone, explicit local zones take precedence, task zones are labeled', () => {
   const input = { requestId: 'r', sessionId: 's', turnId: 't', messageId: 'm', createdAt: '2026-09-24T01:00:00Z',
-    userText: '今天星期几？', model: 'fixture', tools: [], permissionMode: 'task_free', planEnabled: false,
+    userText: '今天星期几？', model: 'fixture', tools: [], permissionMode: 'ask_for_approval', planEnabled: false,
     userMessageMetadata: { userTimeZone: 'America/Los_Angeles' } };
   const remote = createProductAgentTurnRequest(input);
   const clock = remote.inputMessages[0].message;

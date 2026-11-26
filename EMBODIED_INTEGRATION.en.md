@@ -88,7 +88,7 @@ Management uses the existing authenticated `POST /api/agent/v1/call` endpoint:
 Actions: `status`, `configure`, `pair`, `revoke`, `assistant.get/save`, `voice.get/save`. `voice.save` accepts the existing realtime settings format and keeps provider credentials encrypted on the host. `assistant.save` accepts partial updates:
 
 ```json
-{"operation":"devices.command","input":{"action":"assistant.save","input":{"modelId":"YOUR_CONFIGURED_MODEL_ID","language":"en","permissionMode":"task_free","profile":{"name":"assistant","persona":"Speak naturally and concisely."}}}}
+{"operation":"devices.command","input":{"action":"assistant.save","input":{"modelId":"YOUR_CONFIGURED_MODEL_ID","language":"en","permissionMode":"ask_for_approval","profile":{"name":"assistant","persona":"Speak naturally and concisely."}}}}
 ```
 
 The helper also offers `voice-settings [--file SETTINGS_JSON]` and `assistant-settings [--file SETTINGS_JSON]`: omit the file to read redacted settings, supply it to save. `disable` closes the listener and retains pairings. See the skill's [host setup reference](assets/skills/embodied-connect/references/host-setup.md).

@@ -43,7 +43,7 @@ test('Agent worker resolves saved protocols, headers and model credentials throu
       })) } });
     const run = async (sessionId, modelId, override) => {
       await service.call('sessions.create', { sessionId });
-      const job = await service.call('chat.send', { sessionId, requestId: sessionId, modelId, text: 'Say hello.', language: 'en', permissionMode: 'task_free', ...override });
+      const job = await service.call('chat.send', { sessionId, requestId: sessionId, modelId, text: 'Say hello.', language: 'en', permissionMode: 'ask_for_approval', ...override });
       let state;
       for (let i = 0; i < 150; i++) {
         state = (await service.call('chat.jobs', { sessionId })).find(item => item.id === job.id);

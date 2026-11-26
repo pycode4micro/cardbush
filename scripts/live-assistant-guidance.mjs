@@ -69,7 +69,7 @@ for (const ordinary of [false, true]) {
   const parent = createProductAgentTurnRequest({ requestId: turnId, sessionId, turnId, messageId: turnId, createdAt,
     timeZone: 'Asia/Shanghai', uiLanguage: 'zh', userText: '请派一个本地子代理，只读检查当前工作目录下有哪些文件，检查完成后告诉我。',
     model: selected.model, providerBinding: binding.binding, tools: registry.definitions(), workspaceDir: directory,
-    permissionMode: 'task_free', individuation: { habits: false, predictions: false }, maxOutputTokens: 2048,
+    permissionMode: 'ask_for_approval', individuation: { habits: false, predictions: false }, maxOutputTokens: 2048,
     ...(selected.reasoningEffort ? { reasoningEffort: selected.reasoningEffort } : {}) });
   let run;
   const item = { name, success: false, requests, http };

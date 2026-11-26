@@ -16,7 +16,7 @@ async function fixture(t, configure = () => {}) {
     mcpApp: { resourceUri: 'ui://fixture', readResource: async uri => { reads++; return { contents: [{ uri, mimeType: 'text/html;profile=mcp-app', text: '<h1>Fixture</h1>', _meta: { ui: { csp: { resourceDomains: ['https://example.com'] } } } }] }; } },
   });
   register('mcp__demo__save', 'demo'); register('mcp__hidden__save', 'hidden');
-  const req = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'm', permissionMode: 'task_free', tools: [registry.resolve('mcp__demo__save').definition], messages: [], metadata: { providerSecret: 'must not persist' } };
+  const req = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'm', permissionMode: 'ask_for_approval', tools: [registry.resolve('mcp__demo__save').definition], messages: [], metadata: { providerSecret: 'must not persist' } };
   configure({ registry, req, register });
   executions.record({ protocol: 'bush.tool_call.v1', id: 'original', name: 'mcp__demo__save', argumentsText: JSON.stringify({ query: 'original' }) }, { ...req, round: 1, ordinal: 0 }, { kind: 'returned', workspaceChanges: [], result: { content: [], _meta: { uiOnly: true } } });
   const host = new McpAppsHost(root, registry, executions, undefined, () => ({ before: async () => { before++; return { messages: [] }; }, after: async () => ({ messages: [] }) }));

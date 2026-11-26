@@ -59,7 +59,7 @@ function fixture(t) {
     t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
     const request = (turnId, options = {}) => createProductAgentTurnRequest({
       requestId: `request_${turnId}`, sessionId: 'policy', turnId, messageId: `user_${turnId}`, createdAt: now,
-      userText: '继续。', model: 'fixture', uiLanguage: 'zh', permissionMode: 'task_free', planEnabled: false,
+      userText: '继续。', model: 'fixture', uiLanguage: 'zh', permissionMode: 'ask_for_approval', planEnabled: false,
       tools: registry.definitions().filter(tool => ['read_fixture', 'summary_for_user', 'checkpoint_context'].includes(tool.name)),
       maxOutputTokens: 1000, maxContextTokens: 100000, ...options,
     });

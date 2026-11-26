@@ -58,7 +58,7 @@ try {
   await save(join(source, 'hooks/stop.cjs'), 'if (!process.env.PLUGIN_ROOT || process.env.PLUGIN_ROOT !== process.env.CLAUDE_PLUGIN_ROOT || process.env.PLUGIN_DATA !== process.env.CLAUDE_PLUGIN_DATA) process.exit(1); console.log(JSON.stringify({continue:false,stopReason:"Finished by hook"}));');
   const hooks = (await resolvePluginManifest(source)).extensions.hooks;
   assert.equal(hooks.length, 1, 'explicit hook paths replace default discovery and * is a valid matcher');
-  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'task_free',
+  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'ask_for_approval',
     messages: [{ role: 'user', content: 'Finish this task.' }], tools: [], metadata: { workspaceDir: root } };
   const runner = new PluginHookRunner(join(root, 'runtime'));
   const stopped = await runner.run(hooks, 'Stop', { request });

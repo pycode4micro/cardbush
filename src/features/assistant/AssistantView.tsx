@@ -124,7 +124,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     void prepareRef.current().then(config => {
       if (!cancelled) return window.cardbushDesktop?.embodied?.command({ action: 'assistant.save', input: {
         profile, language, modelId: config.modelConfig?.id || config.model,
-        permissionMode: config.permissionMode || 'task_free',
+        permissionMode: config.permissionMode || 'ask_for_approval',
         subagentPermissionRouting: config.subagentPermissionRouting, planEnabled: config.referencePlanMode !== 'off',
         disabledTools: config.disabledTools || [], disabledSkills: config.disabledSkills || [],
       } });

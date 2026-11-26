@@ -136,7 +136,7 @@ test('summary_for_user retains its final-display signal and writes without backg
   for(const [index,args] of [{habit:{text:'Include source links.'}},{}].entries()){
     const result=await coordinator.execute({protocol:'bush.tool_call.v1',id:`summary-${index}`,name:'summary_for_user',argumentsText:JSON.stringify(args)},
       {requestId:'r',sessionId:'current',turnId:'t',round:index,ordinal:0},undefined,
-      {request:{metadata:{individuation:settings},tools:registry.definitions(),permissionMode:'task_free'},contextMessages:[{role:'user',content:'Include source links.'}]});
+      {request:{metadata:{individuation:settings},tools:registry.definitions(),permissionMode:'ask_for_approval'},contextMessages:[{role:'user',content:'Include source links.'}]});
     assert.equal(result.kind,'returned');assert.equal(result.result.final_response,true);
     if(index===0)assert.equal(result.result.saved,true);
   }

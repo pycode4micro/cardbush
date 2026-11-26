@@ -10,6 +10,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { gunzipSync } from 'node:zlib';
 import { AgentHttpClient, AgentHttpError, AgentNetworkError } from '../dist-electron/agentHttpClient.mjs';
 import { packSharedConfiguration } from '../dist-electron/agentSharedConfiguration.mjs';
 import { AgentService } from '../dist-electron/agentService.mjs';
@@ -147,12 +148,75 @@ test('a failing fixture disposer still closes the model listener and removes the
     request.end('{}');
   }), { code: 'ECONNREFUSED' });
 });
-const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'task_free', language: 'en' });
+const input = (sessionId, requestId, text = requestId) => ({ sessionId, requestId, text, modelId: 'fixture', permissionMode: 'ask_for_approval', language: 'en' });
 
 const workerInput = (taskId, extra = {}) => ({ taskId, sessionId: `delegated-${taskId}`, turnId: `turn-${taskId}`, parentSessionId: 'parent',
-  parentTurnId: 'parent-turn', prompt: 'Review the release.', permissionMode: 'task_free', language: 'en', ...extra });
+  parentTurnId: 'parent-turn', prompt: 'Review the release.', permissionMode: 'ask_for_approval', language: 'en', ...extra });
 const workerControl = (service, request, control, parentSessionId = request.parentSessionId) => service.call('delegation.control', {
   parentSessionId, control: { profile: 'subagent-remote-proton', version: '0.1', contextId: request.sessionId, taskId: request.taskId, ...control } });
+
+test('new clients and configuration archives keep the strict Agent v1 permission spelling on the wire', async t => {
+  const seen = [];
+  const legacyEvent = { kind: 'permission_requested', payload: { scope: { mode: 'task_free', roots: ['fixture-root'] } } };
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const { operation, input } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    seen.push({ operation, input });
+    if (operation !== 'chat.events' && !['task_free', 'all_free'].includes(input.permissionMode)) {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Legacy permission enum' } }));
+      return;
+    }
+    const result = operation === 'chat.events' ? { events: [legacyEvent], ended: false } : { permissionMode: input.permissionMode };
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ result }));
+  });
+  fixtureCleanup(t, () => closeFixtureServer(server));
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const client = new AgentHttpClient('http://127.0.0.1:' + server.address().port, 'fixture-approval-v1-'.repeat(2));
+  fixtureCleanup(t, () => client.close());
+  for (const [operation, request] of [['chat.send', input('fixture', 'fixture', 'Literal ask_for_approval')], ['delegation.submit', workerInput('fixture')]]) {
+    const result = await client.call(operation, request);
+    assert.equal(result.permissionMode, 'ask_for_approval');
+    assert.equal(seen.at(-1).input.permissionMode, 'task_free');
+  }
+  assert.equal(seen[0].input.text, 'Literal ask_for_approval');
+  assert.equal((await client.call('chat.send', { ...input('fixture', 'full'), permissionMode: 'all_free' })).permissionMode, 'all_free');
+  assert.equal((await client.call('chat.events', {})).events[0].payload.scope.mode, 'ask_for_approval');
+  const archive = await packSharedConfiguration({ models: {}, instructions: '', subagents: { childPermissionMode: 'ask_for_approval' } }, await directory(t));
+  assert.equal(JSON.parse(gunzipSync(archive.data)).subagents.childPermissionMode, 'task_free');
+});
+
+test('a legacy client and persisted job keep one submission and normalized approval mode on a new Agent', async t => {
+  const f = await openService(t, 'legacy-approval-mode');
+  const sessionId = 'legacy-approval', jobId = 'legacy-job';
+  const sent = input(sessionId, jobId);
+  await f.service.call('sessions.create', { sessionId });
+  const token = 'fixture-legacy-permission-token-'.repeat(2);
+  const listener = await serveAgentHttp(f.service, { token, port: 0 });
+  fixtureCleanup(t, () => listener.close());
+  const rawCall = async (operation, input) => {
+    const response = await fetch(`http://127.0.0.1:${listener.port}/api/agent/v1/call`, { method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, input }) });
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    return body.result;
+  };
+  assert.equal((await rawCall('chat.send', { ...sent, permissionMode: 'task_free' })).permissionMode, 'task_free');
+  const done = await until(() => rawCall('chat.jobs', { sessionId }), jobs => jobs[0]?.status === 'completed');
+  assert.equal(done[0].permissionMode, 'task_free');
+  assert.equal((await f.service.call('chat.jobs', { sessionId }))[0].permissionMode, 'ask_for_approval');
+  await listener.close();
+  await f.service.close();
+  const path = join(f.root, 'agent.json'), stored = JSON.parse(await readFile(path, 'utf8'));
+  stored.jobs[0].input.permissionMode = 'task_free';
+  await writeFile(path, JSON.stringify(stored));
+  const reopened = await openFixtureAgent(t, { dataRoot: f.root, env: { CARDBUSH_REMOTE_PERMISSION_MODE: 'task_free' } });
+  assert.equal((await reopened.call('chat.send', sent)).id, jobId);
+  assert.equal((await reopened.call('chat.send', { ...sent, permissionMode: 'task_free' })).id, jobId);
+  const jobs = await reopened.call('chat.jobs', { sessionId });
+  assert.deepEqual(jobs.map(job => [job.id, job.status, job.permissionMode]), [[jobId, 'completed', 'ask_for_approval']]);
+  assert.equal(f.model.calls.length, 1);
+});
 
 test('service turns use saved child approval routing and preserve explicit per-turn choices', async t => {
   const f = await openService(t, 'saved-child-routing');
@@ -242,7 +306,7 @@ for (const remote of [false, true]) test(`unified child lifecycle through ${remo
     } } : {}) });
   try {
     const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn', model: 'fixture',
-      prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Prepare a release.' } }], tools: registry.definitions(), permissionMode: 'task_free',
+      prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Prepare a release.' } }], tools: registry.definitions(), permissionMode: 'ask_for_approval',
       metadata: { individuation: { habits: false, predictions: false } } }, { signal: AbortSignal.timeout(30000) });
     assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
     assert.deepEqual(tasks.list('parent').map(task => task.status), ['completed', 'stopped', 'completed']);
@@ -353,7 +417,7 @@ test('a parent model approves a remote child through the real HTTP bridge and th
     fixtureCleanup(t, () => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
     const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'parent-request', sessionId: 'parent', turnId: 'parent-turn',
       model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'user', message: { role: 'user', content: 'Read the remote fixture' } }],
-      tools: registry.definitions(), permissionMode: 'task_free', metadata: { subagentPermissionRouting: 'parent', individuation: { habits: false, predictions: false } },
+      tools: registry.definitions(), permissionMode: 'ask_for_approval', metadata: { subagentPermissionRouting: 'parent', individuation: { habits: false, predictions: false } },
     }, { signal: AbortSignal.any([t.signal, AbortSignal.timeout(20000)]) });
     assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal.payload));
     assert.equal(approvals, 1); assert.equal(tasks.list('parent').length, 1);
@@ -466,7 +530,7 @@ for (const [admin, routing, delegateApproval] of [
 ]) test(`worker permissions respect the remote ceiling and task routing (admin=${admin || 'unset'}, route=${routing ?? 'legacy'})`, async t => {
   const root = await directory(t), outside = join(root, 'protected.txt'); await writeFile(outside, 'protected contents');
   const model = await modelFixture(t, 20, outside);
-  const service = await openFixtureAgent(t, { dataRoot: join(root, 'worker'), env: { CARDBUSH_REMOTE_PARENT_APPROVAL: admin, CARDBUSH_REMOTE_PERMISSION_MODE: 'task_free' } });
+  const service = await openFixtureAgent(t, { dataRoot: join(root, 'worker'), env: { CARDBUSH_REMOTE_PARENT_APPROVAL: admin, CARDBUSH_REMOTE_PERMISSION_MODE: 'ask_for_approval' } });
   const request = workerInput('permission', { permissionMode: 'all_free', ...(routing ? { permissionRouting: routing } : {}) });
   try {
     await service.call('product.command', { kind: 'models.update', config: { defaultModelId: 'fixture', models: [{ id: 'fixture', provider: 'openai', model: 'fixture', apiKey: 'fixture', baseURL: model.url }] } });
@@ -484,7 +548,7 @@ for (const [admin, routing, delegateApproval] of [
     assert.equal(pending.payload.permissionRouting, delegateApproval ? 'parent' : 'user');
     assert.equal(pending.payload.permissionEscalationReason, permission.escalationReason);
     assert.equal(pending.payload.subagentTaskId, request.taskId);
-    assert.equal(JSON.parse(await readFile(join(root, 'worker', 'agent.json'), 'utf8')).jobs[0].input.permissionMode, 'task_free', 'parent full access cannot raise the remote ceiling');
+    assert.equal(JSON.parse(await readFile(join(root, 'worker', 'agent.json'), 'utf8')).jobs[0].input.permissionMode, 'ask_for_approval', 'parent full access cannot raise the remote ceiling');
     const response = { operation: 'respond', messageId: 'permission-1', response: { kind: 'permission', interactionId: permission.interactionId, actionDigest: permission.actionDigest, decision: 'allow_once' } };
     await assert.rejects(workerControl(service, request, { ...response, response: { ...response.response, actionDigest: 'sha256:' + '0'.repeat(64) } }), /action_changed/);
     await assert.rejects(workerControl(service, request, { ...response, response: { kind: 'answer', interactionId: permission.interactionId, text: 'Approved' } }), /structured_permission/);
@@ -528,7 +592,7 @@ for (const guide of [false, true]) test(`Runtime-owned collaboration turns retai
     await f.service.call('sessions.create', { sessionId: 'native' });
     const selected = await f.service.product.resolveSubagentModel('fixture');
     const request = createProductAgentTurnRequest({ requestId: 'peer-request', sessionId: 'native', turnId: 'peer-turn', messageId: 'peer-message', createdAt: new Date().toISOString(),
-      userText: 'Coordinate the existing task', model: selected.model, providerBinding: selected.binding, tools: [], permissionMode: 'task_free' });
+      userText: 'Coordinate the existing task', model: selected.model, providerBinding: selected.binding, tools: [], permissionMode: 'ask_for_approval' });
     request.metadata.peerMessageWake = true;
     native = f.service.runtime.runOwnedCommand({ kind: 'runtime.run_session_turn', payload: request }, new AbortController().signal);
     await until(() => f.model.calls.length, count => count === 1);
@@ -923,7 +987,7 @@ test('remote subagent HTTP bridge deduplicates uncertain acknowledgement, return
     const realCall = manager.call.bind(manager); let loseAck = true;
     manager.call = async (...args) => { const value = await realCall(...args); if (args[1] === 'delegation.submit' && loseAck) { loseAck = false; throw new AgentNetworkError('lost acknowledgement'); } return value; };
     const taskText = 'Review this server';
-    const request = { connectionId: connection.id, agentId: f.service.info().id, taskId: 'test-remote-1', sessionId: 'delegated-test-remote-1', turnId: 'turn-test-remote-1', parentSessionId: 'parent', parentTurnId: 'parent-turn', prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${taskText}`, permissionMode: 'task_free', language: 'en' };
+    const request = { connectionId: connection.id, agentId: f.service.info().id, taskId: 'test-remote-1', sessionId: 'delegated-test-remote-1', turnId: 'turn-test-remote-1', parentSessionId: 'parent', parentTurnId: 'parent-turn', prompt: `${REPORT_DELIVERY_INSTRUCTIONS}\n\n${taskText}`, permissionMode: 'ask_for_approval', language: 'en' };
     const result = await runRemoteSubagent(manager, request);
     assert.equal(result.status, 'completed'); assert.match(result.finalResponse, /answer-2/);
     assert.equal(f.model.calls.length, 2, 'uncertain acknowledgement cannot execute twice');
@@ -992,7 +1056,7 @@ test('remote cancellation waits for the server task to stop', async t => {
   try {
     const [connection] = await manager.save({ name: 'Server', transport: 'http', url: `http://127.0.0.1:${http.port}`, token });
     const abort = new AbortController();
-    const result = runRemoteSubagent(manager, { connectionId: connection.id, taskId: 'cancel-remote', sessionId: 'delegated-cancel-remote', turnId: 'turn-cancel-remote', parentSessionId: 'parent', parentTurnId: 'turn', prompt: 'work', permissionMode: 'task_free', language: 'en' }, abort.signal);
+    const result = runRemoteSubagent(manager, { connectionId: connection.id, taskId: 'cancel-remote', sessionId: 'delegated-cancel-remote', turnId: 'turn-cancel-remote', parentSessionId: 'parent', parentTurnId: 'turn', prompt: 'work', permissionMode: 'ask_for_approval', language: 'en' }, abort.signal);
     await until(() => f.service.call('chat.jobs'), jobs => jobs.some(job => job.status === 'running'));
     abort.abort();
     assert.equal((await result).status, 'stopped');

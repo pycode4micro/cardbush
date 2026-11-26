@@ -52,7 +52,7 @@ test('Windows AppContainer enforces file, child process, network and environment
   server.on('connection', () => { sandboxConnections++; });
   const admitted = await commandSandboxPlan({ mode: 'auto', network: 'disabled', readableRoots: [tools, reference], writableRoots: [] },
     { sessionId: 'sandbox-recovery', input: { command: 'fixture probe', shell: 'cmd' }, turn: { request: {
-      permissionMode: 'task_free', metadata: { workspaceDir: tmpdir() },
+      permissionMode: 'ask_for_approval', metadata: { workspaceDir: tmpdir() },
     } } }, work);
   assert.equal(admitted.admission.kind, 'allow', 'a dedicated cwd recovers a broad implicit workspace');
   assert.deepEqual(admitted.policy.writableRoots, [work], 'the sandbox must not grant access to its supervisor parent');

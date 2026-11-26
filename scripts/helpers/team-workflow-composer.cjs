@@ -35,7 +35,7 @@ module.exports = async ({ read, until, frame, key, pointerClick, capture, win })
   await until('creationControls.permission==="all_free"');
   await pointerClick(`${dock} .permission-center-button`);
   await menuChoice('申请批准');
-  await until('creationControls.permission==="task_free"');
+  await until('creationControls.permission==="ask_for_approval"');
   const permissions = await read('permissionChanges.length');
   await draft('检查流程草稿');
   await key('Escape'); await until(`!document.querySelector('${dock}')`);
@@ -47,7 +47,7 @@ module.exports = async ({ read, until, frame, key, pointerClick, capture, win })
   assert.ok(await visible(`${dock} .composer-tools > :first-child`));
   assert.equal(await read(`document.querySelector('${dock} textarea')===workflowInput`), true, 'switching style reuses the editor and its caret');
   assert.deepEqual(await read('[workflowInput.value,workflowInput.selectionStart,workflowInput.selectionEnd]'), ['检查流程草稿',2,4]);
-  assert.deepEqual(await read('creationControls'), {model:'test-other',permission:'task_free'});
+  assert.deepEqual(await read('creationControls'), {model:'test-other',permission:'ask_for_approval'});
   assert.equal(await read('permissionChanges.length'), permissions, 'simple presentation never resets an existing workflow permission');
   await pointerClick(`${dock} .composer-tools > :first-child`);
   assert.ok(await read('document.querySelector(".composer-popover").textContent.includes("添加文件")'), 'simple composer keeps the existing attachment menu');
@@ -70,7 +70,7 @@ module.exports = async ({ read, until, frame, key, pointerClick, capture, win })
   await read('setCreationPortal(null)'); await until(`!!document.querySelector('${dock} .composer-stack.simple')`);
   await read('workflowCover.remove()');
   assert.equal(await read('creationInspector.sessionId===workflowChat'), true);
-  assert.deepEqual(await read('creationControls'), {model:'test-other',permission:'task_free'});
+  assert.deepEqual(await read('creationControls'), {model:'test-other',permission:'ask_for_approval'});
   assert.equal(await read(`document.querySelector('${dock} textarea').value`), '第一行草稿\n第二行输入需要完整宽度');
   win.setSize(1120,1000); await frame();
   await draft('从共享输入框发送流程修改'); await key('Enter');

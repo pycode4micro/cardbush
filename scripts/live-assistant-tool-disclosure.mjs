@@ -170,7 +170,7 @@ async function scenario(name, advanced, ordinaryChat = false) {
     const id = randomUUID(), createdAt = new Date().toISOString();
     const parent = createProductAgentTurnRequest({ requestId: id, sessionId, turnId: id, messageId: id, createdAt,
       timeZone: 'Asia/Shanghai', uiLanguage: 'zh', userText: text, model: selected.model, providerBinding: binding.binding,
-      tools: registry.definitions(), workspaceDir: workspace, permissionMode: 'task_free', planEnabled: true,
+      tools: registry.definitions(), workspaceDir: workspace, permissionMode: 'ask_for_approval', planEnabled: true,
       individuation: { habits: false, predictions: false }, maxOutputTokens: 4096,
       ...(selected.reasoningEffort ? { reasoningEffort: selected.reasoningEffort } : {}) });
     if (ordinaryChat) {

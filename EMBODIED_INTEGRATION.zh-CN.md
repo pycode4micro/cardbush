@@ -88,7 +88,7 @@ node dist-electron/agentServiceCli.mjs --data-dir /srv/cardbush/agent-a --host 1
 `action` 包括 `status`、`configure`、`pair`、`revoke`、`assistant.get/save`、`voice.get/save`。`voice.save` 使用已有实时语音设置格式；服务商密钥只写入主机加密配置。`assistant.save` 支持部分更新，例如：
 
 ```json
-{"operation":"devices.command","input":{"action":"assistant.save","input":{"modelId":"YOUR_CONFIGURED_MODEL_ID","language":"zh","permissionMode":"task_free","profile":{"name":"assistant","persona":"自然、简洁地交流。"}}}}
+{"operation":"devices.command","input":{"action":"assistant.save","input":{"modelId":"YOUR_CONFIGURED_MODEL_ID","language":"zh","permissionMode":"ask_for_approval","profile":{"name":"assistant","persona":"自然、简洁地交流。"}}}}
 ```
 
 辅助脚本也提供 `voice-settings [--file SETTINGS_JSON]`、`assistant-settings [--file SETTINGS_JSON]`，不传文件时读取脱敏设置，传文件时保存。`disable` 关闭监听并保留配对。详见 [安装 skill 的主机配置说明](assets/skills/embodied-connect/references/host-setup.md)。

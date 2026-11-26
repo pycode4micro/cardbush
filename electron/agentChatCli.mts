@@ -6,7 +6,7 @@ import { basename, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { decodeRuntimeEvent, solutionSelectionQuestions, taskPlanSchema, type TaskPlan, type RuntimeEvent, type SolutionQuestionAnswer } from '@cardbush/bush-protocol';
+import { decodeRuntimeEvent, permissionModeSchema, solutionSelectionQuestions, taskPlanSchema, type TaskPlan, type RuntimeEvent, type SolutionQuestionAnswer } from '@cardbush/bush-protocol';
 import { AgentHttpClient, AgentNetworkError } from './agentHttpClient.mjs';
 import type { AgentJob, AgentProject, AgentSendInput } from './agentTypes.js';
 import type { ChatClient } from './agentLocalChat.mjs';
@@ -346,7 +346,7 @@ For server maintenance, run this CLI on that server.
   --project ID      Use an existing server project instead of the current directory
   --model ID        Use a configured model; otherwise use the Agent's default
   --full-access     Full access; host restrictions and process protection still apply
-  --permission MODE task_free (approval, default), user_free, or all_free
+  --permission MODE ask_for_approval (default) or all_free
   --prompt TEXT     Run one turn and exit; piped stdin is also accepted as one prompt
   --models          List models
   --projects        List projects
@@ -448,9 +448,10 @@ export async function main(args = process.argv.slice(2), options: { openArtifact
   const pickSession = normalized.picker && resumeId === '';
   if (resumeId !== undefined && !resumeId.trim() && !pickSession) throw new Error('--resume requires a nonempty session ID, or omit the ID to choose a session.');
   if (pickSession && !(process.stdin.isTTY && process.stderr.isTTY)) throw new Error('Choosing a session requires an interactive terminal. Use --sessions to list IDs, then --resume ID.');
-  const permissionMode = values['full-access'] ? 'all_free' : values.permission ?? 'task_free';
+  const parsedPermission = permissionModeSchema.default('ask_for_approval').safeParse(values['full-access'] ? 'all_free' : values.permission);
   if (values['full-access'] && values.permission && values.permission !== 'all_free') throw new Error('--full-access conflicts with --permission.');
-  if (!['task_free', 'user_free', 'all_free'].includes(permissionMode)) throw new Error('Invalid --permission. Use task_free, user_free or all_free.');
+  if (!parsedPermission.success) throw new Error('Invalid --permission. Use ask_for_approval or all_free.');
+  const permissionMode = parsedPermission.data;
   if (resumeId !== undefined && values.project) throw new Error('--project applies only to new sessions; resumed sessions keep their workspace.');
   if (values.url || values['token-file']) throw new Error('Remote chat has been removed. Register this service as a remote subagent worker instead. Run cardbush on the server for local maintenance.');
   // Saved remote selections and deployment credentials must never redirect a local CLI.

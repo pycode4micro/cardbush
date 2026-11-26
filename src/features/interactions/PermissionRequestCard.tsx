@@ -192,7 +192,7 @@ function permissionScopeNotice(
   language: AppLanguage,
 ) {
   if (!scope) return '';
-  if (scope.mode === 'task_free' && scope.roots.length === 0) {
+  if (scope.mode === 'ask_for_approval' && scope.roots.length === 0) {
     return uiText(language)('permissionRequestCard.noProjectOrTaskWorkspaceIsBound');
   }
   return scope.roots.join(' · ');

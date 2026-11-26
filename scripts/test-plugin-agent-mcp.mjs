@@ -24,7 +24,7 @@ try {
   assert.equal(registry.definitions().length, 0, 'the parent never receives the local catalog');
   const local = new ToolRegistry(); local.register(registration);
   const coordinator = new ToolExecutionCoordinator({ registry: local, permissions: { request: async input => ({ decision: 'allow_once', grantedCapabilityIds: input.capabilityIds }) } });
-  const req = { protocol: 'bush.model_request.v1', sessionId: 'one', turnId: 't', requestId: 'r', model: 'm', tools: local.definitions(), messages: [], permissionMode: 'task_free', metadata: {} };
+  const req = { protocol: 'bush.model_request.v1', sessionId: 'one', turnId: 't', requestId: 'r', model: 'm', tools: local.definitions(), messages: [], permissionMode: 'ask_for_approval', metadata: {} };
   const call = { protocol: 'bush.tool_call.v1', id: 'show', name: registration.definition.name, argumentsText: '{"value":42}' }, identity = { ...req, round: 1, ordinal: 0 };
   const outcome = await coordinator.execute(call, identity, undefined, { request: req, contextMessages: [] });
   assert.equal(outcome.kind, 'returned', JSON.stringify(outcome)); assert.equal(outcome.result.structuredContent.value, 42);

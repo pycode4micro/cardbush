@@ -23,7 +23,7 @@ function fixture(options = {}, tasks = new SubagentTaskStore(), runChild = async
   });
   const prefix = [{ role: 'system', content: 'Frozen instructions' }, { role: 'user', content: 'Original user objective' }];
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('Unexpected permission'); } } });
-  const request = { requestId: 'r', sessionId: 'parent', turnId: 'turn', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'task_free' };
+  const request = { requestId: 'r', sessionId: 'parent', turnId: 'turn', model: 'fixture', tools: registry.definitions(), metadata: {}, permissionMode: 'ask_for_approval' };
   const invoke = args => coordinator.execute({ protocol: 'bush.tool_call.v1', id: crypto.randomUUID(), name: 'subagent', argumentsText: JSON.stringify(args) },
     { requestId: 'r', sessionId: 'parent', turnId: 'turn', round: 1, ordinal: 0 }, undefined,
     { request, contextMessages: prefix });

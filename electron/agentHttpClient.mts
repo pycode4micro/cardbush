@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Agent as HttpAgent, type buildConnector } from 'undici';
 import { agentApiPath, type AgentEventFrame, type AgentEventRequest, type AgentInfo, type AgentOperation } from './agentTypes.js';
 import { AgentBusyError, agentBusyMessage } from './agentErrors.mjs';
+import { decodeAgentPermissionEvent, decodeAgentPermissionReply, encodeAgentPermissionInput } from './agentPermissionWire.mjs';
 
 export class AgentNetworkError extends Error {}
 export class AgentIdentityError extends Error {}
@@ -122,8 +123,8 @@ export class AgentHttpClient {
       : operation === 'configuration.sync' && input.action === 'apply' ? 120_000
       : operation === 'plugins.marketplace' || (operation === 'product.command' && input.kind === 'sandbox.install') ? 300_000 : 60_000;
     const deadline = AbortSignal.timeout(timeout);
-    const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input }) }, signal ? AbortSignal.any([signal, deadline]) : deadline);
-    const data = await response.json() as { result: unknown }; return data.result;
+    const response = await this.#fetch('call', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ operation, input: encodeAgentPermissionInput(operation, input) }) }, signal ? AbortSignal.any([signal, deadline]) : deadline);
+    const data = await response.json() as { result: unknown }; return decodeAgentPermissionReply(operation, input, data.result);
   }
   async *events(input: AgentEventRequest, signal: AbortSignal, format: 'sse' | 'ndjson' = 'sse'): AsyncIterable<AgentEventFrame> {
     const abort = new AbortController(); const combined = AbortSignal.any([signal, abort.signal]);
@@ -166,7 +167,7 @@ export class AgentHttpClient {
             sequence = frame.event.sequence;
           }
           if (!['ready', 'event', 'heartbeat', 'end'].includes(frame.type)) throw new Error('Unknown Agent event frame.');
-          yield frame;
+          yield frame.type === 'event' ? { ...frame, event: decodeAgentPermissionEvent(frame.event) as typeof frame.event } : frame;
           if (frame.type === 'end') { ended = true; break; }
         }
         if (ended) break;

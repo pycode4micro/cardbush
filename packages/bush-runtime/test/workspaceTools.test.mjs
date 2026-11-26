@@ -881,7 +881,7 @@ test("uses absolute filesystem paths safely when a Turn has no workspace", async
   assert.equal(written.kind, "returned");
   assert.equal(readFileSync(path, "utf8"), "hello world");
   assert.deepEqual(permissionRequests[0].targets, [{ kind: "filesystem_path", value: realpathSync.native(path) }]);
-  assert.deepEqual(permissionRequests[0].scope, { mode: "task_free", roots: [] });
+  assert.deepEqual(permissionRequests[0].scope, { mode: "ask_for_approval", roots: [] });
 
   const relative = await coordinator.execute(
     call("write_file", { path: "relative.txt", content: "blocked" }),
@@ -942,7 +942,7 @@ test("canonicalizes a linked workspace root and rejects a linked escape", async 
   assert.equal(escapeOutcome.kind, "returned");
   assert.equal(requests.length, 1);
   assert.deepEqual(requests[0].targets, [{ kind: "filesystem_path", value: realpathSync.native(outside) }]);
-  assert.equal(requests[0].scope.mode, "task_free");
+  assert.equal(requests[0].scope.mode, "ask_for_approval");
   assert.equal(requests[0].scope.roots.length, 1);
 });
 
@@ -1030,7 +1030,7 @@ function identity(sessionId) {
 }
 
 function turn(registry, workspaceDir, metadata) {
-  const permissionMode = metadata.permissionMode ?? "task_free";
+  const permissionMode = metadata.permissionMode ?? "ask_for_approval";
   const requestMetadata = { ...metadata };
   delete requestMetadata.permissionMode;
   return {

@@ -269,7 +269,7 @@ test('MCP aliases retain desktop suppression while a parallel tool asks permissi
     request: { reason: 'Fixture approval', actions: ['read'], targets: [], capabilityIds: ['fixture:allow'] } }) });
   const desktop = f.mcp('desktop', 'mcp__desktop__' + 'click_'.repeat(15), () => { desktopCalls++; return {}; },
     { manifest: { ...manifest, effect_kind: 'desktop_control', mutating: true } });
-  await f.load([desktop]); f.request.permissionMode = 'task_free';
+  await f.load([desktop]); f.request.permissionMode = 'ask_for_approval';
   const loop = new RuntimeToolLoop({ registry: f.registry, eventLog: new InMemoryRuntimeEventLog(), executionStore: f.store,
     identity: { requestId: 'r', sessionId: 's', turnId: 't' },
     externalPermissions: { request: async () => { approvals++; return { decision: 'allow_once', grantedCapabilityIds: ['fixture:allow'] }; } } });

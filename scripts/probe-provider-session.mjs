@@ -45,7 +45,7 @@ try {
     filesystemLocations: ['Home', 'Desktop', 'Documents', 'Downloads', 'Pictures', 'Music']
       .map(name => ({ id: name.toLowerCase(), name, path: name === 'Home' ? homedir() : join(homedir(), name) }))
       .filter(location => existsSync(location.path)),
-    permissionMode: 'task_free', planEnabled: true, visionEnabled: true,
+    permissionMode: 'ask_for_approval', planEnabled: true, visionEnabled: true,
     tools: registry.definitions().filter(tool => !['request_permission', 'update_goal'].includes(tool.name)),
     maxOutputTokens: model.maxOutputTokens, maxContextTokens: model.maxContextTokens,
     reasoningEffort: 'high',

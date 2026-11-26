@@ -15,7 +15,7 @@ export function readInitialReferencePlanMode(storage: Pick<Storage, 'getItem'> =
 
 export function readInitialPermissionMode(storage: Pick<Storage, 'getItem'> = window.localStorage): PermissionMode {
   return normalizePermissionMode(
-    storage.getItem('cardbush.permission_mode') ?? 'task_free',
+    storage.getItem('cardbush.permission_mode') ?? 'ask_for_approval',
   );
 }
 

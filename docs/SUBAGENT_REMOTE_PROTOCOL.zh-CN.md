@@ -87,12 +87,12 @@ CLI 的 worker 管理命令直接访问注册表，不启动模型、插件或 A
 
 ```sh
 # 默认执行上限：
-CARDBUSH_REMOTE_PERMISSION_MODE=task_free
+CARDBUSH_REMOTE_PERMISSION_MODE=ask_for_approval
 # 可选管理员限制；不设置时遵循认证任务携带的审批路由：
 # CARDBUSH_REMOTE_PARENT_APPROVAL=0
 ```
 
-请求模式与远端设置的 `task_free`、`user_free` 或 `all_free` 上限取交集；强制沙盒和进程保护继续生效。完全访问只表示该宿主允许的范围，不代表无限权限。
+请求模式与远端设置的 `ask_for_approval`、`user_free` 或 `all_free` 上限取交集；强制沙盒和进程保护继续生效。完全访问只表示该宿主允许的范围，不代表无限权限。
 
 新版 worker 广播 `workerInteraction.permissionRouting: true`，认证委派请求携带 `permissionRouting: parent | user`，按任务持久化，排队续接也保留。`parent` 允许父 Agent 对精确请求作一次性审批，不重复显示人工卡；`user` 保持人工审批。管理员显式设置 `CARDBUSH_REMOTE_PARENT_APPROVAL=0` 时，强制 `human_required` 并附带 `escalationReason: remote_policy_requires_human`，人工审批卡显示原因。设为 1 还允许未传路由的旧客户端走父审批，否则旧客户端默认人工审批。对不支持此能力的旧 worker 使用模型审批，会在派发前明确报错要求升级，不静默降级。仍允许拒绝。需要人类的审批走 worker 所有者现有可信界面；本预览尚未实现跨宿主人类身份签证。父 Agent 不能在 JSON 中自称人类。没有合格审批通道时只能等待、拒绝或取消，不默认放行。
 

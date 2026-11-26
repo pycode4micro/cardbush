@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -38,13 +38,25 @@ test("migrates the legacy permission-only file without losing its policy", async
   assert.equal(JSON.parse(await readFile(path, "utf8")).protocol, CARDBUSH_SUBAGENT_CONFIG_PROTOCOL);
 });
 
+test('migrates the old approval spelling and preserves the saved routing, tools and model', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-approval-config-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, 'subagents.json');
+  const policy = { protocol: CARDBUSH_SUBAGENT_CONFIG_PROTOCOL, permissionRouting: 'parent',
+    model: { mode: 'fixed', modelId: 'reviewer' }, disabledTools: ['subagent', 'terminal_exec'] };
+  await writeFile(path, JSON.stringify({ ...policy, childPermissionMode: 'task_free' }));
+  const store = new ProductSubagentConfigStore(path);
+  assert.deepEqual(await store.read(), { ...policy, childPermissionMode: 'ask_for_approval' });
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), await store.read());
+});
+
 test("accepts an opaque fixed model reference and rejects unknown fields", async () => {
   const root = await mkdtemp(join(tmpdir(), "cardbush-subagent-fixed-"));
   const path = join(root, "subagents.json");
   await writeFile(path, JSON.stringify({
     protocol: CARDBUSH_SUBAGENT_CONFIG_PROTOCOL,
     permissionRouting: "user",
-    childPermissionMode: "task_free",
+    childPermissionMode: "ask_for_approval",
     model: { mode: "fixed", modelId: "reviewer" },
     disabledTools: ["subagent"],
   }));

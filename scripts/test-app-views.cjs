@@ -730,7 +730,7 @@ app.whenReady().then(async () => {
         loading: true, historyLoading: false, sending: false, stopping: false, activeTurnId: '',
         queuedMessageCount: 0, queuedMessagePreview: '', queuedMessages: [], pendingInteraction: null,
         error: null, notice: null, selectedModel: 'fixture', availableModels: [],
-        referencePlanAvailable: false, referencePlanMode: 'off', permissionMode: 'task_free',
+        referencePlanAvailable: false, referencePlanMode: 'off', permissionMode: 'ask_for_approval',
         subagentPermissionRouting: 'user', reasoningLevelAvailable: false, reasoningLevel: 'high',
         reasoningLevels: [], gitAvailable: false, draft: '',
       };

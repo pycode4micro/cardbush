@@ -1,3 +1,5 @@
+import type { RuntimePermissionMode } from './permissionMode.js';
+
 export const CARDBUSH_SUBAGENT_CONFIG_PROTOCOL =
   "cardbush.subagent_configuration.v1" as const;
 
@@ -17,7 +19,7 @@ export type ChildAgentModelPolicy =
 export interface ChildAgentConfiguration {
   protocol: typeof CARDBUSH_SUBAGENT_CONFIG_PROTOCOL;
   permissionRouting: "user" | "parent";
-  childPermissionMode: "task_free" | "user_free" | "all_free";
+  childPermissionMode: RuntimePermissionMode;
   model: ChildAgentModelPolicy;
   disabledTools: string[];
 }

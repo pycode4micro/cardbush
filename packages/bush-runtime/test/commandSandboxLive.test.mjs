@@ -51,7 +51,7 @@ test('real sandbox execution and exact approvals preserve file boundaries and fu
     prompts.push(request); return { protocol: 'bush.runtime_permission_answer.v1', permissionId: `p-${prompts.length}`, answerId: 'answer', decision,
       grantedCapabilityIds: decision === 'deny' ? [] : request.capabilityIds };
   } } });
-  const run = async (command, additional, mode = 'task_free', shell = windows ? 'powershell' : 'posix') => {
+  const run = async (command, additional, mode = 'ask_for_approval', shell = windows ? 'powershell' : 'posix') => {
     const identity = { requestId: 'r', sessionId: 'owner', turnId: 't', round: 1, ordinal: ++serial };
     const turn = { contextMessages: [], request: { protocol: 'bush.model_request.v1', ...identity, model: 'fixture', messages: [], tools: registry.definitions(), permissionMode: mode, metadata: { workspaceDir: work } } };
     const result = await coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${serial}`, name: 'terminal_exec', argumentsText: JSON.stringify({ command, cwd: work,
@@ -72,10 +72,10 @@ test('real sandbox execution and exact approvals preserve file boundaries and fu
     assert.equal(located.result.commandStarted, true);
     assert.equal(located.result.cwd, work);
   }
-  if (windows) assert.equal((await run('echo automatic-cmd', undefined, 'task_free', 'cmd')).result.exitCode, 0);
+  if (windows) assert.equal((await run('echo automatic-cmd', undefined, 'ask_for_approval', 'cmd')).result.exitCode, 0);
 
   if (windows) {
-    const legacy = await run('$PSVersionTable.PSVersion.ToString(); (Get-Location).ProviderPath; Set-Content -LiteralPath ./legacy.txt -Value "中文" -Encoding UTF8 -ErrorAction Stop; Get-Content ./legacy.txt', undefined, 'task_free', 'powershell5');
+    const legacy = await run('$PSVersionTable.PSVersion.ToString(); (Get-Location).ProviderPath; Set-Content -LiteralPath ./legacy.txt -Value "中文" -Encoding UTF8 -ErrorAction Stop; Get-Content ./legacy.txt', undefined, 'ask_for_approval', 'powershell5');
     assert.equal(legacy.kind, 'returned', JSON.stringify(legacy));
     assert.equal(legacy.result.exitCode, 0, JSON.stringify(legacy));
     assert.equal(legacy.result.resolvedShell, 'powershell5');
@@ -83,7 +83,7 @@ test('real sandbox execution and exact approvals preserve file boundaries and fu
     assert.match(legacy.result.stdout, /^5\.1\./);
     assert.ok(legacy.result.stdout.includes(work));
     assert.match(legacy.result.stdout, /中文/);
-    const denied = await run(write(join(outside, 'legacy-must-not-exist.txt'), 'blocked'), undefined, 'task_free', 'powershell5');
+    const denied = await run(write(join(outside, 'legacy-must-not-exist.txt'), 'blocked'), undefined, 'ask_for_approval', 'powershell5');
     assert.notEqual(denied.result.exitCode, 0);
     assert.equal(denied.resultError.kind, 'permission');
     await assert.rejects(readFile(join(outside, 'legacy-must-not-exist.txt')), { code: 'ENOENT' });

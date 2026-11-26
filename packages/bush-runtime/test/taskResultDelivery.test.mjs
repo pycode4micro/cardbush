@@ -202,7 +202,7 @@ for (const action of ['stop', 'inspect']) {
           entry: { id: messageId, content, role: 'user', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() },
           parent: { protocol: 'bush.session_turn_request.v1', requestId: messageId, sessionId: id, turnId, model: 'fixture',
             prefixMessages: [{ role: 'system', content: 'Fixture.' }], inputMessages: [{ messageId, message: { role: 'user', content } }],
-            tools: definitions, metadata: { assistantOutputMode: 'text' }, permissionMode: 'task_free' },
+            tools: definitions, metadata: { assistantOutputMode: 'text' }, permissionMode: 'ask_for_approval' },
           profile: assistantProfileSchema.parse({}),
         });
       }

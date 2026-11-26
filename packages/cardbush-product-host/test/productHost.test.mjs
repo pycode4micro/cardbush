@@ -111,7 +111,7 @@ test("reads the shared Subagent and Team-child baseline through the Product Host
       return {
         protocol: "cardbush.subagent_configuration.v1",
         permissionRouting: "user",
-        childPermissionMode: "task_free",
+        childPermissionMode: "ask_for_approval",
         model: { mode: "inherit" },
         disabledTools: ["subagent"],
       };

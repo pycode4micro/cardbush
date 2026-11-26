@@ -31,7 +31,7 @@ async function verify() {
   fs.mkdirSync(scheduler, {recursive:true});
   const previous = '2024-03-10T12:00:00Z';
   fs.writeFileSync(path.join(scheduler, 'automations.json'), JSON.stringify({version:1,
-    contexts:{original:{title:'原项目',model:'fixture',prefixMessages:[],tools:[],permissionMode:'task_free',metadata:{},requestCapabilities:{interactiveRequests:true,vision:false}}},
+    contexts:{original:{title:'原项目',model:'fixture',prefixMessages:[],tools:[],permissionMode:'ask_for_approval',metadata:{},requestCapabilities:{interactiveRequests:true,vision:false}}},
     jobs:[{id:'legacy',name:'已保存的项目检查',prompt:'检查项目',sessionId:'original',trigger:{kind:'once',at:previous},timeZone:'UTC',revision:2,state:'completed',createdAt:previous,lastEventIds:[],
       runs:[{id:'legacy-run',turnId:'legacy-turn',queuedAt:previous,finishedAt:previous,status:'completed',reason:'schedule',summary:'原执行摘要',result:'原始执行结果'}]}]}));
   require(path.join(project,'dist-electron','bootstrap.js'));

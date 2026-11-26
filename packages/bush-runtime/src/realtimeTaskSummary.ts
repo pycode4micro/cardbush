@@ -12,7 +12,7 @@ export async function summarizeRealtimeTask(provider: ModelProvider, input: Real
     messages: [{ role: 'system', content: renderPromptTemplate('realtime-task-summary', { language: new Intl.DisplayNames('en', { type: 'language' }).of(input.language) ?? input.language }) },
       { role: 'user', content: JSON.stringify({ assignment: task.prompt, status: task.status,
         result: task.finalResponse.slice(0, 64000), truncated: task.finalResponse.length > 64000, error: task.errorMessage.slice(0, 2000) }) }],
-    tools: [], permissionMode: 'task_free',
+    tools: [], permissionMode: 'ask_for_approval',
     requestCapabilities: { vision: false, interactiveRequests: false },
     metadata: { ...input.model.metadata, runtimeMaintenance: 'realtime_task_summary' },
   }, { signal: AbortSignal.any([AbortSignal.timeout(25_000), ...(signal ? [signal] : [])]) });

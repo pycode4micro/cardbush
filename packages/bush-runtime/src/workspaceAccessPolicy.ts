@@ -60,24 +60,24 @@ async function parentCoversPath(context: ToolAdmissionContext<unknown>, path: st
   const parent = context.parentWorkspaceAuthority;
   if (!parent) return false;
   if (parent.permissionMode === 'all_free') return true;
-  const roots = workspaceRoots(parent.metadata, parent.permissionMode === 'user_free' ? 'user_free' : 'task_free');
+  const roots = workspaceRoots(parent.metadata, parent.permissionMode === 'user_free' ? 'user_free' : 'ask_for_approval');
   const canonical = await Promise.all(roots.map(root => canonicalPath(root).catch(() => undefined)));
   return canonical.some(root => root !== undefined && isWithin(root, path));
 }
 
-export function permissionBoundaryMode(context: ToolAdmissionContext<unknown>): "task_free" | "user_free" {
+export function permissionBoundaryMode(context: ToolAdmissionContext<unknown>): "ask_for_approval" | "user_free" {
   const candidate = context.turn?.request.permissionMode;
-  return candidate === "user_free" ? candidate : "task_free";
+  return candidate === "user_free" ? candidate : "ask_for_approval";
 }
 
 export function allowedRoots(
   context: ToolAdmissionContext<unknown>,
-  mode: "task_free" | "user_free",
+  mode: "ask_for_approval" | "user_free",
 ): string[] {
   return workspaceRoots(context.turn?.request.metadata ?? {}, mode);
 }
 
-function workspaceRoots(metadata: Record<string, unknown>, mode: 'task_free' | 'user_free'): string[] {
+function workspaceRoots(metadata: Record<string, unknown>, mode: 'ask_for_approval' | 'user_free'): string[] {
   const taskRoots = rootStringArray(metadata.taskRoots);
   const configuredUserRoots = rootStringArray(metadata.userRoots);
   const userRoots = mode === "user_free"

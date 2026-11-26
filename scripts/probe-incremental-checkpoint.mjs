@@ -41,7 +41,7 @@ registerContextCompactionTool(registry, () => { throw new Error('Business execut
 const requestId = 'incremental-probe-' + randomUUID();
 const seed = createProductAgentTurnRequest({ requestId, sessionId, turnId, messageId: 'probe',
   createdAt: current.createdAt, localDate: current.createdAt.slice(0, 10), userText: active[0].content,
-  model: model.model, permissionMode: 'task_free', planEnabled: true, visionEnabled: true,
+  model: model.model, permissionMode: 'ask_for_approval', planEnabled: true, visionEnabled: true,
   tools: registry.definitions(), maxOutputTokens: 128000, maxContextTokens: 400000, reasoningEffort: 'high' });
 const prefix = seed.prefixMessages;
 const projection = assembleContextProjection({ session, prefix });

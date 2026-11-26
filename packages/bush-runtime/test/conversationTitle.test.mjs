@@ -25,7 +25,7 @@ test('first submission summarizes authored text once, persists across restart an
   const authored = '请调研这些品牌，按目标、同级和新锐三类整理竞品';
   const send = (sessionId, turn) => host.runSessionTurn(createProductAgentTurnRequest({
     sessionId, turnId: turn, messageId: 'msg-' + turn, requestId: 'req-' + turn, createdAt: new Date().toISOString(),
-    model:'test-model', tools:[], permissionMode:'task_free', planEnabled:false,
+    model:'test-model', tools:[], permissionMode:'ask_for_approval', planEnabled:false,
     userText:'Private resolved document contents', userMessageMetadata:{composerReferenceContent: authored},
   }));
   for (const id of ['automatic','fallback','manual','overlong']) {

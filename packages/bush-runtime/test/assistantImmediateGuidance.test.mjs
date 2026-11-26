@@ -41,7 +41,7 @@ function fixture(t, stream, deps = {}) {
   const command = (id, content, entry = {}, parent = {}) => ({ action: 'turn', sessionId,
     entry: { id, content, createdAt: at, role: 'user', source: 'text', visibility: 'conversation', ...entry },
     parent: { protocol: 'bush.session_turn_request.v1', requestId: id, sessionId, turnId: `turn-${id}`, model: 'fixture', prefixMessages: [],
-      inputMessages: [{ messageId: id, message: { role: 'user', content } }], tools: [], permissionMode: 'task_free', metadata: { assistantOutputMode: 'text' }, ...parent },
+      inputMessages: [{ messageId: id, message: { role: 'user', content } }], tools: [], permissionMode: 'ask_for_approval', metadata: { assistantOutputMode: 'text' }, ...parent },
     profile: assistantProfileSchema.parse({}),
   });
   const send = (...args) => assistant.command(command(...args));

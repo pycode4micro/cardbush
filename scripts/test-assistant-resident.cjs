@@ -58,7 +58,7 @@ async function run() {
   fs.writeFileSync(path.join(friends, 'events.json'), JSON.stringify({ version: 1,
     configuration: { assistant: { name: 'Fixture' }, profile: { name: 'Fixture', timeZone: 'UTC', language: 'en', recognition: {}, confirmedAt: at },
       parent: { protocol: 'bush.session_turn_request.v1', sessionId: 'personal-assistant', turnId: 'fixture', requestId: 'fixture',
-        model: 'fixture', tools: [], inputMessages: [], prefixMessages: [], metadata: {}, permissionMode: 'task_free' } },
+        model: 'fixture', tools: [], inputMessages: [], prefixMessages: [], metadata: {}, permissionMode: 'ask_for_approval' } },
     events: [{ id: 'reminder', logicalKey: 'test', origin: 'user', title: 'Test', intent: 'Test', inputs: [], status: 'watching',
       reminderText: 'Resident reminder', archived: false, revision: 1, createdAt: at, updatedAt: at }],
     signals: [], detections: [{ id: 'tick', eventId: 'reminder', at }] }));

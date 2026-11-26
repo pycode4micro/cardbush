@@ -387,8 +387,8 @@ test("lets an all_free Turn execute a default-ask MCP Tool without another promp
   await manager.close();
 });
 
-test("keeps default-ask MCP permission for task_free and user_free Turns", async (t) => {
-  for (const permissionMode of ["task_free", "user_free"]) {
+test("keeps default-ask MCP permission for ask_for_approval and user_free Turns", async (t) => {
+  for (const permissionMode of ["ask_for_approval", "user_free"]) {
     await t.test(permissionMode, async () => {
       const registry = new ToolRegistry();
       const fake = fakeClient(successfulToolResult);

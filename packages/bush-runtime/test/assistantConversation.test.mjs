@@ -102,7 +102,7 @@ async function* response(request, { text = '', calls = [] } = {}) {
 const parent = (registry, voice = false) => ({ protocol: 'bush.session_turn_request.v1', requestId: 'assistant-request', sessionId: id,
   turnId: 'assistant-turn', model: 'fixture', prefixMessages: [{ role: 'system', content: 'Execution instructions only.' }],
   inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Check the files' } }], tools: registry?.definitions() ?? [],
-  metadata: { assistantOutputMode: voice ? 'voice' : 'text' }, permissionMode: 'task_free' });
+  metadata: { assistantOutputMode: voice ? 'voice' : 'text' }, permissionMode: 'ask_for_approval' });
 
 test('delivery facts wake the current Assistant without changing its configuration, reopening stopped work or crossing a reset', async t => {
   const journal = new ConversationJournal(temporary()), requests = [];
@@ -445,7 +445,7 @@ test('text assistant dispatch reaches the actual child loop and reports completi
     assert.equal(tasks.list(id).length, 1);
     assert.equal(tasks.list(id)[0].status, 'running', 'the assistant can reply while the child works');
     assert.equal(childRequests[0].model, 'fixture');
-    assert.equal(childRequests[0].permissionMode, 'task_free');
+    assert.equal(childRequests[0].permissionMode, 'ask_for_approval');
     assert.ok(childRequests[0].messages.some(message => message.content.includes('Read only: inspect')));
     await command({ action: 'turn', entry: entry('new-topic', '换一个话题'), parent: { ...parent(registry), turnId: 'second-turn' }, profile: assistantProfileSchema.parse({}) });
     await until(async () => (await command({ action: 'read' })).entries.some(item => item.content === '已了解新话题。'));

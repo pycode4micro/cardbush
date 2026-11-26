@@ -196,7 +196,7 @@ test('Shadow mode switches preserve declarations and enforce child state at exec
   assert.match(readonly.inputMessages[0].message.content, /currently a child Agent.*read-only/s);
   assert.equal(readonly.inputMessages.at(-1).message.content, 'Continue');
   assert.equal(readonly.prefixMessages.at(-1).content, 'Original result');
-  assert.equal(readonly.permissionMode, 'task_free');
+  assert.equal(readonly.permissionMode, 'ask_for_approval');
   for (const [name, code] of [['write_file', 'shadow_read_only'], ['subagent', 'child_agent_dispatch_unavailable'], ['root_only', 'child_agent_tool_unavailable']]) {
     const outcome = await f.call(readonly, name);
     assert.equal(outcome.error.code, code);

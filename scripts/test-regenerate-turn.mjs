@@ -126,7 +126,7 @@ async function runRetry(f, { load = async () => f.visible, stale = false, busyAf
     activeConversationId: 's', activeConversation: conversation, conversations: [conversation],
     activeMessages: current, messagesByConversation: { s: current },
     selectedModel: 'test', managedModelConfigs: [], requestContext: {}, skills: [],
-    languageRef: { current: 'zh' }, referencePlanMode: 'off', permissionMode: 'task_free',
+    languageRef: { current: 'zh' }, referencePlanMode: 'off', permissionMode: 'ask_for_approval',
     subagentPermissionRouting: 'parent', reasoningLevel: 'medium',
     localize: (_, english) => english, setError: value => { error = value; }, errorMessage: e => e.message,
     isSessionSending: () => busyAfterRead && reads > 0,

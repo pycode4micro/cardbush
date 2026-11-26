@@ -7,6 +7,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as i18n from '@cardbush/platform/i18n';
+import * as protocol from '@cardbush/bush-protocol';
 import { InMemoryRuntimeHost, ToolRegistry, registerWorkspaceTools } from '@cardbush/bush-runtime';
 import { createProductAgentTurnRequest } from '@cardbush/bush-product-agent';
 import { toResponsesCreateParams } from '@cardbush/bush-provider-openai';
@@ -18,6 +19,7 @@ function sourceModule(path) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { exports, require: specifier => {
     if (specifier === '../i18n') return i18n;
+    if (specifier === '@cardbush/bush-protocol') return protocol;
     throw new Error(`Unexpected source dependency: ${specifier}`);
   } });
   return exports;
@@ -26,9 +28,13 @@ const { normalizePermissionMode, permissionModeOptions } = sourceModule('src/sha
 const { selectRuntimeToolDefinitions } = sourceModule('src/backend/runtimeToolCatalog.ts');
 
 test('saved full access survives, legacy home access migrates conservatively, and only two modes are offered', () => {
-  for (const value of [undefined, null, '', 'user_free', 'task_free', 'invalid']) assert.equal(normalizePermissionMode(value), 'task_free');
+  for (const value of [undefined, null, '', 'user_free', 'task_free', 'ask_for_approval', 'invalid']) assert.equal(normalizePermissionMode(value), 'ask_for_approval');
   assert.equal(normalizePermissionMode('all_free'), 'all_free');
-  for (const language of ['zh', 'en']) assert.deepEqual(structuredClone(permissionModeOptions(language).map(item => item.id)), ['task_free', 'all_free']);
+  for (const [language, labels] of [['zh', ['申请批准', '完全访问']], ['en', ['Ask for approval', 'Full access']]]) {
+    const options = structuredClone(permissionModeOptions(language));
+    assert.deepEqual(options.map(item => item.id), ['ask_for_approval', 'all_free']);
+    assert.deepEqual(options.map(item => item.label), labels);
+  }
 });
 
 for (const compatibilityMode of [false, true]) test(`approval switches and rejection feedback keep the ${compatibilityMode ? 'compatibility' : 'native'} wire prefix intact`, async t => {
@@ -65,14 +71,16 @@ for (const compatibilityMode of [false, true]) test(`approval switches and rejec
   assert.ok(tools.some(tool => tool.name === 'approval_fixture'));
   assert.ok(!tools.some(tool => tool.name === 'request_permission'), 'runtime authorization does not expose a second approval tool');
   let firstTurn;
-  for (const [index, permissionMode] of ['all_free', 'task_free', 'all_free'].entries()) {
+  for (const [index, permissionMode] of ['all_free', 'ask_for_approval', 'all_free'].entries()) {
     const turnId = `mode-${index}`;
     const request = createProductAgentTurnRequest({ requestId: turnId, sessionId: 'permission-cache', turnId,
       messageId: `user-${index}`, createdAt: '2026-09-23T00:00:00Z', userText: `Continue ${index}`,
-      model: 'fixture', tools, permissionMode, planEnabled: false, interactiveRequestsEnabled: true,
+      model: 'fixture', tools, permissionMode: index === 1 && compatibilityMode ? 'task_free' : permissionMode, planEnabled: false, interactiveRequestsEnabled: true,
       maxContextTokens: 100000, maxOutputTokens: 1000 });
+    assert.equal(request.permissionMode, permissionMode);
+    assert.equal(request.metadata.permissionMode, permissionMode);
     const running = host.runSessionTurn(request);
-    if (permissionMode === 'task_free') {
+    if (permissionMode === 'ask_for_approval') {
       let pending;
       for (let attempts = 0; attempts < 300; attempts++) {
         pending = host.events('permission-cache', turnId).find(event => event.kind === 'permission_requested');
@@ -95,6 +103,7 @@ for (const compatibilityMode of [false, true]) test(`approval switches and rejec
   }
   assert.equal(executions, 2, 'full access executes and the rejected approval does not');
   assert.equal(records.length, 6);
+  assert.deepEqual(records.map(record => record.request.permissionMode), ['all_free', 'all_free', 'ask_for_approval', 'ask_for_approval', 'all_free', 'all_free']);
   assert.ok(records.some(record => record.request.messages.some(message => message.role === 'tool' && message.content.includes('Do not retry it through another tool'))));
   for (let index = 1; index < records.length; index++) {
     const before = records[index - 1], after = records[index];
@@ -142,7 +151,7 @@ for (const compatibilityMode of [false, true]) test(`sandbox settings affect exe
     const running = host.runSessionTurn(createProductAgentTurnRequest({
       requestId: turnId, sessionId, turnId, messageId: `user-${index}`, createdAt: '2026-09-23T00:00:00Z',
       userText: `Run fixture ${index}`, model: 'fixture', tools, workspaceDir: workspace,
-      permissionMode: 'task_free', planEnabled: false, interactiveRequestsEnabled: true,
+      permissionMode: 'ask_for_approval', planEnabled: false, interactiveRequestsEnabled: true,
       maxContextTokens: 100000, maxOutputTokens: 1000,
     }));
     if (mode === 'off') {

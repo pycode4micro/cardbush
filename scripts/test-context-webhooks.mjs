@@ -14,7 +14,7 @@ import { renderWebhookBody, webhookConfigSchema, incomingMessage, webhookHash } 
 
 const secrets = { encrypt: s => Buffer.from(s).toString('base64'), decrypt: s => Buffer.from(s, 'base64').toString() };
 const request = (sessionId, text = 'hello', turnId = 'initial') => ({ protocol: 'bush.session_turn_request.v1', requestId: turnId, sessionId, turnId,
-  model: 'fixture', tools: [], prefixMessages: [], inputMessages: [{ messageId: turnId, message: { role: 'user', content: text } }], metadata: {}, permissionMode: 'task_free' });
+  model: 'fixture', tools: [], prefixMessages: [], inputMessages: [{ messageId: turnId, message: { role: 'user', content: text } }], metadata: {}, permissionMode: 'ask_for_approval' });
 const config = (extra = {}) => ({ name: 'External bot', enabled: true, url: '', headers: {}, parameters: {},
   body: { text: '{{reply}}', id: '{{messageId}}', status: '{{status}}', eventId: '{{eventId}}' },
   incoming: { messageId: 'messageId', text: 'text', senderId: 'senderId', conversationId: 'conversationId' }, ...extra });
@@ -235,7 +235,7 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
     await assert.rejects(runContextWebhook(bridge, selected, message('missing'), randomUUID(), true, new AbortController().signal), /assistant_only/);
     const inbound = requests.find(req => req.metadata.botSourceRef), timed = requests.find(req => req.metadata.friendsExecution && req.metadata.botSourceRefs);
     assert.equal(inbound.permissionMode, 'all_free'); assert.equal(inbound.requestCapabilities.interactiveRequests, false);
-    assert.equal(timed.permissionMode, 'task_free'); assert.equal(timed.requestCapabilities.interactiveRequests, true);
+    assert.equal(timed.permissionMode, 'ask_for_approval'); assert.equal(timed.requestCapabilities.interactiveRequests, true);
     assert.deepEqual(timed.metadata.botSourceRefs, [original.deliveryRoute.sourceRef]);
     assert.equal((await fetch(leaseUrl, { headers, method: 'DELETE', body: JSON.stringify({ protocol: 'cardbush.webhook.v1', instanceId }) })).status, 200);
     assert.equal((await fetch(workLease, { headers: workHeaders, method: 'DELETE', body: JSON.stringify({ protocol: 'cardbush.webhook.v1', instanceId }) })).status, 200);
@@ -386,9 +386,9 @@ test('desktop HTTP binding isolates ordinary Runtime history, routes callbacks, 
     const result = await until(async () => { const value = await bot.read('first'); return value.status === 'completed' && value; });
     assert.equal(result.sessionId, 'personal-assistant'); assert.equal(result.reply, 'The word was olive.');
     assert.equal(calls.length, 2); assert.doesNotMatch(JSON.stringify(calls[1].messages), /Remember olive/);
-    assert.equal(calls[0].permissionMode, 'task_free'); assert.equal(calls[1].permissionMode, 'all_free');
+    assert.equal(calls[0].permissionMode, 'ask_for_approval'); assert.equal(calls[1].permissionMode, 'all_free');
     assert.equal(calls[1].requestCapabilities.interactiveRequests, false);
-    assert.equal(savedBinding.parent.permissionMode, 'task_free', 'binding preparation does not mutate local settings');
+    assert.equal(savedBinding.parent.permissionMode, 'ask_for_approval', 'binding preparation does not mutate local settings');
     const clock = calls[1].messages.find(m => m.name === 'turn_runtime_context');
     assert.equal(clock.visibility, 'internal');
     assert.match(clock.content, /Snapshot at message submission \(UTC\):/);
@@ -597,7 +597,7 @@ test('webhook child turns use full access, deny question cards and continue from
   const runtime = new InMemoryRuntimeHost({ dataRoot: root, eventLog: log, toolRegistry: registry, provider: { async *stream(input) {
     calls.push(input);
     if (input.turnId === 'local') {
-      assert.equal(input.permissionMode, 'task_free'); assert.equal(input.requestCapabilities.interactiveRequests, true);
+      assert.equal(input.permissionMode, 'ask_for_approval'); assert.equal(input.requestCapabilities.interactiveRequests, true);
       assert.ok(input.tools.some(tool => tool.name === 'request_user_input_async'), 'the first webhook turn must not remove questions from the durable local catalog');
       yield* answer(input, 'Local conversation.'); return;
     }

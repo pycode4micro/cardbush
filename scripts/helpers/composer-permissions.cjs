@@ -63,8 +63,8 @@ module.exports = async ({ run, until, pause, window, root }) => {
       if (language === 'zh' && theme === 'theme-dark') {
         fs.writeFileSync(path.join(root, 'tmp/composer-permissions.png'), (await window.capturePage()).toPNG());
       }
-      await run("document.querySelector('.permission-mode-row.mode-task_free').click()");
-      await until("chatProps.permissionMode === 'task_free'", 'approval mode selected');
+      await run("document.querySelector('.permission-mode-row.mode-ask_for_approval').click()");
+      await until("chatProps.permissionMode === 'ask_for_approval'", 'approval mode selected');
       await open();
       await check('approval selection');
       await run("document.querySelector('.subagent-routing-switch button:first-child').click()");

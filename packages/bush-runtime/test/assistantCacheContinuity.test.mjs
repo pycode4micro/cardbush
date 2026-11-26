@@ -16,7 +16,7 @@ import { toResponsesCreateParams } from '../../bush-provider-openai/dist/respons
 const entry = (key, content = key) => ({ id: key, role: 'user', content, source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() });
 const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId: id, turnId: 'turn', model: 'fixture',
   tools: [], prefixMessages: [], inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'fixture' } }],
-  metadata: { contextWindowTokens: 400000 }, permissionMode: 'task_free' };
+  metadata: { contextWindowTokens: 400000 }, permissionMode: 'ask_for_approval' };
 const event = (request, sequence, kind, fields = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId,
   sequence, createdAt: new Date().toISOString(), kind, ...fields });
 async function* reply(request, { calls = [], text = '', reasoning = '', replay } = {}) {

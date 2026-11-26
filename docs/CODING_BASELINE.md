@@ -75,7 +75,7 @@ npm run benchmark:coding -- --live --config <模型配置JSON路径> --model-id 
 
 可选参数：`--tasks queue-scope,flac-preview`、`--reasoning high`、`--max-rounds 24`、`--timeout-ms 300000`、`--token-stop 150000`、`--max-output-tokens 4096`。预算按每个任务计算，默认每次响应最多 4096 output tokens，输出上限可单独调整并记入报告。达到已报告的累计 input（含缓存）+ output token 阈值后，不再发起下一次模型请求；最后一次响应可以越过阈值，缺失 usage 时依靠请求次数和时间上限。因此 token-stop 不是金额硬上限，也不是单次上下文窗口上限。
 
-Live 使用固定工具子集和 `task_free` 权限模式，不调用子 Agent。遇到权限请求会停止该任务，并在报告中记录原因；不自动批准工作目录之外的操作。实际模型调用只由显式 `--live` 启动。
+Live 使用固定工具子集和 `ask_for_approval` 权限模式，不调用子 Agent。遇到权限请求会停止该任务，并在报告中记录原因；不自动批准工作目录之外的操作。实际模型调用只由显式 `--live` 启动。
 
 ## 报告与比较
 

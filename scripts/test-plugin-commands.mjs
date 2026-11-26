@@ -54,7 +54,7 @@ try {
       yield { ...base, sequence: 1, kind: 'text_delta', delta: 'Command ready.' };
       yield { ...base, sequence: 2, kind: 'response_completed', finishReason: 'stop' };
     } } });
-  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'task_free', tools: registry.definitions(), metadata: { workspaceDir: workspace }, messages: [{ role: 'user', content: '/native-demo:review "one two" three' }] };
+  const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture', permissionMode: 'ask_for_approval', tools: registry.definitions(), metadata: { workspaceDir: workspace }, messages: [{ role: 'user', content: '/native-demo:review "one two" three' }] };
   const terminal = await host.runModelTurn(request);
   assert.equal(terminal.payload.status, 'completed', JSON.stringify(terminal));
   const toolMessage = requests[0].messages.find(message => message.role === 'tool' && message.toolCallId.startsWith('plugin_command_'));

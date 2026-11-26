@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 import {
   PERSONAL_ASSISTANT_SESSION,
+  capPermissionMode,
   REPORT_DELIVERY_INSTRUCTIONS,
   registeredAgentSchema,
   resolveSubagentName,
@@ -480,7 +481,6 @@ export function registerSubagentTool(
         if (saved.metadata.workspaceDir !== childRequest.metadata.workspaceDir || saved.metadata.projectDir !== childRequest.metadata.projectDir)
           throw new Error('The parent workspace changed. Start a new child for that workspace instead of moving an existing child implicitly.');
         const originalTools = new Set(saved.tools.map(tool => tool.name));
-        const levels = ['task_free', 'user_free', 'all_free'];
         const selectedRouting = context.turn?.request.metadata.subagentPermissionRouting;
         const routing = selectedRouting === 'parent' || selectedRouting === 'user' ? selectedRouting
           : saved.metadata.permissionRouting ?? childRequest.metadata.permissionRouting;
@@ -496,7 +496,7 @@ export function registerSubagentTool(
           temperature: modelSource.temperature, topP: modelSource.topP, requestCapabilities: modelSource.requestCapabilities,
           inputMessages: childRequest.inputMessages, sessionMetadata: childRequest.sessionMetadata,
           tools: childRequest.tools.filter(tool => originalTools.has(tool.name)),
-          permissionMode: levels[Math.min(levels.indexOf(saved.permissionMode), levels.indexOf(childRequest.permissionMode))] as typeof saved.permissionMode,
+          permissionMode: capPermissionMode(childRequest.permissionMode, saved.permissionMode),
           metadata: { ...saved.metadata, ...childRequest.metadata, disabledTools: disabled,
             subagentMode: saved.metadata.subagentMode,
             contextWindowTokens: modelSource.metadata.contextWindowTokens,

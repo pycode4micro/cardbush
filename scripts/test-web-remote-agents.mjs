@@ -128,7 +128,7 @@ test('native runtime discovers only remote targets and preserves async await/fol
     onAsyncResult: item => results.set(item.taskId, item.result),
   });
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: () => assert.fail('Unexpected permission') } });
-  const request = { protocol: 'bush.model_request.v1', requestId: 'req', sessionId: 'parent', turnId: 'turn', model: 'private-model', permissionMode: 'task_free', messages: [], tools: registry.definitions(), metadata: { toolExecutionPolicy: 'web_restricted', uiLanguage: 'zh' } };
+  const request = { protocol: 'bush.model_request.v1', requestId: 'req', sessionId: 'parent', turnId: 'turn', model: 'private-model', permissionMode: 'ask_for_approval', messages: [], tools: registry.definitions(), metadata: { toolExecutionPolicy: 'web_restricted', uiLanguage: 'zh' } };
   let calls = 0;
   const invoke = (name, input, parent = request) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: 'call' + ++calls, name, argumentsText: JSON.stringify(input) }, { requestId: 'req', sessionId: parent.sessionId, turnId: 'turn', round: 1, ordinal: 0 }, undefined, { request: parent, contextMessages: [{ role: 'system', content: 'PRIVATE HISTORY' }] });
   assert.deepEqual((await invoke('list_subagent_options', { _display_title: { zh: '查看远程目标', en: 'List remote agents' } })).result.remote_agents.map(item => item.id), ['remote-test']);
@@ -219,8 +219,8 @@ test('gateway scopes remote identifiers, returns async results, isolates reads a
   await assert.rejects(callWebRemoteAgent({ ...f.configuration, credential: remoteAgentToken(secret, 'bob') }, 'agents.list', {}));
   await assert.rejects(callWebRemoteAgent(f.configuration, 'configuration.sync', {}));
   assert.ok(!operations.includes('configuration.sync'));
-  await callWebRemoteAgent(f.configuration, 'agents.delegate', { ...input, taskId: 'task-full-access', turnId: 'turn-task-full-access', sessionId: 'delegated-full-access', permissionMode: 'task_free' });
-  assert.equal(submitted.at(-1).permissionMode, 'task_free', 'The gateway cannot elevate the parent request; the worker also enforces its ceiling');
+  await callWebRemoteAgent(f.configuration, 'agents.delegate', { ...input, taskId: 'task-full-access', turnId: 'turn-task-full-access', sessionId: 'delegated-full-access', permissionMode: 'ask_for_approval' });
+  assert.equal(submitted.at(-1).permissionMode, 'ask_for_approval', 'The gateway cannot elevate the parent request; the worker also enforces its ceiling');
 });
 
 test('gateway reports unsupported approval routing without acknowledging or submitting a task', async t => {
@@ -232,7 +232,7 @@ test('gateway reports unsupported approval routing without acknowledging or subm
   }));
   const input = { connectionId: 'remote-test', agentId: 'instance-a', parentSessionId: 'parent-alice', parentTurnId: 'turn',
     sessionId: 'delegated-rejected', turnId: 'turn-rejected', taskId: 'rejected', prompt: 'Review',
-    permissionMode: 'task_free', permissionRouting: 'parent', language: 'en' };
+    permissionMode: 'ask_for_approval', permissionRouting: 'parent', language: 'en' };
   await assert.rejects(callWebRemoteAgent(f.configuration, 'agents.delegate', input, undefined, () => { accepted++; }), /Update the remote Agent service/);
   assert.equal(accepted, 0);
 });
@@ -336,7 +336,7 @@ test('worker controls preserve tenant ownership and return usable local task ide
     async call(operation, input) {
       if (operation === 'delegation.submit') { submitted = input; return { id: input.taskId, status: 'queued' }; }
       if (operation === 'chat.jobs') return [{ id: submitted.taskId, sessionId: submitted.sessionId, turnId: submitted.turnId, status: 'completed',
-        delegation: { parentSessionId: submitted.parentSessionId, parentTurnId: submitted.parentTurnId }, permissionMode: 'task_free', language: 'en' }];
+        delegation: { parentSessionId: submitted.parentSessionId, parentTurnId: submitted.parentTurnId }, permissionMode: 'ask_for_approval', language: 'en' }];
       if (operation === 'sessions.get') return input.sessionId === submitted.sessionId ? { sessionId: input.sessionId, metadata: { delegationOwner: submitted.parentSessionId }, turns: [] } : undefined;
       if (operation === 'delegation.control') {
         latestControl = input;
@@ -348,7 +348,7 @@ test('worker controls preserve tenant ownership and return usable local task ide
       throw Error(operation);
     }, async *events() {} };
   const f = await gatewayFixture(t, async () => client);
-  const input = { connectionId: 'remote-test', agentId: 'instance-a', parentSessionId: 'parent-alice', parentTurnId: 'turn', sessionId: 'delegated-child', turnId: 'turn-task', taskId: 'task', prompt: 'Review', permissionMode: 'task_free', language: 'en' };
+  const input = { connectionId: 'remote-test', agentId: 'instance-a', parentSessionId: 'parent-alice', parentTurnId: 'turn', sessionId: 'delegated-child', turnId: 'turn-task', taskId: 'task', prompt: 'Review', permissionMode: 'ask_for_approval', language: 'en' };
   await callWebRemoteAgent(f.configuration, 'agents.delegate', input);
   const control = operation => ({ connectionId: input.connectionId, agentId: input.agentId, parentSessionId: input.parentSessionId,
     control: { profile: 'subagent-remote-proton', version: '0.1', contextId: input.sessionId, taskId: input.taskId, ...operation } });
@@ -359,7 +359,7 @@ test('worker controls preserve tenant ownership and return usable local task ide
   await callWebRemoteAgent(f.configuration, 'agents.control', control({ operation: 'respond', messageId: 'answer', response: { kind: 'answer', interactionId: 'q', text: 'October 30' } }));
   assert.equal(latestControl.control.response.text, 'October 30'); assert.notEqual(latestControl.control.messageId, 'answer');
   const next = await callWebRemoteAgent(f.configuration, 'agents.control', control({ operation: 'message', delivery: 'queue', messageId: 'queue', text: 'Review the result' }));
-  assert.equal(next.contextId, input.sessionId); assert.ok(next.taskId.startsWith('queued-')); assert.equal(submitted.queue, true); assert.equal(submitted.permissionMode, 'task_free');
+  assert.equal(next.contextId, input.sessionId); assert.ok(next.taskId.startsWith('queued-')); assert.equal(submitted.queue, true); assert.equal(submitted.permissionMode, 'ask_for_approval');
   const nextObservation = await callWebRemoteAgent(f.configuration, 'agents.control', { ...control({ operation: 'observe', taskId: next.taskId }) });
   assert.equal(nextObservation.taskId, next.taskId); assert.equal(latestControl.control.taskId, submitted.taskId);
 });
@@ -381,7 +381,7 @@ test('concurrent delegates are bounded and live revocation cancels remote work',
   };
   const f = await gatewayFixture(t, async () => client), controllers = [];
   const input = n => ({ connectionId: 'remote-test', agentId: 'instance-a', parentSessionId: 'parent-alice', parentTurnId: 'turn',
-    sessionId: 'delegated-child-' + n, turnId: 'turn-task-' + n, taskId: 'task-' + n, prompt: 'Review', permissionMode: 'task_free', language: 'zh' });
+    sessionId: 'delegated-child-' + n, turnId: 'turn-task-' + n, taskId: 'task-' + n, prompt: 'Review', permissionMode: 'ask_for_approval', language: 'zh' });
   const pending = Array.from({ length: 4 }, (_, n) => {
     const controller = new AbortController(); controllers.push(controller);
     return callWebRemoteAgent(f.configuration, 'agents.delegate', input(n), controller.signal).catch(error => ({ error: error.message }));

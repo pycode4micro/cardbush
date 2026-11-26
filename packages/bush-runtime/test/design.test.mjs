@@ -17,7 +17,7 @@ async function fixture(t, deny = false) {
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async input => { requests++; return { protocol: 'bush.runtime_permission_answer.v1', permissionId: 'p', answerId: 'a', decision: deny ? 'deny' : 'allow_once', grantedCapabilityIds: deny ? [] : input.capabilityIds }; } } });
   const call = (input, metadata = {}) => coordinator.execute({ protocol: 'bush.tool_call.v1', id: `call-${++sequence}`, name: 'design', argumentsText: JSON.stringify({ path, ...input }) },
     { requestId: 'request', sessionId: 'session', turnId: 'turn', round: 1, ordinal: sequence }, undefined,
-    { request: { protocol: 'bush.model_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'model', messages: [], tools: registry.definitions(), permissionMode: 'task_free', metadata: { workspaceDir: deny ? join(directory, 'other') : directory, ...metadata } }, contextMessages: [] });
+    { request: { protocol: 'bush.model_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'model', messages: [], tools: registry.definitions(), permissionMode: 'ask_for_approval', metadata: { workspaceDir: deny ? join(directory, 'other') : directory, ...metadata } }, contextMessages: [] });
   return { path, directory, call, requests: () => requests };
 }
 const card = { id: 'intro', kind: 'html', title: 'Introduction', html: '<h1>Hello</h1>', frame: { x: 40, y: 40, width: 500, height: 240 } };

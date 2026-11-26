@@ -18,7 +18,7 @@ const panelDefaults: Omit<ComponentProps<typeof ChatPanel>, 'messages' | 'sendin
   loading: false, historyLoading: false, stopping: false, activeTurnId: replayTurn,
   queuedMessageCount: 0, queuedMessagePreview: '', queuedMessages: [], pendingInteraction: null,
   error: null, notice: null, selectedModel: '本地回放', availableModels: [], referencePlanAvailable: false,
-  referencePlanMode: 'off', permissionMode: 'task_free', subagentPermissionRouting: 'user',
+  referencePlanMode: 'off', permissionMode: 'ask_for_approval', subagentPermissionRouting: 'user',
   reasoningLevelAvailable: false, reasoningLevel: 'high', reasoningLevels: [],
   onModelChange: noop, onReferencePlanModeChange: noop, onPermissionModeChange: noop,
   onSubagentPermissionRoutingChange: noop, onReasoningLevelChange: noop, onConfigureModels: noop,

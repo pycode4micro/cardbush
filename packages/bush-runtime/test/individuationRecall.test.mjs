@@ -23,7 +23,7 @@ async function fixture(t){
     async tool(name,args,messages=[],settings=on){
       const id=`call-${++calls}`,result=await coordinator.execute({protocol:'bush.tool_call.v1',id,name,argumentsText:JSON.stringify(args)},
         {requestId:'r',sessionId:'query',turnId:'t',round:calls,ordinal:0},undefined,
-        {request:{metadata:{individuation:settings},tools:registry.definitions(),permissionMode:'task_free'},contextMessages:messages});
+        {request:{metadata:{individuation:settings},tools:registry.definitions(),permissionMode:'ask_for_approval'},contextMessages:messages});
       assert.equal(result.kind,'returned',JSON.stringify(result));return result.result;
     },
   };

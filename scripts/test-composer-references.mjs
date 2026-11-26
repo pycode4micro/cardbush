@@ -395,7 +395,7 @@ test('selected user facts are complete, deduplicated and appended only to the ne
   assert.equal(resolved.content.split('"messageId": "user-1"').length - 1, 1);
   assert.deepEqual(snapshot, original, 'never rewrite prior user messages, summaries or cache prefix');
   assert.deepEqual(await resolvePromptReferenceContext(content, 'current', snapshot), resolved, 'same selected facts serialize identically');
-  const input = { requestId: 'new', sessionId: 'current', turnId: 'next', messageId: 'user-next', createdAt: raw.createdAt, localDate: '2026-09-12', model: 'model', tools: [], permissionMode: 'task_free', planEnabled: false };
+  const input = { requestId: 'new', sessionId: 'current', turnId: 'next', messageId: 'user-next', createdAt: raw.createdAt, localDate: '2026-09-12', model: 'model', tools: [], permissionMode: 'ask_for_approval', planEnabled: false };
   const request = createProductAgentTurnRequest({ ...input, userText: resolved.content, userMessageMetadata: resolved.metadata });
   const ordinary = createProductAgentTurnRequest({ ...input, userText: 'ordinary' });
   assert.deepEqual(request.prefixMessages, ordinary.prefixMessages);

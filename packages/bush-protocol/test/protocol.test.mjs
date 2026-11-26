@@ -329,11 +329,13 @@ test("tool and permission lifecycle facts require stable associations", () => {
       actions: ["read"],
       targets: [{ kind: "filesystem_path", value: "C:/outside.txt" }],
       requestedCapabilityIds: ["read:C:/outside.txt"],
-      scope: { mode: "task_free", roots: ["C:/workspace"] },
+      scope: { mode: "ask_for_approval", roots: ["C:/workspace"] },
     },
   });
   assert.equal(permission.payload.targets[0].kind, "filesystem_path");
   assert.deepEqual(permission.payload.scope.roots, ["C:/workspace"]);
+  assert.deepEqual(decodeRuntimeEvent({ ...permission, payload: { ...permission.payload,
+    scope: { ...permission.payload.scope, mode: 'task_free' } } }), permission);
 
   const historicalPermission = decodeRuntimeEvent({
     ...envelope,

@@ -428,7 +428,7 @@ test('script requests do not bypass exposure, permissions or non-nestable tools'
 test('scripts aggregate parallel delegated permission waits and resume only after all approvals settle', { timeout: 10000 }, async t => {
   const requests = [], asked = Promise.withResolvers(), entered = [Promise.withResolvers(), Promise.withResolvers()], finish = Promise.withResolvers();
   const permissions = new RuntimePermissionBroker({ onRequested: request => { requests.push(request); if (requests.length === 2) asked.resolve(); } });
-  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'ask_for_approval';
   t.after(() => finish.resolve({ done: true }));
   f.add('approval_target', async context => { entered[context.input.index].resolve(); return finish.promise; }, { parallelSafe: true,
     authorize: context => ({ kind: 'ask', request: { reason: 'Fixture approval', actions: ['observe'], targets: [{ kind: 'opaque', value: String(context.input.index) }], capabilityIds: ['fixture:observe'] } }) });
@@ -458,7 +458,7 @@ for (const route of ['authorization', 'forwarded', 'hook']) test(`script ${route
     targets: [{ kind: 'opaque', value: 'fixture-hook' }], capabilityIds: ['fixture:hook'] }, signal) } : permissions, ...(route === 'hook' ? { hooks: {
     before: async ({ toolCall }) => ({ messages: [], ...(toolCall.name === 'approval_target' ? { ask: 'Confirm action' } : {}) }),
     after: async () => ({ messages: [] }),
-  } } : {}) }); f.request.permissionMode = 'task_free';
+  } } : {}) }); f.request.permissionMode = 'ask_for_approval';
   f.add('approval_target', () => { executions++; return {}; }, { ...(route !== 'hook' ? {
     authorize: () => ({ kind: 'ask', request: { reason: 'Confirm action', actions: ['observe'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:observe'] } }),
   } : {}) });
@@ -480,7 +480,7 @@ for (const route of ['authorization', 'forwarded', 'hook']) test(`script ${route
 test('stopping a script waiting for permission cancels its approval and cannot revive the task', { timeout: 10000 }, async t => {
   const asked = Promise.withResolvers(); let executions = 0;
   const permissions = new RuntimePermissionBroker({ onRequested: asked.resolve });
-  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'ask_for_approval';
   f.add('approval_target', () => { executions++; return {}; }, {
     authorize: () => ({ kind: 'ask', request: { reason: 'Confirm action', actions: ['observe'], targets: [{ kind: 'opaque', value: 'fixture' }], capabilityIds: ['fixture:observe'] } }),
   });
@@ -498,7 +498,7 @@ test('stopping a script waiting for permission cancels its approval and cannot r
 test('incident replay: approval waits longer than five minutes do not expire a script, including overlapping waits', { timeout: 10000 }, async t => {
   const requests = [], asked = Promise.withResolvers(), entered = [Promise.withResolvers(), Promise.withResolvers()], finish = Promise.withResolvers();
   const permissions = new RuntimePermissionBroker({ onRequested: request => { requests.push(request); if (requests.length === 2) asked.resolve(); } });
-  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'ask_for_approval';
   let now = Date.now(); t.mock.method(Date, 'now', () => now);
   f.add('approval_target', async context => { entered[context.input.index].resolve(); return finish.promise; }, {
     parallelSafe: true, authorize: context => ({ kind: 'ask', request: { reason: 'Replay approval wait', actions: ['observe'],
@@ -525,7 +525,7 @@ test('incident replay: approval waits longer than five minutes do not expire a s
 test('approval waits do not reset execution budget or remove the script CPU limit', { timeout: 10000 }, async t => {
   const asked = Promise.withResolvers(), entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const permissions = new RuntimePermissionBroker({ onRequested: asked.resolve });
-  const f = fixture(t, { permissions }); f.request.permissionMode = 'task_free';
+  const f = fixture(t, { permissions }); f.request.permissionMode = 'ask_for_approval';
   let now = Date.now(); t.mock.method(Date, 'now', () => now);
   f.add('before_approval', () => { now += 250_000; return {}; });
   f.add('approval_target', async () => { entered.resolve(); return finish.promise; }, {

@@ -28,7 +28,7 @@ function fixture(t) {
     permissions: { async request(request) { return { decision: 'allow_once', grantedCapabilityIds: request.capabilityIds }; } },
   });
   const request = { protocol: 'bush.model_request.v1', requestId: 'r', sessionId: 's', turnId: 't', model: 'fixture',
-    permissionMode: 'task_free', tools: registry.definitions(), messages: [], metadata: { workspaceDir: work } };
+    permissionMode: 'ask_for_approval', tools: registry.definitions(), messages: [], metadata: { workspaceDir: work } };
   return { root, work, outside, secret, beforeExecute(action) { beforeExecute = action; },
     run(name, input) { return coordinator.execute({ protocol: 'bush.tool_call.v1', id: `c${++ordinal}`, name, argumentsText: JSON.stringify(input) },
       { requestId: 'r', sessionId: 's', turnId: 't', round: 1, ordinal }, undefined, { request, contextMessages: [] }); } };

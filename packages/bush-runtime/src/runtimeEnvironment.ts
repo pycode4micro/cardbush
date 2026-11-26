@@ -1,4 +1,4 @@
-import type { ModelMessage, ModelRequest, RuntimeEnvironmentSnapshot } from '@cardbush/bush-protocol';
+import { approvalMode, type ModelMessage, type ModelRequest, type RuntimeAgentFact, type RuntimeEnvironmentSnapshot } from '@cardbush/bush-protocol';
 import type { AgentExecutionRegistry } from './agentExecutionRegistry.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 
@@ -44,14 +44,16 @@ export class RuntimeEnvironment {
     const live = current.filter(fact => !lastKnown.includes(fact));
     const projectDir = typeof request.metadata.projectDir === 'string' ? request.metadata.projectDir : self?.projectDir ?? null;
     const workspaceDir = typeof request.metadata.workspaceDir === 'string' ? request.metadata.workspaceDir : self?.workspaceDir ?? projectDir;
+    const mode = request.permissionMode ?? self?.permissionMode;
+    const modelFact = (fact: RuntimeAgentFact) => fact.permissionMode === undefined ? fact : { ...fact, permissionMode: approvalMode(fact.permissionMode) };
     const sections: Record<string, unknown> = {
       host: { platform: process.platform, architecture: process.arch },
       workspace: { projectDir, workspaceDir },
-      agents: modelView ? { self, items: live.slice(0, 64), total: live.length,
-        ...(lastKnown.length ? { lastKnown: lastKnown.slice(0, 64), lastKnownTotal: lastKnown.length } : {}),
+      agents: modelView ? { self: self && modelFact(self), items: live.slice(0, 64).map(modelFact), total: live.length,
+        ...(lastKnown.length ? { lastKnown: lastKnown.slice(0, 64).map(modelFact), lastKnownTotal: lastKnown.length } : {}),
         ...(related.length > current.length ? { historicalCount: related.length - current.length } : {}),
       } : { self, items: related.slice(0, 64), total: related.length },
-      capabilities: { permissionMode: request.permissionMode ?? self?.permissionMode ?? null,
+      capabilities: { permissionMode: mode === undefined ? null : modelView ? approvalMode(mode) : mode,
         interactiveRequests: request.requestCapabilities?.interactiveRequests ?? self?.interactiveRequests ?? null,
         readOnly: self?.readOnly ?? null },
     };

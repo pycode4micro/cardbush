@@ -11,7 +11,7 @@ import { loadEnabledProductPluginExtensions, loadProductPluginCatalog } from '..
 
 const parent = resolve('tmp'); await mkdir(parent, { recursive: true });
 const root = await mkdtemp(join(parent, 'openai-hooks-'));
-const request = { protocol: 'bush.model_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'fixture', permissionMode: 'task_free', messages: [{ role: 'user', content: 'Test hooks' }], tools: [], metadata: { workspaceDir: root } };
+const request = { protocol: 'bush.model_request.v1', requestId: 'request', sessionId: 'session', turnId: 'turn', model: 'fixture', permissionMode: 'ask_for_approval', messages: [{ role: 'user', content: 'Test hooks' }], tools: [], metadata: { workspaceDir: root } };
 const runners = [], hosts = [], managers = [];
 const runner = options => { const value = new PluginHookRunner(root, options); runners.push(value); return value; };
 const host = options => { const value = new InMemoryRuntimeHost({ dataRoot: join(root, `host-${hosts.length}`), registerDefaultWorkspaceTools: false, ...options }); hosts.push(value); return value; };

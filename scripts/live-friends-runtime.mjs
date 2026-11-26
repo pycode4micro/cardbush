@@ -46,7 +46,7 @@ try {
     recognition: { context: 'This is an isolated live integration test, with no saved habits or ongoing tasks.' }, confirmedAt: new Date().toISOString() },
     parent: { protocol: 'bush.session_turn_request.v1', requestId: 'live-config', sessionId: FRIENDS_SESSION, turnId: 'live-config',
       model: selected.model || selected.modelName, providerBinding: binding.binding, reasoningEffort: 'low', maxOutputTokens: 2000,
-      permissionMode: 'task_free', prefixMessages: [{ role: 'developer', content: 'For the startup event, record completed and return Ready. No files or future work are needed at startup. For subsequent input events, carry out the explicit isolated test instructions using real tools.' }],
+      permissionMode: 'ask_for_approval', prefixMessages: [{ role: 'developer', content: 'For the startup event, record completed and return Ready. No files or future work are needed at startup. For subsequent input events, carry out the explicit isolated test instructions using real tools.' }],
       inputMessages: [{ messageId: 'configuration-only', message: { role: 'user', content: 'Configure the isolated test.' } }], tools: registry.definitions().filter(tool => ['read_file', 'write_file'].includes(tool.name)),
       metadata: { workspaceDir: workspace }, requestCapabilities: { interactiveRequests: false, vision: false } } });
   await until(state => state.events[0]?.status === 'completed');

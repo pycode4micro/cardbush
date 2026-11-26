@@ -61,7 +61,7 @@ export async function configure(values) {
     publicConfig: { model: model.trim(), adapter: 'openai_responses', reasoning: values.reasoning,
       ...bounds, maxOutputTokens, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS, runtimeHashes,
       rootPromptHash: hash(ROOT_AGENT_SYSTEM_PROMPT), driverHash: hash(await readFile(new URL('./live.mjs', import.meta.url))),
-      permissionMode: 'task_free', tools: [...benchmarkTools],
+      permissionMode: 'ask_for_approval', tools: [...benchmarkTools],
       tokenStopPolicy: 'Stop before a new request once reported cumulative input + output reaches the threshold; one response can cross it. Missing usage cannot enforce this threshold.',
     },
   };
@@ -148,7 +148,7 @@ export async function runTask(task, workspace, dataRoot, config) {
     createdAt: new Date().toISOString(), localDate: new Date().toISOString().slice(0, 10),
     userText: `${task.prompt}\n\n当前目录是独立评测副本。请阅读 TASK.md 并运行 npm test；可以添加回归测试，只在当前工作目录内工作。`,
     model: config.model, providerBinding: config.binding, tools: catalog.filter(entry => benchmarkTools.has(entry.definition.name)).map(entry => entry.definition),
-    projectDir: workspace, workspaceDir: workspace, permissionMode: 'task_free', planEnabled: true,
+    projectDir: workspace, workspaceDir: workspace, permissionMode: 'ask_for_approval', planEnabled: true,
     reasoningEffort: config.reasoning, maxOutputTokens: config.maxOutputTokens, maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS, interactiveRequestsEnabled: false,
   });
   const watch = (async () => {

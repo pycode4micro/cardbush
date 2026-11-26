@@ -131,7 +131,7 @@ test('Assistant stop cancels its pending worker call and rejects a late successf
     entry: { id: 'input', content: 'Verify the worker', role: 'user', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() },
     parent: { protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId, turnId: 't', model: 'fixture', prefixMessages: [],
       inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Verify the worker' } }], tools: registry.definitions(),
-      metadata: { assistantOutputMode: 'text' }, permissionMode: 'task_free' }, profile: assistantProfileSchema.parse({}),
+      metadata: { assistantOutputMode: 'text' }, permissionMode: 'ask_for_approval' }, profile: assistantProfileSchema.parse({}),
   });
   await entered.promise;
   assistant.command({ action: 'stop', sessionId });
@@ -153,7 +153,7 @@ test('cancelling a realtime parent does not cancel an already admitted independe
   const tools = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} }), controller = new AbortController();
   const receipt = await host.sendCommand({ kind: 'runtime.realtime_agent_tool', payload: { sessionId: 'parent', callId: 'delegation', action: 'subagent', prompt: 'Independent fixture',
     parent: { protocol: 'bush.session_turn_request.v1', requestId: 'r', sessionId: 'parent', turnId: 't', model: 'fixture', tools, prefixMessages: [],
-      inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Inspect' } }], permissionMode: 'task_free', metadata: {} } } }, controller.signal);
+      inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Inspect' } }], permissionMode: 'ask_for_approval', metadata: {} } } }, controller.signal);
   assert.equal(receipt.status, 'running'); await entered.promise; controller.abort(); await yieldTurn();
   assert.ok(childSignal && !childSignal.aborted);
   finish.resolve();

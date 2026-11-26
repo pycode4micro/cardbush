@@ -175,7 +175,7 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
           if (denied) return { kind: 'deny' as const, code: 'protected_path_delete_denied', message: denied.message, details: { protection: denied.protection, target: denied.target } };
         }
         return commandPermission({ command: String(input.command), cwd: resolved.path, shell: String(input.shell),
-          scope: { mode: context.turn?.request.permissionMode === 'user_free' ? 'user_free' : 'task_free',
+          scope: { mode: context.turn?.request.permissionMode === 'user_free' ? 'user_free' : 'ask_for_approval',
             roots: trusted ? [resolved.root] : [] } });
       }
       if (access === 'read' && trusted && resolved.inside) return { kind: 'allow' as const };
@@ -183,7 +183,7 @@ export function routeWorkspaceTool<T>(registration: ToolRegistration<T>, termina
         reason: `SSH ${access}: ${resolved.path}`, actions: [access],
         targets: [{ kind: 'filesystem_path' as const, value: resolved.path }],
         capabilityIds: [`ssh.${access}:${resolved.path}`],
-        scope: { mode: context.turn?.request.permissionMode === 'user_free' ? 'user_free' as const : 'task_free' as const, roots: trusted ? [resolved.root] : [] },
+        scope: { mode: context.turn?.request.permissionMode === 'user_free' ? 'user_free' as const : 'ask_for_approval' as const, roots: trusted ? [resolved.root] : [] },
       } };
     },
     execute: async context => {

@@ -359,7 +359,7 @@ export async function serveWeb(config: WebServerConfig, store: WebStore, agents:
         const { attachments: _ids, ...message } = input;
         // Vision is a turn capability, independent of this message's attachments:
         // text follow-ups must still inspect prior uploads and generated images.
-        const job = await agent.call('chat.send', { ...message, ...(attachments.length ? { files: attachments.filter(item => !item.mime.startsWith('image/')).map(item => item.textPath ?? item.path), images: attachments.filter(item => item.mime.startsWith('image/')).map(item => item.path) } : {}), visionEnabled: true, sessionId, language: 'zh', permissionMode: 'task_free', planEnabled: false, sourceEnabled: false,
+        const job = await agent.call('chat.send', { ...message, ...(attachments.length ? { files: attachments.filter(item => !item.mime.startsWith('image/')).map(item => item.textPath ?? item.path), images: attachments.filter(item => item.mime.startsWith('image/')).map(item => item.path) } : {}), visionEnabled: true, sessionId, language: 'zh', permissionMode: 'ask_for_approval', planEnabled: false, sourceEnabled: false,
           userMessageMetadata: { userTimeZone: 'Asia/Shanghai', attachments }  });
         reads.invalidate(readKey);
         await store.touch(user.id, sessionId, input.text); json(response, 202, job); return;

@@ -103,6 +103,18 @@ test('local terminal choices are delivered in the first request only to a turn w
   assert.equal(section(requests[1]), null);
 });
 
+test('model environment presents two modes while legacy user-root authority stays available to the host', async () => {
+  const registry = new AgentExecutionRegistry(), env = new RuntimeEnvironment(registry);
+  const root = { ...request('legacy', { projectDir: '/shared' }), permissionMode: 'user_free' };
+  registry.begin(root, 'running');
+  registry.begin(request('peer', { projectDir: '/shared' }), 'running');
+  const model = JSON.parse((await env.message(root, [])).content);
+  assert.equal(model.sections.capabilities.permissionMode, 'ask_for_approval');
+  assert.deepEqual(model.sections.agents.items.map(agent => agent.permissionMode), ['ask_for_approval', 'all_free']);
+  assert.equal((await env.snapshot(root)).sections.capabilities.permissionMode, 'user_free');
+  env.close();
+});
+
 test('source failures cannot fail a turn, while cancellation remains cancellation', async () => {
   const env = new RuntimeEnvironment(), req = request('a');
   env.register('broken', () => { throw Error('credential must not leak'); });

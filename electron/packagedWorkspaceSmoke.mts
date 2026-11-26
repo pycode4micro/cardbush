@@ -11,7 +11,7 @@ export async function verifyPackagedWorkspaceTools(directory: string) {
   } });
   const request = modelRequestSchema.parse({
     protocol: 'bush.model_request.v1', requestId: 'packaged-workspace-smoke', sessionId: 'packaged-smoke', turnId: 'fixture',
-    model: 'fixture', permissionMode: 'task_free', tools: registry.definitions(), messages: [], metadata: { workspaceDir: directory },
+    model: 'fixture', permissionMode: 'ask_for_approval', tools: registry.definitions(), messages: [], metadata: { workspaceDir: directory },
   });
   let ordinal = 0;
   async function execute(name: string, input: Record<string, unknown>) {

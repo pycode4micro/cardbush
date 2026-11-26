@@ -12,7 +12,7 @@ const parent = resolve(tmpdir()), root = await mkdtemp(join(parent, 'cardbush-pl
 const plugin = join(root, 'source', 'compat'), installed = join(root, 'installed'), config = join(root, 'apps.json');
 const write = async (path, text) => { await mkdir(join(path, '..'), { recursive: true }); await writeFile(path, text); };
 const hosts = [];
-const request = (registry, id, text, metadata = {}) => ({ protocol: 'bush.model_request.v1', requestId: `r-${id}`, sessionId: `s-${id}`, turnId: `t-${id}`, model: 'fixture', permissionMode: 'task_free', tools: registry.definitions(), messages: [{ role: 'user', content: text }], metadata: { workspaceDir: root, ...metadata } });
+const request = (registry, id, text, metadata = {}) => ({ protocol: 'bush.model_request.v1', requestId: `r-${id}`, sessionId: `s-${id}`, turnId: `t-${id}`, model: 'fixture', permissionMode: 'ask_for_approval', tools: registry.definitions(), messages: [{ role: 'user', content: text }], metadata: { workspaceDir: root, ...metadata } });
 async function* answer(req, text) {
   const base = { protocol: 'bush.model_event.v1', requestId: req.requestId, createdAt: new Date().toISOString() };
   yield { ...base, sequence: 0, kind: 'response_started' }; yield { ...base, sequence: 1, kind: 'text_delta', delta: text }; yield { ...base, sequence: 2, kind: 'response_completed', finishReason: 'stop' };

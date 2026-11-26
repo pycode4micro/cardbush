@@ -1,3 +1,5 @@
+import { encodeAgentPermissionInput } from './agentPermissionWire.mjs';
+
 /** Private account-bound gateway bridge. No registry or local Agent provisioning
  * exists in the tenant, and remote credentials never enter the runtime worker. */
 export async function callWebRemoteAgent(configuration: { gateway: string; credential: string } | undefined,
@@ -9,7 +11,8 @@ export async function callWebRemoteAgent(configuration: { gateway: string; crede
   try {
     const response = await fetch(configuration.gateway, { method: 'POST', redirect: 'error', signal: combined,
       headers: { Authorization: `Bearer ${configuration.credential}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operation, input }) });
+      body: JSON.stringify({ operation, input: operation === 'agents.delegate' && input && typeof input === 'object' && !Array.isArray(input)
+        ? encodeAgentPermissionInput('delegation.submit', input as Record<string, unknown>) : input }) });
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { error?: string } | null;
       throw new Error(body?.error ?? 'Remote Agent request failed.');

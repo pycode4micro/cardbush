@@ -72,7 +72,7 @@ assert.match(app, /backendCapabilities\.subagentObservabilityProtocol ===\s*SUBA
 
 assert.match(childTurn, /DEFAULT_SUBAGENT_PERMISSION_POLICY/);
 assert.match(childTurn, /permissionRouting: "user"/);
-assert.match(childTurn, /childPermissionMode: "task_free"/);
+assert.match(childTurn, /childPermissionMode: "ask_for_approval"/);
 assert.match(childTurn, /DEFAULT_SUBAGENT_DISABLED_TOOLS/);
 assert.match(childTurn, /metadata\.childAgentPolicy/);
 assert.match(childTurn, /permissionScopeSessionId/);

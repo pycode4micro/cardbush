@@ -20,7 +20,7 @@ Default configuration:
 {
   "protocol": "cardbush.subagent_configuration.v1",
   "permissionRouting": "user",
-  "childPermissionMode": "task_free",
+  "childPermissionMode": "ask_for_approval",
   "model": {
     "mode": "inherit"
   },
@@ -53,7 +53,7 @@ non-overridable. An explicit clean dispatch may choose a lower permission mode;
 changing its permission routing never raises the pre-existing permission ceiling.
 
 The Composer route is a per-Turn product choice and takes precedence over the
-file's `permissionRouting` and clean/registered role defaults, including resumed children. Model-owned requests stay in the audit journal but do not enter the human approval queue. Remote tasks carry the same choice; an explicit remote administrator prohibition is escalated with a reason. Unsupported old workers require an upgrade before model-approval dispatch. `childPermissionMode` accepts `task_free`,
+file's `permissionRouting` and clean/registered role defaults, including resumed children. Model-owned requests stay in the audit journal but do not enter the human approval queue. Remote tasks carry the same choice; an explicit remote administrator prohibition is escalated with a reason. Unsupported old workers require an upgrade before model-approval dispatch. `childPermissionMode` accepts `ask_for_approval`,
 `user_free`, or `all_free`; elevated values are configuration-only and emit a
 startup security warning when used with `parent` routing.
 
@@ -145,7 +145,7 @@ Example after the user requests independent configuration:
   "settings": {
     "reasoning_effort": "high",
     "max_turns": 12,
-    "permission_mode": "task_free"
+    "permission_mode": "ask_for_approval"
   }
 }
 ```

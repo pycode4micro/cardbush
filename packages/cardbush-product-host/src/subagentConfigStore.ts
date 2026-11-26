@@ -3,6 +3,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import {
   CARDBUSH_SUBAGENT_CONFIG_PROTOCOL,
   DEFAULT_CHILD_AGENT_DISABLED_TOOLS,
+  permissionModeSchema,
   type ChildAgentConfiguration,
   type ChildAgentModelPolicy,
 } from "@cardbush/bush-protocol";
@@ -18,7 +19,7 @@ export function defaultProductSubagentConfig(): ProductSubagentConfig {
   return {
     protocol: CARDBUSH_SUBAGENT_CONFIG_PROTOCOL,
     permissionRouting: "user",
-    childPermissionMode: "task_free",
+    childPermissionMode: "ask_for_approval",
     model: { mode: "inherit" },
     disabledTools: [...DEFAULT_SUBAGENT_DISABLED_TOOLS],
   };
@@ -85,10 +86,10 @@ export function decodeProductSubagentConfig(input: unknown): ProductSubagentConf
   if (permissionRouting !== "user" && permissionRouting !== "parent") {
     throw new Error("Subagent permissionRouting must be user or parent.");
   }
-  const childPermissionMode = value.childPermissionMode ?? fallback.childPermissionMode;
-  if (!["task_free", "user_free", "all_free"].includes(String(childPermissionMode))) {
+  const childPermissionMode = permissionModeSchema.safeParse(value.childPermissionMode ?? fallback.childPermissionMode);
+  if (!childPermissionMode.success) {
     throw new Error(
-      "Subagent childPermissionMode must be task_free, user_free, or all_free.",
+      "Subagent childPermissionMode is invalid. Use ask_for_approval or all_free.",
     );
   }
   const disabledTools = value.disabledTools === undefined
@@ -97,7 +98,7 @@ export function decodeProductSubagentConfig(input: unknown): ProductSubagentConf
   return {
     protocol: CARDBUSH_SUBAGENT_CONFIG_PROTOCOL,
     permissionRouting,
-    childPermissionMode: childPermissionMode as ProductSubagentConfig["childPermissionMode"],
+    childPermissionMode: childPermissionMode.data,
     model: decodeModelPolicy(value.model ?? fallback.model),
     disabledTools: [...new Set(disabledTools)],
   };

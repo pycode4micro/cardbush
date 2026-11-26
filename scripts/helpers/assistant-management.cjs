@@ -14,7 +14,7 @@ module.exports = async ({ read, until, fill, click, pause, win, directory }) => 
   await fill('textarea', 'Keep my draft while approving');
   const show = async id => {
     await read(`fixture.management.permissions=[{permissionId:${JSON.stringify(id)},toolCallId:'schedule-call',sessionId:'personal-assistant',turnId:'parent-turn',request:{
-      reason:'Approve this scheduled report',actions:['schedule.create'],targets:[{kind:'path',value:'C:/fixture/report.html'}],requestedCapabilityIds:['schedule.create'],scope:{mode:'task_free',roots:['C:/fixture']}}}];void 0`);
+      reason:'Approve this scheduled report',actions:['schedule.create'],targets:[{kind:'path',value:'C:/fixture/report.html'}],requestedCapabilityIds:['schedule.create'],scope:{mode:'ask_for_approval',roots:['C:/fixture']}}}];void 0`);
     await until('!!document.querySelector(".permission-request-dialog:modal .permission-request-card")');
     assert.equal(await read('document.querySelectorAll(".permission-request-card").length'), 1);
     assert.equal(await read('document.querySelector(".scroll-bottom").getAttribute("aria-hidden")'), 'true', 'the scroll control does not cover the approval card');

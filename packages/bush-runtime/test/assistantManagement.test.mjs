@@ -40,7 +40,7 @@ async function fixture(t, now) {
     } } });
   const parent = () => ({ protocol: 'bush.session_turn_request.v1', requestId: `r-${sequence}`, sessionId: id, turnId: `t-${sequence}`, model: 'fixture-model',
     prefixMessages: [], inputMessages: [{ messageId: `input-${sequence}`, message: { role: 'user', content: 'Manage the requested work.' } }],
-    tools: registry.definitions(), metadata: { workspaceDir: root, planEnabled: true, mcpToolDiscovery: true }, permissionMode: 'task_free', requestCapabilities: { interactiveRequests: true, vision: false } });
+    tools: registry.definitions(), metadata: { workspaceDir: root, planEnabled: true, mcpToolDiscovery: true }, permissionMode: 'ask_for_approval', requestCapabilities: { interactiveRequests: true, vision: false } });
   const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
   const read = () => command({ action: 'read' });
   const events = payload => host.sendCommand({ kind: 'runtime.friends', payload });
@@ -149,7 +149,7 @@ for (const { routing = 'parent', mode = 'text', ordinary = false, report = false
     const content = `Edit the LCQ component.${report ? ' Tell me after you approve the edit.' : ''}`;
     const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'fixture-request', sessionId, turnId: 'fixture-turn',
         model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'user-fixture', message: { role: 'user', content } }],
-        tools: registry.definitions(), permissionMode: 'task_free', metadata: { subagentPermissionRouting: routing,
+        tools: registry.definitions(), permissionMode: 'ask_for_approval', metadata: { subagentPermissionRouting: routing,
           assistantOutputMode: mode, individuation: { habits: false, predictions: false } } };
     if (ordinary) assert.equal((await host.runSessionTurn(parent)).payload.status, 'completed');
     else {
@@ -272,7 +272,7 @@ test('assistant manages existing schedules using saved execution settings, reads
   for (const name of ['call_tool', 'get_tool_schema']) assert.ok(schemas.includes(name), name);
   for (const name of ['mcp_search', 'search_skills', 'mcp__fixture__report', 'terminal_exec', 'update_goal']) assert.ok(!schemas.includes(name), name);
   const saved = JSON.parse(await readFile(join(f.root, 'automations.json'), 'utf8')).jobContexts[created.id];
-  assert.equal(saved.model, 'fixture-model'); assert.equal(saved.permissionMode, 'task_free'); assert.equal(saved.metadata.workspaceDir, f.root);
+  assert.equal(saved.model, 'fixture-model'); assert.equal(saved.permissionMode, 'ask_for_approval'); assert.equal(saved.metadata.workspaceDir, f.root);
   assert.ok(saved.tools.some(tool => tool.name === 'mcp__fixture__report'), 'timer retains execution tools');
   assert.equal(saved.messages, undefined, 'timer does not inherit the conversational history');
   const detail = await f.invoke('assistant_event', { action: 'read', eventId });

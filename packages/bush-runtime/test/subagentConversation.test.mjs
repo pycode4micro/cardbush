@@ -22,7 +22,7 @@ function setup(childGate) {
     } },
   });
   const start = () => host.runModelTurn({ protocol: 'bush.model_request.v1', requestId: 'dispatch-r', sessionId: 'parent', turnId: 'dispatch', model: 'fixture',
-    tools: registry.definitions(), messages: [{ role: 'system', content: 'parent secret prefix' }, { role: 'user', content: 'delegate' }], metadata: {}, permissionMode: 'task_free' });
+    tools: registry.definitions(), messages: [{ role: 'system', content: 'parent secret prefix' }, { role: 'user', content: 'delegate' }], metadata: {}, permissionMode: 'ask_for_approval' });
   const read = async (taskId, parent = 'parent', cursor) => {
     const tool = registry.resolve('tasks');
     return (await tool.execute({ sessionId: parent, input: tool.decodeInput({ action: 'conversation', task_ids: [taskId], cursor }), turn: { request: { metadata: {} } } })).conversation;
@@ -46,7 +46,7 @@ test('human continuation keeps child ownership, original role and policy; parent
   assert.equal(sessions.snapshot(task.childSessionId).metadata.executionModel, undefined, 'display metadata is a read-only projection');
   assert.equal(request.metadata.agentRole, 'child');
   assert.equal(request.metadata.parentSessionId, 'parent');
-  assert.equal(request.permissionMode, 'task_free');
+  assert.equal(request.permissionMode, 'ask_for_approval');
   assert.equal(request.metadata.permissionRouting, 'user');
   assert.equal(request.metadata.permissionEventSessionId, task.childSessionId);
   assert.equal(request.metadata.permissionEventTurnId, 'human-turn');

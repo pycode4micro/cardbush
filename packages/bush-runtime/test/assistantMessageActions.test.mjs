@@ -9,7 +9,7 @@ import { assistantProfileSchema, assistantConversationRequestSchema, PERSONAL_AS
 
 const entry = (id, content, role = 'user') => ({ id, content, role, source: role === 'user' ? 'text' : 'page', visibility: 'conversation', createdAt: new Date().toISOString() });
 const temporary = () => mkdtempSync(join(tmpdir(), 'assistant-message-actions-'));
-const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'quote-request', sessionId, turnId: 'quote-turn', model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Please explain' } }], tools: [], metadata: {}, permissionMode: 'task_free' };
+const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'quote-request', sessionId, turnId: 'quote-turn', model: 'fixture', prefixMessages: [], inputMessages: [{ messageId: 'input', message: { role: 'user', content: 'Please explain' } }], tools: [], metadata: {}, permissionMode: 'ask_for_approval' };
 const until = async condition => { for (let i = 0; i < 200; i++) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail('timed out'); };
 
 test('quotes and reactions persist separately; quote identity cannot be changed by a resend', () => {

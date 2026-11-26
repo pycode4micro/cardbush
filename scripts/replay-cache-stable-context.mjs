@@ -59,7 +59,7 @@ for (const turn of turns) {
     workspaceDir: projectDir,
     images: primaryUser.message.images?.map((image) => image.url),
     filesystemLocations,
-    permissionMode: 'task_free',
+    permissionMode: 'ask_for_approval',
     planEnabled: true,
   };
   const baselineRequest = createLegacyProductAgentTurnRequest(commonInput);

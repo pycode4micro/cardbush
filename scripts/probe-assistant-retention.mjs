@@ -48,7 +48,7 @@ const assistant = new AssistantConversation(journal, { provider: observed, exist
   tasks: () => [], checkpoint, delegate: async () => assert.fail('No delegated work in this fixture') });
 try {
   const parent = { protocol: 'bush.session_turn_request.v1', sessionId: id, turnId: 'audit', requestId: 'audit',
-    model: model.model, inputMessages: [], prefixMessages: [], permissionMode: 'task_free', tools: [],
+    model: model.model, inputMessages: [], prefixMessages: [], permissionMode: 'ask_for_approval', tools: [],
     maxOutputTokens: 2048, metadata: { contextWindowTokens: 32000 } };
   const question = 'Using the conversation evidence already in context, answer without tools. Return one JSON object with string fields account, release_permission, cancelled_job, running_job, audio_error and subtitle_revision. Give the exact recorded values or UNKNOWN.';
   parent.inputMessages.push({ messageId: 'audit', message: { role: 'user', content: question } });

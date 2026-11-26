@@ -25,7 +25,7 @@ async function fixture(t) {
     if(name==='summary_for_user')args=memoryInput(args);
     const call={protocol:'bush.tool_call.v1',id:`call-${++calls}`,name,argumentsText:JSON.stringify(args)};
     return coordinator.execute(call,{requestId:'r',...identity,round:calls,ordinal:0},undefined,
-      {request:{metadata:{individuation:settings},tools:registry.definitions(),permissionMode:'task_free'},contextMessages:messages});
+      {request:{metadata:{individuation:settings},tools:registry.definitions(),permissionMode:'ask_for_approval'},contextMessages:messages});
   }};
 }
 const result=value=>{assert.equal(value.kind,'returned',JSON.stringify(value));return value.result;};
