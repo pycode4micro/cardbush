@@ -62,6 +62,16 @@ let current='a',language='zh',theme='dark',refreshing=false;
 window.setRefreshing=value=>{refreshing=value;render();};
 window.setEmployee=enabled=>{tasks[current]={...taskFor(current),agentProfileId:enabled?'registered:fixture':undefined};render();};
 const readTasks=async()=>[...Object.values(tasks),...Object.values(parentQueues)];
+window.approvalWait=(authority)=>{
+  const task=taskFor(current), revision=(task.raw.revision??0)+1;
+  const observation={contextId:task.childSessionId,taskId:task.taskId,cursor:revision,state:authority?'input_required':'working',
+    progress:{phase:authority?'waiting':'tools',text:'',completedActions:0,failedActions:0},
+    interactions:authority?[{contextId:task.childSessionId,taskId:task.taskId,interactionId:'approval',kind:'permission',text:'Access a fixture',
+      actionDigest:'sha256:'+'a'.repeat(64),operations:['write'],resources:[{kind:'file',value:'fixture'}],
+      authority,decisions:['allow_once','deny'],createdAt:now()}]:[]};
+  tasks[current]={...task,raw:{...task.raw,revision,observation},updatedAt:now()};
+  window.dispatchEvent(new CustomEvent('cardbush:subagent-dispatch',{detail:{parentSessionId:'parent',childSessionId:current,taskId:task.taskId}}));
+};
 window.queueParentFollowup=id=>{const previous=taskFor(id);parentQueues[id]={...previous,taskId:'parent-queued-'+id,childTurnId:'parent-followup-queued-'+id,
   requestPrompt:'父代理排队追加：等当前检查完成后再生成报告。',createdAt:now(),updatedAt:now(),raw:{queuedAfterTaskId:previous.taskId,resumedFromTaskId:previous.taskId}};
   window.dispatchEvent(new CustomEvent('cardbush:subagent-dispatch',{detail:{parentSessionId:'parent',childSessionId:id,taskId:parentQueues[id].taskId}}));};

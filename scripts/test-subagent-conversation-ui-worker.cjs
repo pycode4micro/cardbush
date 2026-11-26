@@ -20,6 +20,12 @@ app.whenReady().then(async () => {
     assert.equal(await read(`document.querySelectorAll('.subagent-conversation .chat-panel').length`),1);
     await until(`document.querySelector('.send-button svg.lucide-square') !== null`);
     await until(`document.querySelector('.tool-execution-block')?.textContent.includes('读取布局文件')`);
+    await read("window.approvalWait('parent_delegate')");
+    await until(`document.querySelector('.assistant-thinking-label')?.textContent==='等待父 Agent 审批'`);
+    await read("window.approvalWait('human_required')");
+    await until(`document.querySelector('.assistant-thinking-label')?.textContent==='等待你授权'`);
+    await read("window.approvalWait()");
+    await until(`document.querySelector('.assistant-thinking-label')?.textContent==='思考中'`);
     await require('./helpers/subagent-activity-motion.cjs')({ read, pause:wait, window,
       selector:'.subagent-conversation-heading .subagent-inspector-state .subagent-activity-spinner', rerender:"window.show('a')" });
     await read('window.setEmployee(true)');

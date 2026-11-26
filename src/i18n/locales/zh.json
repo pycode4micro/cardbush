@@ -2636,6 +2636,8 @@
     "toolExecutionState.returned": "已返回",
     "toolExecutionState.awaitingSolutionSelection": "等待方案选择",
     "toolExecutionState.awaitingPermission": "等待授权",
+    "toolExecutionState.awaitingParentApproval": "等待父 Agent 审批",
+    "toolExecutionState.awaitingUserApproval": "等待你授权",
     "toolImageArtifactViewer.viewImage": "查看图像",
     "toolImageArtifactViewer.previewFailedRetry": "（预览失败，点击重试）",
     "toolImageArtifactViewer.retry": "点击重试",

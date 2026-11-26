@@ -1,7 +1,7 @@
 import { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
 import { projectMcpResult } from './modelResult.js';
 import { mcpInputDecoder } from './inputValidation.js';
-import { documentFilePermission, isDocumentFileTool } from './documentPermissions.js';
+import { fileOperationPermission } from './fileOperationPermissions.js';
 export { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
 import { createHash } from "node:crypto";
 import { StringDecoder } from 'node:string_decoder';
@@ -684,12 +684,14 @@ export class McpClientManager {
   ): ToolRegistration<Record<string, unknown>> {
     const resource = `mcp://${connection.config.id}/tools/${encodeURIComponent(tool.remote.name)}`;
     const decodeInput = mcpInputDecoder(tool.runtimeName, tool.remote.inputSchema);
-    const documentTool = isDocumentFileTool(connection.config, tool.remote.name);
+    const implementationFingerprint = connection.config.implementationFingerprint;
+    const localImplementation = implementationFingerprint && connection.config.transport.kind === 'stdio';
+    const operations = connection.config.fileOperations;
+    const fileOperation = localImplementation && operations && Object.hasOwn(operations, tool.remote.name)
+      ? operations[tool.remote.name] : undefined;
     const declaredReader = connection.config.attachmentReaders && Object.hasOwn(connection.config.attachmentReaders, tool.remote.name)
       ? connection.config.attachmentReaders[tool.remote.name] : undefined;
-    const implementationFingerprint = connection.config.implementationFingerprint;
-    const reader = declaredReader && implementationFingerprint && connection.config.transport.kind === 'stdio' &&
-      tool.remote.annotations?.readOnlyHint === true && (!documentTool || tool.remote.name === 'inspect_document')
+    const reader = declaredReader && implementationFingerprint && localImplementation && tool.remote.annotations?.readOnlyHint === true
       ? { ...declaredReader, implementationFingerprint } : undefined;
     const use = <T>(operation: () => Promise<T>): Promise<T> => {
       if (!isDeepStrictEqual(connection.tools.find(item => item.runtimeName === tool.runtimeName), tool)) {
@@ -749,7 +751,7 @@ export class McpClientManager {
         tool: tool.remote.name,
         readOnly: tool.remote.annotations?.readOnlyHint === true,
         modelVisible: !ui?.visibility || ui.visibility.includes('model'),
-        appCallable: !documentTool && !reader && (ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true),
+        appCallable: !fileOperation && !reader && (ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true),
         call: async (input, options) => use(async () => {
           const validated = decodeInput(input);
           if (connection.retired || connection.health !== 'ready') throw preflightMcpError('mcp_service_unavailable',
@@ -790,9 +792,9 @@ export class McpClientManager {
       visibleToChild: tool.policy.visibleToChild,
       decodeInput,
       authorize: async context => {
-        if (documentTool || reader) {
-          const { request, outsideScope } = await documentFilePermission(context, resource, tool.remote.name, reader);
-          if (tool.policy.permission === 'allow' && !outsideScope && !request.requiresHuman) {
+        if (fileOperation || reader) {
+          const { request, outsideScope, parentApproval } = await fileOperationPermission(context, resource, fileOperation, reader);
+          if (tool.policy.permission === 'allow' && !outsideScope && !request.requiresHuman && !parentApproval) {
             return { kind: 'allow', capabilityIds: request.capabilityIds };
           }
           return { kind: 'ask', request };
@@ -815,10 +817,10 @@ export class McpClientManager {
       },
       execute: async (context) => use(async () => {
         let input = context.input;
-        if (documentTool || reader) {
-          const admission = await documentFilePermission(context, resource, tool.remote.name, reader);
+        if (fileOperation || reader) {
+          const admission = await fileOperationPermission(context, resource, fileOperation, reader);
           if (!context.capabilityIds.includes(admission.capabilityId)) throw preflightMcpError('document_permission_changed',
-            'The document operation or file paths changed after authorization. Request permission for the current operation.', {}, 'retry');
+            'The operation or file paths changed after authorization. Request permission for the current operation.', {}, 'retry');
           input = admission.input;
         }
         if (connection.retired) throw preflightMcpError('mcp_service_unavailable', `MCP service ${connection.config.id} has been disconnected.`, { serverId: connection.config.id });

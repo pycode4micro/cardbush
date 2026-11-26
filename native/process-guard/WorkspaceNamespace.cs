@@ -62,7 +62,7 @@ internal static partial class CardBushProcessHost
                 var info = WorkspaceNamespaceInfo(destination);
                 CheckWorkspaceNamespaceRevision(info, expected, input["mtimeNs"], input["size"]);
                 if ((info.Attributes & 1) != 0) throw new UnauthorizedAccessException("The destination is read-only.");
-                WriteSandboxDirectorySecurity(source, ReadSandboxFileSecurity(destination));
+                WriteSandboxDirectorySecurity(source, ReadSandboxFileSecurity(destination, target), stage);
                 CheckWorkspaceNamespaceRevision(WorkspaceNamespaceInfo(destination), expected, input["mtimeNs"], input["size"]);
                 CheckWorkspaceNamespaceRevision(WorkspaceNamespaceInfoAtPath(target), expected, input["mtimeNs"], input["size"]);
             }

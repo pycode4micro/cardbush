@@ -59,6 +59,7 @@ internal static partial class CardBushProcessHost
         uint exitCode = FAILURE_EXIT;
         bool resumed = false;
         bool startingCommand = false;
+        string sandboxPath = null;
         SandboxSession sandbox = null;
         bool sandboxCleaned = false;
         var inheritedHandles = new List<IntPtr>();
@@ -218,6 +219,8 @@ internal static partial class CardBushProcessHost
         catch (Exception error)
         {
             var nativeError = error as Win32Exception;
+            var aclError = error as SandboxAclException;
+            if (aclError != null) sandboxPath = aclError.FilePath;
             nativeErrorCode = nativeError == null ? (error is UnauthorizedAccessException ? 5 : 0) : nativeError.NativeErrorCode;
             Fail(startingCommand ? "resource_spawn_failed" : "resource_protection_failed",
                 "Process protection could not be established or maintained: " + error.Message);
@@ -262,6 +265,7 @@ internal static partial class CardBushProcessHost
                         + ",\"message\":" + JsonString(failureMessage) + ",\"peakMemoryBytes\":" + peakMemory
                         + ",\"taskMemoryBytes\":" + taskMemory + ",\"totalMemoryBytes\":" + totalMemory
                         + ",\"nativeErrorCode\":" + nativeErrorCode + ",\"commandStarted\":" + (resumed ? "true" : "false")
+                        + (sandboxPath == null ? "" : ",\"sandboxPath\":" + JsonString(sandboxPath))
                         + ",\"sandboxCleaned\":" + (sandboxCleaned ? "true" : "false")
                         + ",\"sandboxScopeStale\":" + (sandbox != null && sandbox.ScopeWasStale ? "true" : "false") + "}";
                     File.WriteAllText(reportPath, report, new UTF8Encoding(false));

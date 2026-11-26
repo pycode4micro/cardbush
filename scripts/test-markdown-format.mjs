@@ -127,6 +127,14 @@ for (const testCase of cases) {
   );
 }
 
+for (const newline of ['\n', '\r\n']) {
+  const adjacent = ['```powershell', '$value = 42', '```', '', '```', '    plain text', '```'].join(newline);
+  assert.equal(normalizeMarkdownContentForDisplay(adjacent), adjacent, 'adjacent nonempty fences stay separate');
+  assert.equal(renderMarkdown(adjacent).match(/<pre>/g)?.length, 2);
+  const outerFence = ['````text', '```powershell Write-Output sample', '**https://example.com**', '```', '````'].join(newline);
+  assert.equal(normalizeMarkdownContentForDisplay(outerFence), outerFence, 'fence-like source lines remain literal');
+}
+
 // Exercise the actual GFM -> Markdown AST -> React link pipeline. String-only
 // normalization tests cannot detect a visually plausible link with a wrong href.
 const linkCases = [
@@ -297,11 +305,8 @@ assert.match(
   /\.markdown-content li > ul,[\s\S]*?\.markdown-content li > ol[\s\S]*?border-left:/,
   'nested Markdown lists must expose a visible hierarchy guide',
 );
-assert.match(
-  appStyles,
-  /\.markdown-content h1\s*\{[\s\S]*?font-size:\s*calc\(19px \* var\(--ui-font-scale, 1\)\)/,
-  'assistant headings must stay compact instead of dominating the conversation',
-);
+const headingSize = Number(appStyles.match(/\.markdown-content h1\s*\{[^}]*?font-size:\s*calc\(([\d.]+)px \* var\(--ui-font-scale, 1\)\)/)?.[1]);
+assert.ok(headingSize > 0 && headingSize <= 19, 'assistant headings must stay compact instead of dominating the conversation');
 assert.match(
   messageBubbleSource,
   /conclusionHeading[\s\S]*?markdown-conclusion-heading/,

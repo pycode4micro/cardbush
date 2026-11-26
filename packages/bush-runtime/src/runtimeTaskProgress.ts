@@ -2,7 +2,7 @@ import type { RuntimeEvent } from '@cardbush/bush-protocol';
 import { LiveToolPresentation } from './liveToolPresentation.js';
 
 export interface RuntimeTaskProgress {
-  phase: 'starting' | 'model' | 'tools' | 'waiting_user' | 'compacting' | 'completed' | 'failed' | 'stopped';
+  phase: 'starting' | 'model' | 'tools' | 'waiting_user' | 'waiting_parent' | 'compacting' | 'completed' | 'failed' | 'stopped';
   last_activity_at?: string;
   model_requests: number;
   completed_tool_calls: number;
@@ -20,7 +20,7 @@ export class RuntimeTaskActivity {
   private failed = 0;
   private readonly tools = new Set<string>();
   private readonly finished = new Map<string, boolean>();
-  private readonly approvals = new Set<string>();
+  private readonly approvals = new Map<string, 'waiting_user' | 'waiting_parent'>();
   private readonly questions = new Set<string>();
   observe(event: RuntimeEvent) {
     this.lastActivity = event.createdAt;
@@ -41,7 +41,8 @@ export class RuntimeTaskActivity {
           this.finished.set(event.payload.toolCallId, true);
         } else if (!this.finished.has(event.payload.toolCallId)) this.finished.set(event.payload.toolCallId, false);
         break;
-      case 'permission_requested': this.approvals.add(event.payload.permissionId); break;
+      case 'permission_requested': this.approvals.set(event.payload.permissionId,
+        event.payload.permissionRouting === 'parent' && !event.payload.permissionEscalationReason ? 'waiting_parent' : 'waiting_user'); break;
       case 'permission_answered':
       case 'permission_rejected':
       case 'permission_expired':
@@ -55,7 +56,9 @@ export class RuntimeTaskActivity {
     }
   }
   snapshot(): RuntimeTaskProgress {
-    return { phase: this.approvals.size || this.questions.size ? 'waiting_user' : this.phase,
+    const phase = this.questions.size || [...this.approvals.values()].includes('waiting_user') ? 'waiting_user'
+      : this.approvals.size ? 'waiting_parent' : this.phase;
+    return { phase,
       ...(this.lastActivity ? { last_activity_at: this.lastActivity } : {}), model_requests: this.models,
       completed_tool_calls: this.completed, failed_tool_calls: this.failed, active_tool_calls: this.tools.size };
   }

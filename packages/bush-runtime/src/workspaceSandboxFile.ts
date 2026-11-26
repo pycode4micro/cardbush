@@ -95,7 +95,10 @@ export class SandboxFileHandle {
       })]);
       if (next.done) {
         const report = await this.process.complete();
-        throw Object.assign(Error(report?.message || this.#stderr || 'Sandbox file worker exited without a result.'), { code: report?.code || 'sandbox_file_worker_failed' });
+        throw Object.assign(Error(report?.message || this.#stderr || 'Sandbox file worker exited without a result.'), {
+          code: report?.code || 'sandbox_file_worker_failed',
+          ...(report?.sandboxPath ? { details: { sandboxPath: report.sandboxPath } } : {}),
+        });
       }
       if (next.value.length > 128 * 1024) throw Error('Sandbox file response exceeded its budget.');
       const response = JSON.parse(next.value);

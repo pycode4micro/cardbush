@@ -2,12 +2,23 @@
 // deletion rights are conferred by granting an existing file object.
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
 internal static partial class CardBushProcessHost
 {
+    private sealed class SandboxAclException : Win32Exception
+    {
+        public readonly string FilePath;
+        public SandboxAclException(int code, string operation, string path) : base(code, operation + ": " + path)
+        {
+            FilePath = path;
+        }
+    }
+
     // ACL inheritance operates on file objects, including every hard-link
     // alias. Keep names pinned while checking and propagating a directory ACL.
     private sealed class SandboxTreeGuard : IDisposable
@@ -86,7 +97,7 @@ internal static partial class CardBushProcessHost
         if (file.Links != 1)
             throw new IOException("Sandbox access cannot include a file with multiple hard links: " + path + ". No command was started.");
         WithSandboxAclLock(delegate {
-            var security = ReadSandboxFileSecurity(handle);
+            var security = ReadSandboxFileSecurity(handle, path);
             var rights = write ? FileSystemRights.Read | FileSystemRights.Write : FileSystemRights.ReadAndExecute;
             if (deleting) rights |= FileSystemRights.Delete;
             // Installed helpers may live in protected Program Files. If Windows
@@ -97,9 +108,9 @@ internal static partial class CardBushProcessHost
                 if (rule.IdentityReference.Value == "S-1-15-2-1" && rule.AccessControlType == AccessControlType.Allow) publicRights |= rule.FileSystemRights;
             if ((publicRights & rights) == rights) return;
             IntPtr acl = SandboxFileAclHandle(path, file, deleting);
-            security = ReadSandboxFileSecurity(acl);
+            security = ReadSandboxFileSecurity(acl, path);
             security.AddAccessRule(new FileSystemAccessRule(identity, rights, AccessControlType.Allow));
-            WriteSandboxDirectorySecurity(acl, security);
+            WriteSandboxDirectorySecurity(acl, security, path);
         });
     }
 
@@ -130,30 +141,30 @@ internal static partial class CardBushProcessHost
             if (temporary) {
                 if (!File.Exists(path)) return;
                 handle = OpenScopeDirectory(path, 0x00020080, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
-                Check(handle != new IntPtr(-1), "Open sandbox file ACL for cleanup");
+                if (handle == new IntPtr(-1)) throw new SandboxAclException(Marshal.GetLastWin32Error(), "Open sandbox file ACL for cleanup", path);
             }
             try {
                 WorkspaceHandleInformation file;
                 Check(GetWorkspaceHandleInformation(handle, out file), "Inspect sandbox cleanup object");
                 if ((file.Attributes & (0x10 | 0x400)) != 0) throw new IOException("Sandbox cleanup file redirected.");
                 if (WorkspaceDeletePending(handle)) return; // Its ACL dies with the deleted object.
-                var security = ReadSandboxFileSecurity(handle);
+                var security = ReadSandboxFileSecurity(handle, path);
                 bool present = false;
                 foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
                     if (rule.IdentityReference.Equals(identity)) { present = true; break; }
                 if (present) {
                     IntPtr acl = temporary ? SandboxFileAclHandle(path, file, true) : handle;
                     security.PurgeAccessRules(identity);
-                    WriteSandboxDirectorySecurity(acl, security);
+                    WriteSandboxDirectorySecurity(acl, security, path);
                 }
             } finally { if (temporary) CloseHandle(handle); }
         });
     }
 
-    private static FileSecurity ReadSandboxFileSecurity(IntPtr handle)
+    private static FileSecurity ReadSandboxFileSecurity(IntPtr handle, string path)
     {
         var security = new FileSecurity();
-        security.SetSecurityDescriptorBinaryForm(ReadSandboxSecurityDescriptor(handle), AccessControlSections.Access);
+        security.SetSecurityDescriptorBinaryForm(ReadSandboxSecurityDescriptor(handle, path), AccessControlSections.Access);
         return security;
     }
 
@@ -162,7 +173,7 @@ internal static partial class CardBushProcessHost
         IntPtr handle;
         if (SandboxAclHandles.TryGetValue(path, out handle)) return handle;
         handle = OpenScopeDirectory(path, 0x00060080, deleting ? 7u : 3u, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
-        Check(handle != new IntPtr(-1), "Open pinned file ACL");
+        if (handle == new IntPtr(-1)) throw new SandboxAclException(Marshal.GetLastWin32Error(), "Open pinned file ACL", path);
         try {
             WorkspaceHandleInformation actual;
             Check(GetWorkspaceHandleInformation(handle, out actual), "Inspect file ACL object");

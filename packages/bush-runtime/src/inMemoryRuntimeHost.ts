@@ -529,6 +529,7 @@ export class InMemoryRuntimeHost {
     this.#botMessaging = options.botMessaging;
     this.#bridgePlugins = new BridgePluginTools(this.#toolRegistry, options.botMessaging, id => this.#botRootSession(id));
     this.#assistantManagement = new AssistantManagement({ registry: this.#toolRegistry, executions: this.#toolExecutions,
+      childPermissions: () => [...this.#toolLoops].flatMap(loop => loop.pendingChildPermissions(PERSONAL_ASSISTANT_SESSION)),
       onPermissionState: (sessionId, executionId, waiting) => {
         this.#agentExecutions.update(sessionId, executionId, waiting ? 'waiting' : 'running');
         if (waiting && sessionId === PERSONAL_ASSISTANT_SESSION) options.onAssistantAttention?.({ id: executionId, interaction: true });
@@ -863,8 +864,10 @@ export class InMemoryRuntimeHost {
         const progress = this.#eventLog.taskProgress(task.childSessionId, task.childTurnId);
         // Child approvals may be presented in the parent's event stream. Read
         // the owning broker rather than duplicating permission lifecycle events.
-        if (progress && task.status === 'running' && [...this.#toolLoops].some(loop =>
-          loop.matches(task.childSessionId, task.childTurnId) && loop.hasPendingPermissions())) progress.phase = 'waiting_user';
+        if (progress && task.status === 'running') {
+          const phase = [...this.#toolLoops].find(loop => loop.matches(task.childSessionId, task.childTurnId))?.permissionWaitPhase();
+          if (phase) progress.phase = phase;
+        }
         return progress;
       } } : {}),
       result: { session_id: task.childSessionId, turn_id: task.childTurnId, ...(task.status !== 'running' ? { output: task.finalResponse, error: task.errorMessage } : {}) },
@@ -2468,8 +2471,11 @@ export class InMemoryRuntimeHost {
         ? input.parentWorkspaceAuthority : undefined,
       ...childPermission,
       ...(request.metadata.pluginBackground ? { externalPermissions: {
-        // Explicit confirmations requested by a trusted hook are host prompts.
-        handles: permission => !modelApproval || permission.requiresHuman === true || permission.actions.includes('plugin_hook.confirm_tool'),
+        // Assistant-owned model approvals share the child broker. An actual
+        // host-required permission remains visible in the Assistant snapshot.
+        // Trusted hook prompts use the host UI because they carry no capability.
+        handles: permission => !modelApproval || permission.actions.includes('plugin_hook.confirm_tool') ||
+          (permission.requiresHuman === true && childPermission.permissionSource?.parentSessionId !== PERSONAL_ASSISTANT_SESSION),
         request: async (permission, signal) => {
           if (!this.#requestBackgroundPermission) throw new Error('This host cannot display background Agent permissions.');
           const answer = await this.#requestBackgroundPermission({ ...permission, sessionId: request.sessionId, turnId: request.turnId }, signal);

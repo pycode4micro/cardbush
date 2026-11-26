@@ -70,6 +70,7 @@ import type {
 import { openInspector } from '../inspector/inspectorEvents';
 import { WorkspaceChangeStateContext, workspaceChangeReverted } from '../tools/WorkspaceChangeStateContext';
 import { AssistantThinkingProcessLine, AssistantThinkingScope } from './AssistantThinkingProcessLine';
+import { selectToolActivityExecution } from '../tools/toolExecutionState';
 import { taskPlanWaitingLabel } from '../taskPlanWaiting';
 import {
   normalizeExecutionNarrationForDisplay,
@@ -757,6 +758,7 @@ function MessageBubbleView({
   language: AppLanguage;
   sending: boolean;
   activeTurnId: string;
+  approvalAuthority?: 'parent_delegate' | 'human_required';
   activeAssistantMessageId: string;
   activeConversationId?: string;
   thinkingVisible?: boolean;
@@ -1640,8 +1642,8 @@ function AssistantActiveTranscript({
   ) => Promise<void>;
 }) {
   const visibleMessages = messages.filter(hasVisibleLoopHistoryMessage);
-  const runningExecution = visibleMessages.flatMap(message => message.toolExecutions ?? [])
-    .find(execution => isToolRunningInContext(execution, active));
+  const runningExecution = selectToolActivityExecution(visibleMessages.flatMap(message => message.toolExecutions ?? [])
+    .filter(execution => isToolRunningInContext(execution, active)));
   return (
     <div className="assistant-active-transcript">
       {visibleMessages.map(segment => <AssistantTranscriptSegment key={segment.id}
@@ -1751,7 +1753,7 @@ function AssistantMessageContent({
         key="thinking-placeholder"
         language={language}
         model={selectedModel}
-        execution={sortedExecutions.find(execution => isToolRunningInContext(execution, active))}
+        execution={selectToolActivityExecution(sortedExecutions.filter(execution => isToolRunningInContext(execution, active)))}
       />,
     );
   }
@@ -2949,6 +2951,7 @@ function sameMessageBubbleProps(
     previous.sending !== next.sending ||
     previous.activeConversationId !== next.activeConversationId ||
     previous.thinkingVisible !== next.thinkingVisible ||
+    previous.approvalAuthority !== next.approvalAuthority ||
     previous.keepActionsVisible !== next.keepActionsVisible ||
     previous.selectedModel !== next.selectedModel ||
     previous.readOnlyActions !== next.readOnlyActions ||
@@ -2986,8 +2989,9 @@ export const MessageBubble = memo(function MessageBubble(props: MessageBubbleVie
   const activeTurnId = props.activeTurnId || props.message.turnId || '';
   const enabled = props.thinkingVisible === true;
   const running = isActiveMessageBubble(props);
-  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running }),
-    [activeConversationId, activeTurnId, enabled, running]);
+  const approvalAuthority = running ? props.approvalAuthority : undefined;
+  const thinkingScope = useMemo(() => ({ activeConversationId, activeTurnId, enabled, running, approvalAuthority }),
+    [activeConversationId, activeTurnId, enabled, running, approvalAuthority]);
   return <FileMemoScope sessionId={props.message.conversationId} turnId={props.message.turnId} sourceReferences={props.message.role === 'assistant'}>
     <WorkspaceRevertAvailability.Provider value={props.canRevertWorkspace !== false}>
       <AssistantThinkingScope.Provider value={thinkingScope}>

@@ -8,7 +8,10 @@ import { bridgeDeliveryResultSchema } from './bridgeDelivery.js';
 export const ASSISTANT_MANAGEMENT_TOOLS = ['search_plugins', 'list_plugin_commands', 'update_task_plan', 'assistant_event'] as const;
 export interface AssistantManagementSnapshot {
   plan?: PlanState;
-  permissions: Array<{ permissionId: string; toolCallId: string; sessionId: string; turnId: string; request: RuntimePermissionRequest }>;
+  permissions: Array<{
+    permissionId: string; toolCallId: string; sessionId: string; turnId: string; request: RuntimePermissionRequest;
+    sourceSessionId?: string; sourceTurnId?: string; subagentTaskId?: string;
+  }>;
 }
 
 export const ASSISTANT_CONVERSATION_COMMAND = 'runtime.assistant_conversation' as const;

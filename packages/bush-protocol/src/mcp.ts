@@ -99,6 +99,18 @@ export const mcpAttachmentReaderSchema = z.object({
 export type McpAttachmentReader = z.infer<typeof mcpAttachmentReaderSchema>;
 export const mcpAttachmentReadersSchema = z.record(z.string().min(1).max(160), mcpAttachmentReaderSchema);
 
+const fileArgument = { argument: mcpAttachmentArgument, access: z.enum(['read', 'write']) };
+const mcpFileOperationSchema = z.object({
+  execution: z.enum(['file', 'host_code']),
+  paths: z.array(z.discriminatedUnion('kind', [
+    z.object({ ...fileArgument, kind: z.literal('path') }).strict(),
+    z.object({ ...fileArgument, kind: z.literal('paths') }).strict(),
+    z.object({ ...fileArgument, kind: z.literal('entries'), property: mcpAttachmentArgument }).strict(),
+  ])).min(1).max(16),
+}).strict();
+export type McpFileOperation = z.infer<typeof mcpFileOperationSchema>;
+export const mcpFileOperationsSchema = z.record(z.string().min(1).max(160), mcpFileOperationSchema);
+
 export const mcpServerSnapshotSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
   pluginId: z.string().min(1).optional(),
@@ -107,6 +119,7 @@ export const mcpServerSnapshotSchema = z.object({
   implementationFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   // Host-attested local readers. Remote tool descriptions cannot enroll themselves.
   attachmentReaders: mcpAttachmentReadersSchema.optional(),
+  fileOperations: mcpFileOperationsSchema.optional(),
   networkProxy: networkProxySchema.optional(),
   transport: mcpTransportConfigSchema,
   versionMode: z.enum(["auto", "legacy", "modern"]).default("auto"),

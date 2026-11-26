@@ -178,6 +178,7 @@ export function ChatPanel({
   sending,
   stopping,
   activeTurnId,
+  approvalAuthority,
   connectionRecovery,
   queuedMessageCount,
   queuedMessagePreview,
@@ -287,6 +288,7 @@ export function ChatPanel({
   sending: boolean;
   stopping: boolean;
   activeTurnId: string;
+  approvalAuthority?: 'parent_delegate' | 'human_required';
   connectionRecovery?: RuntimeConnectionUpdate;
   queuedMessageCount: number;
   queuedMessagePreview: string;
@@ -1993,6 +1995,7 @@ export function ChatPanel({
         language={language}
         sending={sending}
         activeTurnId={activeTurnId}
+        approvalAuthority={message.turnId === activeTurnId ? approvalAuthority : undefined}
         canRevertWorkspace={reversibleTurnIds.has(message.turnId ?? '')}
         activeAssistantMessageId={
           activeAssistantForRender?.message.id ?? ''

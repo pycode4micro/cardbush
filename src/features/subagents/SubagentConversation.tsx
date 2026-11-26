@@ -1,5 +1,5 @@
 import { uiText } from '../../i18n';
-import { childAgentAssignmentText, readUserPrompt, type UserPromptInput } from '@cardbush/bush-protocol';
+import { childAgentAssignmentText, PERSONAL_ASSISTANT_SESSION, readUserPrompt, remoteObservationSchema, type UserPromptInput } from '@cardbush/bush-protocol';
 import { createPortal } from 'react-dom';
 import { EmployeeIcon, employeeTaskTitle, isEmployeeTask } from '../team/employeePresentation';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -151,6 +151,15 @@ export function SubagentConversationView({ task, language, active, refresh, refr
   // Keep the editable queue's explicit order; sorting by time would undo drag/reorder.
   const queuedMessages = useMemo(() => [...parentQueue, ...chat.queuedMessages], [chat.queuedMessages, parentQueue]);
   const reports = useMemo(() => changeReportsFromMessages(messages), [messages]);
+  const executingTask = observedTasks.find(candidate => candidate.childTurnId === chat.activeTurnId) ??
+    (task.childTurnId === chat.activeTurnId ? task : undefined);
+  const pendingApprovals = executingTask && !executingTask.terminal
+    ? remoteObservationSchema.safeParse(executingTask.raw.observation).data?.interactions.filter(item => item.kind === 'permission')
+    : undefined;
+  const approvalAuthority = pendingApprovals?.find(item => item.authority === 'human_required')?.authority ?? pendingApprovals?.[0]?.authority;
+  const pendingInteraction = chat.pendingInteraction;
+  const approvalInAssistant = !host && pendingInteraction?.type === 'path_permission_request' &&
+    pendingInteraction.raw.parentSessionId === PERSONAL_ASSISTANT_SESSION;
   const [error, setError] = useState('');
   const [reverting, setReverting] = useState('');
   const busy = chat.sending || chat.stopping;
@@ -193,6 +202,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         activeConversationId={host?.id ?? sessionId} activeProjectDir={workspaceRoot}
         projectPathAliases={[]} selectedProjectDir="" availableProjects={[]} onWelcomeProjectChange={nothingAsync}
         messages={messages} changeReports={reports} activeTurnId={chat.activeTurnId}
+        approvalAuthority={approvalAuthority}
         loading={chat.loading || chat.messagesLoading} historyLoading={chat.messagesLoading} sending={chat.sending} stopping={chat.stopping}
         turnHistoryAvailable subagentObservabilityAvailable={false} thinkingVisible={thinkingVisible} guidanceDeliveryMode={guidanceDeliveryMode}
         activeGoal={chat.activeGoal} goalAvailable={false} goalCancelling={chat.activeGoalCancelling} goalWaiting={chat.activeGoalWaiting}
@@ -200,7 +210,7 @@ export function SubagentConversationView({ task, language, active, refresh, refr
         queueLocked={chat.queueLocked} queueLockPending={chat.queueLockPending}
         onToggleQueueLock={chat.queuedMessages.length || chat.queueLocked ? chat.toggleQueueLock : undefined}
         queuedMessageCount={queuedMessages.length} queuedMessagePreview={queuedMessages[0]?.text ?? ''} queuedMessages={queuedMessages}
-        pendingInteraction={chat.pendingInteraction ? { ...chat.pendingInteraction, sessionId: host?.id ?? sessionId } : null}
+        pendingInteraction={pendingInteraction && !approvalInAssistant ? { ...pendingInteraction, sessionId: host?.id ?? sessionId } : null}
         connectionRecovery={chat.activeConnectionRecovery} error={error || taskError || configurationError || chat.error || (displayedStatus === 'failed' ? task.errorMessage ?? '' : '')} notice={chat.notice}
         onClearError={() => { setError(''); chat.clearError(); }} onClearNotice={chat.clearNotice}
         draft={draft} onDraftChange={setDraft} selectedModel={chat.selectedModel} selectedModelConfig={selectedModel} executingModel={executionModel?.model} availableModels={models} onModelChange={chat.setSelectedModel} onConfigureModels={onConfigureModels}

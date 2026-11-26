@@ -128,6 +128,7 @@ const cardbushRuntimeIsPackaged = app.isPackaged && !cardbushDevelopmentRuntime;
 process.env.CARDBUSH_PROCESS_HOST_DIRECTORY = cardbushRuntimeIsPackaged
   ? path.join(process.resourcesPath, 'process-guard')
   : path.join(app.getAppPath(), 'dist-native', 'process-guard');
+process.env.CARDBUSH_MSIX_INSTALL_ROOT = process.windowsStore === true ? path.dirname(process.execPath) : '';
 const windowCompositionDebugEnabled =
   process.env.CARDBUSH_WINDOW_COMPOSITION_DEBUG?.trim() === '1';
 const cardbushDevelopmentRuntimeIdentity =
@@ -3435,6 +3436,7 @@ async function runPackagedApplicationSmoke(): Promise<void> {
   const report: Record<string, unknown> = {
     protocol: 'cardbush.packaged_smoke.v1',
     packaged: cardbushRuntimeIsPackaged,
+    storePackage: process.windowsStore === true,
     platform: process.platform,
     arch: process.arch,
     startedAt: new Date(startedAt).toISOString(),
@@ -3501,6 +3503,12 @@ async function runPackagedApplicationSmoke(): Promise<void> {
       cwd: smokeDirectory, env: process.env, maxOutputBytes: 4096, outputLimit: 'truncate' });
     if (search.exitCode !== 0 || !search.stdout.includes('cardbush-search-中文')) {
       throw new Error('Packaged ripgrep did not find the Unicode fixture.');
+    }
+    if (process.platform === 'win32') {
+      process.env.CARDBUSH_RG_PATH = bundledRipgrep;
+      const { verifyPackagedWorkspaceTools } = await import('./packagedWorkspaceSmoke.mjs');
+      await withPackagedSmokeTimeout(verifyPackagedWorkspaceTools(smokeDirectory), 35_000, 'Packaged workspace sandbox timed out.');
+      report.workspaceSandboxReady = true;
     }
     Object.assign(report, { terminalReady: true, searchReady: true,
       hostCapabilities: platformFeatures(process.platform, process.arch) });

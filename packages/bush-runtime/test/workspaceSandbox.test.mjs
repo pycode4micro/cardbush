@@ -68,6 +68,35 @@ test('Windows exact-file grants allow only the selected object and clean up file
     assert.deepEqual([acl(f.path), acl(f.sibling), acl(f.external, true), acl(executable)], before);
     assert.equal(readFileSync(f.sibling, 'utf8'), 'sibling secret'); assert.equal(existsSync(join(f.external, 'new.txt')), false);
   }
+
+  // A package manager owns the installed image's DACL. Deny WRITE_DAC even
+  // to the fixture's owner to reproduce that launch configuration.
+  const restrictions = spawnSync('icacls.exe', [executable, '/deny', '*S-1-3-4:(WDAC)'], { windowsHide: true, encoding: 'utf8' });
+  assert.equal(restrictions.status, 0, restrictions.stderr || restrictions.stdout);
+  const imageAcl = acl(executable);
+  const command = { executable, args: ['exact-file', f.path, f.sibling, join(f.external, 'new.txt')], cwd: f.work, timeoutMs: 10000,
+    sandbox: { network: 'disabled', readableRoots: [], writableRoots: [], privateWorkingDirectory: true,
+      readableFiles: [executable], writableFiles: [f.path], expectedIdentities: { [f.path]: identity(f.path) } } };
+  await assert.rejects(runResourceManagedCommand(command), error => {
+    assert.equal(error.code, 'process_access_denied');
+    assert.equal(error.details.sandboxPath, executable);
+    assert.match(error.message, /Open pinned file ACL/);
+    return true;
+  });
+  const originalInstallRoot = process.env.CARDBUSH_MSIX_INSTALL_ROOT;
+  process.env.CARDBUSH_MSIX_INSTALL_ROOT = f.host;
+  try {
+    const result = await runResourceManagedCommand(command);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /targetWrite=allowed/);
+    assert.doesNotMatch(result.stdout, /(?:siblingRead|siblingWrite|siblingCreate|parentList|targetDelete)=allowed/);
+    assert.equal(acl(executable), imageAcl);
+    assert.equal(readFileSync(f.sibling, 'utf8'), 'sibling secret');
+    assert.equal(existsSync(join(f.external, 'new.txt')), false);
+  } finally {
+    if (originalInstallRoot === undefined) delete process.env.CARDBUSH_MSIX_INSTALL_ROOT;
+    else process.env.CARDBUSH_MSIX_INSTALL_ROOT = originalInstallRoot;
+  }
 });
 
 test('Linux exact-file mounts expose neither sibling files nor host parent directory entries', { skip: process.platform !== 'linux' }, async t => {

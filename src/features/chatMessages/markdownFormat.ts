@@ -51,31 +51,40 @@ const fileLikeExtensions = new Set([
 const bareLinkPunctuation = /[，。；：！？、（）【】《》〈〉「」『』〔〕［］｛｝“”‘’…]/u;
 
 export function normalizeMarkdownContentForDisplay(content: string) {
-  const normalized = content.replace(
-    /^([ \t]*)(`{3,}|~{3,})([^\r\n]*)$/gm,
-    (line, indent: string, fence: string, rawInfo: string) => {
-      const info = rawInfo.trim();
-      if (!info) {
-        return line;
-      }
+  const lines = content.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g) ?? [];
+  const output: string[] = [];
+  let fence: { marker: string; length: number; start: number; hasCode: boolean } | undefined;
 
-      const shellCommand = commandAfterShellFence(info);
-      if (shellCommand) {
-        return `${indent}${fence}${shellCommand.language}\n${shellCommand.command}`;
+  for (const line of lines) {
+    const match = /^( {0,3})(`{3,}|~{3,})([^\r\n]*)(\r\n|\r|\n)?$/.exec(line);
+    if (fence) {
+      if (match && match[2][0] === fence.marker && match[2].length >= fence.length && !match[3].trim()) {
+        if (fence.hasCode) output.push(line);
+        else output.splice(fence.start, output.length - fence.start, match[4] ?? '');
+        fence = undefined;
+      } else {
+        fence.hasCode ||= Boolean(line.trim());
+        output.push(line);
       }
+      continue;
+    }
+    if (!match || (match[2][0] === '`' && match[3].includes('`'))) {
+      output.push(transformOutsideInlineCode(line, normalizeEmphasizedBareLinks));
+      continue;
+    }
 
-      if (looksLikePathFenceContent(info)) {
-        return `${indent}${fence}text\n${info}`;
-      }
-
-      return line;
-    },
-  );
-  const withoutEmptyFences = normalized.replace(
-    /^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n(?:[ \t]*\r?\n)*[ \t]*\1[ \t]*$/gm,
-    '',
-  );
-  return transformMarkdownProse(withoutEmptyFences, normalizeEmphasizedBareLinks);
+    const [, indent, delimiter, rawInfo, ending = ''] = match;
+    const info = rawInfo.trim();
+    const command = commandAfterShellFence(info);
+    const inlineCode = command
+      ? { language: command.language, text: command.command }
+      : looksLikePathFenceContent(info) ? { language: 'text', text: info } : undefined;
+    fence = { marker: delimiter[0], length: delimiter.length, start: output.length, hasCode: Boolean(inlineCode) };
+    output.push(inlineCode
+      ? `${indent}${delimiter}${inlineCode.language}${ending || '\n'}${inlineCode.text}${ending}`
+      : line);
+  }
+  return output.join('');
 }
 
 function normalizeEmphasizedBareLinks(value: string) {
@@ -246,27 +255,6 @@ function clearMarkdownPositions(node: MarkdownNode, source: string) {
   }
   delete node.position;
   node.children?.forEach(child => clearMarkdownPositions(child, source));
-}
-
-function transformMarkdownProse(
-  content: string,
-  transform: (value: string) => string,
-) {
-  const lines = content.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g) ?? [];
-  let fence: { marker: string; length: number } | null = null;
-  return lines.map((line) => {
-    const fenceMatch = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
-    if (fenceMatch) {
-      const marker = fenceMatch[1][0];
-      if (!fence) {
-        fence = { marker, length: fenceMatch[1].length };
-      } else if (fence.marker === marker && fenceMatch[1].length >= fence.length) {
-        fence = null;
-      }
-      return line;
-    }
-    return fence ? line : transformOutsideInlineCode(line, transform);
-  }).join('');
 }
 
 function transformOutsideInlineCode(

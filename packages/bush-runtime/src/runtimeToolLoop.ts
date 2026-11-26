@@ -11,6 +11,7 @@ import { scheduledToolName as resolveScheduledToolName, toolExecutionPhases } fr
 import {
   type ModelMessage,
   type ModelRequest,
+  type AssistantManagementSnapshot,
   type RuntimeEvent,
   type RuntimePermissionAnswer,
   type ToolCall,
@@ -185,6 +186,28 @@ export class RuntimeToolLoop {
 
   hasPendingPermissions(): boolean {
     return this.#permissions.pendingIds().length > 0;
+  }
+
+  permissionWaitPhase(): 'waiting_user' | 'waiting_parent' | undefined {
+    const requests = this.#permissions.pendingRequests();
+    if (!requests.length) return;
+    return this.#permissionSource?.permissionRouting === 'parent' &&
+      !this.#permissionSource.permissionEscalationReason && !requests.some(request => request.requiresHuman) ? 'waiting_parent' : 'waiting_user';
+  }
+
+  pendingChildPermissions(parentSessionId: string): AssistantManagementSnapshot['permissions'] {
+    const source = this.#permissionSource;
+    if (source?.parentSessionId !== parentSessionId) return [];
+    return this.#permissions.pendingRequests().flatMap(permission => {
+      if (!permission.requiresHuman && source.permissionRouting !== 'user' && !source.permissionEscalationReason) return [];
+      return [{
+        permissionId: permission.permissionId, toolCallId: permission.toolCallId,
+        sessionId: this.#permissionEventIdentity.sessionId, turnId: this.#permissionEventIdentity.turnId,
+        sourceSessionId: source.sourceSessionId, sourceTurnId: source.sourceTurnId, subagentTaskId: source.subagentTaskId,
+        request: { reason: permission.reason, actions: permission.actions, targets: permission.targets,
+          requestedCapabilityIds: permission.capabilityIds, scope: permission.scope },
+      }];
+    });
   }
 
   answerPermission(answer: RuntimePermissionAnswer): RuntimePermissionAnswer {

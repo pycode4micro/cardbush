@@ -65,23 +65,25 @@ async function fixture(t, now) {
 const schedule = { action: 'create', name: 'Report', prompt: 'Read the fixture project and save report.html; return its path.', time_zone: 'Asia/Shanghai', trigger: { kind: 'once', at: '2099-10-30T10:00:00+08:00' } };
 const reminder = { action: 'create', text: 'Remind me to review the report.', at: schedule.trigger.at };
 
-for (const { routing = 'parent', mode = 'text', ordinary = false, report = false, count = 1, decision = 'allow_once' } of [
+for (const { routing = 'parent', mode = 'text', ordinary = false, report = false, count = 1, decision = 'allow_once', hostConfirmation = false } of [
   { count: 3 }, { routing: 'user' }, { mode: 'voice' }, { report: true }, { decision: 'deny' },
   { ordinary: true, count: 4 }, { ordinary: true, report: true }, { ordinary: true, routing: 'user' },
+  { hostConfirmation: true },
 ]) {
-  test(`${ordinary ? 'Ordinary conversation' : 'Assistant'} background child ${routing} approval (${mode}, ${report ? 'report requested' : `${count} ${decision} requests`})`, { timeout: 12000 }, async t => {
+  test(`${ordinary ? 'Ordinary conversation' : 'Assistant'} background child ${routing} approval (${mode}, ${hostConfirmation ? 'host requires user' : report ? 'report requested' : `${count} ${decision} requests`})`, { timeout: 12000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), 'assistant-approval-'));
     const registry = new ToolRegistry(), sessions = new SessionStore(), tasks = new SubagentTaskStore();
     const startChild = Promise.withResolvers(), finishChild = Promise.withResolvers(), attention = [], approvalIds = new Set(), requests = [];
     let childRounds = 0, manualRequests = 0, executions = 0;
-    const allowed = routing === 'parent' && decision === 'allow_once';
+    const allowed = !hostConfirmation && routing === 'parent' && decision === 'allow_once';
     const sessionId = ordinary ? 'ordinary-approval' : id;
     sessions.ensureSession(sessionId);
     registry.register({
       definition: { name: 'edit_home_component', description: 'Edit the protected Home component fixture.', inputSchema: { type: 'object' } },
       manifest, visibleToChild: true, decodeInput: value => value,
       authorize: () => ({ kind: 'ask', request: { reason: 'Edit the LCQ component fixture', actions: ['external_tool_call'],
-        targets: [{ kind: 'mcp_resource', value: 'mcp://fixture/tools/edit_home_component' }], capabilityIds: ['fixture:edit'] } }),
+        targets: [{ kind: 'mcp_resource', value: 'mcp://fixture/tools/edit_home_component' }], capabilityIds: ['fixture:edit'],
+        ...(hostConfirmation ? { requiresHuman: true } : {}) } }),
       execute: () => { executions++; return { edited: true }; },
     });
     function* response(request, output, preamble) {
@@ -157,6 +159,17 @@ for (const { routing = 'parent', mode = 'text', ordinary = false, report = false
     }
     assert.equal(requests.length, 2);
     startChild.resolve();
+    if (hostConfirmation) {
+      let pending;
+      await until(async () => { pending = (await command({ action: 'read' })).management.permissions[0]; return !!pending; });
+      const child = tasks.list(sessionId)[0];
+      assert.equal(pending.sourceTurnId, child.childTurnId);
+      assert.equal(pending.subagentTaskId, child.taskId);
+      assert.equal(executions, 0);
+      await host.sendCommand({ kind: 'runtime.answer_permission', payload: { protocol: 'bush.runtime_permission_answer.v1',
+        permissionId: pending.permissionId, answerId: 'fixture-human-answer', decision: 'deny', grantedCapabilityIds: [] } });
+      assert.deepEqual((await command({ action: 'read' })).management.permissions, []);
+    }
     await until(() => childRounds === count + 1);
     if (ordinary && routing === 'parent') {
       const approvalTurns = () => sessions.snapshot(sessionId).turns.filter(turn => turn.turnId.startsWith('peer_turn_'));
@@ -170,15 +183,16 @@ for (const { routing = 'parent', mode = 'text', ordinary = false, report = false
         }
       }
     } else if (!ordinary) await until(async () => !(await command({ action: 'read' })).busy);
-    assert.equal(requests.length, 2 + (routing === 'parent' ? count : 0) + Number(report), 'approval adds one decision request and only an explicitly requested reply');
+    const modelApprovals = routing === 'parent' && !hostConfirmation ? count : 0;
+    assert.equal(requests.length, 2 + modelApprovals + Number(report), 'approval adds one decision request and only an explicitly requested reply');
     const task = tasks.list(sessionId)[0];
     const events = host.events(task.childSessionId, task.childTurnId);
-    assert.equal(approvalIds.size, routing === 'parent' ? count : 0);
+    assert.equal(approvalIds.size, modelApprovals);
     assert.equal(manualRequests, routing === 'user' ? 1 : 0);
     assert.equal(executions, allowed ? count : 0);
-    assert.equal(events.filter(event => event.kind === 'permission_requested').length, approvalIds.size);
-    assert.equal(events.filter(event => event.kind === (allowed ? 'permission_answered' : 'permission_rejected')).length, approvalIds.size);
-    assert.ok(attention.every(notice => !notice.interaction), 'model approvals must not ask the desktop user');
+    assert.equal(events.filter(event => event.kind === 'permission_requested').length, approvalIds.size + Number(hostConfirmation));
+    assert.equal(events.filter(event => event.kind === (allowed ? 'permission_answered' : 'permission_rejected')).length, approvalIds.size + Number(hostConfirmation));
+    assert.equal(attention.filter(notice => notice.interaction).length, Number(hostConfirmation), 'only explicit host confirmations should ask the desktop user');
     const visible = async () => ordinary ? sessions.snapshot(sessionId).turns.flatMap(turn => turn.messages.map(fact => fact.message))
       .filter(message => message.role === 'assistant' && message.content).map(message => message.content)
       : (await command({ action: 'read' })).entries.filter(entry => entry.role === 'assistant' && entry.visibility === 'conversation').map(entry => entry.content);
@@ -192,7 +206,7 @@ for (const { routing = 'parent', mode = 'text', ordinary = false, report = false
     }
     await until(async () => (await visible()).includes('Fixture completion delivered.'));
     assert.deepEqual(await visible(), [...before, 'Fixture completion delivered.']);
-    assert.equal(requests.length, 3 + (routing === 'parent' ? count : 0) + Number(report));
+    assert.equal(requests.length, 3 + modelApprovals + Number(report));
   });
 }
 

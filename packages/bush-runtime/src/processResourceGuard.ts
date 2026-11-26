@@ -250,6 +250,7 @@ export interface ProcessResourceReport {
   /** Native supervisor fact: the protected shell/command was resumed. */
   commandStarted?: boolean;
   blockedExecutable?: string;
+  sandboxPath?: string;
   sandboxCleaned?: boolean;
   sandboxScopeStale?: boolean;
 }

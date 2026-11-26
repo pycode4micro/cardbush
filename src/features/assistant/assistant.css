@@ -13,6 +13,8 @@
 .assistant-body,.assistant-chat { display:flex; flex:1; min-height:0; min-width:0; }
 .assistant-chat { display:block; }
 .assistant-composer-dock { --composer-backdrop-fade:var(--assistant-message-gap); }
+/* The log can receive programmatic focus. Messages and their controls own the visible focus indicators. */
+.assistant-messages:focus { outline:none; }
 .assistant-messages .message-list-content { padding-bottom:var(--assistant-dock-height, 32px); }
 /* Reserve the dock once. Inter-message spacing belongs between rows only. */
 .assistant-messages .assistant-message-row:last-child > :is(.assistant-message,.assistant-task-strip) { margin-bottom:0; }

@@ -12,6 +12,7 @@ import type { ConversationChangeSummary } from '../tools/toolChangeReports';
 
 export const AssistantThinkingScope = createContext<{
   activeConversationId: string; activeTurnId: string; enabled: boolean; running: boolean;
+  approvalAuthority?: 'parent_delegate' | 'human_required';
 }>({
   activeConversationId: '', activeTurnId: '', enabled: false, running: false,
 });
@@ -25,7 +26,10 @@ export function AssistantThinkingProcessLine(props: {
   const scope = useContext(AssistantThinkingScope);
   // Reasoning updates only this tail slot, leaving the transcript and media intact.
   const notice = useLiveThinkingNotice(scope);
-  return <AssistantThinkingDetail {...props} notice={notice} animate={scope.running} />;
+  const approvalLabel = scope.approvalAuthority && uiText(props.language)(
+    scope.approvalAuthority === 'parent_delegate' ? 'toolExecutionState.awaitingParentApproval' : 'toolExecutionState.awaitingUserApproval');
+  return <AssistantThinkingDetail {...props} statusLabel={approvalLabel ?? props.statusLabel}
+    notice={approvalLabel ? null : notice} animate={scope.running && !approvalLabel} />;
 }
 
 export function TurnChangeSummary({ summary, language, onOpen, onContextMenu }: {

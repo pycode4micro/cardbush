@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, open, realpath, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, realpath, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
@@ -276,6 +276,22 @@ export async function prepareExecutionSandbox(input: {
     const env = sandboxEnvironment(input.env ?? process.env, privateRoot);
     let executable = input.executable, args = [...input.args];
     if (windowsPolicyPath) {
+      const installRoot = process.env.CARDBUSH_MSIX_INSTALL_ROOT;
+      // The installed image and its DACL belong to the package manager. If a
+      // trusted helper needs its own image readable inside AppContainer, use
+      // an exclusive, per-launch copy and grant only that copy. Windows still
+      // enforces its executable signature and application-control policy.
+      if (installRoot && isAbsolute(executable) && within(installRoot, executable)) {
+        const image = await realpath(executable);
+        const grant = readableFiles.findIndex(file => file.toLowerCase() === image.toLowerCase());
+        if (grant >= 0 && within(await realpath(installRoot), image) && !expectedIdentities[image]) {
+          executable = join(directory, basename(image));
+          await writeFile(executable, await readFile(image), { flag: 'wx', mode: 0o600 });
+          const metadata = await stat(executable, { bigint: true });
+          expectedIdentities[executable] = `${metadata.dev}:${metadata.ino}`;
+          readableFiles[grant] = executable;
+        }
+      }
       args = sandboxPowerShellArgs(executable, args);
       if (capabilities?.scopes && input.scopePool) scope = await input.scopePool.acquire(input.windowsHostPath!, readableRoots, writableRoots, expectedIdentities);
       await writeFile(windowsPolicyPath, JSON.stringify({ version: 1,

@@ -9,6 +9,7 @@ if (typeof electron === 'string') {
   if (process.argv.includes('--management')) env.CARDBUSH_ASSISTANT_UI_CASE = 'management';
   if (process.argv.includes('--attachments')) env.CARDBUSH_ASSISTANT_UI_CASE = 'attachments';
   if (process.argv.includes('--message-actions')) env.CARDBUSH_ASSISTANT_UI_CASE = 'message-actions';
+  if (process.argv.includes('--markdown')) env.CARDBUSH_ASSISTANT_UI_CASE = 'markdown';
   const directory = fs.mkdtempSync(path.resolve('tmp/assistant-ui-'));
   // Keep the native bundler in Node so Electron can close its Windows I/O loop cleanly.
   buildFixture(directory).then(() => {
@@ -152,7 +153,7 @@ app.whenReady().then(async () => {
   const fill = (selector, value) => read(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(n instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));})();`);
   try {
     await win.loadFile(path.join(directory, 'index.html')); await until('document.querySelectorAll(".assistant-message").length===2');
-    if (['character', 'submission', 'shortcuts', 'timeline', 'management', 'attachments', 'message-actions'].includes(process.env.CARDBUSH_ASSISTANT_UI_CASE)) {
+    if (['character', 'submission', 'shortcuts', 'timeline', 'management', 'attachments', 'message-actions', 'markdown'].includes(process.env.CARDBUSH_ASSISTANT_UI_CASE)) {
       await require('./helpers/assistant-' + process.env.CARDBUSH_ASSISTANT_UI_CASE + '.cjs')({ read, until, fill, click, pause, win, directory });
       assert.deepEqual(errors, []); return;
     }
@@ -395,6 +396,7 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll(".assistant-message").length===1');
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),0,'reset does not resurrect earlier tasks');
     await require('./helpers/assistant-reference-bubbles.cjs')({read,until,fill,click,pause,win,directory});
+    await require('./helpers/assistant-markdown.cjs')({read,until,win});
     assert.deepEqual(errors, []);
     await read('fixture.busy=true;fixture.runtimeError="";void 0');
     await until('document.querySelector(".assistant-typing-bubble")');

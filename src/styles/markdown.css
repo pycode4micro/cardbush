@@ -289,9 +289,8 @@
   font-weight: 600;
 }
 
-.assistant-bubble pre,
-.subagent-inspector-section pre,
-.user-bubble pre {
+:where(.assistant-bubble, .subagent-inspector-section, .user-bubble) pre,
+.markdown-code-block > pre {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -314,6 +313,7 @@
   position: relative;
   width: 100%;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
   margin: 6px 0;
   background: color-mix(in srgb, var(--text) 7%, transparent);
@@ -321,7 +321,7 @@
   border-radius: 8px;
 }
 
-.markdown-code-block pre {
+.markdown-code-block > pre {
   margin: 0;
   padding: 7px 9px 8px;
   background: transparent;
@@ -352,6 +352,7 @@
 }
 
 .markdown-code-actions button {
+  flex: none;
   height: 21px;
   display: inline-flex;
   align-items: center;
@@ -406,9 +407,8 @@
   color: inherit;
 }
 
-.assistant-bubble pre code,
-.subagent-inspector-section pre code,
-.user-bubble pre code {
+:where(.assistant-bubble, .subagent-inspector-section, .user-bubble) pre code,
+.markdown-code-block > pre > code {
   display: block;
   width: max-content;
   min-width: 100%;
@@ -639,17 +639,14 @@
   margin: 0;
 }
 
-.markdown-code-block.wrapped pre {
+.markdown-code-block.wrapped > pre {
   overflow-x: hidden;
 }
 
-.assistant-bubble .markdown-code-block.wrapped pre code,
-.subagent-inspector-section .markdown-code-block.wrapped pre code,
-.user-bubble .markdown-code-block.wrapped pre code {
+.markdown-code-block.wrapped > pre > code {
   width: 100%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .message-actions button.feedback-up,

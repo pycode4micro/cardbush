@@ -28,6 +28,7 @@ export interface RuntimePermissionBrokerOptions {
 
 interface PendingPermission {
   answering?: boolean;
+  request: PermissionInvocation;
   requestKey: string;
   primaryToolCallId: string;
   capabilityIds: string[];
@@ -80,6 +81,7 @@ export class RuntimePermissionBroker implements PermissionResolver {
       return Promise.reject(abortError());
     }
     const pending: PendingPermission = {
+      request,
       requestKey,
       primaryToolCallId: request.toolCallId,
       capabilityIds: request.capabilityIds,
@@ -172,6 +174,10 @@ export class RuntimePermissionBroker implements PermissionResolver {
 
   pendingIds(): string[] {
     return [...this.#pending.keys()];
+  }
+
+  pendingRequests() {
+    return [...this.#pending].map(([permissionId, pending]) => ({ ...pending.request, permissionId }));
   }
 
   #deletePending(permissionId: string, pending: PendingPermission): void {

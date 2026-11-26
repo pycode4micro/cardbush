@@ -2638,6 +2638,8 @@
     "toolExecutionState.returned": "Returned",
     "toolExecutionState.awaitingSolutionSelection": "Awaiting solution selection",
     "toolExecutionState.awaitingPermission": "Awaiting permission",
+    "toolExecutionState.awaitingParentApproval": "Waiting for parent Agent approval",
+    "toolExecutionState.awaitingUserApproval": "Waiting for your approval",
     "toolImageArtifactViewer.viewImage": "View image",
     "toolImageArtifactViewer.previewFailedRetry": " (preview failed, retry)",
     "toolImageArtifactViewer.retry": "Retry",

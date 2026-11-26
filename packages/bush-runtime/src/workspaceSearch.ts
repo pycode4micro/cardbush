@@ -176,7 +176,8 @@ async function runRipgrep(executable: string, args: string[], cwd: string, budge
         const diagnostic = decodeCommandOutput(Buffer.concat(stderr));
         if (code === 78 || code === 79) throw Object.assign(Error(diagnostic || 'Sandbox startup failed.'), { code: code === 78 ? 'sandbox_approval_changed' : 'sandbox_spawn_failed' });
         if (diagnostic) budget.warn(diagnostic);
-        if (report?.code && !budget.limit) throw Object.assign(Error(report.message), { code: report.code });
+        if (report?.code && !budget.limit) throw Object.assign(Error(report.message), { code: report.code,
+          ...(report.sandboxPath ? { details: { sandboxPath: report.sandboxPath } } : {}) });
         resolveResult({ code, sandbox: guarded.sandbox });
       } catch (value) { reject(value); }
     });

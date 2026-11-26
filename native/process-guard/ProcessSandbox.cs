@@ -327,12 +327,12 @@ internal static partial class CardBushProcessHost
         WithSandboxAclLock(delegate {
             using (new SandboxTreeGuard(path)) {
             IntPtr handle = SandboxAclHandle(path);
-            var security = ReadSandboxDirectorySecurity(handle);
+            var security = ReadSandboxDirectorySecurity(handle, path);
             // The root itself cannot be deleted or renamed by this command.
             security.AddAccessRule(new FileSystemAccessRule(identity, rights & ~FileSystemRights.Delete, AccessControlType.Allow));
             security.AddAccessRule(new FileSystemAccessRule(identity, rights,
                 InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Allow));
-            WriteSandboxDirectorySecurity(handle, security);
+            WriteSandboxDirectorySecurity(handle, security, path);
             }
         });
     }
@@ -344,13 +344,13 @@ internal static partial class CardBushProcessHost
         // Remove only this one-use SID from the current ACL.
         WithSandboxAclLock(delegate {
             IntPtr handle = SandboxAclHandle(path);
-            var security = ReadSandboxDirectorySecurity(handle);
+            var security = ReadSandboxDirectorySecurity(handle, path);
             bool present = false;
             foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
                 if (rule.IdentityReference.Equals(identity)) { present = true; break; }
             if (!present) return;
             security.PurgeAccessRules(identity);
-            WriteSandboxDirectorySecurity(handle, security);
+            WriteSandboxDirectorySecurity(handle, security, path);
         });
     }
 
@@ -359,7 +359,7 @@ internal static partial class CardBushProcessHost
         IntPtr handle;
         if (SandboxAclHandles.TryGetValue(path, out handle)) return handle;
         handle = OpenScopeDirectory(path, 0x00060000, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
-        Check(handle != new IntPtr(-1), "Open pinned directory ACL");
+        if (handle == new IntPtr(-1)) throw new SandboxAclException(Marshal.GetLastWin32Error(), "Open pinned directory ACL", path);
         try {
             WorkspaceHandleInformation actual, expected;
             Check(GetWorkspaceHandleInformation(handle, out actual), "Inspect directory ACL object");
@@ -375,18 +375,18 @@ internal static partial class CardBushProcessHost
         } catch { CloseHandle(handle); throw; }
     }
 
-    private static DirectorySecurity ReadSandboxDirectorySecurity(IntPtr handle)
+    private static DirectorySecurity ReadSandboxDirectorySecurity(IntPtr handle, string path)
     {
         var security = new DirectorySecurity();
-        security.SetSecurityDescriptorBinaryForm(ReadSandboxSecurityDescriptor(handle), AccessControlSections.Access);
+        security.SetSecurityDescriptorBinaryForm(ReadSandboxSecurityDescriptor(handle, path), AccessControlSections.Access);
         return security;
     }
 
-    private static byte[] ReadSandboxSecurityDescriptor(IntPtr handle)
+    private static byte[] ReadSandboxSecurityDescriptor(IntPtr handle, string path)
     {
         IntPtr owner, group, dacl, sacl, descriptor;
         uint error = GetSecurityInfo(handle, 1, 4, out owner, out group, out dacl, out sacl, out descriptor);
-        if (error != 0) throw new Win32Exception((int)error, "Read pinned filesystem ACL");
+        if (error != 0) throw new SandboxAclException((int)error, "Read pinned filesystem ACL", path);
         try {
             uint length = GetSecurityDescriptorLength(descriptor);
             if (length == 0 || length > 65536) throw new IOException("Invalid filesystem security descriptor.");
@@ -404,7 +404,7 @@ internal static partial class CardBushProcessHost
     private static extern uint GetSecurityInfo(IntPtr handle, int kind, uint information, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
     [DllImport("advapi32.dll")]
     private static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
-    private static void WriteSandboxDirectorySecurity(IntPtr handle, ObjectSecurity security)
+    private static void WriteSandboxDirectorySecurity(IntPtr handle, ObjectSecurity security, string path)
     {
         var bytes = security.GetSecurityDescriptorBinaryForm();
         IntPtr descriptor = Marshal.AllocHGlobal(bytes.Length);
@@ -417,7 +417,7 @@ internal static partial class CardBushProcessHost
             // inheritance. SetKernelObjectSecurity does not propagate file ACLs.
             uint information = 4u | (security.AreAccessRulesProtected ? 0x80000000u : 0x20000000u);
             uint error = SetSecurityInfo(handle, 1, information, IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
-            if (error != 0) throw new Win32Exception((int)error, "Update pinned directory ACL");
+            if (error != 0) throw new SandboxAclException((int)error, "Update pinned filesystem ACL", path);
         } finally { Marshal.FreeHGlobal(descriptor); }
     }
     [DllImport("advapi32.dll", SetLastError = true)]

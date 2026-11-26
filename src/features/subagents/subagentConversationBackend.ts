@@ -63,7 +63,7 @@ export function subagentConversationBackend({ base = localConversationBackend, r
         const owner = knownTask();
         const child = tasks.filter(task => task.childSessionId === id && task.parentSessionId === owner.parentSessionId &&
           task.remote?.connectionId === owner.remote?.connectionId);
-        const revision = child.map(task => `${task.taskId}:${task.status}:${task.updatedAt}`).join('|');
+        const revision = child.map(task => `${task.taskId}:${task.status}:${task.raw.revision ?? task.updatedAt}`).join('|');
         if (revision !== taskRevision) { taskRevision = revision; onTasksChanged?.(child); }
         const running = child.find(task => !task.terminal && !isQueuedSubagentTask(task));
         listener({ activeTurnId: jobs?.activeTurnId || running?.childTurnId, queueState: jobs?.queueState,

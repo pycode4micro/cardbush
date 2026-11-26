@@ -24,6 +24,7 @@ export class AssistantManagement {
   constructor(private options: {
     registry: ToolRegistry; executions: ToolExecutionStore; capabilities: RuntimeCapabilityStore;
     coordination: () => CoordinationStore;
+    childPermissions?: () => AssistantManagementSnapshot['permissions'];
     hooks?: (request: ModelRequest) => ToolExecutionHooks;
     onPermissionState?: (sessionId: string, executionId: string, waiting: boolean) => void;
   }) {
@@ -125,7 +126,8 @@ export class AssistantManagement {
     return { ...call, name: target.name, argumentsText: JSON.stringify(target.input) };
   }
   snapshot(): AssistantManagementSnapshot {
-    return { plan: this.options.coordination().getPlan(PERSONAL_ASSISTANT_SESSION), permissions: [...this.pending.values()] };
+    return { plan: this.options.coordination().getPlan(PERSONAL_ASSISTANT_SESSION),
+      permissions: [...this.pending.values(), ...(this.options.childPermissions?.() ?? [])] };
   }
   get awaitingPermission() { return this.pending.size > 0; }
   hasPermission(id: string) { return this.permissions.pendingIds().includes(id); }

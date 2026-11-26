@@ -1,6 +1,21 @@
 {
   "mcpServers": {
     "documents": {
+      "cardbush_file_operations": {
+        "inspect_document": { "execution": "file", "paths": [{ "argument": "path", "access": "read", "kind": "path" }] },
+        "author_document": { "execution": "host_code", "paths": [
+          { "argument": "inputs", "access": "read", "kind": "entries", "property": "path" },
+          { "argument": "outputs", "access": "write", "kind": "paths" }
+        ] },
+        "convert_document": { "execution": "file", "paths": [
+          { "argument": "path", "access": "read", "kind": "path" },
+          { "argument": "output", "access": "write", "kind": "path" }
+        ] },
+        "render_presentation": { "execution": "file", "paths": [
+          { "argument": "path", "access": "read", "kind": "path" },
+          { "argument": "output", "access": "write", "kind": "path" }
+        ] }
+      },
       "cardbush_attachment_readers": {
         "inspect_document": {
           "pathArgument": "path",

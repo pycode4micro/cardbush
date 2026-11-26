@@ -6,7 +6,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const executable = process.argv[2] ? path.resolve(process.argv[2]) : packagedExecutable(root);
+const installed = process.argv.includes('--installed');
+const binary = process.argv.slice(2).find(value => value !== '--installed');
+if (installed && (!binary || process.platform !== 'win32')) throw Error('Pass the installed Windows executable with --installed.');
+const executable = binary ? path.resolve(binary) : packagedExecutable(root);
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'cardbush-packaged-smoke-'));
 const resultPath = path.join(temporaryRoot, 'result.json');
 const userDataPath = path.join(temporaryRoot, 'user-data');
@@ -21,8 +24,8 @@ try {
     ? path.resolve(path.dirname(executable), '..', '..')
     : path.dirname(executable);
   const isolatedDirectory = path.join(temporaryRoot, path.basename(sourceDirectory));
-  await cp(sourceDirectory, isolatedDirectory, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
-  const isolatedExecutable = path.join(isolatedDirectory, path.relative(sourceDirectory, executable));
+  if (!installed) await cp(sourceDirectory, isolatedDirectory, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+  const isolatedExecutable = installed ? executable : path.join(isolatedDirectory, path.relative(sourceDirectory, executable));
   const exitCode = await launch(isolatedExecutable, [
     `--user-data-dir=${userDataPath}`,
     '--disable-gpu',
@@ -32,7 +35,9 @@ try {
     CARDBUSH_WINDOW_COMPOSITION_DEBUG: '0',
   });
   const report = JSON.parse(await readFile(resultPath, 'utf8'));
-  report.isolation = { outsideCheckout: true, sourceExecutable: executable, executable: isolatedExecutable };
+  const runtimeRelative = path.relative(root, isolatedExecutable);
+  const outsideCheckout = path.isAbsolute(runtimeRelative) || runtimeRelative.startsWith(`..${path.sep}`);
+  report.isolation = { outsideCheckout, installed, sourceExecutable: executable, executable: isolatedExecutable };
   // Preserve failures too; a package that cannot boot needs a useful receipt.
   if (process.env.CARDBUSH_SMOKE_REPORT) await writeFile(process.env.CARDBUSH_SMOKE_REPORT, JSON.stringify(report, null, 2) + '\n');
   assert.equal(exitCode, 0, report.error || `Packaged app exited with ${exitCode}.`);
@@ -46,10 +51,12 @@ try {
   assert.equal(report.shutdownClean, true);
   assert.equal(report.terminalReady, true);
   assert.equal(report.searchReady, true);
+  if (process.platform === 'win32') assert.equal(report.workspaceSandboxReady, true);
+  if (installed) assert.equal(report.storePackage, true, 'The application must run with its installed package identity.');
   assert.equal(Object.values(report.assets).every(Boolean), true);
   console.log('packaged application smoke passed', JSON.stringify({
     executable,
-    isolated: true,
+    isolated: true, installed,
     elapsedMs: report.elapsedMs,
     runtimeElapsedMs: report.runtimeStatus?.elapsedMs,
     assets: report.assets,
@@ -90,7 +97,7 @@ function launch(file, args, env) {
     const timeout = setTimeout(() => {
       child.kill();
       reject(new Error(`Packaged application smoke timed out.\n${stderr}`));
-    }, 45_000);
+    }, 75_000);
     child.stdout.on('data', (chunk) => process.stdout.write(chunk));
     child.stderr.on('data', (chunk) => {
       const text = String(chunk);

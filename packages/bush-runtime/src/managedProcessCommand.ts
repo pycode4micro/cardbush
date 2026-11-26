@@ -64,7 +64,8 @@ export async function runResourceManagedCommand(input: ManagedCommandOptions) {
       cancelDeadline?.();
       const report = await managed.complete();
       if (input.signal?.aborted) { reject(input.signal.reason); return; }
-      if (!failure && report?.code) failure = Object.assign(new Error(report.message), { code: report.code });
+      if (!failure && report?.code) failure = Object.assign(new Error(report.message), { code: report.code,
+        ...(report.sandboxPath ? { details: { sandboxPath: report.sandboxPath } } : {}) });
       if (failure) { reject(failure); return; }
       resolve({ stdout: output.text('stdout'), stderr: output.text('stderr'), exitCode, outputTruncated: output.truncated });
     });
