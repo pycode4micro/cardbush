@@ -85,7 +85,7 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
       'Use list_browsers and select_browser when the user names a browser or profile. Otherwise use the conversation binding, including integrated pages returned by local child agents; if no binding exists, the configured default is bound on first use. Binding survives disconnects; never silently switch browsers or replay a failed mutation.',
       'For Chrome/Edge, each session is isolated in a visibly named tab group. For the integrated browser, controllable tabs are those explicitly referenced by the user, created in this conversation, or newly created by its verified local descendant tasks. Selecting a browser does not grant unrelated tabs. Use select_browser with connectionId cardbush to create integrated tabs.',
       'Browser connection consent covers all supported websites; individual tools still follow Runtime permissions. Integrated browser sessions recover automatically after restart. If an old page is missing, list_pages to inspect the current state; new work can use new_page without asking the user to @ again. Only ask to identify an existing page when that specific page is required. Never reuse stale page or element IDs or switch browsers silently.',
-      'new_page opens in the background by default; select_page changes only the Agent target. Keep the user’s current tab and window unchanged. Use background:false or bringToFront:true only when the user wants to see the page. For existing Chrome/Edge personal tabs, ask the user to copy them into the current session group from the extension popup.',
+      'new_page works in the background by default. CardBush can reuse an Agent background tab. Use reuseExisting:false when it must retain a separate CardBush page. select_page changes only the Agent target. Use background:false or bringToFront:true only when the user wants to see the page. For existing Chrome/Edge personal tabs, ask the user to copy them into the current session group from the extension popup.',
       'When directing the user to an opened page, copy its returned reference URL into a Markdown link. Clicking this tab reference reveals the existing tab without reopening or navigating it. Do not invent references or substitute a website URL for a tab reference.',
       'Call release_browser when browser work is complete; it detaches control and collapses external session groups the user is not viewing, without closing tabs.',
       'For visual verification use take_screenshot (viewport/selector supported) or export_image; images are attached to the model and saved automatically. Do not trigger a browser download or open a popup merely to inspect an image.',
@@ -272,17 +272,26 @@ export function createCardbushBrowserServer(options: { connector?: typeof reques
 
   server.registerTool('new_page', toolDefinition(
     'Open browser page',
-    'Open and select an Agent tab in the background, scoped to this conversation, preserving the user’s active tab and window. Pass background:false only when the user wants it shown. To search the web for current news or articles, pass a search-engine URL with the query and read take_snapshot. CardBush reports visible separately; Chrome/Edge uses the session group. Omit url for a blank tab; otherwise pass an HTTP(S) URL.',
-    z.object({ url: z.string().url().optional(), background: z.boolean().default(true) }),
+    'Open or reuse an Agent background tab scoped to this conversation. CardBush can reuse a background tab; pass reuseExisting:false to keep separate pages, subject to its session limit. Pass background:false only when the user wants the tab shown. To search the web for current news or articles, pass a search-engine URL with the query and read take_snapshot. Omit url for a blank tab.',
+    z.object({ url: z.string().url().optional(), background: z.boolean().default(true),
+      reuseExisting: z.boolean().optional().describe('CardBush only. Set false when a separate page must be retained alongside existing pages.') }),
     false,
   ), async (input, context) => withToolResult(async () => {
     const scope = scopeFromContext(context);
     const url = input.url ?? DEFAULT_BROWSER_START_PAGE;
-    const result = record(await request('tabs.create', { url, background: input.background !== false }, context));
+    const result = record(await request('tabs.create', { url, background: input.background !== false,
+      ...(input.reuseExisting === false ? { reuseExisting: false } : {}) }, context));
     result.reference = browserPageReference(result);
     const selectedPageId = integer(result.id);
-    if (selectedPageId != null) selectedPageIds.set(scope.id, selectedPageId);
-    return { text: `Opened browser tab ${selectedPageId ?? ''}: ${browserPageLink(result)}${presentationNotice(result)}`, structured: result };
+    if (selectedPageId != null) {
+      selectedPageIds.set(scope.id, selectedPageId);
+      if (typeof result.targetKey === 'string') targetKeys.set(JSON.stringify([scope.id, selectedPageId]), result.targetKey);
+    }
+    if (result.reused === true && selectedPageId != null) {
+      snapshots.clear(scope.id, selectedPageId);
+      clearScreenshotFailures(scope.id, selectedPageId);
+    }
+    return { text: `${result.reused === true ? 'Reused' : 'Opened'} browser tab ${selectedPageId ?? ''}: ${browserPageLink(result)}${presentationNotice(result)}`, structured: result };
   }));
 
   server.registerTool('close_page', toolDefinition(

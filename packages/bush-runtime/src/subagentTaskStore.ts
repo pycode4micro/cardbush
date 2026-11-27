@@ -189,11 +189,20 @@ export class SubagentTaskStore {
   }
 
   observe(parentSessionId: string, taskId: string, observation: SubagentTask['observation'], error?: string): void {
-    const before = this.get(parentSessionId, taskId);
+    const state = this.#load(parentSessionId), before = state.latest.get(taskId);
     if (!before || before.status !== 'running') return;
     if (observation && (observation.contextId !== before.childSessionId || observation.taskId !== taskId)) throw new Error('Child observation identity mismatch.');
+    if (observation && (!Number.isSafeInteger(observation.cursor) || observation.cursor < 0)) throw new Error('Invalid child observation cursor.');
     if (observation && before.observation && observation.cursor < before.observation.cursor) throw new Error('Child observation cursor moved backwards.');
-    if (JSON.stringify(before.observation) === JSON.stringify(observation) && before.observationError === error) return;
+    if (before.observationError === error) {
+      if (!observation && !before.observation) return;
+      if (observation && before.observation && JSON.stringify({ ...before.observation, cursor: observation.cursor }) === JSON.stringify(observation)) {
+        // The source journal owns replay. Keep the live cursor without advancing the task revision.
+        if (before.observation.cursor !== observation.cursor)
+          state.latest.set(taskId, { ...before, observation: { ...before.observation, cursor: observation.cursor } });
+        return;
+      }
+    }
     this.#append(parentSessionId, subagentTaskSchema.parse({ ...before, observation, observationError: error,
       ...(before.remote && !before.executionStartedAt && observation && ['working', 'input_required'].includes(observation.state)
         ? { executionStartedAt: this.#now() } : {}),

@@ -49,15 +49,16 @@ export function useInspectorBrowserActions(actions: {
           try { guestWebContentsId = webview?.getWebContentsId?.() ?? null; } catch { /* A guest may be attaching or closing. */ }
           const inWorkspace = workspace.tabs.some(tab => tab.id === tabId);
           const displayedHere = displayed.tabs.some(tab => tab.id === tabId);
+          const open = displayedHere && displayed.open;
           const active = displayedHere && displayed.activeId === tabId;
-          const shown = displayedHere && displayed.open && pane?.classList.contains('active');
+          const shown = open && pane?.classList.contains('active');
           const bounds = webview?.getBoundingClientRect();
           const visible = Boolean(shown && guestWebContentsId && bounds && bounds.width > 0 && bounds.height > 0 &&
             bounds.bottom > 0 && bounds.right > 0 && bounds.top < window.innerHeight && bounds.left < window.innerWidth &&
             !webview?.closest('[inert], [aria-hidden="true"]') && getComputedStyle(webview!).visibility === 'visible');
           if (shown && !visible && !pane?.querySelector('.showing-start-page')) settling = true;
           if (request.action === 'close' && webview) settling = true;
-          return { tabId, guestWebContentsId, inWorkspace, active, visible };
+          return { tabId, guestWebContentsId, inWorkspace, open, active, visible };
         });
         return { requestId: request.requestId!, pages };
       });

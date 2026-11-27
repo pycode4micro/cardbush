@@ -38,9 +38,27 @@ for (const stage of ['pending', 'reserved', 'committed', 'reset']) test(`Assista
     entry: { id: 'initial', role: 'user', source: 'text', visibility: 'conversation', content: 'Start work', createdAt: new Date().toISOString() } });
   await until(() => requests.length === 2 && !assistant.command({ action: 'read', sessionId: id }).busy);
   assert.equal(tasks.get(id, 'child').resultWatched, true);
+  const observation = activeObservation(tasks.get(id, 'child'));
+  tasks.observe(id, 'child', observation);
+  const writes = persistence.load(id).length;
+  const revision = tasks.get(id, 'child').revision;
+  for (let cursor = 2; cursor <= 2319; cursor++) tasks.observe(id, 'child', { ...observation, cursor });
+  assert.throws(() => tasks.observe(id, 'child', { ...observation, cursor: NaN }), /Invalid child observation cursor/);
+  assert.throws(() => tasks.observe(id, 'child', observation), /cursor moved backwards/);
+  assert.equal(persistence.load(id).length, writes, 'cursor-only events from the 5EPlay replay never append a task revision');
+  assert.equal(tasks.get(id, 'child').observation.cursor, 2319);
+  assert.equal(tasks.get(id, 'child').revision, revision);
+  assistant.close(); persistence.close();
+  persistence = new FileSubagentTaskPersistence({ root: taskRoot }); tasks = new SubagentTaskStore({ persistence });
+  assert.equal(tasks.get(id, 'child').observation.cursor, 1, 'the source can replay from the last durable task change');
+  assert.equal(tasks.get(id, 'child').resultWatched, true);
+  tasks.delivery.restoreWatching(id, tasks.list(id));
+  tasks.observe(id, 'child', { ...observation, cursor: 2320, progress: { ...observation.progress, completedActions: 1 } });
+  assert.equal(persistence.load(id).at(-1).task.observation.cursor, 2320);
   const finished = tasks.finish({ parentSessionId: id, taskId: 'child', status: 'completed', finalResponse: 'Verified result', errorMessage: '', usage: {} });
+  assistant = create();
   if (stage === 'reserved') assert.ok(tasks.delivery.reserve(id, finished));
-  if (stage === 'committed') { t.mock.timers.tick(1200); await until(() => requests.length === 3 && !assistant.command({ action: 'read', sessionId: id }).busy); }
+  if (stage === 'committed') { assistant.restore(parent, profile); t.mock.timers.tick(1200); await until(() => requests.length === 3 && !assistant.command({ action: 'read', sessionId: id }).busy); }
   if (stage === 'reset') assistant.forget(id);
   assistant.close(); persistence.close();
   persistence = new FileSubagentTaskPersistence({ root: taskRoot }); tasks = new SubagentTaskStore({ persistence }); requests = [];
@@ -61,7 +79,13 @@ test('ordinary conversation restores a watched result once without redispatching
   const task = tasks.start({ parentSessionId: 'parent', parentTurnId: 'old', taskId: 'finished-child', childSessionId: 'child',
     childTurnId: 'child-turn', prompt: 'Check', inheritContext: false, inheritedMessageCount: 0 });
   tasks.delivery.watch('parent', task);
-  tasks.finish({ parentSessionId: 'parent', taskId: task.taskId, status: 'completed', finalResponse: 'Durable result', errorMessage: '', usage: {} });
+  const observation = activeObservation(task);
+  tasks.observe('parent', task.taskId, observation);
+  tasks.observe('parent', task.taskId, { ...observation, cursor: 1468 });
+  const resumed = new SubagentTaskStore({ persistence });
+  assert.equal(resumed.get('parent', task.taskId).observation.cursor, 1);
+  assert.ok(resumed.restoredLocalRuns('parent', task.taskId).length);
+  resumed.finish({ parentSessionId: 'parent', taskId: task.taskId, status: 'completed', finalResponse: 'Durable result', errorMessage: '', usage: {} });
   const requests = [];
   for (const turnId of ['next', 'after-restart']) {
     const registry = new ToolRegistry();
@@ -77,6 +101,11 @@ test('ordinary conversation restores a watched result once without redispatching
   assert.equal(sessions.snapshot('parent').turns.flatMap(turn => turn.messages).filter(fact => fact.message.name === 'subagent_result').length, 1);
   assert.match(JSON.stringify(requests[0].messages), /Durable result/);
 });
+
+function activeObservation(task) {
+  return { contextId: task.childSessionId, taskId: task.taskId, cursor: 1, state: 'working',
+    progress: { phase: 'model', text: '', completedActions: 0, failedActions: 0 }, interactions: [] };
+}
 
 test('resident startup restores Assistant notifications without a new user turn', async t => {
   const root = temporary(t), sessions = new SessionStore(), tasks = new SubagentTaskStore();

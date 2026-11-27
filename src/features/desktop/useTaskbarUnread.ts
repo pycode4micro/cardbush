@@ -6,7 +6,7 @@ import { observeAssistantReceipt, readAssistantReceipt, saveAssistantReceipt } f
 type ReplyStatus = { unread: number; generation: number; latest?: { id: string; at: string } };
 
 /** Only the workspace publishes the combined badge. The capsule shares its read position. */
-export function useTaskbarUnread(workspaceUnread: number, ready: boolean) {
+export function useTaskbarUnread(workspaceUnread: number, ready: boolean, workspaceReady: boolean) {
   const [assistantUnread, setAssistantUnread] = useState(0);
   useEffect(() => {
     const desktop = window.cardbushDesktop;
@@ -39,6 +39,8 @@ export function useTaskbarUnread(workspaceUnread: number, ready: boolean) {
     return () => { disposed = true; offReply(); offRead(); };
   }, [ready]);
   useEffect(() => {
-    void window.cardbushDesktop?.setSessionAttentionCount?.(workspaceUnread + assistantUnread).catch(() => undefined);
-  }, [workspaceUnread, assistantUnread]);
+    if (!ready) return;
+    const count = (workspaceReady ? workspaceUnread : 0) + assistantUnread;
+    void window.cardbushDesktop?.setSessionAttentionCount?.(count).catch(() => undefined);
+  }, [ready, workspaceReady, workspaceUnread, assistantUnread]);
 }

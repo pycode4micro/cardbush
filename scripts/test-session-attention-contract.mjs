@@ -128,7 +128,8 @@ assert.match(hook, /attentionByConversation/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'completed'/);
 assert.match(hook, /markSessionAttention\([\s\S]*?'interaction'/);
 assert.match(app, /useTaskbarUnread\(chat\.workspaceNotices\.length/, 'the workspace publishes its inbox count once; embedded chats cannot overwrite it');
-assert.match(read('src', 'features', 'desktop', 'useTaskbarUnread.ts'), /setSessionAttentionCount\?\.\(workspaceUnread \+ assistantUnread\)/);
+assert.match(app, /useTaskbarUnread\(chat\.workspaceNotices\.length, runtimeStartup\.phase === 'ready', chat\.initialListSettled\)/);
+assert.match(read('src', 'features', 'desktop', 'useTaskbarUnread.ts'), /const count = \(workspaceReady \? workspaceUnread : 0\) \+ assistantUnread;[\s\S]*?setSessionAttentionCount\?\.\(count\)/);
 assert.match(hook, /clearSessionAttention\(activeConversationIdRef.current, 'completed'\)/);
 
 assert.match(app, /attentionByConversation=\{chat\.attentionByConversation\}/);

@@ -408,7 +408,7 @@ function CardbushApp() {
     contextWindowUsageAvailable: backendCapabilities.contextWindowUsage,
     workspaceChangesAvailable: backendCapabilities.workspaceChanges,
   });
-  useTaskbarUnread(chat.workspaceNotices.length, runtimeStartup.phase === 'ready');
+  useTaskbarUnread(chat.workspaceNotices.length, runtimeStartup.phase === 'ready', chat.initialListSettled);
   useEffect(() => installUiLongTaskObserver(), []);
   useEffect(() => {
     setUiPerformanceActiveSession(chat.activeConversationId);

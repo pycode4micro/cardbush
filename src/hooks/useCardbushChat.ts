@@ -8,7 +8,7 @@ import { splitStreamAttachmentMentions, chatAttachmentsFromOutbound, streamAttac
 import { createRealtimeAgentExecutor } from '../backend/realtimeAgent';
 import { journalMessages } from '../backend/conversationJournal';
 import { useConversationEventInbox, observeConversationEvents, type ConversationEventResult } from '../features/automations/conversationEventResults';
-import { workspaceInbox } from '../features/desktop/workspaceNotifications';
+import { subscribeWorkspaceInteractionAttention, workspaceInbox } from '../features/desktop/workspaceNotifications';
 import type { ConversationEntry } from '@cardbush/bush-protocol';
 import type { VoiceTarget } from '../features/voice/voiceSession';
 import { adoptDraftConversationSource, resolveConversationSource } from '../features/settings/conversationSource';
@@ -533,9 +533,12 @@ export function useCardbushChat(
   }, [clearSessionAttention, markSessionAttention]);
 
   // Interaction lifecycle events also clear badges on inactive/local or remote sessions.
-  useEffect(() => onRuntimeInteractionsChanged((sessionId, interaction) => {
-    syncInteractionAttention(sessionId, interaction);
-  }), [onRuntimeInteractionsChanged, syncInteractionAttention]);
+  useEffect(() => backend.scope ? onRuntimeInteractionsChanged(syncInteractionAttention)
+    : subscribeWorkspaceInteractionAttention(onRuntimeInteractionsChanged,
+      sessionId => sessionId === PERSONAL_ASSISTANT_SESSION || Boolean(preparedConversationsRef.current[sessionId]) ||
+        conversationsRef.current.some(conversation => conversation.id === sessionId),
+      fetchConversations, syncInteractionAttention),
+  [backend.scope, fetchConversations, onRuntimeInteractionsChanged, syncInteractionAttention]);
 
   useEffect(() => {
     if (backend.scope) return;
@@ -544,7 +547,7 @@ export function useCardbushChat(
 
   const pruneSessionAttention = useCallback((knownIds: Set<string>) => {
     const staleIds = Object.keys(attentionByConversationRef.current).filter(
-      (sessionId) => !knownIds.has(sessionId),
+      (sessionId) => sessionId !== PERSONAL_ASSISTANT_SESSION && !knownIds.has(sessionId),
     );
     if (staleIds.length === 0) return;
     const next = { ...attentionByConversationRef.current };
@@ -4358,6 +4361,7 @@ export function useCardbushChat(
     processingConversationIds,
     attentionByConversation: inbox.attentionByConversation,
     workspaceNotices: inbox.notices,
+    initialListSettled,
     unreadEventResults, latestEventArrival,
     clearSessionAttention,
     activeTeamFlow,

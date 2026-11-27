@@ -3,11 +3,12 @@ import type { WebContents } from 'electron';
 
 type Reference = { tabId: string; pageId?: string; url?: string };
 type Entry = { tabId: string; ownerId: number; guestId: number; targetKey: string };
+type AgentTab = { ownerId: number; scopeId: string; sessionId: string; reusable: boolean };
 type Scope = { ownerId: number; entries: Map<string, Entry>; selected: string; bindingRevision: number;
   inheritedFrom?: { parentId: string; revision: number } };
 export type BrowserTabAction = { action: 'open' | 'bind' | 'activate' | 'close' | 'inspect'; tabId: string;
   tabIds?: string[]; url?: string; sessionId?: string; requestId?: string; background?: boolean };
-export type BrowserTabPresentation = { tabId: string; guestWebContentsId: number | null; inWorkspace: boolean; active: boolean; visible: boolean };
+export type BrowserTabPresentation = { tabId: string; guestWebContentsId: number | null; inWorkspace: boolean; open: boolean; active: boolean; visible: boolean };
 export type BrowserTabActionResult = { requestId: string; pages: BrowserTabPresentation[] };
 const pageCommands = new Set([
   'Accessibility.enable', 'Accessibility.getFullAXTree', 'DOM.resolveNode', 'DOM.describeNode', 'DOM.getContentQuads',
@@ -15,6 +16,7 @@ const pageCommands = new Set([
   'Page.getFrameTree', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Input.insertText', 'Input.dispatchKeyEvent',
   'Input.dispatchMouseEvent',
 ]);
+const agentTabLimit = 8;
 
 function unavailable(message: string, code = 'cardbush_page_unavailable'): never {
   throw Object.assign(new Error(message), { code });
@@ -38,6 +40,8 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined, ca
 /** Only registered inspector guests, never the application renderer or unrelated previews. */
 export class IntegratedBrowser {
   private readonly entries = new Map<string, Entry>();
+  private readonly agentTabs = new Map<string, AgentTab>();
+  private readonly reusingTabs = new Set<string>();
   private readonly scopes = new Map<string, Scope>();
   private readonly parents = new Map<string, string>();
   private readonly attached = new Set<number>();
@@ -57,7 +61,7 @@ export class IntegratedBrowser {
     if (result.pages.some(page => !page || typeof page !== 'object') ||
       pending.tabIds.some(id => result.pages.filter(page => page.tabId === id).length !== 1) || result.pages.some(page =>
       (page.guestWebContentsId !== null && !Number.isSafeInteger(page.guestWebContentsId)) ||
-      ['inWorkspace', 'active', 'visible'].some(key => typeof page[key as keyof BrowserTabPresentation] !== 'boolean'))) return;
+      ['inWorkspace', 'open', 'active', 'visible'].some(key => typeof page[key as keyof BrowserTabPresentation] !== 'boolean'))) return;
     pending.resolve(result.pages);
   }
   private present(scope: Scope, action: BrowserTabAction, signal?: AbortSignal): Promise<BrowserTabPresentation[]> {
@@ -126,10 +130,14 @@ export class IntegratedBrowser {
     const key = this.key(owner.id, input.tabId);
     const previous = this.entries.get(key);
     if (previous?.guestId === guest.id) return;
+    if (previous) this.agentTabs.delete(key);
     const entry = { tabId: input.tabId, ownerId: owner.id, guestId: guest.id, targetKey: `cardbush:${randomUUID()}` };
     this.entries.set(key, entry);
     guest.once('destroyed', () => {
-      if (this.entries.get(key) === entry) this.entries.delete(key);
+      if (this.entries.get(key) === entry) {
+        this.entries.delete(key);
+        this.agentTabs.delete(key);
+      }
       this.attached.delete(guest.id);
     });
   }
@@ -137,12 +145,17 @@ export class IntegratedBrowser {
     const key = this.key(ownerId, input.tabId), entry = this.entries.get(key);
     if (entry?.guestId !== input.guestWebContentsId) return;
     this.entries.delete(key);
+    this.agentTabs.delete(key);
     this.detach(entry.guestId);
   }
   matchesReference(ownerId: number, tabId: string, targetKey: string): boolean {
     const entry = this.entries.get(this.key(ownerId, tabId));
     if (!entry || entry.targetKey !== targetKey) return false;
-    try { this.guest(entry); return true; } catch { return false; }
+    try { this.guest(entry); this.retainTab(entry); return true; } catch { return false; }
+  }
+  private retainTab(entry: Entry) {
+    const tab = this.agentTabs.get(this.key(entry.ownerId, entry.tabId));
+    if (tab) tab.reusable = false;
   }
   /** Explicit @ selections grant only these exact guests to the submitting conversation. */
   async bind(owner: WebContents, scopeId: string, references: Reference[]) {
@@ -155,7 +168,10 @@ export class IntegratedBrowser {
     });
     const previous = this.scopes.get(scopeId);
     const scope: Scope = previous?.ownerId === owner.id ? previous : { ownerId: owner.id, entries: new Map(), selected: '', bindingRevision: 0 };
-    for (const entry of selected) scope.entries.set(entry.tabId, entry);
+    for (const entry of selected) {
+      this.retainTab(entry);
+      scope.entries.set(entry.tabId, entry);
+    }
     scope.selected = selected[0].tabId;
     scope.bindingRevision++;
     this.scopes.set(scopeId, scope);
@@ -240,18 +256,51 @@ export class IntegratedBrowser {
     if (!scope) return;
     for (const entry of scope.entries.values()) this.detach(entry.guestId);
   }
-  async request(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  private async openPage(scopeId: string, scope: Scope, params: Record<string, unknown>, signal?: AbortSignal) {
+    const url = pageUrl(params.url), sessionId = this.actionSession(scopeId), background = params.background !== false;
+    if (background && params.reuseExisting !== false) {
+      const candidates = [...scope.entries.values()].reverse().filter(entry => {
+        const key = this.key(entry.ownerId, entry.tabId), tab = this.agentTabs.get(key);
+        return tab?.scopeId === scopeId && tab.sessionId === sessionId && tab.reusable && !this.reusingTabs.has(key) && this.entries.get(key) === entry;
+      });
+      const presentations = await this.inspect(scopeId, scope, candidates, signal);
+      for (const entry of candidates) {
+        const key = this.key(entry.ownerId, entry.tabId), presentation = presentations.find(item => item.tabId === entry.tabId);
+        if (!this.agentTabs.get(key)?.reusable || this.reusingTabs.has(key) || this.entries.get(key) !== entry ||
+            presentation?.guestWebContentsId !== entry.guestId || !presentation.inWorkspace) continue;
+        if (presentation.visible || (presentation.active && presentation.open)) { this.retainTab(entry); continue; }
+        const guest = this.guest(entry);
+        this.reusingTabs.add(key);
+        try {
+          signal?.throwIfAborted();
+          if (guest.getURL() !== url) {
+            // Previously shared links and element targets must not point to a different document.
+            entry.targetKey = `cardbush:${randomUUID()}`;
+            await abortable(guest.loadURL(url), signal, () => guest.stop());
+          }
+          const [current] = await this.inspect(scopeId, scope, [entry], signal);
+          this.requirePresented(entry, current);
+          scope.selected = entry.tabId;
+          scope.bindingRevision++;
+          return { ...this.page(entry, scope, current), reused: true };
+        } finally { this.reusingTabs.delete(key); }
+      }
+    }
     signal?.throwIfAborted();
-    const scopeId = String(params.scopeId ?? ''), scope = this.scopes.get(scopeId);
-    if (!scope) unavailable('Select CardBush with select_browser before using its pages.', 'cardbush_browser_unselected');
-    if (method === 'debugger.detachScope') { this.release(scopeId); return { released: true, browser: 'cardbush' }; }
-    if (method === 'tabs.create') {
-      const url = pageUrl(params.url), tabId = `browser:${randomUUID()}`;
-      this.options.action(scope.ownerId, { action: 'open', tabId, url, sessionId: this.actionSession(scopeId), background: params.background !== false });
+    const count = [...this.agentTabs.values()].filter(tab => tab.ownerId === scope.ownerId && tab.sessionId === sessionId).length;
+    if (count >= agentTabLimit) throw Object.assign(new Error(
+      'This CardBush conversation has reached its Agent tab limit. Use list_pages and navigate an existing Agent tab, or close an Agent tab before creating another.'),
+      { code: 'cardbush_agent_tab_limit', details: { limit: agentTabLimit, execution: 'not_dispatched' } });
+    const tabId = `browser:${randomUUID()}`, key = this.key(scope.ownerId, tabId);
+    // Reserve before signaling the renderer, including while sibling Agents are opening pages.
+    this.agentTabs.set(key, { ownerId: scope.ownerId, scopeId, sessionId, reusable: background && params.reuseExisting !== false });
+    try { this.options.action(scope.ownerId, { action: 'open', tabId, url, sessionId, background }); }
+    catch (error) { this.agentTabs.delete(key); throw error; }
+    try {
       const deadline = Date.now() + 15_000;
       while (Date.now() < deadline) {
         signal?.throwIfAborted();
-        const entry = this.entries.get(this.key(scope.ownerId, tabId));
+        const entry = this.entries.get(key);
         if (entry) {
           scope.entries.set(tabId, entry); scope.selected = tabId; scope.bindingRevision++;
           this.grantCreatedPage(scopeId, entry);
@@ -261,8 +310,24 @@ export class IntegratedBrowser {
         }
         await new Promise(resolve => setTimeout(resolve, 30));
       }
-      unavailable('CardBush requested a new tab but it has not become ready. It may still open; do not automatically replay this request.', 'cardbush_page_open_timeout');
+      unavailable('The requested CardBush tab did not become ready. List pages before opening another tab.', 'cardbush_page_open_timeout');
+    } catch (error) {
+      if (!scope.entries.has(tabId)) {
+        // This request never acquired a guest. Roll back its own unfinished tab and
+        // retain the slot if the renderer cannot confirm that it is gone.
+        void this.present(scope, { action: 'close', tabId, sessionId }).then(([page]) => {
+          if (!page?.inWorkspace && page?.guestWebContentsId === null) this.agentTabs.delete(key);
+        }).catch(() => {});
+      }
+      throw error;
     }
+  }
+  async request(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    signal?.throwIfAborted();
+    const scopeId = String(params.scopeId ?? ''), scope = this.scopes.get(scopeId);
+    if (!scope) unavailable('Select CardBush with select_browser before using its pages.', 'cardbush_browser_unselected');
+    if (method === 'debugger.detachScope') { this.release(scopeId); return { released: true, browser: 'cardbush' }; }
+    if (method === 'tabs.create') return this.openPage(scopeId, scope, params, signal);
     if (method === 'tabs.list') {
       // Listing is discovery, not target admission: stale selection must not
       // hide the remaining authorized tabs needed for explicit recovery.
@@ -281,7 +346,13 @@ export class IntegratedBrowser {
     }
     const entry = [...scope.entries.values()].find(item => item.guestId === params.tabId);
     if (!entry) unavailable('This CardBush page was not selected or created in this conversation.', 'cardbush_page_not_authorized');
+    const key = this.key(entry.ownerId, entry.tabId);
+    if (this.reusingTabs.has(key)) unavailable('The Agent tab is being reused. List pages before issuing another command.', 'cardbush_agent_tab_busy');
+    if (typeof params.expectedTargetKey === 'string' && params.expectedTargetKey !== entry.targetKey)
+      unavailable('The Agent tab now contains a different document. List pages and take a fresh snapshot before using it again.', 'browser_target_changed');
     const guest = this.guest(entry);
+    const tab = this.agentTabs.get(key);
+    if (tab && (tab.scopeId !== scopeId || method === 'tabs.activate' && params.bringToFront === true)) this.retainTab(entry);
     if (method === 'tabs.activate') {
       scope.selected = entry.tabId;
       scope.bindingRevision++;

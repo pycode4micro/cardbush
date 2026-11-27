@@ -184,3 +184,42 @@ test('unthrottled renderer visibility and stale focus cannot mark a minimized co
   assert.equal(api.isCardbushForeground(), false);
   unwatch(); dispose();
 });
+
+test('hidden child interactions never enter the workspace badge count, including after a delayed session lookup', async () => {
+  const api = await loadChatTranscript({ source: [
+    `export * from ${JSON.stringify(path.resolve('src/features/desktop/workspaceNotifications.ts'))};`,
+    `export * from ${JSON.stringify(path.resolve('src/runtime-client/RuntimeInteractionBridge.ts'))};`,
+  ].join('\n'), globals: { structuredClone } });
+  const bridge = api.createRuntimeInteractions();
+  const notices = {}, reads = [];
+  let deliverSessions;
+  const loaded = new Promise(resolve => { deliverSessions = resolve; });
+  const dispose = api.subscribeWorkspaceInteractionAttention(bridge.onRuntimeInteractionsChanged,
+    id => id === 'personal-assistant', () => { reads.push(true); return loaded; }, (id, interaction) => {
+      if (interaction) notices[id] = { sessionId: id, interactionId: interaction.id, kind: 'interaction', updatedAt: '2026-11-27T03:00:00.000Z' };
+      else delete notices[id];
+    });
+  const badgeCount = () => api.workspaceInbox(notices, []).notices.length;
+  const ask = (sessionId, selectionId) => bridge.registerRuntimeSolution({
+    sessionId, selectionId, turnId: 'work', prompt: 'Choose a path', options: [], blocking: true,
+  });
+  ask('hidden-child', 'child-question');
+  ask('ordinary-chat', 'parent-question');
+  ask('closed-question', 'already-answered');
+  bridge.removeRuntimeSolution('already-answered');
+  assert.equal(bridge.pendingRuntimeInteraction('hidden-child').id, 'child-question');
+  assert.equal(badgeCount(), 0);
+  assert.equal(reads.length, 1, 'concurrent children share the session visibility lookup');
+  deliverSessions([{ id: 'ordinary-chat' }, { id: 'closed-question' }]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(badgeCount(), 1);
+  assert.deepEqual(Object.keys(notices), ['ordinary-chat']);
+  bridge.registerRuntimePermission({ permissionId: 'human-required', sessionId: 'personal-assistant', turnId: 'owner-turn',
+    sourceSessionId: 'hidden-child', subagentTaskId: 'task', permissionRouting: 'user',
+    request: { reason: 'User approval required', requestedCapabilityIds: [] }, answer: async () => {} });
+  assert.equal(badgeCount(), 2, 'human approval routed to the visible parent still reaches the taskbar');
+  bridge.removeRuntimePermission('human-required');
+  bridge.removeRuntimeSolution('child-question');
+  assert.equal(badgeCount(), 1);
+  dispose();
+});

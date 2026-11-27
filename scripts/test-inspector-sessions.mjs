@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import ts from 'typescript';
+import * as bushProtocol from '@cardbush/bush-protocol';
 
 const cache = new Map();
 function load(file) {
@@ -11,6 +12,7 @@ function load(file) {
   const exports = {}; cache.set(file, exports);
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function('exports', 'require', code)(exports, spec => {
+    if (spec === '@cardbush/bush-protocol') return bushProtocol;
     if (!spec.startsWith('.')) return createRequire(file)(spec);
     const target = resolve(dirname(file), spec);
     return load(existsSync(target + '.ts') ? target + '.ts' : resolve(target, 'index.ts'));
@@ -281,7 +283,7 @@ for (const parentSelected of [true, false]) test(`browser actions belong to the 
     if (action.requestId) browser.acknowledge(owner.id, { requestId: action.requestId, pages: (action.tabIds ?? [action.tabId]).map(tabId => {
       const exists = retained(state).some(tab => tab.id === tabId);
       return { tabId, guestWebContentsId: exists ? [...guests.values()].find(guest => guest.tabId === tabId)?.id ?? null : null,
-        inWorkspace: view(state, workspace).tabs.some(tab => tab.id === tabId), active: view(state, workspace).activeId === tabId, visible: false };
+        inWorkspace: view(state, workspace).tabs.some(tab => tab.id === tabId), open: false, active: view(state, workspace).activeId === tabId, visible: false };
     }) });
   } });
   if (parentSelected) browser.select('parent');

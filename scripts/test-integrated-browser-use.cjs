@@ -342,7 +342,7 @@ async function run() {
   const citedGuest = webContents.fromId(cited.id);
   success(await call('navigate_page',{type:'url',url:url+'changed'},firstTurn));
   await citedGuest.executeJavaScript('window.referenceProof=123;document.querySelector("input").value="keep typed content";window.scrollTo(0,240)');
-  const other = success(await call('new_page',{url},firstTurn));
+  const other = success(await call('new_page',{url,reuseExisting:false},firstTurn));
   const beforeCount = await ui('browserFixture.allTabs.length');
   const originalScroll = await citedGuest.executeJavaScript('window.scrollY');
   await ui(`browserFixture.setWorkspaceId('reference-reader');browserFixture.setCitation(${JSON.stringify(`[AA 榜单](${cited.reference})`)});void 0`);
@@ -384,6 +384,15 @@ async function run() {
   const quietPage=success(await call('new_page',{url},'unrelated-current'));
   assert.equal(await ui('browserFixture.snapshot(browserFixture.workspaceId).open'),false,'creating the first background page does not open a collapsed inspector');
   assert.equal(quietPage.visible,false);
+  const quietCount = await ui('browserFixture.allTabs.length');
+  const oldSnapshot = success(await call('take_snapshot',{limit:3},'unrelated-current'));
+  const reusedPage = success(await call('new_page',{url:url+'reused'},'unrelated-current'));
+  assert.equal(reusedPage.reused,true);
+  assert.equal(reusedPage.id,quietPage.id);
+  assert.equal(reusedPage.visible,false);
+  assert.equal(reusedPage.url,url+'reused');
+  assert.equal(await ui('browserFixture.allTabs.length'),quietCount);
+  failure(await call('take_snapshot',{cursor:oldSnapshot.nextCursor},'unrelated-current'),'snapshot_cursor_expired');
   success(await call('take_snapshot',{query:'Play first video'},'unrelated-current'));
   success(await call('close_page',{pageId:quietPage.id},'unrelated-current'));
   await ui(`browserFixture.setWorkspaceId(browserFixture.localInspectorWorkspace(${JSON.stringify(firstTurn)})); void 0`);

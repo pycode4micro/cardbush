@@ -19,6 +19,7 @@ function fixture({ autoAck = true, actionTimeoutMs, ownerVisible, presentation =
     const destroyed = [];
     const guest = { id: ++nextId, tabId, hostWebContents: owner, closed: false,
       isDestroyed() { return this.closed; }, getType: () => 'webview', getURL: () => url, getTitle: () => 'Same URL',
+      async loadURL(next) { url = next; }, stop() {},
       once(event, callback) { if (event === 'destroyed') destroyed.push(callback); },
       debugger: { isAttached: () => false },
       destroy() { this.closed = true; destroyed.forEach(callback => callback()); } };
@@ -29,7 +30,7 @@ function fixture({ autoAck = true, actionTimeoutMs, ownerVisible, presentation =
   const response = action => ({ requestId: action.requestId, pages: (action.tabIds ?? [action.tabId]).map(tabId => {
     const guest = [...guests.values()].find(guest => guest.tabId === tabId && !guest.closed);
     return presentation({ tabId, guestWebContentsId: action.action === 'close' ? null : guest?.id ?? null,
-      inWorkspace: Boolean(guest), active: true, visible: true });
+      inWorkspace: Boolean(guest), open: true, active: true, visible: true });
   }) });
   const browser = new IntegratedBrowser({ defaultOwner: () => owners[0], getContents: id => guests.get(id), actionTimeoutMs, ownerVisible,
     action(ownerId, action) {
@@ -99,6 +100,55 @@ test('background creation and selection do not request inspector activation', as
   assert.equal(f.actions.at(-1).action, 'activate');
   await f.call('conversation', 'tabs.create', {url:'https://example.com/show', background:false});
   assert.equal(f.actions.findLast(action => action.action === 'open').background, false);
+});
+
+test('45 sequential lookups reuse only the same Agent background guest in Assistant and ordinary conversations', async () => {
+  const f = fixture({ presentation: page => ({ ...page, active: page.tabId === 'user-tab', visible: page.tabId === 'user-tab' }) });
+  const personal = f.register('user-tab', f.owners[0], 'https://example.com/personal');
+  for (const parent of ['personal-assistant', 'ordinary-conversation']) {
+    await f.bind(parent, personal);
+    const child = `${parent}-child`;
+    f.browser.inheritScope(parent, child);
+    const first = await f.create(child);
+    for (let index = 1; index < 45; index++) {
+      const result = await f.call(child, 'tabs.create', { url: `https://example.com/research/${index}` });
+      assert.equal(result.id, first.id);
+      assert.equal(result.reused, true);
+      assert.equal(result.visible, false);
+      assert.notEqual(result.targetKey, first.targetKey);
+    }
+    assert.equal((await f.list(parent)).find(page => page.selected).id, personal.id);
+    assert.equal((await f.list(child)).length, 2);
+    assert.equal(f.browser.matchesReference(f.owners[0].id, first.tabId, first.targetKey), false);
+    await assert.rejects(f.call(child, 'tabs.activate', { tabId: first.id, expectedTargetKey: first.targetKey }), { code: 'browser_target_changed' });
+  }
+  assert.equal(personal.guest.getURL(), 'https://example.com/personal');
+  assert.equal(f.actions.filter(action => action.action === 'open').length, 2);
+  assert.equal(f.actions.filter(action => action.action === 'activate' || action.action === 'close').length, 0);
+});
+
+test('distinct tabs are bounded across siblings; explicit references and the user tab stay intact', async () => {
+  const f = fixture({ presentation: page => ({ ...page, active: page.tabId === 'user-tab', visible: page.tabId === 'user-tab' }) });
+  const user = f.register('user-tab');
+  await f.bind('parent', user);
+  const a = 'child-a', b = 'child-b';
+  for (const scope of [a, b]) f.browser.inheritScope('parent', scope);
+  const first = await f.create(a);
+  // Opening a citation protects the original guest from automatic navigation.
+  assert.equal(f.browser.matchesReference(f.owners[0].id, first.tabId, first.targetKey), true);
+  const outcomes = await Promise.allSettled(Array.from({length: 12}, (_, i) => f.call(i % 2 ? a : b,
+    'tabs.create', {url: `https://example.com/compare/${i}`, reuseExisting: false})));
+  const added = outcomes.filter(result => result.status === 'fulfilled');
+  const rejected = outcomes.filter(result => result.status === 'rejected');
+  assert.equal(added.length, 7);
+  assert.equal(rejected.length, 5);
+  rejected.forEach(result => assert.equal(result.reason.code, 'cardbush_agent_tab_limit'));
+  await assert.rejects(f.create(a), { code: 'cardbush_agent_tab_limit' });
+  assert.equal((await f.list('parent')).length, 9);
+  await f.call('parent', 'tabs.close', { tabId: added[0].value.id });
+  assert.notEqual((await f.create(a)).id, first.id);
+  assert.equal(f.guests.get(first.id).getURL(), 'https://example.com/');
+  assert.equal(f.guests.get(user.id).getURL(), 'https://example.com/');
 });
 
 test('concurrent integrated commands wait for background renderer initialization and detach clears control', async () => {
