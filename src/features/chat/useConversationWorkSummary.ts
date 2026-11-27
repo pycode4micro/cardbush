@@ -3,7 +3,7 @@ import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
 import { useHoverPreview } from '../../components/HoverPreview';
 
 /** Shared header summary placement and dismissal for every conversation surface. */
-export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement | null>, activeConversationId: string, inspectorOpen: boolean) {
+export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement | null>, activeConversationId: string, inspectorOpen: boolean, onOpen?: () => void) {
   const toggleRef = useRef<HTMLButtonElement>(null);
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
   const [widePane, setWidePane] = useState(false);
@@ -94,7 +94,10 @@ export function useConversationWorkSummary(chatBodyRef: RefObject<HTMLDivElement
     toggleWorkSummary: (anchor: HTMLElement) => {
       updateWorkSummaryLayout(anchor);
       hover.close();
-      if (!workSummaryVisible) setPinnedLayout(true);
+      if (!workSummaryVisible) {
+        setPinnedLayout(true);
+        onOpen?.();
+      }
       setWorkSummaryVisible(value => !value);
     },
     workSummaryHoverProps: { ref: toggleRef, ...hover.triggerProps, 'aria-describedby': undefined,

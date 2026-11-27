@@ -1,5 +1,6 @@
 // Production React controls/theme in an isolated hidden Electron renderer. No accounts or real microphone.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), electron = require('electron');
+const { launchElectronFixture, runElectronFixture } = require('./helpers/electron-test-lifecycle.cjs');
 if (typeof electron === 'string') {
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
   if (process.argv.includes('--character')) env.CARDBUSH_ASSISTANT_UI_CASE = 'character';
@@ -12,9 +13,8 @@ if (typeof electron === 'string') {
   if (process.argv.includes('--markdown')) env.CARDBUSH_ASSISTANT_UI_CASE = 'markdown';
   const directory = fs.mkdtempSync(path.resolve('tmp/assistant-ui-'));
   // Keep the native bundler in Node so Electron can close its Windows I/O loop cleanly.
-  buildFixture(directory).then(() => {
-    const result = require('node:child_process').spawnSync(electron, [__filename, directory], { env, windowsHide: true, stdio: 'inherit', timeout: env.CARDBUSH_ASSISTANT_UI_CASE ? 60000 : 100000 });
-    if (result.error) console.error(result.error); process.exitCode = result.status ?? 1;
+  buildFixture(directory).then(async () => {
+    process.exitCode = await launchElectronFixture(electron, [__filename, directory], env);
   }).catch(error => { console.error(error); process.exitCode = 1; });
 } else {
   runRendererFixture();
@@ -31,7 +31,7 @@ async function buildFixture(directory) {
       if (source === '../subagents/useLoopSubagentTasks' && importer?.endsWith('AssistantView.tsx')) return '\0assistant-tasks.ts';
     }, load(id) {
       if (id === '\0assistant-event-backend.ts') return `export const eventBackend={read:async()=>structuredClone(fixture.eventSnapshot??{events:[],detections:[],permissions:[],solutions:[]})};`;
-      if (id === '\0assistant-tasks.ts') return `import {useEffect,useState} from 'react';export function useLoopSubagentTasks(){const [,update]=useState(0);useEffect(()=>{const refresh=()=>update(v=>v+1);window.addEventListener('fixture-tasks',refresh);return()=>window.removeEventListener('fixture-tasks',refresh);},[]);return fixture.tasks??[];}`;
+      if (id === '\0assistant-tasks.ts') return `import {useEffect,useState} from 'react';export function useLoopSubagentTasks(){const [tasks,setTasks]=useState(()=>[...(fixture.tasks??[])]);useEffect(()=>{const refresh=()=>setTasks([...(fixture.tasks??[])]);window.addEventListener('fixture-tasks',refresh);return()=>window.removeEventListener('fixture-tasks',refresh);},[]);return tasks;}`;
       if (id === '\0assistant-backend.ts') return `
         import {splitStreamAttachmentMentions} from ${file('src/shared/chatAttachments.ts')};
         import {assistantInputAttachments} from ${file('src/features/assistant/assistantTimeline.ts')};
@@ -111,7 +111,7 @@ async function buildFixture(directory) {
             <AssistantView active={active} language={language}
               noticeTarget={noticeTarget} onNoticeLocated={()=>setNoticeTarget(undefined)}
               composerControls={{...controls,...permissions}} prepare={async()=>{if(fixture.holdPrepare)await new Promise(resolve=>fixture.releasePrepare=resolve);return {sessionId:'personal-assistant',model:'fixture',userInput:'',...readAssistantPermissions()};}} inspectorOpen={inspector} onToggleInspector={()=>{fixture.inspected=true;setInspector(value=>!value);}}
-              composerPortalTarget={portal?target:null} browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
+              composerPortalTarget={portal?target:null} subagentObservabilityAvailable browserTabs={[{kind:"browser",tabId:"test-tab",url:"https://example.com",title:"网页参考"}]}/></section>
             {portal&&<aside ref={setTarget} className="inspector-quick-input" style={{position:"fixed",bottom:20,left:300,width:450,zIndex:30}}/>}
           </ProfileCenter></ApplicationVoiceHost></AssistantSkinContext.Provider></div>;
         }createRoot(document.getElementById('root')).render(<Fixture/>);`;
@@ -135,7 +135,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 // The full suite also traverses every character state and tool via the real polling feed.
 // Individual UI assertions retain their short deadline; allow time for the cumulative cases.
 const deadline = setTimeout(() => { console.error('Assistant UI suite exceeded its total time budget'); app.exit(1); }, process.env.CARDBUSH_ASSISTANT_UI_CASE ? 55000 : 95000);
-app.whenReady().then(async () => {
+runElectronFixture(app, async () => {
   if (process.env.CARDBUSH_ASSISTANT_UI_CASE === 'attachments') electron.protocol.handle('cardbush-file', async request => {
     const target = path.resolve(decodeURIComponent(new URL(request.url).pathname).replace(/^\/(?=[a-z]:)/i, ''));
     if (!target.startsWith(path.resolve(directory) + path.sep)) return new Response('', { status: 403 });
@@ -362,6 +362,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelector(".assistant-composer-dock textarea").value'),'');
     await read(`fixture.tasks=[{taskId:'task-visible',origin:'subagent',parentSessionId:'personal-assistant',childSessionId:'child-execution',parentTurnId:'voice_turn_fixture',agentName:'桌面整理',requestPrompt:'整理桌面应用清单',status:'running',terminal:false,createdAt:new Date().toISOString(),remote:{agentId:'ssh-1',taskId:'remote-task'}}];window.addEventListener('cardbush:open-work-summary-inspector',e=>fixture.taskDetail=e.detail);window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=running]")');
+    const badge = 'document.querySelector("[data-work-summary-toggle] .work-summary-badge")';
+    await until(`${badge}?.textContent === "1" && ${badge}.hasAttribute("data-spinning")`);
+    assert.equal(await read(`getComputedStyle(${badge}, "::after").animationName`), 'cardbush-spin');
     assert.equal(await read('document.querySelector(".assistant-task-name").textContent'),'桌面整理');
     assert.equal(await read('document.querySelector(".assistant-task-meta > span").textContent'), '子 Agent');
     assert.equal(await read('document.querySelector(".assistant-task-status").textContent'), '运行中');
@@ -383,13 +386,30 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelectorAll(".assistant-task-bubble").length'),1,'queued continuations share the original child conversation entry');
     assert.equal(await read('document.querySelector(".assistant-task-bubble")===fixture.taskBubble'),true,'the entry does not move or remount on a follow-up');
     assert.equal(await read('document.querySelector(".assistant-task-name").textContent'),'桌面整理','retain the original child name');
+    assert.equal(await read(`${badge}.textContent`), '1', 'a queued follow-up does not count as a second child');
     await read(`fixture.tasks[0]={...fixture.tasks[0],status:'completed',terminal:true};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble").getAttribute("aria-label").includes("本轮结束后执行")');
+    assert.equal(await read(`${badge}.hasAttribute("data-spinning")`), false, 'a queued-only child does not spin');
     await read(`fixture.tasks[1]={...fixture.tasks[1],raw:{...fixture.tasks[1].raw,executionStartedAt:new Date().toISOString()}};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('!document.querySelector(".assistant-task-bubble").getAttribute("aria-label").includes("本轮结束后执行")');
-    await read(`fixture.tasks=fixture.tasks.map(task=>({...task,status:'completed',terminal:true}));window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await read(`fixture.tasks=fixture.tasks.map(task=>({...task,status:'completed',terminal:true,completedAt:new Date().toISOString()}));window.dispatchEvent(new Event('fixture-tasks'));void 0`);
     await until('document.querySelector(".assistant-task-bubble[data-status=completed]")');
     assert.match(await read('document.querySelector(".assistant-task-bubble").getAttribute("aria-label")'),/已完成/);
+    assert.equal(await read(`${badge}.textContent`), '1', 'the completed child stays counted until viewed');
+    assert.equal(await read(`getComputedStyle(${badge}, "::after").animationName`), 'none');
+    await read(`fixture.tasks.push({...fixture.tasks[0],taskId:'task-new',childSessionId:'child-new',agentName:'新子任务',remote:undefined,status:'running',terminal:false,createdAt:new Date().toISOString()});window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await until(`${badge}?.textContent === "2" && ${badge}.hasAttribute("data-spinning")`);
+    await click('.assistant-task-bubble[data-status=completed]');
+    await until(`${badge}?.textContent === "1" && ${badge}.hasAttribute("data-spinning")`);
+    await read(`fixture.tasks[2]={...fixture.tasks[2],status:'completed',terminal:true,completedAt:new Date().toISOString()};window.dispatchEvent(new Event('fixture-tasks'));void 0`);
+    await until(`${badge}?.textContent === "1" && !${badge}.hasAttribute("data-spinning")`);
+    await read(`document.querySelector('[data-work-summary-toggle]').dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));void 0`);
+    await until('document.querySelector(".conversation-work-summary.soft-panel-visible .work-summary-subagent-list")');
+    assert.equal(await read(`${badge}.textContent`), '1', 'hover preview does not mark results viewed');
+    await click('[data-work-summary-toggle]');
+    await until(`!${badge}`);
+    await read('document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));void 0');
+    await until('!document.querySelector(".conversation-work-summary")');
     await menu();await choose('重置上下文');await until('document.querySelector(".confirm-action-dialog[open]")');
     await click('.confirm-action-dialog .danger');await until('document.querySelectorAll(".assistant-message,.assistant-task-bubble").length===0');
     await read(`fixture.entries.push({id:'after-task-reset',role:'user',content:'重新开始',source:'text',visibility:'conversation',createdAt:new Date().toISOString()});void 0`);
@@ -411,6 +431,5 @@ app.whenReady().then(async () => {
     await until('!document.querySelector(".assistant-composer-dock .runtime-queue-item") && document.querySelectorAll(".assistant-messages [data-message-id="+fixture.sendCalls.at(-1).identity.id+"]").length===1');
     console.log('Assistant UI passed: shared header/docking, inspector/summary, browser references, portal draft, responsive input alignment, scroll follow, simple Composer, file picker/send/retry, dictation draft, Markdown, private speech, model settings, history, bubble/reduced-motion animations and responsive themes. Screenshots: ' + directory);
   } finally { win.destroy(); clearTimeout(deadline); }
-  app.quit();
-}).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); });
+});
 }

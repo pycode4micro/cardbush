@@ -37,7 +37,7 @@ export function childConversationSummaries(tasks: SubagentTaskSnapshot[]) {
     const current = [...group].reverse().find(task => task.status === 'running' && !isQueuedSubagentTask(task))
       ?? [...group].reverse().find(task => task.status === 'running') ?? group[group.length - 1];
     // Retain the entry's position and inspector identity; the watcher follows all child turns.
-    return { ...original, status: current.status, terminal: current.terminal,
+    return { ...original, currentTaskId: current.taskId, status: current.status, terminal: current.terminal,
       responsePrompt: current.responsePrompt, errorMessage: current.errorMessage, updatedAt: current.updatedAt,
       completedAt: current.completedAt, usage: current.usage, raw: current.raw };
   }).sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));

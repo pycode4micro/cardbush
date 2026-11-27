@@ -1,4 +1,5 @@
 const { readSourceFile } = require('./helpers/read-source-file.cjs');
+const { runElectronFixture } = require('./helpers/electron-test-lifecycle.cjs');
 // Actual extracted views in isolated Chromium: no product profile, real files,
 // network requests, model calls or Runtime subscriptions.
 const { app, BrowserWindow, protocol } = require('electron');
@@ -239,7 +240,7 @@ async function buildViews() {
     .map(asset => String(asset.source)).join('\n') };
 }
 
-app.whenReady().then(async () => {
+runElectronFixture(app, async () => {
   const { code: bundle, css: viewCss } = await buildViews();
   // Vite builds production feature gates; React itself must remain development
   // here so StrictMode actually replays mounts and effect cleanup.
@@ -1167,8 +1168,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(errors, []);
     console.log('App views passed: module ownership, StrictMode, preview races/reload/error/unmount, lazy syntax, toolbar, welcome, session switch and stop.');
   } finally { window.destroy(); }
-// Let Chromium and native worker queues finish disposing before process exit.
-}).then(() => app.quit()).catch(error => { console.error(error); app.exit(1); });
+});
 
 function loadChatCallbackNames() {
   const file = path.join(root, 'src/features/chat/ChatPanel.tsx');

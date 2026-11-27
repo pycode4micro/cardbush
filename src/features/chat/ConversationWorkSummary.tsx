@@ -57,6 +57,7 @@ export function ConversationWorkSummary({
   workspaceRoot = '',
   pathAliases = noPathAliases,
   subagentObservabilityAvailable = false,
+  subagentTaskSnapshots,
   softVisible = true,
   running = false,
   activeTurnId = '',
@@ -74,6 +75,7 @@ export function ConversationWorkSummary({
   workspaceRoot?: string;
   pathAliases?: ProjectPathAlias[];
   subagentObservabilityAvailable?: boolean;
+  subagentTaskSnapshots?: SubagentTaskSnapshot[];
   softVisible?: boolean;
   running?: boolean;
   activeTurnId?: string;
@@ -88,7 +90,8 @@ export function ConversationWorkSummary({
   const openSummary = host?.openWorkSummary ?? openWorkSummaryInspector;
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
-  const taskFeed = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
+  const fetchedTasks = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable && subagentTaskSnapshots === undefined);
+  const taskFeed = subagentTaskSnapshots ?? fetchedTasks;
   const allTasks = useMemo(() => childConversationSummaries(withConversationAgentNames(taskFeed, messages)), [taskFeed, messages]);
   const subagentTasks = allTasks.filter(task => !isEmployeeTask(task));
   const visibleSubagentTasks = subagentTasks.slice(0, visibleSubagentTaskCount);

@@ -32,8 +32,8 @@ import './assistant.css';
 import { useLoopSubagentTasks } from '../subagents/useLoopSubagentTasks';
 import { AssistantTaskBubble } from './AssistantTaskBubble';
 import { childConversationSummaries } from '../subagents/subagentTaskPresentation';
+import { useAssistantSubagentBadge } from './useAssistantSubagentBadge';
 import { PromptReferenceFallback } from '../composer/PromptReferenceLink';
-import type { SubagentTaskSnapshot } from '../../types';
 import { usePublishRegionConversation } from '../inspector/RegionConversationContext';
 import { localInspectorWorkspace } from '../inspector/inspectorSessions';
 import { assistantInputEntry, assistantTimeLabel, assistantTimeSeparators } from './assistantTimeline';
@@ -43,7 +43,7 @@ import { copyText } from '../messageFeedback';
 
 const sessionId = PERSONAL_ASSISTANT_SESSION;
 type SubmittedMessage = { entry: ConversationEntry; prompt: UserPromptInput; state: 'preparing' | 'sending' | 'accepted' | 'failed' };
-type TimelineRow = { key: string; at: string } & ({ entry: ConversationEntry } | { tasks: SubagentTaskSnapshot[] });
+type TimelineRow = { key: string; at: string } & ({ entry: ConversationEntry } | { tasks: ReturnType<typeof childConversationSummaries> });
 export function AssistantView({ active, language, floating, prepare, observeActivity, ownsConfiguration = true, composerControls,
   workSummaryAvailable = true, transcriptFooter, headerActionsTarget, inspectorOpen = false, onToggleInspector, noticeTarget, onNoticeLocated, transcriptVisible = active,
   browserTabs = [], composerPortalTarget = null, windowMaximized = false, subagentObservabilityAvailable = false }: {
@@ -95,8 +95,12 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   }, [entries, submitted, queuedMessages]);
   const allTasks = useLoopSubagentTasks(sessionId, active && !floating && ready, active && !floating);
   // Reset removes the journal; do not resurrect old tasks in a fresh conversation.
-  const tasks = childConversationSummaries(allTasks.filter(task => task.origin === 'subagent' && task.taskId && entries.length &&
-    (task.createdAt || task.startedAt || '') >= entries[0].createdAt));
+  const firstEntryAt = entries[0]?.createdAt;
+  const currentTasks = useMemo(() => allTasks.filter(task => task.taskId && firstEntryAt &&
+    (task.createdAt || task.startedAt || '') >= firstEntryAt), [allTasks, firstEntryAt]);
+  const taskSummaries = useMemo(() => childConversationSummaries(currentTasks), [currentTasks]);
+  const tasks = taskSummaries.filter(task => task.origin === 'subagent');
+  const subagentBadge = useAssistantSubagentBadge(taskSummaries, active && !floating && ready);
   const timeline = [...pageEntries.map(entry => ({ key: entry.id, at: entry.createdAt, entry })),
     ...tasks.map(task => ({ key: task.taskId!, at: task.createdAt || task.startedAt || '', task }))]
     .sort((a, b) => a.at.localeCompare(b.at));
@@ -145,7 +149,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
   const chatBody = useRef<HTMLDivElement>(null), activeRef = useRef(active); activeRef.current = active;
   const scroller = useRef<HTMLDivElement>(null), composerDock = useRef<HTMLDivElement>(null);
   const viewport = useAssistantViewport({ active: active && !floating, bodyRef: chatBody, dockRef: composerDock, scrollerRef: scroller, revision: lastPageEntry, portaled: Boolean(composerPortalTarget) });
-  const summary = useConversationWorkSummary(chatBody, sessionId, inspectorOpen);
+  const summary = useConversationWorkSummary(chatBody, sessionId, inspectorOpen, () => subagentBadge.markSeen());
   const activeEvent = useAssistantEventExecution();
   const historyLoaded = useRef(false), animationTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [arriving, setArriving] = useState<Set<string>>(() => new Set());
@@ -389,7 +393,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
       {'tasks' in row
         ? <div className="message-list-item assistant-message-row">
           <div className="assistant-task-strip">
-            {row.tasks.map(task => <AssistantTaskBubble key={task.taskId} task={task} language={language}/>)}
+            {row.tasks.map(task => <AssistantTaskBubble key={task.taskId} task={task} language={language} onOpen={() => subagentBadge.markSeen(task)}/>)}
           </div>
         </div>
         : renderTimelineMessage(row.entry, quick)}
@@ -417,7 +421,8 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     {floatingView}
     <TopBar language={language} inspectorOpen={inspectorOpen} onToggleInspector={onToggleInspector}
       actionsTarget={headerActionsTarget} showActionTooltips={Boolean(headerActionsTarget)}
-      conversationContentAvailable={workSummaryAvailable && (timeline.length > 0 || Boolean(activeEvent))} workSummaryVisible={summary.showWorkSummary}
+      conversationContentAvailable={workSummaryAvailable && (timeline.length > 0 || taskSummaries.length > 0 || Boolean(activeEvent))} workSummaryVisible={summary.showWorkSummary}
+      workSummarySubagents={subagentBadge.badge}
       workSummaryHoverProps={summary.workSummaryHoverProps} onToggleWorkSummary={summary.toggleWorkSummary}/>
     {eventDialog && active && <AssistantEventsDialog language={language} initialEventId={eventDialog.eventId} close={() => setEventDialog(undefined)}/>}
     {active && management?.permissions[0] && <AssistantPermissionCard key={management.permissions[0].permissionId}
@@ -439,7 +444,7 @@ export function AssistantView({ active, language, floating, prepare, observeActi
     <div className="assistant-body"><div className="assistant-chat chat-body" ref={chatBody} style={{ '--work-summary-anchor-right': `${summary.workSummaryAnchorRight}px` } as CSSProperties}>
       {summary.workSummaryPresence.mounted && <ConversationWorkSummary language={language} sessionId={sessionId} messages={pageMessages} changeReports={[]}
         taskPlan={taskPlan} eventExecution={activeEvent} onOpenEvent={eventId => setEventDialog({ eventId })}
-        onOpenChangeReview={() => {}} subagentObservabilityAvailable={subagentObservabilityAvailable}
+        onOpenChangeReview={() => {}} subagentTaskSnapshots={subagentObservabilityAvailable ? currentTasks : undefined}
         hoverProps={summary.workSummaryPanelProps} keepOpenUntil={summary.keepWorkSummaryOpenUntil}
         running={busy} softVisible={summary.workSummaryPresence.visible}/>}
       <div className="chat-content-frame">

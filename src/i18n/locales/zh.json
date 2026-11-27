@@ -633,6 +633,7 @@
     "copyToastHost.copiedToClipboard": "已复制到剪贴板",
     "sidebarResizer.resizeSidebar": "调整侧边栏宽度",
     "topBar.showOrHideWorkSummary": "显示或隐藏工作摘要",
+    "topBar.workSummarySubagentActivity": "显示或隐藏工作摘要（{active} 个子 Agent 运行中或排队，{unread} 个结果未查看）",
     "topBar.expandSidebar": "展开右侧栏",
     "windowFrame.back": "返回",
     "windowFrame.applicationMenu": "应用菜单",

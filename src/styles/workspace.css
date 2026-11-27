@@ -113,3 +113,41 @@
   padding: 0;
   gap: 0;
 }
+
+[data-work-summary-toggle] {
+  position: relative;
+}
+
+.work-summary-badge {
+  --work-summary-badge-size: 17px;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: -2px;
+  display: grid;
+  place-items: center;
+  inline-size: var(--work-summary-badge-size);
+  block-size: var(--work-summary-badge-size);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--surface));
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.work-summary-badge[data-spinning]::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1px solid transparent;
+  border-block-start-color: var(--accent);
+  border-radius: inherit;
+  animation: cardbush-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-summary-badge[data-spinning]::after { animation: none; }
+}

@@ -634,6 +634,7 @@
     "copyToastHost.copiedToClipboard": "Copied to clipboard",
     "sidebarResizer.resizeSidebar": "Resize sidebar",
     "topBar.showOrHideWorkSummary": "Show or hide work summary",
+    "topBar.workSummarySubagentActivity": "Show or hide work summary ({active} active or queued, {unread} unread subagent results)",
     "topBar.expandSidebar": "Expand sidebar",
     "windowFrame.back": "Back",
     "windowFrame.applicationMenu": "Application menu",

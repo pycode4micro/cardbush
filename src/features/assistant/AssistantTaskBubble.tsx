@@ -4,7 +4,7 @@ import type { SubagentTaskSnapshot } from '../../types';
 import { openWorkSummaryInspector } from '../subagents/subagentObservabilityEvents';
 import { subagentTaskPresentation } from '../subagents/subagentTaskPresentation';
 
-export function AssistantTaskBubble({ task, language }: { task: SubagentTaskSnapshot; language: string }) {
+export function AssistantTaskBubble({ task, language, onOpen }: { task: SubagentTaskSnapshot; language: string; onOpen?: () => void }) {
   const t = uiText(language);
   const state = subagentTaskPresentation(task, language);
   const id = task.childSessionId || task.taskId;
@@ -12,7 +12,10 @@ export function AssistantTaskBubble({ task, language }: { task: SubagentTaskSnap
   const title = task.requestPrompt?.trim() || t('assistantTaskBubble.doSomething');
   return <button type="button" className="assistant-task-bubble" data-status={task.status} data-tone={state.tone} data-message-id={task.taskId}
     title={name} aria-label={t('assistantTaskBubble.viewExecution', { name, state: state.label })}
-    onClick={() => openWorkSummaryInspector({ kind: 'subagent-task', sessionId: task.parentSessionId, task, title })}>
+    onClick={() => {
+      onOpen?.();
+      openWorkSummaryInspector({ kind: 'subagent-task', sessionId: task.parentSessionId, task, title });
+    }}>
     <span className="assistant-task-glyph"><Bot aria-hidden="true" /></span>
     <span className="assistant-task-copy">
       <span className="assistant-task-name">{name}</span>

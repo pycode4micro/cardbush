@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { uiText } from '../i18n';
+import { resolveUiLanguage, uiText } from '../i18n';
 import { AlignLeft, PanelRight } from 'lucide-react';
 import type { AppLanguage } from '../types';
 import type { ComponentProps, ReactNode } from 'react';
@@ -10,6 +10,7 @@ export function TopBar({
   language,
   conversationContentAvailable = false,
   workSummaryVisible,
+  workSummarySubagents,
   inspectorOpen,
   onToggleWorkSummary,
   workSummaryHoverProps,
@@ -22,6 +23,7 @@ export function TopBar({
   language: AppLanguage;
   conversationContentAvailable?: boolean;
   workSummaryVisible?: boolean;
+  workSummarySubagents?: { active: number; unread: number; spinning: boolean };
   inspectorOpen: boolean;
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
   workSummaryHoverProps?: ComponentProps<'button'>;
@@ -31,7 +33,11 @@ export function TopBar({
   showActionTooltips?: boolean;
 }) {
   const t = uiText(language);
-  const summaryLabel = t('topBar.showOrHideWorkSummary');
+  const subagentCount = (workSummarySubagents?.active ?? 0) + (workSummarySubagents?.unread ?? 0);
+  const number = new Intl.NumberFormat(resolveUiLanguage(language));
+  const summaryLabel = subagentCount && workSummarySubagents
+    ? t('topBar.workSummarySubagentActivity', { active: number.format(workSummarySubagents.active), unread: number.format(workSummarySubagents.unread) })
+    : t('topBar.showOrHideWorkSummary');
   const inspectorLabel = t(inspectorOpen ? 'app.closeInspector' : 'topBar.expandSidebar');
   const actions = (
     <>
@@ -48,6 +54,9 @@ export function TopBar({
           data-tooltip={showActionTooltips ? summaryLabel : undefined}
         >
           <AlignLeft size={15} aria-hidden="true" />
+          {subagentCount > 0 && <span className="work-summary-badge" data-spinning={workSummarySubagents?.spinning || undefined} aria-hidden="true">
+            {`${number.format(Math.min(subagentCount, 99))}${subagentCount > 99 ? '+' : ''}`}
+          </span>}
         </button>
       )}
       {onToggleInspector && <button
