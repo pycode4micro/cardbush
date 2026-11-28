@@ -1,15 +1,162 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { ProductMcpConfigStore } from '@cardbush/product-host';
-import { ToolRegistry } from '@cardbush/bush-runtime';
+import { InMemoryRuntimeHost, SubagentTaskStore, ToolRegistry } from '@cardbush/bush-runtime';
+import { PERSONAL_ASSISTANT_SESSION, assistantProfileSchema } from '@cardbush/bush-protocol';
 import { McpClientManager } from '@cardbush/bush-mcp-client';
 import { ElectronProductHostController } from '../dist-electron/productHostController.mjs';
 import { startProductMcpManagement, mergeMcpServer } from '../dist-electron/productMcpManagement.mjs';
 import { mcpManagementView } from '../dist-electron/productMcpManagementView.mjs';
+import { loadPluginSearchPackages } from '../dist-electron/pluginSearchPackages.mjs';
 import homeLibrary from '../assets/skills/cardbush-docs/scripts/home-library.cjs';
+
+test('desktop Assistant delegates plugin observations and retains the real plugin lifecycle tools', async () => {
+  const parent = resolve('tmp'); await mkdir(parent, { recursive: true });
+  const root = await mkdtemp(join(parent, 'assistant-product-plugins-'));
+  const registry = new ToolRegistry(), tasks = new SubagentTaskStore();
+  const manager = new McpClientManager({ registry });
+  const productRoot = join(root, 'product-host'), runtimeRoot = join(root, 'runtime'), installed = join(root, 'installed');
+  const loadPluginPackages = () => loadPluginSearchPackages([{ path: installed, source: 'user' }], join(productRoot, 'config', 'apps.json'));
+  const id = PERSONAL_ASSISTANT_SESSION, name = 'fixture-package';
+  const tools = Object.fromEntries(['list_plugin_marketplaces', 'inspect_plugin', 'install_plugin', 'uninstall_plugin']
+    .map(tool => [tool, `mcp__cardbush_management__${tool}`]));
+  const source = version => ({ kind: 'local', path: join(root, 'candidate-' + version) });
+  const packageArgs = version => ({ plugin_id: name, source: source(version) });
+  const product = new ElectronProductHostController({ dataRoot: productRoot, runtimeStateRoot: runtimeRoot,
+    bundledSkillRoot: join(root, 'skills'), userSkillRoot: join(root, 'user-skills'),
+    bundledPluginRoot: join(root, 'bundled'), userPluginRoot: installed, runtimeBridge: {
+      command: async ({ operationId, command }) => {
+        assert.ok(['runtime.apply_mcp_snapshot', 'runtime.get_mcp_snapshot', 'runtime.prepare_plugin_update',
+          'runtime.prepare_plugin_uninstall'].includes(command.kind), `Unexpected fixture command ${command.kind}`);
+        if (command.kind === 'runtime.prepare_plugin_update') assert.equal(command.payload.updatePluginId, name);
+        if (command.kind === 'runtime.prepare_plugin_uninstall') assert.equal(command.payload.uninstallPluginId, name);
+        assert.ok(!(command.payload.servers?.length), 'fixture packages have no MCP services of their own');
+        return { protocol: 'bush.runtime_ipc.v1', type: 'command_response', operationId, ok: true, result: manager.snapshot() };
+      }, cancelOperation: async () => {},
+    } });
+  let endpoint, runtime, mode, childVersion;
+  const stages = [], queries = [], calls = [];
+  const round = (request, name, args = {}) => ({ name, args, id: `call-${request.requestId}` });
+  const toolResults = request => request.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content));
+  const mcpResult = receipt => {
+    assert.notEqual(receipt.isError, true, receipt.content[0].text);
+    return JSON.parse(receipt.content[0].text);
+  };
+  async function* respond(request, output) {
+    const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
+    yield { ...base, sequence: 0, kind: 'response_started' };
+    if (typeof output === 'string') yield { ...base, sequence: 1, kind: 'text_delta', delta: output };
+    else yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: output.id,
+      nameDelta: output.name, argumentsDelta: JSON.stringify(output.args) };
+    yield { ...base, sequence: 2, kind: 'response_completed', finishReason: typeof output === 'string' ? 'stop' : 'tool_calls' };
+  }
+  try {
+    for (const version of ['0.8.0', '0.9.0']) {
+      const manifest = join(source(version).path, '.codex-plugin', 'plugin.json');
+      await mkdir(dirname(manifest), { recursive: true });
+      await writeFile(manifest, JSON.stringify({ name, version }));
+    }
+    endpoint = await startProductMcpManagement(() => product, undefined, undefined, { host: () => product, marketplace: () => assert.fail('Uses the local package source') });
+    await manager.apply({ protocol: 'bush.mcp_snapshot.v2', snapshotId: 'desktop-assistant-plugins', revision: 1, servers: [{
+      id: 'cardbush_management', transport: { kind: 'streamable_http', url: endpoint.url, headers: { Authorization: `Bearer ${endpoint.token}` } },
+      defaultToolPolicy: { permission: 'ask', visibleToChild: true }, toolPolicies: { inspect_plugin: { permission: 'allow', visibleToChild: true } },
+    }] });
+    for (const tool of Object.values(tools)) assert.ok(registry.resolve(tool)?.mcpHook, `${tool} must come from the real Desktop MCP server`);
+    assert.match(registry.resolve(tools.inspect_plugin).definition.description, /specific candidate before a requested update/);
+    runtime = new InMemoryRuntimeHost({ dataRoot: runtimeRoot, toolRegistry: registry, subagentTaskStore: tasks, loadPluginPackages,
+      provider: { async *stream(request) {
+        const last = toolResults(request).at(-1);
+        const child = request.metadata.agentRole === 'child';
+        const n = child ? queries.length : stages.length;
+        (child ? queries : stages).push(request);
+        let output;
+        if (child && mode === 'lookup') {
+          if (n === 0) output = round(request, 'search_plugins', { mode: 'plugins', query: name });
+          else {
+            assert.deepEqual(last.matches.map(({ name, version, installed }) => ({ name, version, installed })), [{ name, version: '0.8.0', installed: true }]);
+            output = 'Installed fixture-package 0.8.0.';
+          }
+        } else if (child && mode === 'update') {
+          if (n === 0) output = round(request, 'get_tool_schema', { name: tools.inspect_plugin });
+          else if (n === 1) {
+            assert.equal(last.matches[0].name, tools.inspect_plugin);
+            output = round(request, 'call_tool', { name: tools.inspect_plugin, arguments: packageArgs('0.9.0') });
+          } else {
+            childVersion = mcpResult(last);
+            assert.deepEqual(childVersion, { plugin_id: name, installed_version: '0.8.0', candidate_version: '0.9.0' });
+            output = JSON.stringify(childVersion);
+          }
+        } else if (mode === 'blocked') {
+          if (n === 0) output = round(request, 'get_tool_schema', { names: [tools.inspect_plugin, tools.list_plugin_marketplaces] });
+          else if (n === 1) {
+            assert.deepEqual(last.matches, []);
+            assert.deepEqual(last.errors.map(error => error.name), [tools.inspect_plugin, tools.list_plugin_marketplaces]);
+            output = round(request, 'call_tool', { name: tools.inspect_plugin, arguments: packageArgs('0.9.0') });
+          } else { assert.equal(last.code, 'tool_not_exposed'); output = 'Only the child can read plugin versions.'; }
+        } else if (mode === 'lookup') {
+          if (n === 0) output = round(request, 'subagent', { prompt: 'Read the installed fixture-package version.' });
+          else if (n === 1 && !request.messages.some(message => message.name === 'background_task_result')) output = 'Dispatched.';
+          else output = 'Installed fixture-package 0.8.0.';
+        } else {
+          const target = mode === 'remove' ? tools.uninstall_plugin : tools.install_plugin;
+          if (mode === 'update' && n === 0) output = round(request, 'subagent', { prompt: 'Compare the installed and candidate versions with inspect_plugin.' });
+          else if (mode === 'update' && n === 1 && !request.messages.some(message => message.name === 'background_task_result' && JSON.parse(message.content).taskId === last?.taskId)) output = 'Checking candidate.';
+          else if (n === 0) output = round(request, 'get_tool_schema', { name: target });
+          else if (last?.content) output = mcpResult(last).status;
+          else if (last?.matches?.[0]?.name === target) {
+            const args = mode === 'remove' ? { plugin_id: name } : mode === 'update'
+              ? { ...packageArgs(childVersion.candidate_version), update: { installed_version: childVersion.installed_version, candidate_version: childVersion.candidate_version } }
+              : packageArgs('0.8.0');
+            output = round(request, 'call_tool', { name: target, arguments: args });
+          } else output = round(request, 'get_tool_schema', { name: target });
+        }
+        calls.push(typeof output === 'string' ? output : output.name);
+        yield* respond(request, output);
+      } } });
+    await runtime.sendCommand({ kind: 'runtime.create_session', payload: { sessionId: id } });
+    const command = payload => runtime.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId: id, ...payload } });
+    const run = async (phase, question, answer) => {
+      mode = phase; stages.length = 0; queries.length = 0; calls.length = 0;
+      const createdAt = new Date().toISOString();
+      const entry = { id: phase, role: 'user', source: 'text', visibility: 'conversation', content: question, createdAt };
+      const request = { protocol: 'bush.session_turn_request.v1', requestId: phase, sessionId: id, turnId: phase, model: 'scripted',
+        prefixMessages: [], inputMessages: [{ messageId: phase, message: { role: 'user', content: question } }],
+        tools: registry.definitions(), permissionMode: 'all_free', metadata: { mcpToolDiscovery: true, individuation: { habits: false, predictions: false } } };
+      await command({ action: 'turn', parent: request, profile: assistantProfileSchema.parse({}), entry });
+      for (let i = 0; i < 500; i++) {
+        const state = await command({ action: 'read' });
+        assert.equal(state.error, '');
+        if (!state.busy && state.entries.some(result => result.role === 'assistant' && result.content === answer)) return state;
+        await delay(15);
+      }
+      assert.fail(`No final reply for ${phase}: ${JSON.stringify(calls)}`);
+    };
+    await run('install', 'Install the fixture package.', 'installed');
+    assert.equal((await product.pluginInstallation(name)).version, '0.8.0');
+    await run('blocked', 'Check whether the old parent tools can still be loaded.', 'Only the child can read plugin versions.');
+    const checked = await run('lookup', 'What version is the fixture package?', 'Installed fixture-package 0.8.0.');
+    assert.equal(calls[0], 'subagent');
+    assert.equal(calls.filter(call => call === 'search_plugins').length, 1);
+    assert.ok(!calls.includes('tasks'));
+    assert.equal(checked.entries.filter(entry => entry.role === 'assistant' && entry.content === 'Installed fixture-package 0.8.0.').length, 1);
+    assert.equal(stages.at(-1).messages.filter(message => message.name === 'background_task_result').length, 1);
+    await run('update', 'Update the fixture package.', 'updated');
+    assert.equal((await product.pluginInstallation(name)).version, '0.9.0');
+    await run('remove', 'Uninstall the fixture package.', 'uninstalled');
+    assert.equal(await product.pluginInstallation(name), undefined);
+  } finally {
+    await runtime?.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    await manager.close();
+    await endpoint?.close();
+    await product.stopMaintenance();
+    assert.ok(root.startsWith(parent + sep));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('cancelled startup catalog refresh never submits late work and cancels an in-flight command', async () => {
   const parent = resolve('tmp'); await mkdir(parent, { recursive: true });

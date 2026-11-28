@@ -65,7 +65,7 @@ export function registerProductPluginTools(server: McpServer, getHost: () => Pro
   }));
 
   server.registerTool('inspect_plugin', {
-    description: 'Read the installed and candidate versions of one CardBush plugin without changing its installation. Supply a configured marketplace or absolute package folder or ZIP. Use before a requested update.',
+    description: 'Compare one CardBush plugin with a specific candidate before a requested update. Supply a configured marketplace or absolute candidate package folder or ZIP. For the currently installed version or state alone, use search_plugins in plugins mode and use its installed catalog result.',
     inputSchema: packageInput,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (input) => result(async () => {

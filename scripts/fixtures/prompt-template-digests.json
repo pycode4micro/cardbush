@@ -113,7 +113,7 @@
   {
     "name": "assistant-execution",
     "slots": [],
-    "sha256": "0d0b9cbf7bc0a0fbc90801180193d372731e6eda095530291caaf943c847fa3f"
+    "sha256": "390461bc8980bf43275369362482ba2331cedfec8059bdf85f48c1a186eace0a"
   },
   {
     "name": "assistant-management",
@@ -247,7 +247,7 @@
   {
     "name": "assistant-plugin-management",
     "slots": [],
-    "sha256": "d9f9c974f09f2883e72424d61f190e02ac6c1983e7abc887f411894516770c08"
+    "sha256": "f2ece680ba76c14517e1df5ea35b9c1d919f0d37e595faadeebe988ab4f8fb36"
   },
   {
     "name": "subagent-result-delivery",

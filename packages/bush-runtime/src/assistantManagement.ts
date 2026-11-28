@@ -17,7 +17,9 @@ const disclosureDescriptions = {
   get_tool_schema: 'Read complete definitions for Assistant-owned management tools and advanced actions. Pass one exact name or up to 16 names. Use the returned invocation. Tool discovery for delegated work belongs to the child Agent.',
   call_tool: 'Invoke an Assistant-owned management tool or advanced action using its exact name and the arguments returned by the complete definition. Load that definition in an earlier round. All existing permissions and receipts apply.',
 } satisfies Record<(typeof disclosureNames)[number], string>;
-const productPluginTools = new Set(['list_plugin_marketplaces', 'inspect_plugin', 'install_plugin', 'uninstall_plugin']);
+// The parent owns requested lifecycle changes. The child owns package discovery
+// and verification, including the version comparison needed for an update.
+const productPluginMutationTools = new Set(['install_plugin', 'uninstall_plugin']);
 
 /** Uses the ordinary validators, permission grants and receipts, without a child or a second scheduler. */
 export class AssistantManagement {
@@ -62,7 +64,7 @@ export class AssistantManagement {
     const catalog = this.options.registry.definitions().filter(tool => allowed.has(tool.name) ||
       (ownerHistory && tool.name === 'read_conversation_history') ||
       parent.metadata.toolExecutionPolicy !== 'web_restricted' && (this.isBridgeTool(tool.name) ||
-        this.isProductPluginTool(tool.name, parent)));
+        this.isProductPluginMutation(tool.name, parent)));
     return catalog.filter(tool => parent.tools.some(item => item.name === tool.name) &&
       this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false);
   }
@@ -71,14 +73,14 @@ export class AssistantManagement {
     return registration?.registrationOwner === `bridge:${PERSONAL_ASSISTANT_SESSION}` &&
       registration.manifest?.operation === 'bridge.plugin.call' && registration.mcpHook?.modelVisible !== false;
   }
-  private isProductPluginTool(name: string, parent: RuntimeSessionTurnRequest) {
+  private isProductPluginMutation(name: string, parent: RuntimeSessionTurnRequest) {
     if (parent.metadata.botSourceRef || (Array.isArray(parent.metadata.botSourceRefs) && parent.metadata.botSourceRefs.length)) return false;
     const registration = this.options.registry.resolve(name);
     return registration?.registrationOwner === 'runtime_mcp' && registration.mcpHook?.server === 'cardbush_management' &&
-      registration.mcpHook.modelVisible !== false && productPluginTools.has(registration.mcpHook.tool);
+      registration.mcpHook.modelVisible !== false && productPluginMutationTools.has(registration.mcpHook.tool);
   }
   projectModelDefinitions(parent: RuntimeSessionTurnRequest, tools: ToolDefinition[]) {
-    const visible = tools.filter(tool => !this.isProductPluginTool(tool.name, parent));
+    const visible = tools.filter(tool => !this.isProductPluginMutation(tool.name, parent));
     const request: ModelRequest = { ...parent, protocol: 'bush.model_request.v1', messages: [], tools: visible };
     return { tools: projectBuiltinDefinitions(this.options.registry, request, visible), hasDeferredProductPlugins: visible.length < tools.length };
   }
@@ -104,7 +106,7 @@ export class AssistantManagement {
     const scope = { hasTool, canRecall: disclosureNames.every(hasTool) };
     const tools = candidates.flatMap(tool => {
       const registration = this.options.registry.resolve(tool.name);
-      const productPlugin = this.isProductPluginTool(tool.name, parent);
+      const productPlugin = this.isProductPluginMutation(tool.name, parent);
       return registration && (!registration.mcpHook || this.isBridgeTool(tool.name) || productPlugin) && parent.tools.some(item => item.name === tool.name) &&
         registration.modelAvailable?.(request) !== false && (productPlugin || hasTool(tool.name) ||
           scope.canRecall && registration.projectModelDefinition?.(registration.definition, scope) === null)
@@ -141,7 +143,7 @@ export class AssistantManagement {
       : this.definitions(parent).some(tool => tool.name === call.name))) throw Object.assign(Error('This tool is not available to the assistant.'), { code: 'tool_not_exposed' });
     const executionRequest: ModelRequest = disclosure ? this.disclosureRequest(parent, request, nativeTools)
       : { ...request, tools: [...parent.tools, ...this.definitions(parent).filter(tool => !parent.tools.some(item => item.name === tool.name))], requestCapabilities: parent.requestCapabilities };
-    if (this.isBridgeTool(call.name) || this.isProductPluginTool(call.name, parent)) synchronizeMcpDiscovery(this.options.registry, executionRequest, request.messages);
+    if (this.isBridgeTool(call.name) || this.isProductPluginMutation(call.name, parent)) synchronizeMcpDiscovery(this.options.registry, executionRequest, request.messages);
     const identity = { requestId: request.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: round + 1, ordinal };
     this.identities.set(call.id, identity);
     if (typeof parent.metadata.environmentExecutionId === 'string') this.executions.set(call.id, parent.metadata.environmentExecutionId);
