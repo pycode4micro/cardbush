@@ -16,7 +16,7 @@ function fixture(run, { autoAccept = true, control } = {}) {
     inheritBrowserScope: async () => { assert.fail('Remote tasks must not inherit local browser grants'); },
     createTaskId: () => `remote-${++serial}`, asyncDispatch: true,
     remoteAgents: { list: async () => [target], ...(control ? { control } : {}), run: (input, signal, onAccepted) => { requests.push(input); if (autoAccept) onAccepted(); return run(input, signal, onAccepted); } },
-    onAsyncResult: item => results.set(item.taskId, item.result),
+    onAsyncResult: item => { results.set(item.taskId, item.result); return false; },
   });
   const signals = new RuntimeTurnSignals();
   const observer = new RuntimeTaskTools((context, promises, mode, signal, duration) => signals.wait(context.sessionId, context.turnId, promises, mode, signal, duration));
@@ -58,6 +58,7 @@ test('remote dispatch waits for acceptance, not completion, and never observes a
   accept();
   const receipt = await dispatch;
   assert.equal(receipt.result.status, 'running');
+  assert.equal(receipt.result.result_delivery, undefined, 'An out-of-turn caller must not be promised in-turn delivery');
   assert.ok(f.tasks.get('parent-session', receipt.result.taskId).remoteAcceptedAt);
   finish(completed('done'));
   await f.results.get(receipt.result.taskId);
@@ -106,6 +107,7 @@ for (const scenario of [
   await replyStarted.promise;
   const receipt = JSON.parse(requests[1].messages.find(message => message.toolCallId === 'probe').content);
   assert.equal(receipt.status, scenario.asynchronous ? 'running' : scenario.status);
+  assert.equal(receipt.result_delivery, scenario.asynchronous ? 'automatic' : undefined);
   finish.resolve(result); await new Promise(resolve => setImmediate(resolve));
   releaseReply.resolve();
   assert.equal((await pending).payload.status, 'completed');

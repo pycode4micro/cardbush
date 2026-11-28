@@ -170,6 +170,88 @@ async function* response(request, text = '', calls = []) {
   yield { ...base, sequence, kind: 'response_completed', finishReason: calls.length ? 'tool_calls' : 'stop' };
 }
 
+for (const sessionId of [id, 'ordinary-parent']) test(`${sessionId} delivers one child package lookup automatically while retaining explicit inspection`, async t => {
+  const dataRoot = temporary(t), registry = new ToolRegistry(), sessions = new SessionStore(), tasks = new SubagentTaskStore();
+  const assistant = sessionId === id;
+  const childGate = gate();
+  const parentRequests = [], childRequests = [], catalogReads = [];
+  const host = new InMemoryRuntimeHost({ dataRoot, toolRegistry: registry, sessionStore: sessions, subagentTaskStore: tasks,
+    loadPluginPackages: async () => {
+      catalogReads.push('installed packages');
+      return { packages: [{ name: 'fixture-plugin', displayName: 'Fixture plugin', description: 'Fixture', version: '0.8.0',
+        installed: true, enabled: true, source: 'user' }] };
+    }, provider: { async *stream(request) {
+      if (request.metadata.agentRole === 'child') {
+        childRequests.push(request);
+        if (childRequests.length === 1) {
+          assert.match(request.tools.find(tool => tool.name === 'search_plugins').description, /Answer from that entry without repeating/);
+          await childGate.promise;
+          yield* response(request, '', [{ id: 'look-up-package', name: 'search_plugins', args: { mode: 'plugins', query: 'fixture-plugin' } }]);
+        } else {
+          const receipt = JSON.parse(request.messages.find(message => message.role === 'tool' && message.toolCallId === 'look-up-package').content);
+          assert.deepEqual(receipt.matches.map(({ name, version, installed }) => ({ name, version, installed })),
+            [{ name: 'fixture-plugin', version: '0.8.0', installed: true }]);
+          yield* response(request, 'Installed fixture-plugin version is 0.8.0.');
+        }
+        return;
+      }
+      parentRequests.push(request);
+      assert.ok(request.tools.some(tool => tool.name === 'tasks'), 'Explicit status and recovery stay available');
+      if (parentRequests.length === 1) {
+        yield* response(request, '', [{ id: 'delegate', name: 'subagent', args: { prompt: 'Look up fixture-plugin in the installed package catalog.' } }]);
+      } else if (parentRequests.length === 2) {
+        const receipt = JSON.parse(request.messages.find(message => message.role === 'tool' && message.toolCallId === 'delegate').content);
+        assert.equal(receipt.result_delivery, 'automatic');
+        assert.match(receipt.instructions, /Do not call tasks inspect, await/);
+        yield* response(request, 'Started.');
+      } else {
+        const results = request.messages.filter(message => message.name === (assistant ? 'background_task_result' : 'subagent_result'));
+        assert.equal(results.length, 1);
+        assert.match(results[0].content, /0\.8\.0/);
+        yield* response(request, 'Version 0.8.0.');
+      }
+    } } });
+  let running;
+  const command = payload => host.sendCommand({ kind: 'runtime.assistant_conversation', payload: { sessionId, ...payload } });
+  try {
+    sessions.ensureSession(sessionId);
+    const parent = { protocol: 'bush.session_turn_request.v1', requestId: 'request', sessionId, turnId: 'turn', model: 'fixture',
+      prefixMessages: [], inputMessages: [{ messageId: 'question', message: { role: 'user', content: 'Check the installed plugin version.' } }],
+      tools: registry.definitions(), metadata: { individuation: { habits: false, predictions: false } } };
+    if (assistant) await command({ action: 'turn', parent, profile: assistantProfileSchema.parse({}),
+      entry: { id: 'question', role: 'user', content: 'Check the installed plugin version.', source: 'text', visibility: 'conversation', createdAt: new Date().toISOString() } });
+    else running = host.runSessionTurn(parent);
+    await until(() => parentRequests.length >= 2);
+    await yieldTurn();
+    assert.equal(parentRequests.length, 2, 'Waiting does not require a model status request');
+    const [task] = tasks.list(sessionId);
+    assert.equal(task.resultWatched, true);
+    childGate.release();
+    if (assistant) {
+      await tasks.waitForCompletion(sessionId, task.taskId, new AbortController().signal);
+      for (let i = 0; i < 500 && (await command({ action: 'read' })).entries.every(entry => entry.content !== 'Version 0.8.0.'); i++) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      const state = await command({ action: 'read' });
+      assert.equal(state.entries.filter(entry => entry.source === 'task').length, 1);
+      assert.equal(state.entries.filter(entry => entry.content === 'Version 0.8.0.').length, 1);
+    } else {
+      assert.equal((await running).payload.status, 'completed');
+      const history = sessions.snapshot(sessionId).turns.flatMap(turn => turn.messages.map(item => item.message));
+      assert.equal(history.filter(message => message.name === 'subagent_result').length, 1);
+      assert.equal(history.filter(message => message.content === 'Version 0.8.0.').length, 1);
+    }
+    assert.equal(tasks.list(sessionId).length, 1);
+    assert.equal(parentRequests.length, 3);
+    assert.equal(childRequests.length, 2);
+    assert.equal(catalogReads.length, 1);
+  } finally {
+    childGate.release();
+    await host.sendCommand({ kind: 'runtime.shutdown', payload: {} });
+    await running?.catch(() => {});
+  }
+});
+
 for (const action of ['stop', 'inspect']) {
   for (const timing of ['during-reply', 'after-reply', 'before-context-commit', 'history-failure', 'concurrent-user']) {
     test(`task lifecycle delivers a terminal result once through ${action} receipt, ${timing}`, async t => {

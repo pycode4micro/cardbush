@@ -812,6 +812,7 @@ export class InMemoryRuntimeHost {
         onAsyncResult: ({ parentSessionId, parentTurnId, taskId, result }) => {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
           this.#trackAgentGuidance(key, taskId, result);
+          return this.#activeTurns.has(key);
         },
         permissionPolicy: subagentPermissionPolicy,
         models: options.subagentModels,

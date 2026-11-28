@@ -206,15 +206,20 @@ test('Assistant adopts saved Friends bindings and events; isolated notices keep 
     await friends({ action: 'submit', input: { id: 'local-notice', text: 'Send me the update.', createdAt: new Date().toISOString() } });
     await until(() => received.some(body => body.arguments?.text === 'From desktop.'));
     assert.equal(received.find(body => body.arguments?.text === 'From desktop.').senderId, 'alice');
+    // Reproduce the stored pre-assistant_event contract. The live catalog no longer contains this tool.
+    const legacySchedule = { name: 'schedule_task', description: 'Manage existing scheduled jobs.', inputSchema: {
+      type: 'object', properties: { action: { type: 'string' } }, required: ['action'],
+    } };
     const second = (await gateway.command({ action: 'save', config: { ...cfg, name: 'Weixin work' }, binding: {
       kind: 'assistant', sessionId: 'personal-assistant', title: 'Work', parent: { ...parent, sessionId: 'personal-assistant',
-        tools: parent.tools.filter(t => t.name !== 'assistant_event'), metadata: { mcpCatalogUpdates: 'additions' } }, profile: assistant, generation: 0 } })).connections.find(c => c.id !== connection.id);
+        tools: [...parent.tools.filter(t => t.name !== 'assistant_event'), legacySchedule], metadata: { mcpCatalogUpdates: 'additions' } }, profile: assistant, generation: 0 } })).connections.find(c => c.id !== connection.id);
     assert.ok(second);
     const workHeaders = { Authorization: `Bearer ${second.token}`, 'Content-Type': 'application/json' }, workLease = second.endpoint.replace(/\/messages$/, '/capabilities');
     assert.equal((await fetch(workLease, { headers: workHeaders, method: 'POST', body: JSON.stringify({ protocol: 'cardbush.webhook.v1', capabilities: { text: true }, plugins: [plugin], instanceId }) })).status, 200);
     await push('second', 'Unrelated message.', 'bob', client(second));
     const workRequest = requests.find(req => req.sessionId === 'personal-assistant' && req.messages.some(m => m.content === 'Unrelated message.'));
     assert.ok(workRequest.tools.some(tool => tool.name === 'assistant_event'), 'an already paired Assistant bot can manage new events');
+    assert.ok(!workRequest.tools.some(tool => tool.name === 'schedule_task'), 'migration does not expose the retired tool');
     await push('third', 'Confirmed detail.', 'alice');
     await push('first', 'Schedule my update.', 'alice');
     const events = (await friends({ action: 'read' })).events, original = events.find(e => e.intent === 'Schedule my update.');
@@ -257,16 +262,11 @@ for (const phase of ['reasoning', 'tool']) {
     const entered = Promise.withResolvers(), release = Promise.withResolvers();
     const requests = [], delivered = [], registry = new ToolRegistry();
     let gateway, toolCalls = 0, cancelled = false;
-    const name = 'search_plugins';
+    const name = 'update_task_plan';
     const receiver = createServer(async (req, res) => { let raw = ''; for await (const chunk of req) raw += chunk;
       delivered.push(JSON.parse(raw)); res.end('{}'); });
     receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening');
     const runtime = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry, sessionStore: new SessionStore(),
-      loadPluginPackages: async () => {
-        toolCalls++; entered.resolve(); await release.promise;
-        return { packages: [{ name: 'fixture', displayName: 'Fixture', source: 'bundled', description: 'completed observation',
-          version: '1.0.0', installed: true, enabled: true }] };
-      },
       provider: { async *stream(request, { signal }) {
         requests.push(request);
         if (requests.length === 1 && phase === 'reasoning') {
@@ -275,16 +275,22 @@ for (const phase of ['reasoning', 'tool']) {
         }
         if (requests.length === 1 && phase === 'tool') {
           const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
-          yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'slow-observation', nameDelta: name, argumentsDelta: JSON.stringify({ mode: 'plugins', query: '*' }) };
+          yield { ...base, sequence: 0, kind: 'tool_call_delta', index: 0, toolCallId: 'slow-observation', nameDelta: name, argumentsDelta: JSON.stringify({ action: 'get' }) };
           yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' }; return;
         }
         yield* answer(request, request.turnId === requests[0].turnId ? 'Only the first two pages.' : 'A separate reply.');
       } } });
+    const plan = registry.resolve(name), execute = plan.execute;
+    plan.execute = async context => {
+      toolCalls++; entered.resolve(); await release.promise;
+      return { ...await execute(context), observation: 'completed observation' };
+    };
     const bridge = { command: (kind, payload) => runtime.sendCommand({ kind, payload }) };
     try {
       await bridge.command('runtime.create_session', { sessionId });
       gateway = await new ContextWebhookHost(root, secrets, bridge, { port: 0 }).start();
       const selected = binding(sessionId);
+      selected.parent.metadata.planEnabled = true;
       selected.parent.tools = [registry.resolve(name).definition];
       const connection = (await gateway.command({ action: 'save', binding: selected, config: config({ url: `http://127.0.0.1:${receiver.address().port}/reply` }) })).connections[0];
       const bot = client(connection);

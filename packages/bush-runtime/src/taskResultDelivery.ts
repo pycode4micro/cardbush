@@ -1,4 +1,5 @@
 import type { SubagentTask } from '@cardbush/bush-protocol';
+import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { z } from 'zod';
 
 export const taskResultReferenceSchema = z.object({ sessionId: z.string(), taskId: z.string(), attempt: z.string() });
@@ -23,6 +24,12 @@ export function resultDelivery(result: unknown): ResultDelivery | undefined {
 export function transferResultDelivery(source: unknown, target: unknown) {
   const delivery = resultDelivery(source);
   if (delivery && target && typeof target === 'object') deliveries.set(target, delivery);
+}
+
+export function withAutomaticChildResult<T extends object>(receipt: T) {
+  const result = { ...receipt, result_delivery: 'automatic', instructions: renderPromptTemplate('subagent-result-delivery').trim() };
+  transferResultDelivery(receipt, result);
+  return result;
 }
 
 export interface TaskResultLease {

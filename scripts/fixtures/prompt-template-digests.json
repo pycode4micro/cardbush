@@ -21,7 +21,7 @@
       "finalResponseSignalInstructions",
       "localDeliverableInstructions"
     ],
-    "sha256": "337e41239c0118dcd528ca17ee990e795f5dd5d888b0347732585a43070d3ccc"
+    "sha256": "3dddbca73b9d35c400643b6409f4d27ebd13a81edef1a4c2606c5a69bd1382a9"
   },
   {
     "name": "goal-continuation-prompt",
@@ -48,12 +48,12 @@
   {
     "name": "task-continuation-instructions",
     "slots": [],
-    "sha256": "3becff3ee6c1de904e008237c1f8861e972aac2f03472bd0a83d4890cb7fabf7"
+    "sha256": "685beaeb22ebed9c8f0aa01e2d9083a022de268724dff8722980b4f8e9a90de6"
   },
   {
     "name": "source-binding-instructions",
     "slots": [],
-    "sha256": "e9aef5c1130ed6c5cb9bf53d8677962ba7e75d6a18be57843765ed8bbfb931e0"
+    "sha256": "1d371ef006eea754556692a33e3be2c3e84bf3bd79c41aa02a3fc10c42467fa4"
   },
   {
     "name": "checkpoint-continuation-instructions",
@@ -83,7 +83,7 @@
       "host",
       "eventPolicy"
     ],
-    "sha256": "042f20e281919dcc4f806cec4fcbcedd4d41a404412c81d1615bd318e9998b7a"
+    "sha256": "16ff42a05c7730214075b2cab94a63503843286dbc2737d488254dd5f48514ee"
   },
   {
     "name": "assistant-events-enabled",
@@ -113,12 +113,12 @@
   {
     "name": "assistant-execution",
     "slots": [],
-    "sha256": "6687188b66e49789b3879dfed1899bd1cfd3b4583d2b261b7bc516c4401f4124"
+    "sha256": "0d0b9cbf7bc0a0fbc90801180193d372731e6eda095530291caaf943c847fa3f"
   },
   {
     "name": "assistant-management",
     "slots": [],
-    "sha256": "62a0bbbf802fa7f65624ee17c58555187243eae1c7354ba7927c99087e0aa1dc"
+    "sha256": "dee0b5f85c3343770bececfbe49fb84ec8b9548be50e9c493877e6ad29cca5ce"
   },
   {
     "name": "tone-natural",
@@ -138,12 +138,12 @@
   {
     "name": "source-enabled",
     "slots": [],
-    "sha256": "ba01bad10490285727ddeaf3eeefd3e2e6785d296361940282ff96390c18a357"
+    "sha256": "19877315c725b22af77c5781a5096ca89f6a72f372c034ef172a8dfd7e595d6b"
   },
   {
     "name": "source-disabled",
     "slots": [],
-    "sha256": "e3997447c604db855ad6e9334ebdf25cc4ef307fe884366bb0ab12f12c89663c"
+    "sha256": "fc69c97816c3f3d1cda363be2e0c02787dcc672ff244c9b5790c87eb33c48c9e"
   },
   {
     "name": "realtime-context-compaction",
@@ -232,21 +232,26 @@
   {
     "name": "coordination-tool-boundaries",
     "slots": [],
-    "sha256": "3e63c9be22cc7d1d4abbb4af777a64d146a6fca9cdaceffaab55032e1f888a0c"
+    "sha256": "df49c6ee1f93b697659fe23891a2ce723ab73b9eaf52050207dbee2b8a57f076"
   },
   {
     "name": "runtime-environment-observation",
     "slots": [],
-    "sha256": "5a611729828babef1c058cd1e45fffbb2528d388e2d79cf1c10435c97b3a6afa"
+    "sha256": "140561dfc54eead89e604068de7cf6ea49f69dc985b8263feb3bad6ea83f75ed"
   },
   {
     "name": "assistant-tool-disclosure",
     "slots": [],
-    "sha256": "b3939c43462d9c3276a5f16fe5aa3167500ef4939fa7d9390923b56010212d92"
+    "sha256": "24aa92c2757c86a109cc0a151a9603acacaea7a106ccaf3b7827bf88359dc6a9"
   },
   {
     "name": "assistant-plugin-management",
     "slots": [],
-    "sha256": "c9060c4656b78ae99ac8371f002850097341051373278186690b0d58843940bd"
+    "sha256": "d9f9c974f09f2883e72424d61f190e02ac6c1983e7abc887f411894516770c08"
+  },
+  {
+    "name": "subagent-result-delivery",
+    "slots": [],
+    "sha256": "43f1946fab1a7f24fa4e2bfadfa014c514c06de577bc2d872ac02bdedc828ca9"
   }
 ]

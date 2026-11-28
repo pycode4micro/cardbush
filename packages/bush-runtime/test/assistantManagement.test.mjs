@@ -371,17 +371,18 @@ test('assistant registers and edits a local calendar rule through ordinary tool 
   assert.equal((await f.scheduler.list()).jobs.length, 0);
 });
 
-test('capability discovery respects enabled tools and visibility without executing or delegating catalog entries', async t => {
+test('Assistant cannot search or invoke the child execution catalog even with an older saved tool list', async t => {
   const f = await fixture(t);
-  assert.equal((await f.invoke('search_plugins', { mode: 'skill', query: 'spreadsheet' })).matches[0].name, 'sheets');
-  assert.equal((await f.invoke('list_plugin_commands', {})).commands[0].id, 'fixture:report');
-  const found = await f.invoke('search_plugins', { mode: 'mcp', query: '*' });
-  assert.deepEqual(found.matches.map(item => item.name), ['mcp__fixture__report']); assert.equal(found._page, undefined);
+  for (const [name, args] of [['search_plugins', { mode: 'skill', query: 'spreadsheet' }], ['list_plugin_commands', {}]]) {
+    assert.ok(f.parent().tools.some(tool => tool.name === name));
+    assert.equal((await f.invoke(name, args)).code, 'tool_unavailable');
+    assert.ok(f.requests.every(request => !request.tools.some(tool => tool.name === name)));
+    assert.equal((await f.invoke('get_tool_schema', { name })).code, 'tool_not_exposed');
+    assert.equal((await f.invoke('call_tool', { name, arguments: args })).code, 'tool_not_exposed');
+  }
+  assert.equal((await f.invoke('get_tool_schema', { name: 'mcp__fixture__report' })).code, 'tool_not_exposed');
   assert.equal((await f.invoke('call_tool', { name: 'mcp__fixture__report', arguments: {} })).code, 'tool_not_exposed');
   assert.equal(f.executed(), 0);
-  const metadata = { ...f.parent().metadata, disabledSkills: ['sheets'], builtinPluginCommandsAvailable: false };
-  assert.deepEqual((await f.invoke('search_plugins', { mode: 'skill', query: '*' }, { metadata })).matches, []);
-  assert.equal((await f.invoke('list_plugin_commands', {}, { metadata })).code, 'tool_unavailable');
   assert.equal((await f.invoke('assistant_event', reminder, { tools: [] })).code, 'tool_unavailable');
   assert.equal((await f.invoke('assistant_event', reminder, { metadata: { toolExecutionPolicy: 'none' } })).code, 'tool_unavailable');
   assert.equal((await f.invoke('assistant_event', reminder, { metadata: { agentRole: 'child' } })).code, 'tool_unavailable');

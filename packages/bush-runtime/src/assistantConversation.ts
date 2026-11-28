@@ -27,7 +27,7 @@ import { completeContextUnits } from './contextCompactionTransaction.js';
 import type { AssistantMemory } from './assistantMemory.js';
 import type { AssistantManagement } from './assistantManagement.js';
 import { teamCompletionAlreadyRead, teamCompletionNotice } from './teamResults.js';
-import { TaskResultDelivery, resultDelivery, taskReceiptDelivery, type TaskResultLease } from './taskResultDelivery.js';
+import { TaskResultDelivery, resultDelivery, taskReceiptDelivery, withAutomaticChildResult, type TaskResultLease } from './taskResultDelivery.js';
 import { settleAtAbort } from './abortSettlement.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@cardbush/bush-protocol';
 import type { RuntimeEnvironment } from './runtimeEnvironment.js';
@@ -846,14 +846,14 @@ export class AssistantConversation {
             output = await execution;
             nativeResults.set(ordinal, output);
             signal.throwIfAborted();
-            this.watchDelegation(output);
+            output = this.watchDelegation(output);
           } else {
             const input = conversationalSubagentInput.parse(args);
             output = await run(() => this.deps.delegate({ sessionId: id, callId: `assistant-${randomUUID()}`, action: call.name,
               parent, prompt: input.prompt, taskId: input.task_id, delivery: input.delivery, targetAgent: profile.targetAgent || undefined }, signal, onOutcome));
             nativeResults.set(ordinal, output);
             signal.throwIfAborted();
-            this.watchDelegation(output);
+            output = this.watchDelegation(output);
           }
           nativeResults.set(ordinal, output);
           return { role: 'tool' as const, toolCallId: call.id, content: JSON.stringify(output) };
@@ -917,10 +917,12 @@ export class AssistantConversation {
     const receipt = output as { taskId?: string; status?: string } | undefined;
     // Native terminal receipts stay watched until projection/context commits.
     // Standalone adapters without lifecycle ownership retain their direct receipt contract.
-    if (!receipt?.taskId || receipt.status === 'not_delivered' || (!resultDelivery(output) && ['completed', 'failed', 'stopped', 'unavailable'].includes(receipt.status ?? ''))) return;
+    if (!receipt?.taskId || receipt.status === 'not_delivered' || (!resultDelivery(output) && ['completed', 'failed', 'stopped', 'unavailable'].includes(receipt.status ?? ''))) return output;
     const task = this.deps.tasks(PERSONAL_ASSISTANT_SESSION).find(task => task.taskId === receipt.taskId);
     if (task) this.results.watch(PERSONAL_ASSISTANT_SESSION, task);
     this.schedule();
+    return task?.origin === 'subagent' && (receipt.status === 'running' || receipt.status === 'queued')
+      ? withAutomaticChildResult(receipt) : output;
   }
   private schedule() {
     if (this.timer || this.stopped) return;

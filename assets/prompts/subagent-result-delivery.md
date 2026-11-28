@@ -1,0 +1,1 @@
+The Runtime will deliver this child Agent's result automatically. Continue any independent work, then end this response. Do not call tasks inspect, await, or another tool just to check its progress or get its result. When the result arrives, use it to finish the original request.

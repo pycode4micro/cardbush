@@ -1,5 +1,5 @@
 import { assistantDelegationOrigins } from './assistantDelegationOrigins.js';
-import { taskReceiptDelivery } from './taskResultDelivery.js';
+import { taskReceiptDelivery, withAutomaticChildResult } from './taskResultDelivery.js';
 import { renderPromptTemplate } from '@cardbush/platform/prompts';
 import { registerTeamSubmission, childSubmission, childExecutionFacts } from './teamSubmission.js';
 import { uiText, resolveUiLanguage } from '@cardbush/platform/i18n';
@@ -122,12 +122,13 @@ export function registerSubagentTool(
     createTurnId?: () => string;
     createMessageId?: () => string;
     asyncDispatch?: boolean;
+    /** True when the active parent turn will consume the completion itself. */
     onAsyncResult?: (input: {
       parentSessionId: string;
       parentTurnId: string;
       taskId: string;
       result: Promise<{ role: "user"; name: "subagent_result"; content: string } | null>;
-    }) => void;
+    }) => boolean;
     onInteraction?: (parentSessionId: string, taskId: string, observation: RemoteObservation) => void;
     permissionPolicy?: SubagentPermissionPolicy;
     models?: SubagentModelCatalog;
@@ -216,7 +217,7 @@ export function registerSubagentTool(
     definition: {
       name: SUBAGENT_TOOL,
       description:
-        "Delegate ad-hoc work to one child per call; use separate calls for independent assignments, even with several agents. Choose team when the host should schedule a saved dependency workflow and resume unfinished steps. Follow up on an owned child with task_id and prompt: running children receive guidance; finished children resume their session and name. Give new ad-hoc children short responsibility names. Fork continuations inherit the current parent model; configured clean children retain theirs. Use tasks to inspect/stop/read conversations; await waits for results. Continue independent work and reconcile subagent_result. Independent peers use an available collaboration plugin. Host permissions and child restrictions remain enforced.",
+        "Delegate ad-hoc work to one child per call; use separate calls for independent assignments, even with several agents. Choose team when the host should schedule a saved dependency workflow and resume unfinished steps. Follow up on an owned child with task_id and prompt: running children receive guidance; finished children resume their session and name. Give new ad-hoc children short responsibility names. Fork continuations inherit the current parent model; configured clean children retain theirs. Use tasks to inspect/stop/read conversations when needed. Follow result_delivery in the receipt; when automatic, continue independent work and reconcile subagent_result on arrival, without polling. Independent peers use an available collaboration plugin. Host permissions and child restrictions remain enforced.",
       inputSchema: subagentInputSchema({
         type: "object",
         additionalProperties: false,
@@ -245,7 +246,7 @@ export function registerSubagentTool(
     },
     projectModelDefinition: (definition, scope) => !scope.canRecall ? definition : presentTool(definition, {
       fields: ['action', 'name', 'prompt', 'agent_id', 'agent_type', 'task_id', 'target_agent', 'run_in_background', 'delivery', 'response', 'report_approval'], actions: ['run'],
-      description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with task_id and prompt: default to immediate guidance for current-task corrections or extra facts; queue only separate work that must wait for completion. State the selected mode and actual delivery state to the user. Answer a pending interaction with task_id and response. Omit name, mode and configuration; the host retains identity and scope. Use tasks to inspect/stop/read conversations; await waits for results. Independent peers use an available collaboration plugin. For registration or a new clean child's configuration, load get_tool_schema(name="subagent"), then call_tool with its full arguments.`,
+      description: `Delegate ad-hoc work to one child per call; separate calls suit independent assignments even with several agents. Choose team for saved dependency workflows scheduled by the host. Start with a saved agent_id, plugin agent_type or fork. Give new ad-hoc children a short responsibility name; put assignment details in prompt. Follow up with task_id and prompt: default to immediate guidance for current-task corrections or extra facts; queue only separate work that must wait for completion. State the selected mode and actual delivery state to the user. Answer a pending interaction with task_id and response. Omit name, mode and configuration; the host retains identity and scope. Use tasks to inspect/stop/read conversations when needed. Let the Runtime deliver results when the receipt says result_delivery is automatic. Independent peers use an available collaboration plugin. For registration or a new clean child's configuration, load get_tool_schema(name="subagent"), then call_tool with its full arguments.`,
     }),
     manifest: {
       effect_kind: "delegation",
@@ -413,8 +414,9 @@ export function registerSubagentTool(
           await Promise.race([accepted, completion]);
           const current = tasks.get(context.sessionId, taskId)!;
           if (current.status !== 'running') return taskResult(current, tasks, context.signal);
-          options.onAsyncResult?.({ parentSessionId: context.sessionId, parentTurnId: context.turnId, taskId, result: completion.then(asyncResultMessage) });
-          return { ...submittedResult(current), remote };
+          const automatic = options.onAsyncResult?.({ parentSessionId: context.sessionId, parentTurnId: context.turnId, taskId, result: completion.then(asyncResultMessage) });
+          const receipt = { ...submittedResult(current), remote };
+          return automatic ? withAutomaticChildResult(receipt) : receipt;
         }
         return taskResult(await completion, tasks, context.signal);
       }
@@ -565,13 +567,14 @@ export function registerSubagentTool(
           ...(!queuedChild(task) ? { instructions: 'Background task started. Continue independent work; use tasks when its result is needed.' } : {}) };
       }
       if (options.asyncDispatch && !execution.waitForResult) {
-        options.onAsyncResult?.({
+        const automatic = options.onAsyncResult?.({
           parentSessionId: context.sessionId,
           parentTurnId: context.turnId,
           taskId,
           result: completion.then(asyncResultMessage),
         });
-        return submittedResult(tasks.get(context.sessionId, taskId)!);
+        const receipt = submittedResult(tasks.get(context.sessionId, taskId)!);
+        return automatic ? withAutomaticChildResult(receipt) : receipt;
       }
       return taskResult(await completion, tasks, context.signal);
   }

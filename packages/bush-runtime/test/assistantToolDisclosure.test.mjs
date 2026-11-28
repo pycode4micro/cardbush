@@ -25,18 +25,19 @@ async function* response(request, calls = [], text = 'Done.') {
   if (!calls.length) yield { ...base, sequence: sequence++, kind: 'text_delta', delta: text };
   yield { ...base, sequence, kind: 'response_completed', finishReason: calls.length ? 'tool_calls' : 'stop' };
 }
-async function fixture(t, { child, remoteAgents, root: existingRoot, hooks } = {}) {
+async function fixture(t, { child, remoteAgents, root: existingRoot, hooks, commands } = {}) {
   const root = existingRoot ?? await mkdtemp(join(tmpdir(), 'cardbush-assistant-disclosure-'));
   const registry = new ToolRegistry(), sessions = new SessionStore(), tasks = new SubagentTaskStore();
   sessions.ensureSession(sessionId);
   const requests = [], children = [], results = new Map(), executed = [], forbidden = [];
   let steps = [], round = 0, turns = 0;
   const host = new InMemoryRuntimeHost({ dataRoot: root, toolRegistry: registry, sessionStore: sessions, subagentTaskStore: tasks, remoteAgents,
-    ...(hooks ? { loadPluginExtensions: async () => ({ commands: [], skills: [], agents: [], hooks }) } : {}),
+    ...(hooks || commands ? { loadPluginExtensions: async () => ({ commands: commands ?? [], skills: [], agents: [], hooks: hooks ?? [] }) } : {}),
     provider: { async *stream(request) {
       if (request.metadata.agentRole === 'child') {
         children.push(structuredClone(request));
-        if (child) await child(request);
+        const calls = await child?.(request);
+        if (calls?.length) { yield* response(request, calls); return; }
         if (request.metadata.teamRunId && !request.messages.some(message => message.role === 'tool' && message.content.includes('bush.team_submission.v1'))) {
           yield* response(request, [call('submit', 'team_submit', { status: 'submitted', summary: 'Inventory verified.' })]); return;
         }
@@ -97,7 +98,11 @@ test('Assistant projects the ordinary native definitions without changing memory
   assert.match(seen[0].messages.find(message => message.role === 'system').content, /explicitly tell the user which mode you chose/);
   assert.equal(tools.find(tool => tool.name === 'team').inputSchema.properties.definition, undefined);
   assert.deepEqual(tools.find(tool => tool.name === 'team').inputSchema.properties.action.enum, ['list', 'get', 'run', 'resume', 'rerun', 'diagnostics']);
-  for (const name of ['get_tool_schema', 'call_tool']) assert.ok(tools.some(tool => tool.name === name));
+  for (const name of ['get_tool_schema', 'call_tool']) {
+    const tool = tools.find(tool => tool.name === name);
+    assert.match(tool.description, /Assistant-owned/);
+    assert.doesNotMatch(tool.description, /search_plugins/);
+  }
   const memory = new AssistantMemory({}, f.registry).definitions();
   for (const definition of memory) assert.deepEqual(tools.find(tool => tool.name === definition.name), definition);
   assert.deepEqual(f.registry.definitions(), original, 'projection never mutates native schemas');
@@ -131,6 +136,30 @@ test('Assistant worker diagnostics are recalled and execute once through the sha
     { tools: f.parent().tools.filter(tool => tool.name !== 'worker_connection') });
   assert.equal(f.results.get('unavailable-worker-schema').code, 'tool_not_exposed');
   assert.equal(connections.length, 1);
+});
+
+test('a capability lookup starts one child and only that child searches the catalog', async t => {
+  const gate = Promise.withResolvers();
+  t.after(() => gate.resolve());
+  const command = { id: 'fixture:report', name: 'report', description: 'Prepare a report', path: 'command.md', pluginId: 'fixture', userInvocable: true };
+  const f = await fixture(t, { commands: [command], child: async request => {
+    for (const name of ['search_plugins', 'list_plugin_commands']) assert.ok(request.tools.some(tool => tool.name === name), name);
+    const receipts = request.messages.filter(message => message.role === 'tool');
+    if (!receipts.length) {
+      await gate.promise;
+      return [call('child-search', 'search_plugins', { mode: 'mcp', query: 'secret' }), call('child-commands', 'list_plugin_commands', { query: 'report' })];
+    }
+    assert.equal(JSON.parse(receipts.find(message => message.toolCallId === 'child-search').content).matches[0].name, 'mcp__fixture__secret');
+    assert.equal(JSON.parse(receipts.find(message => message.toolCallId === 'child-commands').content).commands[0].id, command.id);
+  } });
+  assert.equal((await f.run([[call('delegate-lookup', 'subagent', { prompt: 'Find available report tools and plugin commands.' })]])).length, 2);
+  gate.resolve();
+  await until(async () => f.requests.length === 3 && !(await f.read()).busy);
+  assert.equal(f.tasks.list(sessionId)[0].status, 'completed');
+  assert.equal(f.requests.filter(request => request.messages.some(message => message.name === 'background_task_result')).length, 1);
+  assert.ok(f.requests.every(request => request.tools.every(tool => !['search_plugins', 'list_plugin_commands'].includes(tool.name))));
+  assert.equal(f.children.length, 2);
+  assert.equal(f.forbidden.length, 0, 'catalog lookup did not execute the discovered tool');
 });
 
 test('complete recalled schemas preserve employee and Team create/update/delete with one execution per outer call', async t => {

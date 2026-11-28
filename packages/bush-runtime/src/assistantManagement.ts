@@ -6,13 +6,17 @@ import { resultDelivery } from './taskResultDelivery.js';
 import { RuntimePermissionBroker } from './runtimePermissionBroker.js';
 import type { ToolExecutionStore } from './toolExecutionStore.js';
 import type { CoordinationStore } from './coordinationStore.js';
-import { projectMcpDiscoveryResult, synchronizeMcpDiscovery } from './mcpToolDiscovery.js';
+import { synchronizeMcpDiscovery } from './mcpToolDiscovery.js';
 import { projectBuiltinDefinitions } from './builtinToolDisclosure.js';
 import { stripToolDisplayTitle } from './toolDisplay.js';
 import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 
 const allowed = new Set<string>(ASSISTANT_MANAGEMENT_TOOLS);
 const disclosureNames = ['get_tool_schema', 'call_tool'] as const;
+const disclosureDescriptions = {
+  get_tool_schema: 'Read complete definitions for Assistant-owned management tools and advanced actions. Pass one exact name or up to 16 names. Use the returned invocation. Tool discovery for delegated work belongs to the child Agent.',
+  call_tool: 'Invoke an Assistant-owned management tool or advanced action using its exact name and the arguments returned by the complete definition. Load that definition in an earlier round. All existing permissions and receipts apply.',
+} satisfies Record<(typeof disclosureNames)[number], string>;
 const productPluginTools = new Set(['list_plugin_marketplaces', 'inspect_plugin', 'install_plugin', 'uninstall_plugin']);
 
 /** Uses the ordinary validators, permission grants and receipts, without a child or a second scheduler. */
@@ -60,10 +64,7 @@ export class AssistantManagement {
       parent.metadata.toolExecutionPolicy !== 'web_restricted' && (this.isBridgeTool(tool.name) ||
         this.isProductPluginTool(tool.name, parent)));
     return catalog.filter(tool => parent.tools.some(item => item.name === tool.name) &&
-      this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false).map(tool => {
-        if (tool.name === 'search_plugins') return { ...tool, description: 'Discover MCP tools, Skills and local packages (bundled or user-installed) on this Runtime before delegation. Start with query, default mode=all. Narrow with mcp, skill or plugins. Use * to browse; pass a standby server ID in mcp mode or continue with cursor alone. Give the child the matched Skill mainResource or exact tool/package identity. The child reads instructions and executes on its own host.' };
-        return tool;
-      });
+      this.options.registry.resolve(tool.name)?.modelAvailable?.(request) !== false);
   }
   private isBridgeTool(name: string) {
     const registration = this.options.registry.resolve(name);
@@ -88,7 +89,7 @@ export class AssistantManagement {
     const definitions = disclosureNames.flatMap(name => {
       const registration = this.options.registry.resolve(name);
       return registration && parent.tools.some(tool => tool.name === name) && registration.modelAvailable?.(request) !== false
-        ? [registration.definition] : [];
+        ? [{ ...registration.definition, description: disclosureDescriptions[name] }] : [];
     });
     return definitions.length === disclosureNames.length ? definitions : [];
   }
@@ -138,12 +139,9 @@ export class AssistantManagement {
     const disclosure = call.name === 'get_tool_schema';
     if (!(disclosure ? nativeTools.length && this.disclosureDefinitions(parent).some(tool => tool.name === call.name) && request.tools.some(tool => tool.name === call.name)
       : this.definitions(parent).some(tool => tool.name === call.name))) throw Object.assign(Error('This tool is not available to the assistant.'), { code: 'tool_not_exposed' });
-    // Catalog queries need the caller's actual execution capabilities, not just
-    // the small conversational schema. Schema lookup alone uses the restricted scope.
     const executionRequest: ModelRequest = disclosure ? this.disclosureRequest(parent, request, nativeTools)
       : { ...request, tools: [...parent.tools, ...this.definitions(parent).filter(tool => !parent.tools.some(item => item.name === tool.name))], requestCapabilities: parent.requestCapabilities };
     if (this.isBridgeTool(call.name) || this.isProductPluginTool(call.name, parent)) synchronizeMcpDiscovery(this.options.registry, executionRequest, request.messages);
-    if (call.name === 'search_plugins') executionRequest.metadata = { ...executionRequest.metadata, mcpToolDiscovery: true };
     const identity = { requestId: request.requestId, sessionId: parent.sessionId, turnId: parent.turnId, round: round + 1, ordinal };
     this.identities.set(call.id, identity);
     if (typeof parent.metadata.environmentExecutionId === 'string') this.executions.set(call.id, parent.metadata.environmentExecutionId);
@@ -161,13 +159,8 @@ export class AssistantManagement {
       if (outcome.hookFeedback !== undefined) return outcome.hookFeedback;
       // Complete schemas are prerequisites, not pageable search summaries.
       if (disclosure) return outcome.result;
-      if (call.name === 'search_plugins') {
-        const localTools = new Set(parent.tools.filter(tool => !this.options.registry.resolve(tool.name)?.mcpHook).map(tool => tool.name));
-        parent.tools = executionRequest.tools.filter(tool => localTools.has(tool.name) || this.options.registry.resolve(tool.name)?.mcpHook);
-      }
       // Page-aware tools keep continuation cursors instead of dumping catalogues.
-      const rendered = this.options.registry.projectModelPage(call.name, outcome.result, 12000, call)
-        ?? projectMcpDiscoveryResult(JSON.stringify(outcome.result), 12000);
+      const rendered = this.options.registry.projectModelPage(call.name, outcome.result, 12000, call);
       return rendered ? JSON.parse(rendered) : outcome.result;
     } finally { this.identities.delete(call.id); this.executions.delete(call.id); }
   }

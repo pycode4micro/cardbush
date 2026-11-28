@@ -5,7 +5,7 @@ import type { RuntimePermissionRequest } from './runtimeHost.js';
 import { bridgeDeliveryResultSchema } from './bridgeDelivery.js';
 
 /** Direct, bounded management; execution tools remain owned by children. */
-export const ASSISTANT_MANAGEMENT_TOOLS = ['search_plugins', 'list_plugin_commands', 'update_task_plan', 'assistant_event'] as const;
+export const ASSISTANT_MANAGEMENT_TOOLS = ['update_task_plan', 'assistant_event'] as const;
 export interface AssistantManagementSnapshot {
   plan?: PlanState;
   permissions: Array<{
